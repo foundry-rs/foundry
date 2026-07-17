@@ -22,7 +22,7 @@ use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell};
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
-    traces::{decode_trace_arena, prune_trace_depth, render_trace_arena},
+    traces::{decode_trace_arena, prune_trace_depth, render_trace_arena_inner},
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
@@ -187,7 +187,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     if let Some(trace_depth) = tracing.trace_depth {
                         prune_trace_depth(trace, trace_depth);
                     }
-                    sh_println!("{}", render_trace_arena(trace))?;
+                    sh_println!(
+                        "{}",
+                        render_trace_arena_inner(trace, false, tracing.verbosity > 4)
+                    )?;
                 }
             }
 

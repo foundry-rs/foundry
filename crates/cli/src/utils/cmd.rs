@@ -11,7 +11,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{
         CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
-        prune_trace_depth, render_trace_arena_inner,
+        prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
     },
 };
 use std::{
@@ -302,11 +302,17 @@ pub async fn print_traces(
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await;
 
-        if let Some(trace_depth) = trace_depth {
-            prune_trace_depth(arena, trace_depth);
+        if shell::is_json()
+            && let Some(trace_depth) = trace_depth
+        {
+            let arena = trace_arena_at_depth(arena, trace_depth);
+            sh_println!("{}", render_trace_arena_inner(&arena, verbose, state_changes))?;
+        } else {
+            if let Some(trace_depth) = trace_depth {
+                prune_trace_depth(arena, trace_depth);
+            }
+            sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
         }
-
-        sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
     if shell::is_json() {

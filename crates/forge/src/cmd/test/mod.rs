@@ -69,7 +69,10 @@ use foundry_evm::{
     fuzz::{BasicTxDetails, CounterExample},
     hardforks::TempoHardfork,
     opts::EvmOpts,
-    traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
+    traces::{
+        backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
+        trace_arena_at_depth,
+    },
 };
 use foundry_tui::tui_mode;
 use rand::Rng;
@@ -2745,6 +2748,11 @@ impl TestArgs {
                         // Empty logs for non verbose runs.
                         test_result.logs = vec![];
                     }
+                    if let Some(trace_depth) = tracing.trace_depth {
+                        for (_, arena) in &mut test_result.traces {
+                            *arena = trace_arena_at_depth(arena, trace_depth);
+                        }
+                    }
                 }
             }
             if let Some(regression) = &symbolic_regression {
@@ -2969,14 +2977,20 @@ impl TestArgs {
                             decode_trace_arena(arena, &decoder).await;
 
                             if let Some(trace_depth) = tracing.trace_depth {
-                                prune_trace_depth(arena, trace_depth);
+                                let mut arena = arena.clone();
+                                prune_trace_depth(&mut arena, trace_depth);
+                                decoded_traces.push(render_trace_arena_inner(
+                                    &arena,
+                                    false,
+                                    trace_verbosity > 4,
+                                ));
+                            } else {
+                                decoded_traces.push(render_trace_arena_inner(
+                                    arena,
+                                    false,
+                                    trace_verbosity > 4,
+                                ));
                             }
-
-                            decoded_traces.push(render_trace_arena_inner(
-                                arena,
-                                false,
-                                trace_verbosity > 4,
-                            ));
                         }
                     }
                 }
@@ -3033,6 +3047,14 @@ impl TestArgs {
                             decoder.identify(arena, &mut identifier);
                             gas_report.analyze([arena], &decoder).await;
                         }
+                    }
+                }
+
+                if shell::is_json()
+                    && let Some(trace_depth) = tracing.trace_depth
+                {
+                    for (_, arena) in &mut result.traces {
+                        *arena = trace_arena_at_depth(arena, trace_depth);
                     }
                 }
                 // Clear memory.

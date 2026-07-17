@@ -895,16 +895,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
-                    .trace_requirements(
-                        TraceRequirements::none()
-                            .with_calls(true)
-                            .with_debug(debug)
-                            .with_decode_internal(if self.config.tracing.decode_internal {
-                                InternalTraceMode::Full
-                            } else {
-                                InternalTraceMode::None
-                            }),
-                    )
+                    .trace_requirements(script_trace_requirements(&self.config, debug))
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
@@ -947,6 +938,18 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 }
 
+const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
+    TraceRequirements::none()
+        .with_calls(true)
+        .with_debug(debug)
+        .with_verbosity(config.tracing.verbosity)
+        .with_decode_internal(if config.tracing.decode_internal {
+            InternalTraceMode::Full
+        } else {
+            InternalTraceMode::None
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -969,6 +972,15 @@ mod tests {
         "0x1111111111111111111111111111111111111111111111111111111111111111";
     const SESSION_ROOT_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn script_trace_requirements_honor_tracing_verbosity() {
+        let mut config = Config::default();
+        config.tracing.verbosity = 5;
+
+        let tracing = script_trace_requirements(&config, false).into_config().unwrap();
+        assert!(tracing.record_state_diff);
+    }
 
     fn active_session_entry(
         session_id: B256,

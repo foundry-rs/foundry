@@ -427,6 +427,30 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
         .stdout_eq(file!["../../fixtures/SimpleContractTestVerbose.json": Json]);
 });
 
+forgetest!(test_json_trace_depth_removes_nested_nodes, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
+
+    let output = cmd
+        .args(["test", "-vvvvv", "--json", "--trace-depth", "0"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let traces = output["src/Simple.t.sol:SimpleContractTest"]["test_results"]["test()"]["traces"]
+        .as_array()
+        .unwrap();
+    assert!(!traces.is_empty());
+
+    for trace in traces {
+        let arena = trace[1]["arena"].as_array().unwrap();
+        assert_eq!(arena.len(), 1);
+        assert!(arena[0]["children"].as_array().unwrap().is_empty());
+    }
+});
+
 forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
