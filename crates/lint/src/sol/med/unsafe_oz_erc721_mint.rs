@@ -126,11 +126,10 @@ fn function_reaches<'hir>(
     target: FunctionId,
     seen: &mut Vec<FunctionId>,
 ) -> bool {
-    if !seen.contains(&function_id) {
-        seen.push(function_id);
-    } else {
+    if seen.contains(&function_id) {
         return false;
     }
+    seen.push(function_id);
     let Some(body) = hir.function(function_id).body else { return false };
     let mut scan = CalleeCollector { gcx, hir, calls: Vec::new() };
     for stmt in body.stmts {
