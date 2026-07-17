@@ -371,7 +371,8 @@ impl RemappingsProvider<'_> {
     }
 
     fn with_dependency_context(mut remapping: Remapping, lib: &Path) -> Option<Remapping> {
-        let context = if let Some(context) = remapping.context.take() {
+        let (context, has_boundary) = if let Some(context) = remapping.context.take() {
+            let has_boundary = context.ends_with('/');
             let context = Path::new(&context);
             if context.is_absolute()
                 || context.components().any(|component| component == Component::ParentDir)
@@ -379,18 +380,31 @@ impl RemappingsProvider<'_> {
                 trace!(?context, ?lib, "skipping dependency remapping with escaping context");
                 return None;
             }
-            lib.join(context)
+            (lib.join(context), has_boundary)
         } else {
-            lib.to_path_buf()
+            (lib.to_path_buf(), true)
         };
-        let Ok(context) = dunce::canonicalize(context) else { return None };
-        if !context.starts_with(lib) {
+
+        // Explicit contexts are source-unit prefixes and do not have to exist. Canonicalize their
+        // closest existing ancestor to reject symlink escapes without changing the declared prefix.
+        let mut ancestor = context.as_path();
+        loop {
+            match fs::symlink_metadata(ancestor) {
+                Ok(_) => break,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    ancestor = ancestor.parent()?;
+                }
+                Err(_) => return None,
+            }
+        }
+        let Ok(ancestor) = dunce::canonicalize(ancestor) else { return None };
+        if !ancestor.starts_with(lib) {
             trace!(?context, ?lib, "skipping dependency remapping with escaping context");
             return None;
         }
 
         let mut context = context.to_string_lossy().into_owned();
-        if !context.ends_with('/') {
+        if has_boundary && !context.ends_with('/') {
             context.push('/');
         }
         remapping.context = Some(context);
@@ -432,8 +446,10 @@ impl Provider for RemappingsProvider<'_> {
         let remappings = remappings
             .into_iter()
             .map(|r| {
+                let has_boundary = r.context.as_ref().is_some_and(|context| context.ends_with('/'));
                 let mut r = RelativeRemapping::new(r, self.root);
-                if let Some(context) = &mut r.context
+                if has_boundary
+                    && let Some(context) = &mut r.context
                     && !context.ends_with('/')
                 {
                     context.push('/');
@@ -626,8 +642,16 @@ mod tests {
             &lib,
         )
         .unwrap();
-        let expected_context = format!("{}/", src.display());
-        assert_eq!(contextual.context.as_deref(), Some(expected_context.as_str()));
+        assert_eq!(contextual.context.as_deref(), Some(src.to_string_lossy().as_ref()));
+        let missing = RemappingsProvider::with_dependency_context(
+            remapping_with_context(Path::new("src/generated")),
+            &lib,
+        )
+        .unwrap();
+        assert_eq!(
+            missing.context.as_deref(),
+            Some(lib.join("src/generated").to_string_lossy().as_ref())
+        );
         assert!(
             RemappingsProvider::with_dependency_context(
                 remapping_with_context(Path::new("../outside")),
@@ -653,6 +677,14 @@ mod tests {
             assert!(
                 RemappingsProvider::with_dependency_context(
                     remapping_with_context(Path::new("link/missing")),
+                    &lib,
+                )
+                .is_none()
+            );
+            symlink(outside.join("missing"), lib.join("dangling")).unwrap();
+            assert!(
+                RemappingsProvider::with_dependency_context(
+                    remapping_with_context(Path::new("dangling/generated")),
                     &lib,
                 )
                 .is_none()

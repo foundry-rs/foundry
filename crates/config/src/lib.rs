@@ -1141,8 +1141,10 @@ impl Config {
             .remappings
             .into_iter()
             .map(|r| {
+                let has_boundary = r.context.as_ref().is_some_and(|context| context.ends_with('/'));
                 let mut r = RelativeRemapping::new(r.into(), &root);
-                if let Some(context) = &mut r.context
+                if has_boundary
+                    && let Some(context) = &mut r.context
                     && !context.ends_with('/')
                 {
                     context.push('/');

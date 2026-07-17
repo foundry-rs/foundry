@@ -302,18 +302,13 @@ fn configure_pcx_from_solc_cli(
             || vec![String::new()],
             |context| {
                 // Compile output can contain root-relative or canonical source names. Register
-                // both forms with a directory boundary so Solar applies the same contextual
-                // remapping in either case without matching sibling path prefixes.
-                let with_boundary = |mut context: String| {
-                    if !context.ends_with('/') {
-                        context.push('/');
-                    }
-                    context
-                };
-                let mut contexts = vec![
-                    with_boundary(context.clone()),
-                    with_boundary(project_paths.root.join(context).to_string_lossy().into_owned()),
-                ];
+                // both forms while preserving user-defined file and source-prefix contexts.
+                let has_boundary = context.ends_with('/');
+                let mut absolute = project_paths.root.join(context).to_string_lossy().into_owned();
+                if has_boundary && !absolute.ends_with('/') {
+                    absolute.push('/');
+                }
+                let mut contexts = vec![context.clone(), absolute];
                 if std::path::MAIN_SEPARATOR != '/' {
                     let separator = std::path::MAIN_SEPARATOR.to_string();
                     contexts.extend(
