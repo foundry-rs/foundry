@@ -196,17 +196,20 @@ interface EvmVm {
 contract MonadEvmVersionTest is Test {
     EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
     address constant CLZ_TARGET = address(uint160(0x0c17));
+    address constant MEMORY_TARGET = address(uint160(0x3e3));
 
     function test_set_monad_evm_version() public {
         vm.etch(CLZ_TARGET, hex"60011e60005260206000f3");
 
         evm.setEvmVersion("MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
+        assertEq(memoryExpansionGasDelta(), 897, "MonadEight should use Ethereum memory pricing");
         (bool ok,) = CLZ_TARGET.staticcall(hex"");
         assertFalse(ok, "CLZ should be unavailable on MonadEight");
 
         evm.setEvmVersion("MonadNine");
         assertEq(evm.getEvmVersion(), "monadnine");
+        assertEq(memoryExpansionGasDelta(), 128, "MonadNine should use MIP-3 memory pricing");
         bytes memory output;
         (ok, output) = CLZ_TARGET.staticcall(hex"");
         assertTrue(ok, "CLZ should be available on MonadNine");
@@ -214,8 +217,23 @@ contract MonadEvmVersionTest is Test {
 
         evm.setEvmVersion("monad:MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
+        assertEq(memoryExpansionGasDelta(), 897, "MonadEight memory pricing should be restored");
         (ok,) = CLZ_TARGET.staticcall(hex"");
         assertFalse(ok, "CLZ should be disabled after switching back to MonadEight");
+    }
+
+    function memoryExpansionGasDelta() internal returns (uint256) {
+        // The probe measures gas around MSTORE at offsets 0 and 0x2000.
+        uint256 base = memoryGas(hex"5a5f610000525a90035f5260205ff3");
+        uint256 expanded = memoryGas(hex"5a5f612000525a90035f5260205ff3");
+        return expanded - base;
+    }
+
+    function memoryGas(bytes memory code) internal returns (uint256) {
+        vm.etch(MEMORY_TARGET, code);
+        (bool ok, bytes memory output) = MEMORY_TARGET.staticcall(hex"");
+        assertTrue(ok, "memory gas probe should succeed");
+        return abi.decode(output, (uint256));
     }
 }
    "#,

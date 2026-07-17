@@ -622,6 +622,7 @@ fn compile_and_test(
                 config,
                 evm_opts,
                 filter_args,
+                rerun_failures,
                 selected_sources_relative,
                 isolate,
             );
