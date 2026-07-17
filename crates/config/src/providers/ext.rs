@@ -42,6 +42,10 @@ pub(crate) trait ProviderExt: Provider + Sized {
     ) -> FallbackProfileProvider<Self> {
         FallbackProfileProvider::new(self, profile, fallback)
     }
+
+    fn legacy_labels(self) -> LegacyLabelsProvider<Self> {
+        LegacyLabelsProvider(self)
+    }
 }
 
 impl<P: Provider> ProviderExt for P {}
@@ -412,6 +416,7 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
 
             map.insert(profile, dict);
         }
+        normalize_legacy_labels(&mut map);
         Ok(map)
     }
 
@@ -420,33 +425,17 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     }
 }
 
-/// A provider that maps deprecated root labels into the tracing section before providers merge.
-pub(crate) struct TracingCompatProvider<P>(pub(crate) P);
+/// Adapts deprecated labels from arbitrary external providers.
+pub(crate) struct LegacyLabelsProvider<P>(pub(crate) P);
 
-impl<P: Provider> Provider for TracingCompatProvider<P> {
+impl<P: Provider> Provider for LegacyLabelsProvider<P> {
     fn metadata(&self) -> Metadata {
         self.0.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = self.0.data()?;
-
-        if let Some(labels) = map.get(&Profile::new("labels")).cloned() {
-            merge_tracing_labels(&labels, map.entry(Profile::new("tracing")).or_default());
-        }
-
-        for (profile, dict) in &mut map {
-            if profile.as_str().as_str() == Config::PROFILE_SECTION {
-                for value in dict.values_mut() {
-                    if let Value::Dict(_, profile) = value {
-                        normalize_tracing_labels(profile);
-                    }
-                }
-            } else if !Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
-                normalize_tracing_labels(dict);
-            }
-        }
-
+        normalize_legacy_labels(&mut map);
         Ok(map)
     }
 
@@ -455,7 +444,25 @@ impl<P: Provider> Provider for TracingCompatProvider<P> {
     }
 }
 
-fn normalize_tracing_labels(dict: &mut Dict) {
+pub(crate) fn normalize_legacy_labels(map: &mut Map<Profile, Dict>) {
+    if let Some(labels) = map.get(&Profile::new("labels")).cloned() {
+        merge_tracing_labels(&labels, map.entry(Profile::new("tracing")).or_default());
+    }
+
+    for (profile, dict) in map {
+        if profile.as_str().as_str() == Config::PROFILE_SECTION {
+            for value in dict.values_mut() {
+                if let Value::Dict(_, profile) = value {
+                    normalize_legacy_labels_in_profile(profile);
+                }
+            }
+        } else if !Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+            normalize_legacy_labels_in_profile(dict);
+        }
+    }
+}
+
+pub(crate) fn normalize_legacy_labels_in_profile(dict: &mut Dict) {
     let Some(Value::Dict(_, labels)) = dict.get("labels").cloned() else { return };
     let tracing = dict.entry("tracing".to_string()).or_insert_with(|| Dict::new().into());
     if let Value::Dict(_, tracing) = tracing {

@@ -836,13 +836,13 @@ impl Config {
     #[doc(alias = "try_from")]
     pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         trace!("load config with provider: {:?}", provider.metadata());
-        Self::from_figment(Figment::from(TracingCompatProvider(provider)))
+        Self::from_figment(Figment::from(provider.legacy_labels()))
     }
 
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let provider = Figment::from(TracingCompatProvider(provider)).select(self.profile.clone());
+        let provider = Figment::from(provider.legacy_labels()).select(self.profile.clone());
         let invariant_corpus_random_sequence_weight_configured =
             self.invariant.corpus_random_sequence_weight_configured
                 || provider.contains("invariant.corpus_random_sequence_weight")
@@ -961,7 +961,7 @@ impl Config {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
-            return Figment::from(TracingCompatProvider(self));
+            return Figment::from(self);
         }
 
         let root = self.root.as_path();
@@ -985,19 +985,21 @@ impl Config {
 
         // merge environment variables
         figment = figment
-            .merge(TracingCompatProvider(
+            .merge(
                 Env::prefixed("DAPP_")
                     .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            ))
-            .merge(TracingCompatProvider(
+                    .global()
+                    .legacy_labels(),
+            )
+            .merge(
                 Env::prefixed("DAPP_TEST_")
                     .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            ))
+                    .global()
+                    .legacy_labels(),
+            )
             .merge(DappEnvCompatProvider)
             .merge(EtherscanEnvProvider::default())
-            .merge(TracingCompatProvider(
+            .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
                     .map(|key| {
@@ -1010,8 +1012,9 @@ impl Config {
                             key.into()
                         }
                     })
-                    .global(),
-            ))
+                    .global()
+                    .legacy_labels(),
+            )
             .select(profile.clone());
 
         // only resolve remappings if all providers are requested
@@ -1055,7 +1058,7 @@ impl Config {
             figment = figment.merge(("invariant.workers_configured", true));
         }
 
-        Figment::from(TracingCompatProvider(self)).merge(figment).select(profile)
+        Figment::from(self).merge(figment).select(profile)
     }
 
     /// The config supports relative paths and tracks the root path separately see
@@ -2498,7 +2501,7 @@ impl Config {
         // Apply key fixes before selecting profiles, while standalone sections and profile names
         // are still distinguishable.
         let provider = ForcedSnakeCaseData(toml_provider).strict_select(profiles);
-        let provider = &TracingCompatProvider(BackwardsCompatTomlProvider(provider));
+        let provider = &BackwardsCompatTomlProvider(provider);
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
@@ -2729,10 +2732,12 @@ impl Provider for Config {
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
             entry.insert("labels".to_string(), labels.clone());
+            normalize_legacy_labels_in_profile(entry);
         }
         if let Some(entry) = data.get_mut(&self.profile) {
             entry.insert("root".to_string(), root);
             entry.insert("labels".to_string(), labels);
+            normalize_legacy_labels_in_profile(entry);
         }
         Ok(data)
     }
@@ -5782,6 +5787,38 @@ mod tests {
                     old: "labels".to_string(),
                     new: "tracing.labels".to_string(),
                 }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_env_labels_use_tracing_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "FOUNDRY_LABELS",
+                r#"{ "0x0000000000000000000000000000000000000001" = "Alice" }"#,
+            );
+            jail.set_env(
+                "FOUNDRY_TRACING_LABELS",
+                r#"{ "0x0000000000000000000000000000000000000001" = "Bob" }"#,
+            );
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.labels,
+                AddressHashMap::from_iter([(
+                    address!("0x0000000000000000000000000000000000000001"),
+                    "Alice".to_string(),
+                )])
+            );
+            assert_eq!(
+                config.tracing.labels,
+                AddressHashMap::from_iter([(
+                    address!("0x0000000000000000000000000000000000000001"),
+                    "Bob".to_string(),
+                )])
             );
 
             Ok(())
