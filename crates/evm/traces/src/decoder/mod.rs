@@ -1219,6 +1219,7 @@ impl CallTraceDecoder {
     /// Pretty-prints a value.
     fn format_value(&self, value: &DynSolValue) -> String {
         if let DynSolValue::Address(addr) = value
+            && !self.disable_labels
             && let Some(label) = self.labels.get(addr)
         {
             if self.compact_labels {
@@ -1426,6 +1427,10 @@ mod tests {
         let tracing = TracingConfig { compact_labels: true, ..tracing };
         let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
         assert_eq!(decoder.format_value(&value), "Alice");
+
+        let tracing = TracingConfig { disable_labels: true, ..tracing };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        assert_eq!(decoder.format_value(&value), address.to_string());
     }
 
     #[test]

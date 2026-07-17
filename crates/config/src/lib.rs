@@ -853,7 +853,6 @@ impl Config {
             || provider.contains("invariant.workers")
             || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
             || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
-        let tracing_labels_configured = provider.contains("tracing.labels");
         let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
@@ -861,7 +860,6 @@ impl Config {
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
-        config.normalize_tracing_settings(tracing_labels_configured);
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -895,12 +893,10 @@ impl Config {
         let invariant_workers_configured = figment
             .extract_inner::<bool>("invariant.workers_configured")
             .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
-        let tracing_labels_configured = figment_value_is_configured(&figment, "tracing.labels");
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
-        config.normalize_tracing_settings(tracing_labels_configured);
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -951,31 +947,10 @@ impl Config {
         Ok(config)
     }
 
-    fn normalize_tracing_figment(mut figment: Figment) -> Figment {
-        if figment.contains("tracing.labels")
-            && let Ok(tracing_labels) =
-                figment.extract_inner::<AddressHashMap<String>>("tracing.labels")
-        {
-            let mut labels =
-                figment.extract_inner::<AddressHashMap<String>>("labels").unwrap_or_default();
-            labels.extend(tracing_labels);
-            figment = figment.merge(("labels", labels));
-        }
-
-        figment
-    }
-
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
         let Some(hardfork) = self.hardfork else { return Ok(()) };
         self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
         Ok(())
-    }
-
-    fn normalize_tracing_settings(&mut self, tracing_labels_configured: bool) {
-        if tracing_labels_configured {
-            self.labels.extend(self.tracing.labels.clone());
-        }
-        self.tracing.labels = self.labels.clone();
     }
 
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
@@ -1070,8 +1045,6 @@ impl Config {
             || figment.extract_inner::<bool>("invariant.workers_configured").unwrap_or_else(|_| {
                 figment.extract_inner::<InvariantWorkers>("invariant.workers").is_ok()
             });
-
-        figment = Self::normalize_tracing_figment(figment);
 
         // normalize defaults
         figment = self.normalize_defaults(figment);
@@ -2752,9 +2725,7 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         let root = Value::serialize(self.root.clone())?;
-        let mut labels = self.labels.clone();
-        labels.extend(self.tracing.labels.clone());
-        let labels = Value::serialize(labels)?;
+        let labels = Value::serialize(&self.labels)?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
             entry.insert("labels".to_string(), labels.clone());
@@ -5858,7 +5829,8 @@ mod tests {
 
         let provided = Figment::from(&config).extract::<Config>().unwrap();
         assert_eq!(provided.verbosity, 0);
-        assert_eq!(provided.labels, labels);
+        assert!(provided.labels.is_empty());
+        assert_eq!(provided.tracing.labels, labels);
 
         let merged = config.merge_inline_provider(("ffi", true)).unwrap();
         assert_eq!(merged.tracing.verbosity, 4);
@@ -5914,9 +5886,19 @@ mod tests {
                 address!("0x0000000000000000000000000000000000000002"),
                 "Bob".to_string(),
             )]);
-            assert_eq!(config.labels, labels);
+            assert!(config.labels.is_empty());
             assert_eq!(config.tracing.labels, labels);
             assert!(config.warnings.is_empty());
+
+            let serialized = config.to_string_pretty().unwrap();
+            assert!(!serialized.contains("[labels]"));
+            assert!(serialized.contains("[tracing.labels]"));
+
+            jail.create_file("foundry.toml", &serialized)?;
+            let reloaded = Config::load().unwrap();
+            assert!(reloaded.labels.is_empty());
+            assert_eq!(reloaded.tracing.labels, labels);
+            assert!(reloaded.warnings.is_empty());
 
             Ok(())
         });
