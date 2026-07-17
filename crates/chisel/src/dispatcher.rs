@@ -292,7 +292,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let new_cache_file = match self.session.write() {
             Ok(path) => path,
             Err(error) => {
-                self.session.id = previous_id.clone();
+                self.session.id = previous_id;
                 return Err(error);
             }
         };
