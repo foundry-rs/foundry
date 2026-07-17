@@ -209,10 +209,16 @@ impl RemappingsProvider<'_> {
         // TODO: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
-            let (nested_foundry_remappings, auto_detected_remappings) = rayon::join(
-                || self.find_nested_foundry_remappings(),
-                || self.auto_detect_remappings(),
-            );
+            let (nested_foundry_remappings, (configured_remappings, auto_detected_remappings)) =
+                rayon::join(
+                    || self.find_nested_foundry_remappings(),
+                    || {
+                        rayon::join(
+                            || self.find_nested_configured_remappings(),
+                            || self.auto_detect_remappings(),
+                        )
+                    },
+                );
 
             let mut lib_remappings = BTreeMap::new();
             for r in nested_foundry_remappings {
@@ -225,6 +231,29 @@ impl RemappingsProvider<'_> {
                     continue;
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
+            }
+
+            // Remappings resolved from a dependency's config take precedence over filesystem
+            // autodetection, while the closest dependency wins between configured remappings.
+            let mut nested_lib_remappings = BTreeMap::new();
+            for r in configured_remappings {
+                insert_closest(&mut nested_lib_remappings, r.context, r.name, r.path.into());
+            }
+            for (context, remappings) in nested_lib_remappings {
+                let lib_remappings = lib_remappings.entry(context).or_default();
+                for (name, path) in remappings {
+                    match lib_remappings.entry(name) {
+                        // Only refine an autodetected package-root mapping. A configured remapping
+                        // from a nested dependency must not replace a closer root dependency.
+                        Entry::Occupied(mut entry) if path.starts_with(entry.get()) => {
+                            entry.insert(path);
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(path);
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             all_remappings.extend(
@@ -246,22 +275,51 @@ impl RemappingsProvider<'_> {
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.find_nested_remappings(true)
+    }
+
+    /// Returns remappings configured directly in foundry projects within libraries.
+    fn find_nested_configured_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.find_nested_remappings(false)
+    }
+
+    fn find_nested_remappings(
+        &self,
+        auto_detect_remappings: bool,
+    ) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths
             .par_iter()
-            .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
+            .filter_map(|p| {
+                if p.is_absolute() {
+                    // Preserve the existing fallback scan without granting remappings from the
+                    // unrelated root lib directory configured precedence over the absolute lib.
+                    auto_detect_remappings.then(|| self.root.join("lib"))
+                } else {
+                    Some(self.root.join(p))
+                }
+            })
             .flat_map(foundry_toml_dirs)
             .flat_map_iter(|lib| {
                 trace!(?lib, "find all remappings of nested foundry.toml");
-                self.nested_foundry_remappings(&lib)
+                self.nested_foundry_remappings(&lib, auto_detect_remappings)
             })
             .collect::<Vec<_>>()
             .into_iter()
     }
 
-    fn nested_foundry_remappings(&self, lib: &Path) -> Vec<Remapping> {
+    fn nested_foundry_remappings(
+        &self,
+        lib: &Path,
+        auto_detect_remappings: bool,
+    ) -> Vec<Remapping> {
         // load config of the nested lib if it exists, using fallback mode since libs may not
         // define all profiles the main project uses
-        let Ok(config) = Config::load_with_root_and_fallback(lib) else { return vec![] };
+        let config = if auto_detect_remappings {
+            Config::load_with_root_and_fallback(lib)
+        } else {
+            Config::load_with_root_and_fallback_without_auto_detected_remappings(lib)
+        };
+        let Ok(config) = config else { return vec![] };
         let config = config.sanitized();
 
         // if the configured _src_ directory is set to something that
@@ -294,6 +352,14 @@ impl RemappingsProvider<'_> {
         if let Some(r) = src_remapping {
             remappings.push(r);
         }
+
+        if !auto_detect_remappings && let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
+            // A dependency's self-remapping describes imports from within that dependency. Without
+            // a context, it must not override the package-root mapping used by the root project.
+            let self_remapping = format!("{name}/");
+            remappings.retain(|remapping| remapping.name != self_remapping);
+        }
+
         remappings
     }
 
