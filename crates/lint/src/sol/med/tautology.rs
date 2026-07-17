@@ -322,7 +322,10 @@ fn effective_range_for_cast(
     }
 }
 
-fn is_value_preserving_widening(source_type: ElementaryType, target_type: ElementaryType) -> bool {
+const fn is_value_preserving_widening(
+    source_type: ElementaryType,
+    target_type: ElementaryType,
+) -> bool {
     match (source_type, target_type) {
         (ElementaryType::UInt(source), ElementaryType::UInt(target))
         | (ElementaryType::Int(source), ElementaryType::Int(target)) => {
