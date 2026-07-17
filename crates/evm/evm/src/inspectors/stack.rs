@@ -1551,9 +1551,27 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.line_coverage, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.line_coverage],
             |inspector| inspector.create(ecx, create).map(Some),
         );
+
+        let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
+        let mut cheatcode_outcome = None;
+        if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
+            cheatcode_outcome = cheatcodes.create(ecx, create);
+        }
+
+        if let Some(trace_idx) = trace_idx
+            && let Some(tracer) = self.tracer.as_deref_mut()
+        {
+            let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
+            debug_assert_eq!(node.trace.depth, ecx.journal().depth());
+            node.trace.caller = create.caller();
+        }
+
+        if let Some(output) = cheatcode_outcome {
+            return Some(output);
+        }
 
         // If frame_start detected an invalid CREATE2 deployer, return the error here
         // (after sub-inspectors have been notified) so tracing stays balanced.

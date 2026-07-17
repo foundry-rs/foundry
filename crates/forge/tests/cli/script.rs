@@ -2202,6 +2202,54 @@ contract PrankTrace is Script {
     assert_eq!(deployment["trace"]["caller"], "0x0000000000000000000000000000000000001234");
 });
 
+forgetest_init!(json_trace_uses_pranked_create_caller, |prj, cmd| {
+    prj.add_script(
+        "PrankCreateTrace",
+        r#"
+import "forge-std/Script.sol";
+
+contract Target {
+    address public creator = msg.sender;
+}
+
+contract PrankCreateTrace is Script {
+    function run() external {
+        vm.startPrank(address(0x1234));
+        Target created = new Target();
+        Target created2 = new Target{salt: bytes32(uint256(1))}();
+        require(created.creator() == address(0x1234));
+        require(created2.creator() == address(0x1234));
+        vm.stopPrank();
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .args(["script", "PrankCreateTrace", "-vvvv", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: Value = serde_json::from_slice(&output).unwrap();
+    let execution =
+        output["traces"].as_array().unwrap().iter().find(|trace| trace[0] == "Execution").unwrap();
+    let deployments = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| matches!(node["trace"]["kind"].as_str(), Some("CREATE" | "CREATE2")))
+        .collect::<Vec<_>>();
+
+    assert_eq!(deployments.len(), 2);
+    assert!(deployments.iter().any(|node| node["trace"]["kind"] == "CREATE2"));
+    assert!(
+        deployments
+            .iter()
+            .all(|node| node["trace"]["caller"] == "0x0000000000000000000000000000000000001234")
+    );
+});
+
 // https://github.com/foundry-rs/foundry/pull/7742
 forgetest_async!(unlocked_no_sender, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
