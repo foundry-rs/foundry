@@ -129,6 +129,11 @@ contract ReentrancyEvents {
     event Paid(address indexed to, uint256 amount);
     event Tick();
 
+    modifier emitSuffix() {
+        _;
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
     uint256 public counter;
     address payable public recipient;
     IExternal public ext;
@@ -160,6 +165,29 @@ contract ReentrancyEvents {
         // forge-lint: disable-next-line(unchecked-call)
         recipient.send(1 wei);
         emit Counter(counter); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterYulCall(address target) external {
+        assembly {
+            pop(call(gas(), target, 0, 0, 0, 0, 0))
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterYulStaticcall(address target) external {
+        assembly {
+            pop(staticcall(gas(), target, 0, 0, 0, 0))
+        }
+        emit Tick();
+    }
+
+    function emitAfterYulSwitchCall(address target, uint256 selector) external {
+        assembly {
+            switch selector
+            case 0 { pop(call(gas(), target, 0, 0, 0, 0, 0)) }
+            default {}
+        }
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
     function emitAfterSelfExternalCall() external {
@@ -241,6 +269,10 @@ contract ReentrancyEvents {
         emit Counter(d.notify(1) ? 1 : 0); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
+    function siblingOperandOrder(IExternal d) external {
+        _consumePair(_emitAndReturn(), d.notify(1) ? 1 : 0);
+    }
+
     // Internal helper returns early after an external call: caller should still see the taint.
     function emitAfterHelperEarlyReturn(bool flag) external {
         _maybeNotify(flag);
@@ -274,17 +306,15 @@ contract ReentrancyEvents {
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
-    // Known limitation: member-form internal calls (`Lib.f(...)`, `using for`)
-    // are not yet followed because Solar's `members_of` for `TyKind::Type(Contract)` is a
-    // TODO. The external call inside `staticHelper` is therefore missed and no warning fires.
+    // Member-form internal calls (`Lib.f(...)`, `using for`) are resolved by Solar and followed.
     function emitAfterLibraryStaticCall() external {
         NotifyLib.staticHelper(ext);
-        emit Tick();
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
     function emitAfterUsingForCall() external {
         ext.notifyVia(1);
-        emit Tick();
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
     // --- Good cases ---------------------------------------------------------
@@ -526,6 +556,13 @@ contract ReentrancyEvents {
         counter += 1;
     }
 
+    function _emitAndReturn() internal returns (uint256) {
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+        return 1;
+    }
+
+    function _consumePair(uint256, uint256) internal pure {}
+
     function _pureHelper(uint256 a) internal pure returns (uint256) {
         return a + 1;
     }
@@ -535,6 +572,33 @@ contract ReentrancyEvents {
     function _helperEmitAfterCall() internal {
         ext.notify(0);
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function returnThroughModifier() external emitSuffix {
+        ext.notify(0);
+        return;
+    }
+
+    function recursiveBaseCase(IExternal d, uint256 depth) public {
+        if (depth == 0) {
+            d.notify(0);
+            return;
+        }
+        recursiveBaseCase(d, depth - 1);
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function caughtFailure(IExternal d) external {
+        try d.notify(0) returns (bool) {} catch {
+            emit Tick();
+        }
+    }
+
+    function conditionlessContinue(IExternal d) external {
+        for (;; d.notify(0)) {
+            emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+            continue;
+        }
     }
 }
 
@@ -614,5 +678,49 @@ contract SuperChild is SuperPureOverride {
     function emitAfterSuperPureArityCall() external {
         super.arity();
         emit Counter(0);
+    }
+}
+
+contract DispatchBase {
+    event DispatchTick();
+
+    function dispatchHook(IExternal target) internal virtual {}
+
+    function inheritedEntry(IExternal target) external {
+        dispatchHook(target);
+        emit DispatchTick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+}
+
+contract DispatchLeaf is DispatchBase {
+    function dispatchHook(IExternal target) internal override {
+        target.notify(0);
+    }
+}
+
+contract InternalFunctionPointerEvents {
+    IExternal internal target;
+    event Tick();
+
+    function noop() internal {}
+
+    function notify() internal {
+        target.notify(0);
+    }
+
+    function notifyAgain() internal {
+        target.notify(1);
+    }
+
+    function harmlessPointer() external {
+        function() internal callback = noop;
+        callback();
+        emit Tick();
+    }
+
+    function taintingPointer(bool alternate) external {
+        function() internal callback = alternate ? notify : notifyAgain;
+        callback();
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 }

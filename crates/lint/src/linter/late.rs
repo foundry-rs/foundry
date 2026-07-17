@@ -35,6 +35,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_nested_function(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _id: hir::FunctionId,
     ) {
@@ -170,7 +171,7 @@ where
 
     fn visit_nested_function(&mut self, id: hir::FunctionId) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_nested_function(self.ctx, self.hir, id);
+            pass.check_nested_function(self.ctx, self.gcx, self.hir, id);
         }
         self.walk_nested_function(id)
     }
@@ -310,6 +311,7 @@ mod tests {
         fn check_nested_function(
             &mut self,
             _ctx: &LintContext,
+            _gcx: solar::sema::Gcx<'hir>,
             _hir: &'hir hir::Hir<'hir>,
             _id: hir::FunctionId,
         ) {

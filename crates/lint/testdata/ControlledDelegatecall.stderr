@@ -233,6 +233,70 @@ LL │         (ok,) = target.delegatecall(data);
 warning[controlled-delegatecall]: delegatecall target is not provably trusted
    ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
    │
+LL │         (ok,) = target.delegatecall(data);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
+LL │         (ok,) = holder.target.delegatecall(data);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
+LL │         (ok,) = holder.target.delegatecall(data);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
+LL │         (ok,) = targets[used].delegatecall(data);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
+LL │         (ok,) = holder.target.delegatecall(data);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
+LL │         (ok,) = first.target.delegatecall(data);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
+LL │                 (ok,) = saved.target.delegatecall(data);
+   │                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
+LL │         (ok,) = first.target.delegatecall(data);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/controlled-delegatecall
+
+warning[controlled-delegatecall]: delegatecall target is not provably trusted
+   ╭▸ ROOT/testdata/ControlledDelegatecall.sol:LL:CC
+   │
 LL │         (ok,) = new ControlledDelegatecallFactory().impl().delegatecall(data);
    │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │

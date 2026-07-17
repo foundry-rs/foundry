@@ -6,7 +6,7 @@ use crate::{
 use solar::sema::{
     Gcx, Hir,
     builtins::Builtin,
-    hir::{Expr, ExprKind, Function, Res, StmtKind},
+    hir::{Expr, FunctionId, StmtKind},
 };
 use std::{cell::RefCell, collections::HashSet};
 
@@ -18,12 +18,12 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for RequireRevertInLoop {
-    fn check_function(
+    fn check_nested_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
+        function: FunctionId,
     ) {
         let emitted = RefCell::new(HashSet::new());
 
@@ -31,15 +31,15 @@ impl<'hir> LateLintPass<'hir> for RequireRevertInLoop {
             ctx,
             gcx,
             hir,
-            func,
+            function,
             |ctx, _, _, stmt| {
                 if let StmtKind::Revert(expr) = stmt.kind {
                     let mut emitted = emitted.borrow_mut();
                     emit_once(ctx, &mut emitted, expr);
                 }
             },
-            |ctx, _, _, expr| {
-                if is_require_or_revert_call(expr) {
+            |ctx, gcx, _, expr| {
+                if is_require_or_revert_call(gcx, expr) {
                     let mut emitted = emitted.borrow_mut();
                     emit_once(ctx, &mut emitted, expr);
                 }
@@ -54,16 +54,11 @@ fn emit_once(ctx: &LintContext, emitted: &mut HashSet<solar::interface::Span>, e
     }
 }
 
-fn is_require_or_revert_call(expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return false };
-    let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
-
-    reses.iter().any(|res| {
+fn is_require_or_revert_call<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> bool {
+    gcx.call_info(expr).is_some_and(|info| {
         matches!(
-            res,
-            Res::Builtin(
-                Builtin::Require | Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert
-            )
+            info.builtin(),
+            Some(Builtin::Require | Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert)
         )
     })
 }
