@@ -45,6 +45,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `deprecated-oz-function`: OpenZeppelin deprecated `SafeERC20.safeApprove` (use `safeIncreaseAllowance` / `safeDecreaseAllowance`) and `AccessControl._setupRole` (use `_grantRole`).
   - `empty-block`: Flags regular functions with an empty body; constructors, `receive`/`fallback`, `virtual` functions, functions with modifiers and value-less `payable` functions are exempt.
   - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
+  - `inconsistent-type-names`: Flags shorthand `uint`/`int` declarations when the same contract also uses `uint256`/`int256`.
   - `missing-events-access-control`: Access control changes should emit events.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
@@ -70,6 +71,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
+  - `todo-comment`: Detects unresolved `TODO` and `FIXME` markers in comments.
   - `unused-error`: Custom error declarations that are never referenced should be removed.
   - `literal-instead-of-constant`: A literal value repeated inside a contract should be a named constant.
   - `function-init-state`: State variable initializers run before the constructor; depending on a non-pure function or another state variable there observes partial state.

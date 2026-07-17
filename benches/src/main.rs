@@ -1,13 +1,14 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details, install_local_workspace, parse_version_specs,
+    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_commit,
+    get_forge_version, get_forge_version_details, install_local_workspace, parse_version_specs,
     results::{BenchmarkResults, versioned_summary_filename},
     switch_foundry_version,
 };
 use foundry_common::sh_println;
 use rayon::prelude::*;
+use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -56,6 +57,19 @@ struct Cli {
     #[clap(long)]
     json_output: Option<PathBuf>,
 
+    /// Filename for results using the common benchmark JSON schema.
+    /// Resolved relative to --output-dir.
+    #[clap(long)]
+    common_json_output: Option<PathBuf>,
+
+    /// Filename for a machine-readable manifest describing the benchmark cases.
+    #[clap(long, requires = "suite")]
+    manifest_output: Option<PathBuf>,
+
+    /// Stable suite identifier included in --manifest-output.
+    #[clap(long, requires = "manifest_output")]
+    suite: Option<String>,
+
     /// Filename for the opt-in versioned symbolic benchmark sidecar.
     #[clap(long)]
     symbolic_sidecar_output: Option<PathBuf>,
@@ -82,6 +96,25 @@ struct Cli {
 
 /// Mutex to prevent concurrent foundryup calls
 static FOUNDRY_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Serialize)]
+struct BenchmarkCaseManifest {
+    id: String,
+    benchmark: String,
+    workload_name: String,
+    workload_repository: String,
+    workload_requested_ref: String,
+    workload_commit: String,
+    arguments: Option<String>,
+    versions: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BenchmarkSuiteManifest {
+    schema: &'static str,
+    suite: String,
+    cases: Vec<BenchmarkCaseManifest>,
+}
 
 /// Activate a version: build from `source` when the spec was `name=path`,
 /// otherwise switch via foundryup (or build the default workspace for `local`).
@@ -173,6 +206,8 @@ fn main() -> Result<()> {
     sh_println!("Running benchmarks: {}", benchmarks.join(", "));
 
     let mut results = BenchmarkResults::new();
+    let mut version_commits = std::collections::HashMap::new();
+    let write_common_json = cli.common_json_output.is_some();
     // Set the first version as baseline
     if let Some(first_version) = versions.first() {
         results.set_baseline_version(first_version.clone());
@@ -216,6 +251,9 @@ fn main() -> Result<()> {
         sh_println!("Current version: {}", current.trim());
 
         // Get and store the full version details with commit hash and date
+        if write_common_json {
+            version_commits.insert(version.clone(), get_forge_commit()?);
+        }
         let version_details = get_forge_version_details()?;
         results.add_version_details(version, version_details);
 
@@ -323,6 +361,73 @@ fn main() -> Result<()> {
         }
     }
 
+    if let Some(filename) = cli.common_json_output {
+        let repo =
+            std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "foundry-rs/foundry".to_string());
+        let pr = github_pull_request();
+        for version in &versions {
+            let commit = version_commits
+                .get(version)
+                .expect("commit captured for every benchmarked version")
+                .clone();
+            let common = results.generate_common_result(version, repo.clone(), commit, pr);
+            if common.benchmarks.is_empty() {
+                eyre::bail!("no benchmark results produced for {version}");
+            }
+            let output = if versions.len() == 1 {
+                filename.clone()
+            } else {
+                filename.with_file_name(versioned_summary_filename(&filename, version))
+            };
+            let path = cli.output_dir.join(output);
+            fs::create_dir_all(path.parent().unwrap_or(&cli.output_dir))?;
+            fs::write(&path, serde_json::to_string_pretty(&common)?)?;
+            sh_println!("✅ Common JSON result written to: {}", path.display());
+        }
+    }
+
+    if let Some(filename) = cli.manifest_output {
+        let mut cases = Vec::new();
+        for (repo_config, project) in &projects {
+            for benchmark in &benchmarks {
+                let present_versions = versions
+                    .iter()
+                    .filter(|version| {
+                        results
+                            .data
+                            .get(benchmark)
+                            .and_then(|version_data| version_data.get(*version))
+                            .is_some_and(|repo_data| repo_data.contains_key(&repo_config.name))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if present_versions.is_empty() {
+                    continue;
+                }
+                cases.push(BenchmarkCaseManifest {
+                    id: format!("{benchmark}/{}", repo_config.name),
+                    benchmark: benchmark.clone(),
+                    workload_name: repo_config.name.clone(),
+                    workload_repository: format!("{}/{}", project.org, project.repo),
+                    workload_requested_ref: repo_config.rev.clone(),
+                    workload_commit: project.revision.clone(),
+                    arguments: repo_config.extra_args.clone(),
+                    versions: present_versions,
+                });
+            }
+        }
+        cases.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+        let manifest = BenchmarkSuiteManifest {
+            schema: "foundry-benchmark-suite/v1",
+            suite: cli.suite.expect("clap requires --suite with --manifest-output"),
+            cases,
+        };
+        let path = cli.output_dir.join(filename);
+        fs::create_dir_all(path.parent().unwrap_or(&cli.output_dir))?;
+        fs::write(&path, serde_json::to_string_pretty(&manifest)? + "\n")?;
+        sh_println!("✅ Benchmark manifest written to: {}", path.display());
+    }
+
     if let Some(filename) = cli.symbolic_sidecar_output {
         let mut sidecars = std::collections::BTreeMap::new();
         for (benchmark, version_data) in &results.data {
@@ -349,6 +454,10 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn github_pull_request() -> Option<u64> {
+    std::env::var("BENCHMARK_PR_NUMBER").ok()?.parse().ok()
 }
 
 #[allow(unused_must_use)]

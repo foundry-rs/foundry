@@ -16,40 +16,6 @@ on:
 
 env:
   DEFAULT_VERSIONS: "master,local"
-
-  # Repos to benchmark per step. Each comma-separated entry has the form
-  #   org/repo[:rev][ <extra args>]
-  # where anything after the first whitespace is appended to every benchmark
-  # command for that repo (use this to skip a broken test contract via e.g.
-  # `--nmc BrokenTest`, so a single failing test does not fail the whole CI).
-  TEST_REPOS: >-
-    ithacaxyz/account:v0.5.7,
-    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test|LibStringTest',
-    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
-    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
-
-  ISOLATE_TEST_REPOS: >-
-    ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
-    vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test|LibStringTest',
-    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
-    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
-
-  SYMBOLIC_REPOS: >-
-    Vectorized/solady:v0.1.26,
-    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5,
-    farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b
-
-  BUILD_REPOS: >-
-    ithacaxyz/account:v0.5.7,
-    vectorized/solady:v0.1.26,
-    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
-    sparkdotfi/spark-psm:v1.0.0
-
-  COVERAGE_REPOS: >-
-    ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
-    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
-    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
-
   RUSTC_WRAPPER: "sccache"
 
 jobs:
@@ -58,6 +24,7 @@ jobs:
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       is_source_comparison: ${{ steps.prep.outputs.is_source_comparison }}
     # Source-built baseline/candidate use the profiling profile, forge only.
@@ -110,6 +77,7 @@ jobs:
       - name: Prepare comparison
         id: prep
         env:
+          GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
         run: |
           compact="${REQUESTED_VERSIONS//[[:space:]]/}"
@@ -123,6 +91,12 @@ jobs:
             printf '%s' "$base_sha" > benches/baseline-ref.txt
             printf '%s' "$candidate_sha" > benches/candidate-ref.txt
             git rev-list --count "${candidate_sha}..${base_sha}" > benches/behind-count.txt
+            pr_number=$(gh api --method GET "repos/$GITHUB_REPOSITORY/pulls" \
+              -f "head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" -f state=open \
+              --jq '.[0].number // empty')
+            if [[ -n "$pr_number" ]]; then
+              echo "BENCHMARK_PR_NUMBER=$pr_number" >> "$GITHUB_ENV"
+            fi
             echo "Comparing origin/master ($base_sha) against this branch."
           else
             echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
@@ -133,29 +107,19 @@ jobs:
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ steps.prep.outputs.versions }}
-          REPOS: ${{ github.event.inputs.repos || env.TEST_REPOS }}
+          REPOS: ${{ github.event.inputs.repos }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches --force-install \
-            --versions "$VERSIONS" \
-            --repos "$REPOS" \
-            --benchmarks forge_test,forge_fuzz_test \
-            --output-file forge_test_bench.md \
-            --json-output forge_test_bench.json \
-            --verbose
+          benches/scripts/run-benchmark-suite.sh ci test \
+            --versions "$VERSIONS" --output-dir ./benches --repos "$REPOS"
 
       - name: Run forge isolate test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ steps.prep.outputs.versions }}
-          REPOS: ${{ github.event.inputs.repos || env.ISOLATE_TEST_REPOS }}
+          REPOS: ${{ github.event.inputs.repos }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions "$VERSIONS" \
-            --repos "$REPOS" \
-            --benchmarks forge_isolate_test \
-            --output-file forge_isolate_test_bench.md \
-            --json-output forge_isolate_test_bench.json \
-            --verbose
+          benches/scripts/run-benchmark-suite.sh ci isolate \
+            --versions "$VERSIONS" --output-dir ./benches --repos "$REPOS"
 
       # Temporarily disabled as long as the previous stable benchmark baseline
       # does not support symbolic execution.
@@ -163,42 +127,28 @@ jobs:
       #   env:
       #     FOUNDRY_DIR: ${{ github.workspace }}/.foundry
       #     VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
-      #     REPOS: ${{ github.event.inputs.repos || env.SYMBOLIC_REPOS }}
+      #     REPOS: ${{ github.event.inputs.repos }}
       #   run: |
-      #     ./target/release/foundry-bench --output-dir ./benches \
-      #       --versions "$VERSIONS" \
-      #       --repos "$REPOS" \
-      #       --benchmarks forge_symbolic_test \
-      #       --output-file forge_symbolic_bench.md \
-      #       --verbose
+      #     benches/scripts/run-benchmark-suite.sh ci symbolic \
+      #       --versions "$VERSIONS" --output-dir ./benches --repos "$REPOS"
 
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ steps.prep.outputs.versions }}
-          REPOS: ${{ github.event.inputs.repos || env.BUILD_REPOS }}
+          REPOS: ${{ github.event.inputs.repos }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions "$VERSIONS" \
-            --repos "$REPOS" \
-            --benchmarks forge_build_no_cache,forge_build_with_cache \
-            --output-file forge_build_bench.md \
-            --json-output forge_build_bench.json \
-            --verbose
+          benches/scripts/run-benchmark-suite.sh ci build \
+            --versions "$VERSIONS" --output-dir ./benches --repos "$REPOS"
 
       - name: Run forge coverage benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ steps.prep.outputs.versions }}
-          REPOS: ${{ github.event.inputs.repos || env.COVERAGE_REPOS }}
+          REPOS: ${{ github.event.inputs.repos }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions "$VERSIONS" \
-            --repos "$REPOS" \
-            --benchmarks forge_coverage \
-            --output-file forge_coverage_bench.md \
-            --json-output forge_coverage_bench.json \
-            --verbose
+          benches/scripts/run-benchmark-suite.sh ci coverage \
+            --versions "$VERSIONS" --output-dir ./benches --repos "$REPOS"
 
       - name: Combine benchmark results
         run: ./.github/scripts/combine-benchmarks.sh benches
@@ -222,6 +172,21 @@ jobs:
           jq -s 'add' "${base_parts[@]}" > benches/base-summary.json
           jq -s 'add' "${cand_parts[@]}" > benches/candidate-summary.json
 
+      - name: Build benchmark manifest
+        if: steps.prep.outputs.is_source_comparison == 'true'
+        run: |
+          shopt -s nullglob
+          manifests=( benches/*_bench-manifest.json )
+          if [[ ${#manifests[@]} -eq 0 ]]; then
+            echo "::error::Missing benchmark suite manifests."
+            exit 1
+          fi
+          python3 .github/scripts/benchmark_clickhouse.py manifest \
+            --output benches/benchmark-manifest.json \
+            --baseline "$(cat benches/baseline-ref.txt)" \
+            --candidate "$(cat benches/candidate-ref.txt)" \
+            "${manifests[@]}"
+
       - name: Upload benchmark results as artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -236,6 +201,8 @@ jobs:
             benches/LATEST.md
             benches/base-summary.json
             benches/candidate-summary.json
+            benches/common/
+            benches/benchmark-manifest.json
             benches/baseline-ref.txt
             benches/candidate-ref.txt
             benches/behind-count.txt

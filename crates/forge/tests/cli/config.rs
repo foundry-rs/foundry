@@ -218,7 +218,7 @@ runs = 256
 depth = 500
 min_depth = 1
 depth_mode = "fixed"
-workers = 1
+workers = "auto"
 fail_on_revert = false
 call_override = false
 dictionary_weight = 80
@@ -1517,7 +1517,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "depth": 500,
     "min_depth": 1,
     "depth_mode": "fixed",
-    "workers": 1,
+    "workers": "auto",
     "fail_on_revert": false,
     "call_override": false,
     "dictionary_weight": 80,

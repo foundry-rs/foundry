@@ -640,10 +640,12 @@ pub(crate) fn validate_sponsor_url(raw: &str) -> Result<()> {
                  The sponsor relay is a trusted third party; use an encrypted channel."
             );
         }
-        _ => eyre::bail!(
-            "--sponsor-url must start with https:// (got {raw}). \
+        _ => {
+            eyre::bail!(
+                "--sponsor-url must start with https:// (got {raw}). \
              The sponsor relay is a trusted third party; use an encrypted channel."
-        ),
+            );
+        }
     }
 }
 

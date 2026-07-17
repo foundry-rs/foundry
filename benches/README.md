@@ -33,6 +33,46 @@ Build and install the benchmark runner:
 cargo build --release --bin foundry-bench
 ```
 
+### Run CI benchmark suites locally
+
+The canonical CI and nightly benchmark definitions live in
+`benches/scripts/run-benchmark-suite.sh`. List the available profiles and suites
+with:
+
+```bash
+benches/scripts/run-benchmark-suite.sh --list
+```
+
+| Profile | Suites run by CI |
+| --- | --- |
+| `ci` | `test`, `isolate`, `build`, `coverage` |
+| `nightly` | `test`, `fuzz`, `build`, `coverage`, `symbolic` for both stable and nightly |
+
+The `ci:symbolic` suite is also defined for local use but is currently disabled
+in the regular workflow because the previous stable baseline does not support
+symbolic execution.
+
+After building the runner, invoke a suite from the repository root. These are
+the same definitions used by CI, including pinned repositories, exclusions,
+benchmark IDs, installation behavior, and output filenames:
+
+```bash
+# Run the regular CI test suite against a local Foundry build.
+benches/scripts/run-benchmark-suite.sh ci test \
+  --versions local \
+  --output-dir ./benches
+
+# Run the stable side of the nightly symbolic suite.
+benches/scripts/run-benchmark-suite.sh nightly symbolic \
+  --versions stable \
+  --output-dir ./benches
+```
+
+Use `--dry-run` before the profile name to print the exact argument vector
+without running the benchmark. Pass `--repos "org/repo[:rev][ <extra args>]"`
+to replace a suite's repository list, matching the manual benchmark workflow's
+override. An empty `--repos` value uses the suite default.
+
 To install `foundry-bench` to your PATH:
 
 ```bash
@@ -254,12 +294,15 @@ The artifact bundle exposes:
 #### Command-line Options
 
 - `--versions <VERSIONS>` - Comma-separated list of Foundry versions (default: stable,nightly)
-- `--repos <REPOS>` - Comma-separated list of repos in org/repo[:rev] format (default: ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22)
+- `--repos <REPOS>` - Comma-separated list of repos in org/repo[:rev] format
 - `--benchmarks <BENCHMARKS>` - Comma-separated list of benchmarks to run
 - `--force-install` - Force installation of Foundry versions
 - `--verbose` - Show detailed benchmark output
-- `--output-dir <DIR>` - Directory for output files (default: benches)
-- `--output-file <FILE_NAME.md>` - Name of the output file (default: LATEST.md)
+- `--output-dir <DIR>` - Directory for output files (default: current working directory)
+- `--output-file <FILE_NAME.md>` - Name of the Markdown output file. Defaults to `LATEST.md`
+  unless `--json-output` is set, in which case Markdown is omitted unless explicitly requested
+- `--common-json-output <FILE.json>` - Write results using the common benchmark schema in
+  `benches/schema/benchmark-result-v1.schema.json`
 - `--symbolic-sidecar-output <FILE.json>` - Write the opt-in v1 symbolic samples sidecar (requires exactly one version)
 
 ## Benchmark Structure
@@ -274,16 +317,15 @@ The artifact bundle exposes:
 
 ## Configuration
 
-The benchmark binary uses command-line arguments to configure which repositories and versions to test. The default repositories are:
-
-- `ithacaxyz/account:v0.3.2`
-- `Vectorized/solady:v0.1.22`
-
-You can override these using the `--repos` flag with the format `org/repo[:rev]`.
+The benchmark binary uses command-line arguments to configure which repositories and versions to
+test. Its generic defaults track the main branches of Account and Solady. Reproducible CI repository
+pins and per-repository arguments are defined by `run-benchmark-suite.sh`; use `--list` to discover
+those suites. You can override repositories using `--repos` with the format `org/repo[:rev]`.
 
 ## Results
 
-Benchmark results are saved to `benches/LATEST.md` (or custom output file specified with `--output-file`). The report includes:
+Benchmark results are saved to `<output-dir>/LATEST.md` unless a custom output file is specified or
+Markdown output is suppressed by `--json-output`. The report includes:
 
 - Summary of versions and repositories tested
 - Performance comparison tables for each benchmark type showing:
@@ -293,6 +335,21 @@ Benchmark results are saved to `benches/LATEST.md` (or custom output file specif
   - Relative performance comparison between versions
 - System information (OS, CPU cores)
 - Detailed hyperfine benchmark results in JSON format
+
+## ClickHouse Ingestion
+
+Successful `master` versus branch runs from the Foundry Benchmarks workflow are ingested by
+`.github/workflows/benchmarks-clickhouse.yml`. The ClickHouse schema and migrations are managed by
+the benchmark infrastructure. Configure the `bench` GitHub environment with `CLICKHOUSE_HOST`,
+`CLICKHOUSE_USER`, and `CLICKHOUSE_PASSWORD` secrets. The optional `CLICKHOUSE_DATABASE` and
+`CLICKHOUSE_TABLE` variables default to `default` and `benchmark_results`. `CLICKHOUSE_HOST` may be
+a bare host (using HTTPS on port 8443) or a full HTTPS endpoint. The ClickHouse user only needs
+`INSERT` access to the destination table.
+
+The ingester sends one `JSONEachRow` record per workflow attempt, comparison side, benchmark case,
+and immutable workload commit. The versioned record includes raw timings, extensible counters,
+source and workload provenance, runner metadata, and a deterministic `result_id`; infrastructure
+owners use that contract to provision storage and release/trend views.
 
 ## Troubleshooting
 

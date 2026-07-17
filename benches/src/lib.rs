@@ -578,7 +578,9 @@ impl BenchmarkProject {
             "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
             "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
             "forge_symbolic_test" => self.bench_forge_symbolic_test(version, runs, verbose),
-            _ => eyre::bail!("Unknown benchmark: {}", benchmark),
+            _ => {
+                eyre::bail!("Unknown benchmark: {}", benchmark);
+            }
         }
     }
 }
@@ -631,7 +633,9 @@ pub fn parse_version_specs(specs: &[String]) -> Result<Vec<(String, Option<PathB
                 Some((name, path)) if !name.is_empty() && !path.is_empty() => {
                     (name, Some(PathBuf::from(path)))
                 }
-                Some(_) => eyre::bail!("invalid source version '{spec}'; expected name=path"),
+                Some(_) => {
+                    eyre::bail!("invalid source version '{spec}'; expected name=path");
+                }
                 None => (spec, None),
             };
             if name.is_empty()
@@ -810,6 +814,39 @@ pub fn get_forge_version() -> Result<String> {
     Ok(version.lines().next().unwrap_or("unknown").to_string())
 }
 
+/// Get the commit of the active Forge binary.
+pub fn get_forge_commit() -> Result<String> {
+    let output = Command::new("forge")
+        .args(["--version"])
+        .output()
+        .wrap_err("Failed to get forge version")?;
+    if !output.status.success() {
+        eyre::bail!("forge --version failed");
+    }
+    let output =
+        String::from_utf8(output.stdout).wrap_err("Invalid UTF-8 in forge version output")?;
+    parse_forge_commit(&output)
+        .map(str::to_owned)
+        .ok_or_else(|| eyre::eyre!("forge --version did not report a commit"))
+}
+
+fn parse_forge_commit(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Commit SHA: "))
+        .filter(|commit| !commit.is_empty())
+        .or_else(|| {
+            output
+                .lines()
+                .next()?
+                .split_once('(')?
+                .1
+                .split_whitespace()
+                .next()
+                .filter(|commit| !commit.is_empty())
+        })
+}
+
 /// Get the full forge version details including commit hash and date
 pub fn get_forge_version_details() -> Result<String> {
     let output = Command::new("forge")
@@ -863,5 +900,17 @@ mod tests {
         );
         assert!(parse_version_specs(&["../master=/tmp/foundry".to_string()]).is_err());
         assert!(parse_version_specs(&["master=".to_string()]).is_err());
+    }
+
+    #[test]
+    fn parses_modern_and_legacy_forge_commits() {
+        assert_eq!(
+            parse_forge_commit("forge Version: 1.3.1\nCommit SHA: abcdef123456\n"),
+            Some("abcdef123456")
+        );
+        assert_eq!(
+            parse_forge_commit("forge 0.2.0 (123456abcdef 2023-01-01T00:00:00Z)"),
+            Some("123456abcdef")
+        );
     }
 }

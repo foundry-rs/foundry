@@ -2,7 +2,7 @@
 
 use super::{
     context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
-    storage::{StorageAccess, storage_access_at},
+    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at},
 };
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
@@ -25,9 +25,9 @@ use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
     pub(crate) fn draw_layout(&mut self, f: &mut Frame<'_>) {
-        // We need 100 columns to display a 32 byte word in the memory and stack panes.
+        // We need 100 columns to display a 32 byte word in the data and stack panes.
         let area = f.area();
-        let min_width = 100;
+        let min_width = if self.show_data || self.show_stack { 100 } else { 1 };
         let min_height = 16;
         if area.width < min_width || area.height < min_height {
             self.size_too_small(f, min_width, min_height);
@@ -112,9 +112,9 @@ impl TUIContext<'_> {
 
         let opcodes_weight = if self.show_opcodes { 1 } else { 0 };
         let source_weight = if self.show_source { 3 } else { 0 };
-        let memory_weight = if self.show_source { 1 } else { 2 };
+        let data_weight = if self.show_data { if self.show_source { 1 } else { 2 } } else { 0 };
         let total_weight = opcodes_weight
-            + memory_weight
+            + data_weight
             + source_weight
             + if self.show_variables { 1 } else { 0 }
             + if self.show_stack { 1 } else { 0 };
@@ -128,7 +128,9 @@ impl TUIContext<'_> {
         if self.show_stack {
             constraints.push(Constraint::Ratio(1, total_weight));
         }
-        constraints.push(Constraint::Ratio(memory_weight, total_weight));
+        if self.show_data {
+            constraints.push(Constraint::Ratio(data_weight, total_weight));
+        }
         if self.show_source {
             constraints.push(Constraint::Ratio(source_weight, total_weight));
         }
@@ -144,8 +146,9 @@ impl TUIContext<'_> {
         if self.show_stack {
             self.draw_stack(f, *panes.next().expect("stack pane is visible"));
         }
-        let memory_pane = *panes.next().expect("memory pane is always visible");
-        self.draw_buffer(f, memory_pane);
+        if self.show_data {
+            self.draw_data(f, *panes.next().expect("data pane is visible"));
+        }
         if self.show_source {
             self.draw_src(f, *panes.next().expect("source pane is visible"));
         }
@@ -178,18 +181,21 @@ impl TUIContext<'_> {
         };
 
         let has_left_pane = self.show_opcodes || self.show_source;
-        let (app_left, app_right) = if has_left_pane {
-            // Split app in 2 horizontally.
-            let [app_left, app_right] = Layout::new(
-                Direction::Horizontal,
-                [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)],
-            )
-            .split(app)[..] else {
-                unreachable!()
-            };
-            (Some(app_left), app_right)
-        } else {
-            (None, app)
+        let has_right_pane = self.show_variables || self.show_stack || self.show_data;
+        let (app_left, app_right) = match (has_left_pane, has_right_pane) {
+            (true, true) => {
+                let [app_left, app_right] = Layout::new(
+                    Direction::Horizontal,
+                    [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)],
+                )
+                .split(app)[..] else {
+                    unreachable!()
+                };
+                (Some(app_left), Some(app_right))
+            }
+            (true, false) => (Some(app), None),
+            (false, true) => (None, Some(app)),
+            (false, false) => (None, None),
         };
 
         if footer_height > 0 {
@@ -216,26 +222,33 @@ impl TUIContext<'_> {
             }
         }
 
-        let total_weight =
-            2 + if self.show_variables { 1 } else { 0 } + if self.show_stack { 1 } else { 0 };
-        let mut constraints = Vec::with_capacity(3);
-        if self.show_variables {
-            constraints.push(Constraint::Ratio(1, total_weight));
-        }
-        if self.show_stack {
-            constraints.push(Constraint::Ratio(1, total_weight));
-        }
-        constraints.push(Constraint::Ratio(2, total_weight));
+        if let Some(app_right) = app_right {
+            let total_weight = if self.show_variables { 1 } else { 0 }
+                + if self.show_stack { 1 } else { 0 }
+                + if self.show_data { 2 } else { 0 };
+            let mut constraints = Vec::with_capacity(3);
+            if self.show_variables {
+                constraints.push(Constraint::Ratio(1, total_weight));
+            }
+            if self.show_stack {
+                constraints.push(Constraint::Ratio(1, total_weight));
+            }
+            if self.show_data {
+                constraints.push(Constraint::Ratio(2, total_weight));
+            }
 
-        let panes = Layout::new(Direction::Vertical, constraints).split(app_right);
-        let mut panes = panes.iter();
-        if self.show_variables {
-            self.draw_variables(f, *panes.next().expect("variables pane is visible"));
+            let panes = Layout::new(Direction::Vertical, constraints).split(app_right);
+            let mut panes = panes.iter();
+            if self.show_variables {
+                self.draw_variables(f, *panes.next().expect("variables pane is visible"));
+            }
+            if self.show_stack {
+                self.draw_stack(f, *panes.next().expect("stack pane is visible"));
+            }
+            if self.show_data {
+                self.draw_data(f, *panes.next().expect("data pane is visible"));
+            }
         }
-        if self.show_stack {
-            self.draw_stack(f, *panes.next().expect("stack pane is visible"));
-        }
-        self.draw_buffer(f, *panes.next().expect("memory pane is always visible"));
     }
 
     fn footer_height(&self) -> u16 {
@@ -610,6 +623,47 @@ impl TUIContext<'_> {
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
         storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
+    }
+
+    fn draw_data(&mut self, f: &mut Frame<'_>, area: Rect) {
+        if let Some(space) = self.active_storage() {
+            self.draw_storage(f, area, space);
+        } else {
+            self.draw_buffer(f, area);
+        }
+    }
+
+    fn draw_storage(&mut self, f: &mut Frame<'_>, area: Rect, space: StorageSpace) {
+        let accesses = self.storage_accesses(space);
+        let current_slot = storage_access_at(self.debug_steps(), self.current_step)
+            .filter(|access| access.space() == space)
+            .map(StorageAccess::slot);
+        self.draw_memory.current_storage_startline =
+            self.draw_memory.current_storage_startline.min(accesses.len().saturating_sub(1));
+
+        let index_width = decimal_digits(accesses.len()).max(2);
+        let mut lines = accesses
+            .values()
+            .copied()
+            .enumerate()
+            .skip(self.draw_memory.current_storage_startline)
+            .flat_map(|(index, access)| {
+                storage_slot_lines(index, index_width, access, current_slot == Some(access.slot()))
+            })
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("No {} accessed in current call", space.noun()),
+                Style::new().add_modifier(Modifier::DIM),
+            )));
+        }
+
+        let count = accesses.len();
+        let suffix = if count == 1 { "slot" } else { "slots" };
+        let title = format!("{}: {count} accessed {suffix}", space.label());
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+        f.render_widget(paragraph, area);
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -1034,7 +1088,7 @@ fn shortcut_lines() -> Vec<Line<'static>> {
             dimmed,
         )),
         Line::from(Span::styled(
-            "[t] labels | [m] decode | [h] help | [J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint",
+            "[t] labels | [m] decode | [h] help | [J/K] stack scroll | [ctrl+j/k] data scroll | ['<char>] breakpoint",
             dimmed,
         )),
     ]
@@ -1119,6 +1173,33 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
 
 fn storage_access_line(access: StorageAccess) -> Line<'static> {
     Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
+}
+
+fn storage_slot_lines(
+    index: usize,
+    index_width: usize,
+    access: StorageAccess,
+    current: bool,
+) -> [Line<'static>; 2] {
+    let value_style = if current {
+        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::White)
+    };
+    let prefix_width = index_width + 2;
+    [
+        Line::from(vec![
+            Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
+            Span::styled(access.op(), value_style),
+            Span::raw(" slot "),
+            Span::styled(hex_u256(access.slot()), value_style),
+        ]),
+        Line::from(vec![
+            Span::raw(" ".repeat(prefix_width)),
+            Span::raw("value "),
+            Span::styled(hex_u256(access.value()), value_style),
+        ]),
+    ]
 }
 
 fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) -> String {
@@ -1477,6 +1558,53 @@ mod tests {
     }
 
     #[test]
+    fn storage_explorer_draws_accessed_slots() {
+        let mut first = trace_step(Vec::new());
+        first.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(42),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut second = trace_step(Vec::new());
+        second.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(0xbeef),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut latest = trace_step(Vec::new());
+        latest.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(43),
+            had_value: Some(U256::from(42)),
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![first, second, latest])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 2;
+        let backend = TestBackend::new(100, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| tui.draw_storage(f, Rect::new(0, 0, 100, 6), super::StorageSpace::Persistent))
+            .unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Storage: 2 accessed slots"));
+        assert!(screen.contains("SSTORE slot 0x0"));
+        assert!(screen.contains("value 0x2b"));
+        assert!(screen.contains("SSTORE slot 0x1"));
+        assert!(screen.contains("value 0xbeef"));
+    }
+
+    #[test]
     fn hidden_source_pane_omits_source_panel() {
         let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
         context.layout = DebuggerLayout::Horizontal;
@@ -1569,6 +1697,32 @@ mod tests {
         assert!(!screen.contains("Stack:"));
         assert!(screen.contains("Variables"));
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_data_pane_omits_data_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_opcodes = false;
+        tui.show_variables = false;
+        tui.show_stack = false;
+        tui.show_data = false;
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("Memory (max expansion: 0 bytes)"));
+        assert!(screen.contains("Contract call"));
     }
 
     #[test]

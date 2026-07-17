@@ -29,10 +29,11 @@ use crate::{
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
+use dialoguer::{Select, console::Term};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::{self, LoadConfig},
+    utils::{self, FoundryPathExt, LoadConfig},
 };
 use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
@@ -70,6 +71,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
+use foundry_tui::tui_mode;
 use rand::Rng;
 use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
@@ -377,6 +379,14 @@ fn sources_to_compile_from_artifacts(
     artifacts: &ProjectCompileOutput,
     test_matcher: &TestFunctionMatcher<'_>,
 ) -> BTreeSet<PathBuf> {
+    let paths = config.project_paths::<MultiCompilerLanguage>();
+    let empty_filter = EmptyTestFilter::default();
+    let filter_args = test_filter.args();
+    let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+        || filter_args.test_pattern_inverse.is_some()
+        || filter_args.contract_pattern.is_some()
+        || filter_args.contract_pattern_inverse.is_some();
+
     // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
     // identifiers it constructs are project-relative. Match that here for the filter check
     // (notably for the `--rerun` failure list, which is persisted relative) but return the
@@ -385,11 +395,25 @@ fn sources_to_compile_from_artifacts(
         .artifact_ids()
         .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
         .filter(|(id, abi)| {
-            if id.source.starts_with(&config.src) {
+            if id.source.starts_with(&paths.sources) {
                 return true;
             }
+            if paths.is_script(&id.source) && !paths.is_test(&id.source) {
+                return false;
+            }
             let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-            test_matcher.matches_contract(test_filter, &stripped, abi)
+            // ABI-only compilation can omit test functions with invalid bodies, so preserve the
+            // existing filter behavior for conventional test files instead of treating them as
+            // fixtures.
+            if stripped.source.is_sol_test() {
+                return if has_contract_or_test_filter {
+                    test_matcher.matches_contract(test_filter, &stripped, abi)
+                } else {
+                    test_filter.matches_path(&stripped.source)
+                };
+            }
+            !test_matcher.matches_contract(&empty_filter, &stripped, abi)
+                || test_matcher.matches_contract(test_filter, &stripped, abi)
         })
         .map(|(id, _)| id.source)
         .collect()
@@ -1172,6 +1196,52 @@ impl TestArgs {
         Ok(())
     }
 
+    pub(crate) fn ensure_coverage_mode_compatible(&self) -> Result<()> {
+        self.ensure_mutation_mode_compatible(true)?;
+
+        let mut conflicts = Vec::new();
+        if shell::is_json() {
+            conflicts.push("--json");
+        }
+        if self.junit {
+            conflicts.push("--junit");
+        }
+        if self.list {
+            conflicts.push("--list");
+        }
+        if self.debug {
+            conflicts.push("--debug");
+        }
+        if self.flamegraph {
+            conflicts.push("--flamegraph");
+        }
+        if self.flamechart {
+            conflicts.push("--flamechart");
+        }
+        if self.evm_profile.is_some() {
+            conflicts.push("--evm-profile");
+        }
+        if self.showmap_out.is_some() {
+            conflicts.push("--showmap-out");
+        }
+        if self.brutalize {
+            conflicts.push("--brutalize");
+        }
+        if self.replay_symbolic_artifact.is_some() {
+            conflicts.push("--replay-symbolic-artifact");
+        }
+        if !conflicts.is_empty() {
+            bail!(
+                "`forge coverage` cannot be combined with: {}. Use `--report lcov` for an \
+                 interoperable coverage report or `--report attribution` for per-test JSON \
+                attribution.",
+                conflicts.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         if let Some(showmap) = self.showmap_override.clone() {
@@ -1469,9 +1539,9 @@ impl TestArgs {
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
-    /// This means that it will return all sources that are not test contracts or that match the
-    /// filter. We want to compile all non-test sources always because tests might depend on them
-    /// dynamically through cheatcodes.
+    /// For filtered runs, this includes all configured source files, non-test artifacts outside
+    /// script-only paths, and runnable tests that match the filter. Non-test artifacts remain
+    /// available because tests may resolve them dynamically through cheatcodes.
     #[instrument(target = "forge::test", skip_all)]
     fn get_sources_to_compile(
         &self,
@@ -1491,25 +1561,22 @@ impl TestArgs {
             ));
         }
 
-        let filter_args = test_filter.args();
-        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
-            || filter_args.test_pattern_inverse.is_some()
-            || filter_args.contract_pattern.is_some()
-            || filter_args.contract_pattern_inverse.is_some();
-        if !has_contract_or_test_filter {
-            return Ok((
-                source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    .chain(
-                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
-                            .filter(|path| test_filter.matches_path(path)),
-                    )
-                    .collect(),
-                None,
-            ));
-        }
-
         let mut project = config.create_project(true, true)?;
-        let output = compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
+        let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+            .chain(
+                source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    // Preserve path-filter behavior for conventional test files while still
+                    // scanning non-test fixtures under the test root.
+                    .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+            )
+            .collect::<BTreeSet<_>>();
+        let output = compile_abi_project(
+            &mut project,
+            ProjectCompiler::new()
+                .files(sources)
+                .dynamic_test_linking(config.dynamic_test_linking)
+                .quiet(true),
+        )?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
@@ -1623,8 +1690,6 @@ impl TestArgs {
     }
 
     async fn compile_project(&mut self) -> Result<CompiledTestProject> {
-        let should_default_fuzz_run_workers_to_auto =
-            self.fuzz_only.is_enabled() && self.invariant_workers.is_none();
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -1635,10 +1700,6 @@ impl TestArgs {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
-        if should_default_fuzz_run_workers_to_auto && !config.invariant.workers_configured {
-            config.invariant.workers = InvariantWorkers::Auto;
-        }
-
         if should_mutate {
             // Force dyn test linking and cache usage for mutation testing after any config reload.
             config.dynamic_test_linking = true;
@@ -1867,6 +1928,8 @@ impl TestArgs {
             );
         }
 
+        let mut filter = filter.clone();
+
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -1931,7 +1994,7 @@ impl TestArgs {
                 config,
                 evm_opts.clone(),
                 output,
-                filter,
+                &mut filter,
                 execution.clone(),
             )
             .await?
@@ -1947,7 +2010,7 @@ impl TestArgs {
                     config.clone(),
                     evm_opts.clone(),
                     output,
-                    filter,
+                    &mut filter,
                     TestExecutionOptions {
                         decode_internal,
                         multi_network: MultiNetworkConfig {
@@ -1969,7 +2032,7 @@ impl TestArgs {
                         config.clone(),
                         pass_evm_opts.clone(),
                         output,
-                        filter,
+                        &mut filter,
                         TestExecutionOptions {
                             decode_internal,
                             multi_network: MultiNetworkConfig {
@@ -2432,7 +2495,7 @@ impl TestArgs {
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
@@ -2493,7 +2556,7 @@ impl TestArgs {
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         match network_dispatch_kind(dispatch_opts) {
@@ -2561,7 +2624,7 @@ impl TestArgs {
         mut runner: MultiContractRunner<FEN>,
         config: Arc<Config>,
         verbosity: u8,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         let fuzz_seed = config.fuzz.seed;
@@ -2577,7 +2640,7 @@ impl TestArgs {
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
 
-        let num_filtered = runner.matching_test_functions(filter).count();
+        let mut num_filtered = runner.matching_test_functions(filter).count();
 
         if !self.opcodes.is_empty() && verbosity < 5 {
             sh_eprintln!()?;
@@ -2610,6 +2673,41 @@ impl TestArgs {
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
+        let debug_selection_term = Term::stderr();
+        let interactive_debug_selection = self.debug
+            && num_filtered != 1
+            && tui_mode().is_interactive()
+            && debug_selection_term.is_term();
+        let mut matching_debug_tests = if interactive_debug_selection {
+            collect_matching_debug_tests(&runner.list_signatures(filter))
+        } else if self.debug && num_filtered != 1 {
+            collect_matching_debug_tests(&runner.list(filter))
+        } else {
+            Vec::new()
+        };
+        if interactive_debug_selection {
+            ctrlc::set_handler(|| {
+                let _ = Term::stderr().show_cursor();
+                std::process::exit(130);
+            })?;
+
+            let Some(selected) = Select::new()
+                .with_prompt("Select a test to debug")
+                .items(
+                    matching_debug_tests
+                        .iter()
+                        .map(|test| format!("{}.{}", test.contract, test.test)),
+                )
+                .max_length(DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT)
+                .interact_on_opt(&debug_selection_term)?
+            else {
+                bail!("Debugger test selection cancelled");
+            };
+
+            filter.set_rerun_failures(vec![matching_debug_tests.swap_remove(selected)]);
+            num_filtered = 1;
+        }
+
         if num_filtered != 1
             && (self.debug || self.flamegraph || self.flamechart || self.evm_profile.is_some())
         {
@@ -2628,7 +2726,7 @@ impl TestArgs {
                 format!("\n\nFilter used:\n{filter}")
             };
             let matching_tests_hint = if self.debug {
-                format_matching_debug_tests(&runner.list(filter)).unwrap_or_default()
+                format_matching_debug_tests(&matching_debug_tests).unwrap_or_default()
             } else {
                 String::new()
             };
@@ -3643,37 +3741,41 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
     }
 }
 
-fn format_matching_debug_tests(
+fn collect_matching_debug_tests(
     matching_tests: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
-) -> Option<String> {
-    let mut output = String::from("\n\nMatching tests:");
-    let mut total = 0;
-    let mut shown = 0;
-
+) -> Vec<RerunFailure> {
+    let mut tests = Vec::new();
     for (source, contracts) in matching_tests {
-        for (contract, tests) in contracts {
-            for test in tests {
-                total += 1;
-
-                if shown < DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT {
-                    output.push_str("\n  ");
-                    output.push_str(source);
-                    output.push(':');
-                    output.push_str(contract);
-                    output.push('.');
-                    output.push_str(test);
-                    shown += 1;
-                }
-            }
+        for (contract, contract_tests) in contracts {
+            let contract = format!("{source}:{contract}");
+            tests.extend(
+                contract_tests
+                    .iter()
+                    .map(|test| RerunFailure { contract: contract.clone(), test: test.clone() }),
+            );
         }
     }
+    tests
+}
 
-    if total == 0 {
+fn format_matching_debug_tests(matching_tests: &[RerunFailure]) -> Option<String> {
+    if matching_tests.is_empty() {
         return None;
     }
 
-    if total > shown {
-        output.push_str(&format!("\n  ... and {} more", total - shown));
+    let mut output = String::from("\n\nMatching tests:");
+    for test in matching_tests.iter().take(DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT) {
+        output.push_str("\n  ");
+        output.push_str(&test.contract);
+        output.push('.');
+        output.push_str(&test.test);
+    }
+
+    if matching_tests.len() > DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT {
+        output.push_str(&format!(
+            "\n  ... and {} more",
+            matching_tests.len() - DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT
+        ));
     }
 
     Some(output)
@@ -3987,6 +4089,27 @@ mod tests {
         assert!(!should_render_trace_output(true, true));
         assert!(!should_render_trace_output(false, false));
         assert!(should_render_trace_output(false, true));
+    }
+
+    #[test]
+    fn debugger_test_candidates_preserve_exact_suite_ids() {
+        let matching = BTreeMap::from([(
+            "test/Counter.t.sol".to_string(),
+            BTreeMap::from([(
+                "CounterTest".to_string(),
+                vec!["testFuzz_SetNumber(uint256)".to_string(), "test_Increment()".to_string()],
+            )]),
+        )]);
+
+        let candidates = collect_matching_debug_tests(&matching);
+
+        assert_eq!(candidates[0].contract, "test/Counter.t.sol:CounterTest");
+        assert_eq!(candidates[0].test, "testFuzz_SetNumber(uint256)");
+        assert_eq!(candidates[1].test, "test_Increment()");
+        assert_eq!(
+            format_matching_debug_tests(&candidates).unwrap(),
+            "\n\nMatching tests:\n  test/Counter.t.sol:CounterTest.testFuzz_SetNumber(uint256)\n  test/Counter.t.sol:CounterTest.test_Increment()"
+        );
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>

@@ -107,7 +107,7 @@ impl SelectorsSubcommands {
                 let mut project = project_from_paths(project_paths)?;
                 let output = if let Some(contract_info) = &contract {
                     let Some(contract_name) = contract_info.name() else {
-                        eyre::bail!("No contract name provided.")
+                        eyre::bail!("No contract name provided.");
                     };
 
                     let target_path = contract_info

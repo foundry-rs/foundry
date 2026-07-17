@@ -45,6 +45,32 @@ forgetest_init!(doc_supports_empty_projects, |_prj, cmd| {
     cmd.arg("doc").assert_success();
 });
 
+forgetest_init!(doc_uses_configured_commit_for_source_links, |prj, cmd| {
+    prj.add_source(
+        "Revision.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Revision {}
+"#,
+    );
+    prj.update_config(|config| {
+        config.doc.repository = Some("https://github.com/foundry-rs/foundry".to_string());
+        config.doc.commit = Some("v1.2.3".to_string());
+    });
+
+    cmd.arg("doc").assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Revision.mdx"), None),
+        str![[r#"
+...
+[Git Source](https://github.com/foundry-rs/foundry/blob/v1.2.3/src/Revision.sol)
+...
+"#]],
+    );
+});
+
 forgetest!(doc_supports_mixed_solidity_versions, |prj, cmd| {
     prj.add_source(
         "New.sol",
