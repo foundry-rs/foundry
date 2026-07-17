@@ -1417,6 +1417,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             },
         );
 
+        // The tracer records call inputs before cheatcodes apply caller overrides such as pranks
+        // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
+        // can be synchronized with the inputs that are actually executed.
+        let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
+        let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.
             if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
@@ -1438,9 +1443,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 }
             }
 
-            if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
-                return Some(output);
-            }
+            cheatcode_outcome = cheatcodes.call_with_executor(ecx, call, self.inner);
+        }
+
+        if let Some(trace_idx) = trace_idx
+            && let Some(tracer) = self.tracer.as_deref_mut()
+        {
+            let caller = match call.scheme {
+                CallScheme::DelegateCall | CallScheme::CallCode => call.target_address,
+                CallScheme::Call | CallScheme::StaticCall => call.caller,
+            };
+            let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
+            debug_assert_eq!(node.trace.depth, ecx.journal().depth());
+            node.trace.caller = caller;
+        }
+
+        if let Some(output) = cheatcode_outcome {
+            return Some(output);
         }
 
         if let Some(outcome) = handle_arbitrum_system_call::<FEN>(ecx, call) {
