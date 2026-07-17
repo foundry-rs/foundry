@@ -1,4 +1,7 @@
-use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
+use crate::{
+    eth::subscription::SubscriptionId,
+    types::{ActivityOptions, ReorgOptions},
+};
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, U64, U256,
     map::{HashMap, HashSet},
@@ -534,6 +537,14 @@ pub enum EthRequest {
     /// Gets the current mining behavior
     #[serde(rename = "anvil_getIntervalMining", with = "empty_params")]
     GetIntervalMining(()),
+
+    /// Sets or disables (`null`) activity simulation
+    #[serde(rename = "anvil_setActivity", with = "sequence")]
+    SetActivity(Option<ActivityOptions>),
+
+    /// Gets the current activity simulation config
+    #[serde(rename = "anvil_getActivity", with = "empty_params")]
+    GetActivity(()),
 
     /// Removes transactions from the pool
     #[serde(rename = "anvil_dropTransaction", alias = "hardhat_dropTransaction", with = "sequence")]
@@ -1153,6 +1164,22 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
         let s = r#"{"method": "evm_setIntervalMining", "params": [100]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_custom_activity() {
+        let s = r#"{"method": "anvil_setActivity", "params": [{"txs":{"min":1,"max":4},"reverted":20}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "anvil_setActivity", "params": [null]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        match serde_json::from_value::<EthRequest>(value).unwrap() {
+            EthRequest::SetActivity(options) => assert_eq!(options, None),
+            _ => unreachable!(),
+        }
+        let s = r#"{"method": "anvil_getActivity", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

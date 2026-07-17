@@ -1,6 +1,7 @@
 use crate::{
     EthereumHardfork, FeeManager, PrecompileFactory,
     eth::{
+        activity,
         backend::{
             db::{Db, SerializableState},
             fork::{ClientFork, ClientForkConfig},
@@ -28,6 +29,7 @@ use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
 };
 use alloy_transport::TransportError;
+use anvil_core::types::ActivityOptions;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
@@ -138,6 +140,8 @@ pub struct NodeConfig {
     pub no_mining: bool,
     /// Enables auto and interval mining mode
     pub mixed_mining: bool,
+    /// Activity simulation config. `Some` enables generated network activity.
+    pub activity: Option<ActivityOptions>,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -483,6 +487,7 @@ impl Default for NodeConfig {
             block_time: None,
             no_mining: false,
             mixed_mining: false,
+            activity: None,
             port: NODE_PORT,
             max_transactions: 1_000,
             fork_urls: vec![],
@@ -852,6 +857,17 @@ impl NodeConfig {
     ) -> Self {
         self.block_time = block_time.map(Into::into);
         self.mixed_mining = mixed_mining;
+        self
+    }
+
+    /// Sets the activity simulation config. Defaults `block_time` to 2s when interval
+    /// mining is not otherwise configured, since activity is generated per block.
+    #[must_use]
+    pub fn with_activity(mut self, activity: Option<ActivityOptions>) -> Self {
+        if activity.is_some() && self.block_time.is_none() && !self.no_mining {
+            self.block_time = Some(Duration::from_secs(2));
+        }
+        self.activity = activity;
         self
     }
 
@@ -1309,6 +1325,17 @@ impl NodeConfig {
                     .wrap_err_with(|| format!("failed to fund account {address}"))?;
             }
         }
+
+        // Installs the built-in activity contracts so activity simulation can also be
+        // enabled at runtime via `anvil_setActivity`.
+        backend
+            .set_code(activity::ACTIVITY_ADDRESS, activity::ACTIVITY_RUNTIME_CODE)
+            .await
+            .wrap_err("failed to install activity contract")?;
+        backend
+            .set_code(activity::ACTIVITY_TOKEN_ADDRESS, activity::ACTIVITY_TOKEN_RUNTIME_CODE)
+            .await
+            .wrap_err("failed to install activity token contract")?;
 
         Ok(backend)
     }

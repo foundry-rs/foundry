@@ -79,7 +79,7 @@ use anvil_core::{
         block::{BlockInfo, canonical_block, canonical_block_transaction},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
-    types::{ReorgOptions, TransactionData},
+    types::{ActivityOptions, ReorgOptions, TransactionData},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::{
@@ -149,6 +149,8 @@ pub struct EthApi<N: Network> {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
+    /// Activity simulation config, `None` when disabled. Read by the activity generator task.
+    activity: Arc<RwLock<Option<ActivityOptions>>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -166,6 +168,7 @@ impl<N: Network> Clone for EthApi<N> {
             transaction_order: self.transaction_order.clone(),
             net_listening: self.net_listening,
             instance_id: self.instance_id.clone(),
+            activity: self.activity.clone(),
         }
     }
 }
@@ -185,6 +188,7 @@ impl<N: Network> EthApi<N> {
         logger: LoggingManager,
         filters: Filters<N>,
         transactions_order: TransactionOrder,
+        activity: Option<ActivityOptions>,
     ) -> Self {
         Self {
             pool,
@@ -199,6 +203,7 @@ impl<N: Network> EthApi<N> {
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
+            activity: Arc::new(RwLock::new(activity)),
         }
     }
 
@@ -244,6 +249,33 @@ impl<N: Network> EthApi<N> {
     pub fn anvil_get_interval_mining(&self) -> Result<Option<u64>> {
         node_info!("anvil_getIntervalMining");
         Ok(self.miner.get_interval())
+    }
+
+    /// Sets or disables (`None`) activity simulation.
+    ///
+    /// Handler for ETH RPC call: `anvil_setActivity`.
+    pub fn anvil_set_activity(&self, options: Option<ActivityOptions>) -> Result<()> {
+        node_info!("anvil_setActivity");
+        *self.activity.write() = options;
+        Ok(())
+    }
+
+    /// Returns the current activity simulation config, if enabled.
+    ///
+    /// Handler for ETH RPC call: `anvil_getActivity`.
+    pub fn anvil_get_activity(&self) -> Result<Option<ActivityOptions>> {
+        node_info!("anvil_getActivity");
+        Ok(self.activity.read().clone())
+    }
+
+    /// Returns a handle to the shared activity simulation config.
+    pub(crate) fn activity_config(&self) -> Arc<RwLock<Option<ActivityOptions>>> {
+        self.activity.clone()
+    }
+
+    /// Whether the pool currently holds transactions ready to be mined.
+    pub(crate) fn has_ready_pool_transactions(&self) -> bool {
+        self.pool.ready_transactions().next().is_some()
     }
 
     /// Enables or disables, based on the single boolean argument, the automatic mining of new
@@ -1975,6 +2007,8 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_interval_mining(interval).to_rpc_result()
             }
             EthRequest::GetIntervalMining(()) => self.anvil_get_interval_mining().to_rpc_result(),
+            EthRequest::SetActivity(options) => self.anvil_set_activity(options).to_rpc_result(),
+            EthRequest::GetActivity(()) => self.anvil_get_activity().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }

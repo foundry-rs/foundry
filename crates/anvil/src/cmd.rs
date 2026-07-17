@@ -5,8 +5,13 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
+use alloy_primitives::{
+    Address, B256, U256,
+    map::HashMap,
+    utils::{Unit, parse_ether},
+};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
+use anvil_core::types::{ActivityKind, ActivityOptions, ActivityRange};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
@@ -109,6 +114,54 @@ pub struct NodeArgs {
     /// but also whenever a transaction is submitted. Requires `--block-time` to be set.
     #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
+
+    /// Enable activity simulation: generate realistic transactions, logs and state changes
+    /// every block. Implies `--block-time 2` unless set.
+    #[arg(long, conflicts_with = "no_mining", help_heading = "Activity simulation")]
+    pub activity: bool,
+
+    /// Number of activity transactions injected per block.
+    #[arg(long = "activity.txs", requires = "activity", value_name = "N|N-M", value_parser = ActivityRange::<u64>::parse, help_heading = "Activity simulation")]
+    pub activity_txs: Option<ActivityRange<u64>>,
+
+    /// Percentage of activity transactions that revert.
+    #[arg(
+        long = "activity.reverted",
+        requires = "activity",
+        value_name = "PCT",
+        help_heading = "Activity simulation"
+    )]
+    pub activity_reverted: Option<u8>,
+
+    /// Percentage of activity transactions left pending indefinitely.
+    #[arg(
+        long = "activity.pending",
+        requires = "activity",
+        value_name = "PCT",
+        help_heading = "Activity simulation"
+    )]
+    pub activity_pending: Option<u8>,
+
+    /// Number of events emitted per activity contract-call transaction.
+    #[arg(long = "activity.logs", requires = "activity", value_name = "N|N-M", value_parser = ActivityRange::<u64>::parse, help_heading = "Activity simulation")]
+    pub activity_logs: Option<ActivityRange<u64>>,
+
+    /// Transfer value range in ether.
+    #[arg(long = "activity.value", requires = "activity", value_name = "MIN-MAX", value_parser = ether_range, help_heading = "Activity simulation")]
+    pub activity_value: Option<ActivityRange<U256>>,
+
+    /// Enabled activity kinds. [default: network-appropriate]
+    #[arg(long = "activity.mix", requires = "activity", value_name = "KINDS", value_delimiter = ',', value_parser = ActivityKind::from_str, help_heading = "Activity simulation")]
+    pub activity_mix: Option<Vec<ActivityKind>>,
+
+    /// RNG seed for deterministic activity.
+    #[arg(
+        long = "activity.seed",
+        requires = "activity",
+        value_name = "SEED",
+        help_heading = "Activity simulation"
+    )]
+    pub activity_seed: Option<u64>,
 
     /// The hosts the server will listen on.
     #[arg(
@@ -278,6 +331,7 @@ impl NodeArgs {
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
+            .with_activity(self.activity_options())
             .with_account_generator(self.account_generator())?
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
@@ -353,6 +407,22 @@ impl NodeArgs {
             accounts.insert(address, balance);
         }
         Ok(accounts)
+    }
+
+    fn activity_options(&self) -> Option<ActivityOptions> {
+        if !self.activity {
+            return None;
+        }
+        let defaults = ActivityOptions::default();
+        Some(ActivityOptions {
+            txs: self.activity_txs.unwrap_or(defaults.txs),
+            reverted: self.activity_reverted.unwrap_or(defaults.reverted),
+            pending: self.activity_pending.unwrap_or(defaults.pending),
+            logs: self.activity_logs.unwrap_or(defaults.logs),
+            value: self.activity_value.unwrap_or(defaults.value),
+            mix: self.activity_mix.clone(),
+            seed: self.activity_seed,
+        })
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -914,6 +984,22 @@ fn read_genesis_file(path: &str) -> Result<Genesis, String> {
     foundry_common::fs::read_json_file(path.as_ref()).map_err(|err| err.to_string())
 }
 
+/// Parses an ether-denominated `MIN-MAX` range (e.g. `0.0001-0.1`) into wei.
+fn ether_range(s: &str) -> Result<ActivityRange<U256>, String> {
+    let parse = |s: &str| parse_ether(s.trim()).map_err(|e| e.to_string());
+    let (min, max) = match s.split_once('-') {
+        Some((min, max)) => (parse(min)?, parse(max)?),
+        None => {
+            let value = parse(s)?;
+            (value, value)
+        }
+    };
+    if min > max {
+        return Err(format!("invalid range: `{s}`"));
+    }
+    Ok(ActivityRange { min, max })
+}
+
 fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
     let s = s.parse::<f64>().map_err(|e| e.to_string())?;
     if s == 0.0 {
@@ -970,6 +1056,44 @@ mod tests {
             NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
+    }
+
+    #[test]
+    fn can_parse_activity_args() {
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--activity",
+            "--activity.txs",
+            "2-5",
+            "--activity.reverted",
+            "20",
+            "--activity.value",
+            "0.001-1",
+            "--activity.mix",
+            "transfer,contract",
+            "--activity.seed",
+            "7",
+        ]);
+        let config = args.into_node_config().unwrap();
+        let activity = config.activity.unwrap();
+        assert_eq!(activity.txs, ActivityRange { min: 2, max: 5 });
+        assert_eq!(activity.reverted, 20);
+        assert_eq!(activity.pending, ActivityOptions::default().pending);
+        assert_eq!(
+            activity.value,
+            ActivityRange { min: parse_ether("0.001").unwrap(), max: parse_ether("1").unwrap() }
+        );
+        assert_eq!(activity.mix, Some(vec![ActivityKind::Transfer, ActivityKind::Contract]));
+        assert_eq!(activity.seed, Some(7));
+        // Activity implies interval mining.
+        assert_eq!(config.block_time, Some(Duration::from_secs(2)));
+
+        let args: NodeArgs = NodeArgs::parse_from(["anvil"]);
+        assert_eq!(args.into_node_config().unwrap().activity, None);
+
+        // Activity knobs require `--activity`.
+        assert!(NodeArgs::try_parse_from(["anvil", "--activity.txs", "2-5"]).is_err());
+        assert!(NodeArgs::try_parse_from(["anvil", "--activity", "--no-mining"]).is_err());
     }
 
     #[test]

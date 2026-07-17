@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod api;
 pub mod otterscan;
 pub mod sign;

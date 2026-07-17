@@ -232,7 +232,11 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         logger,
         filters.clone(),
         transaction_order,
+        config.activity.clone(),
     );
+
+    // spawn the activity generator; it idles until activity is configured
+    tokio::task::spawn(eth::activity::ActivityGenerator::new(api.clone()).run());
 
     // spawn the node service
     let node_service =

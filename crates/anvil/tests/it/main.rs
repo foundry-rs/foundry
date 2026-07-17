@@ -1,4 +1,5 @@
 mod abi;
+mod activity;
 mod anvil;
 mod anvil_api;
 mod api;
