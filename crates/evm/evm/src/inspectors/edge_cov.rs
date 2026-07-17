@@ -26,6 +26,10 @@ const MAX_CMP_LOG_SITES: usize = 1024;
 // detection threshold so a hot loop can be classified without filling the whole log.
 const MAX_CMP_OBSERVATIONS_PER_SITE: u8 = 8;
 
+// Collision-free coverage is collected into a fresh inspector clone for each raw call. Pre-sizing
+// the per-call dense map avoids repeated small-table growth in coverage-guided invariant runs.
+const INITIAL_DENSE_EDGE_CAPACITY: usize = 256;
+
 /// Edge coverage collection kind.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EdgeCovKind {
@@ -92,7 +96,7 @@ pub struct CmpOperands {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EdgeKey {
     pub address: Address,
-    pub depth: Option<usize>,
+    pub depth: Option<u32>,
     pub pc: usize,
     pub jump_dest: U256,
 }
@@ -105,7 +109,11 @@ impl EdgeKey {
         jump_dest: U256,
         include_depth: bool,
     ) -> Self {
-        Self { address, depth: include_depth.then_some(depth), pc, jump_dest }
+        if include_depth {
+            debug_assert!(depth <= u32::MAX as usize);
+        }
+        let depth = include_depth.then_some(depth as u32);
+        Self { address, depth, pc, jump_dest }
     }
 }
 
@@ -175,6 +183,8 @@ pub struct EdgeCovInspector {
     /// Comparison operand log for CmpLog-style guided fuzzing.
     cmp_log: Option<Vec<CmpOperands>>,
     cmp_site_counts: HashMap<CmpSiteKey, u8>,
+    last_cmp_site: Option<CmpSiteKey>,
+    last_cmp_site_count: u8,
 }
 
 impl fmt::Debug for EdgeCovInspector {
@@ -226,6 +236,8 @@ impl EdgeCovInspector {
             hash_builder: DefaultHashBuilder::default(),
             cmp_log: None,
             cmp_site_counts: HashMap::default(),
+            last_cmp_site: None,
+            last_cmp_site_count: 0,
         }
     }
 
@@ -236,6 +248,8 @@ impl EdgeCovInspector {
         } else {
             self.cmp_log = None;
             self.cmp_site_counts.clear();
+            self.last_cmp_site = None;
+            self.last_cmp_site_count = 0;
         }
     }
 
@@ -249,6 +263,8 @@ impl EdgeCovInspector {
             cmp_log.clear();
         }
         self.cmp_site_counts.clear();
+        self.last_cmp_site = None;
+        self.last_cmp_site_count = 0;
     }
 
     /// Get an immutable reference to the comparison operand log.
@@ -270,7 +286,18 @@ impl EdgeCovInspector {
         self.dense_hitcount.len()
     }
 
+    /// Prepare per-call coverage buffers before EVM execution starts.
+    pub fn prepare_for_execution(&mut self) {
+        if self.config.kind == EdgeCovKind::CollisionFree
+            && self.dense_hitcount.capacity() < INITIAL_DENSE_EDGE_CAPACITY
+        {
+            self.dense_hitcount
+                .reserve(INITIAL_DENSE_EDGE_CAPACITY - self.dense_hitcount.capacity());
+        }
+    }
+
     /// Mark the edge `(address, depth, pc, jump_dest)` as hit.
+    #[inline]
     fn store_hit(&mut self, address: Address, depth: usize, pc: usize, jump_dest: U256) {
         if !self.collect_edges {
             return;
@@ -286,12 +313,21 @@ impl EdgeCovInspector {
         self.hitcount[edge_id] = self.hitcount[edge_id].wrapping_add(1).max(1);
     }
 
+    #[inline]
     fn store_dense_hit(&mut self, address: Address, depth: usize, pc: usize, jump_dest: U256) {
         let key = EdgeKey::new(address, depth, pc, jump_dest, self.config.include_call_depth);
-        let count = self.dense_hitcount.entry(key).or_default();
-        *count = count.wrapping_add(1).max(1);
+        match self.dense_hitcount.entry(key) {
+            Entry::Occupied(mut entry) => {
+                let count = entry.get_mut();
+                *count = count.wrapping_add(1).max(1);
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(1);
+            }
+        }
     }
 
+    #[inline]
     fn hash_edge_id(
         &mut self,
         address: Address,
@@ -323,37 +359,83 @@ impl EdgeCovInspector {
     }
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
+    #[inline]
     fn store_cmp(&mut self, cmp: CmpOperands) {
+        if self.cmp_log.is_none() {
+            return;
+        }
+
+        let site = CmpSiteKey::new(&cmp);
+        if self.last_cmp_site == Some(site) {
+            if self.last_cmp_site_count >= MAX_CMP_OBSERVATIONS_PER_SITE {
+                return;
+            }
+            self.last_cmp_site_count += 1;
+            self.cmp_log.as_mut().expect("checked above").push(cmp);
+            return;
+        }
+
+        self.flush_last_cmp_site();
+
         let Some(cmp_log) = &mut self.cmp_log else {
             return;
         };
 
-        let site = CmpSiteKey::new(&cmp);
-        if let Some(count) = self.cmp_site_counts.get_mut(&site) {
-            if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
-                return;
+        let can_insert_site = self.cmp_site_counts.len() < MAX_CMP_LOG_SITES;
+        match self.cmp_site_counts.entry(site) {
+            Entry::Occupied(mut entry) => {
+                let count = entry.get_mut();
+                if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
+                    self.last_cmp_site = Some(site);
+                    self.last_cmp_site_count = *count;
+                    return;
+                }
+                *count += 1;
+                self.last_cmp_site = Some(site);
+                self.last_cmp_site_count = *count;
+                cmp_log.push(cmp);
             }
-            *count += 1;
-            cmp_log.push(cmp);
-        } else if self.cmp_site_counts.len() < MAX_CMP_LOG_SITES {
-            self.cmp_site_counts.insert(site, 1);
-            cmp_log.push(cmp);
+            Entry::Vacant(entry) => {
+                if can_insert_site {
+                    entry.insert(1);
+                    self.last_cmp_site = Some(site);
+                    self.last_cmp_site_count = 1;
+                    cmp_log.push(cmp);
+                } else {
+                    self.last_cmp_site = Some(site);
+                    self.last_cmp_site_count = MAX_CMP_OBSERVATIONS_PER_SITE;
+                }
+            }
         }
     }
 
-    #[cold]
-    fn do_step<CTX>(&mut self, interp: &mut Interpreter, context: &mut CTX)
+    fn flush_last_cmp_site(&mut self) {
+        let Some(site) = self.last_cmp_site.take() else {
+            return;
+        };
+        if let Some(count) = self.cmp_site_counts.get_mut(&site) {
+            *count = self.last_cmp_site_count;
+        }
+        self.last_cmp_site_count = 0;
+    }
+
+    #[inline]
+    fn do_step<CTX>(&mut self, interp: &mut Interpreter, context: &mut CTX, op: u8)
     where
         CTX: ContextTr,
     {
         let address = interp.input.target_address();
-        let depth = context.journal_ref().depth();
         let current_pc = interp.bytecode.pc();
 
-        match interp.bytecode.opcode() {
+        match op {
             opcode::JUMP => {
                 // unconditional jump
                 if let Ok(jump_dest) = interp.stack.peek(0) {
+                    let depth = if self.config.include_call_depth {
+                        context.journal_ref().depth()
+                    } else {
+                        0
+                    };
                     self.store_hit(address, depth, current_pc, jump_dest);
                 }
             }
@@ -368,6 +450,11 @@ impl EdgeCovInspector {
                     };
 
                     if let Ok(jump_dest) = jump_dest {
+                        let depth = if self.config.include_call_depth {
+                            context.journal_ref().depth()
+                        } else {
+                            0
+                        };
                         self.store_hit(address, depth, current_pc, jump_dest);
                     }
                 }
@@ -378,8 +465,8 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
-    fn do_cmp_step(&mut self, interp: &mut Interpreter) {
+    #[inline]
+    fn do_cmp_step(&mut self, interp: &mut Interpreter, op: u8) {
         if self.cmp_log.is_none() {
             return;
         }
@@ -387,7 +474,7 @@ impl EdgeCovInspector {
         let address = interp.input.target_address();
         let current_pc = interp.bytecode.pc();
 
-        match interp.bytecode.opcode() {
+        match op {
             op @ (opcode::EQ | opcode::LT | opcode::SLT | opcode::GT | opcode::SGT) => {
                 if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
                     self.store_cmp(CmpOperands { op1, op2, pc: current_pc, address, opcode: op });
@@ -442,7 +529,7 @@ where
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let op = interp.bytecode.opcode();
         if self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI) {
-            self.do_step(interp, context);
+            self.do_step(interp, context, op);
         }
         if self.cmp_log.is_some()
             && matches!(
@@ -450,7 +537,7 @@ where
                 opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
             )
         {
-            self.do_cmp_step(interp);
+            self.do_cmp_step(interp, op);
         }
     }
 }
@@ -458,13 +545,14 @@ where
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct CmpSiteKey {
     address: Address,
-    pc: usize,
+    pc: u32,
     opcode: u8,
 }
 
 impl CmpSiteKey {
-    const fn new(cmp: &CmpOperands) -> Self {
-        Self { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode }
+    fn new(cmp: &CmpOperands) -> Self {
+        debug_assert!(cmp.pc <= u32::MAX as usize);
+        Self { address: cmp.address, pc: cmp.pc as u32, opcode: cmp.opcode }
     }
 }
 
@@ -686,6 +774,39 @@ mod tests {
             op1: U256::from(123),
             op2: U256::from(456),
             pc: 2,
+            address: Address::ZERO,
+            opcode: opcode::EQ,
+        });
+
+        assert_eq!(inspector.get_cmp_log().len(), usize::from(MAX_CMP_OBSERVATIONS_PER_SITE) + 1);
+        assert_eq!(inspector.get_cmp_log().last().unwrap().pc, 2);
+    }
+
+    #[test]
+    fn cmp_log_cached_site_keeps_cap_across_site_switches() {
+        let mut inspector = EdgeCovInspector::with_cmp_log();
+
+        for i in 0..usize::from(MAX_CMP_OBSERVATIONS_PER_SITE) + 1 {
+            inspector.store_cmp(CmpOperands {
+                op1: U256::from(i),
+                op2: U256::from(i + 1),
+                pc: 1,
+                address: Address::ZERO,
+                opcode: opcode::EQ,
+            });
+        }
+
+        inspector.store_cmp(CmpOperands {
+            op1: U256::from(123),
+            op2: U256::from(456),
+            pc: 2,
+            address: Address::ZERO,
+            opcode: opcode::EQ,
+        });
+        inspector.store_cmp(CmpOperands {
+            op1: U256::from(789),
+            op2: U256::from(790),
+            pc: 1,
             address: Address::ZERO,
             opcode: opcode::EQ,
         });

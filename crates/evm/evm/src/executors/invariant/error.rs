@@ -228,7 +228,7 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
                 // Tag byte disambiguates `None` from `Some(0)` so configs with
                 // `include_call_depth` toggled don't collide in the fingerprint.
                 bytes.push(u8::from(hit.edge.depth.is_some()));
-                bytes.extend_from_slice(&hit.edge.depth.unwrap_or(0).to_le_bytes());
+                bytes.extend_from_slice(&u64::from(hit.edge.depth.unwrap_or(0)).to_le_bytes());
                 bytes.push(hit.count);
             }
             Some(keccak256(bytes))
