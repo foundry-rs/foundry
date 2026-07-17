@@ -27,8 +27,8 @@ use crate::FoundryNetwork;
 /// - **Ethereum**: Default variant when no special fields are present
 /// - **Op**: When `sourceHash`, `mint`, and `isSystemTx` fields are present, or transaction type is
 ///   `DEPOSIT_TX_TYPE_ID`
-/// - **Tempo**: When `feeToken` or `nonceKey` fields are present, or transaction type is
-///   `TEMPO_TX_TYPE_ID`
+/// - **Tempo**: When any Tempo-specific field ([`TEMPO_REQUEST_KEYS`]) is present, or transaction
+///   type is `TEMPO_TX_TYPE_ID`
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum FoundryTransactionRequest {
@@ -245,23 +245,30 @@ impl AsMut<TransactionRequest> for FoundryTransactionRequest {
     }
 }
 
+/// JSON keys of the Tempo-specific [`TempoTransactionRequest`] extension fields.
+const TEMPO_REQUEST_KEYS: &[&str] = &[
+    "feeToken",
+    "nonceKey",
+    "calls",
+    "keyType",
+    "keyData",
+    "keyId",
+    "aaAuthorizationList",
+    "keyAuthorization",
+    "validBefore",
+    "validAfter",
+    "feePayerSignature",
+];
+
 impl From<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest {
     fn from(tx: WithOtherFields<TransactionRequest>) -> Self {
         if tx.transaction_type == Some(TEMPO_TX_TYPE_ID)
-            || tx.other.contains_key("feeToken")
-            || tx.other.contains_key("nonceKey")
+            || TEMPO_REQUEST_KEYS.iter().any(|key| tx.other.contains_key(*key))
         {
-            let mut tempo_tx_req: TempoTransactionRequest = tx.inner.into();
-            if let Some(fee_token) =
-                tx.other.get_deserialized::<Address>("feeToken").transpose().ok().flatten()
-            {
-                tempo_tx_req.fee_token = Some(fee_token);
-            }
-            if let Some(nonce_key) =
-                tx.other.get_deserialized::<U256>("nonceKey").transpose().ok().flatten()
-            {
-                tempo_tx_req.set_nonce_key(nonce_key);
-            }
+            // Serde round-trip to pick up all Tempo fields carried in `other`.
+            let tempo_tx_req = serde_json::to_value(&tx)
+                .and_then(serde_json::from_value::<TempoTransactionRequest>)
+                .unwrap_or_else(|_| tx.inner.into());
             return Self::Tempo(Box::new(tempo_tx_req));
         }
         #[cfg(feature = "optimism")]
@@ -304,16 +311,14 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                     other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
                 }
                 other.insert("nonceKey".to_string(), serde_json::to_value(tx.nonce_key).unwrap());
-                let first_call = tx.calls.first();
+                // Carry the full batch; `to` stays empty as `build_aa` appends it as a call.
+                other.insert("calls".to_string(), serde_json::to_value(&tx.calls).unwrap());
                 let mut inner = TransactionRequest::default()
                     .with_chain_id(tx.chain_id)
                     .with_nonce(tx.nonce)
                     .with_gas_limit(tx.gas_limit)
                     .with_max_fee_per_gas(tx.max_fee_per_gas)
                     .with_max_priority_fee_per_gas(tx.max_priority_fee_per_gas)
-                    .with_kind(first_call.map(|c| c.to).unwrap_or_default())
-                    .with_value(first_call.map(|c| c.value).unwrap_or_default())
-                    .with_input(first_call.map(|c| c.input.clone()).unwrap_or_default())
                     .with_access_list(tx.access_list);
                 inner.transaction_type = Some(TEMPO_TX_TYPE_ID);
                 WithOtherFields { inner, other }.into()
@@ -592,6 +597,7 @@ impl TransactionBuilder4844 for FoundryTransactionRequest {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use tempo_primitives::{TempoTransaction, transaction::Call};
 
     use super::*;
 
@@ -624,6 +630,57 @@ mod tests {
 
         assert!(matches!(req, FoundryTransactionRequest::Tempo(_)));
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
+    }
+
+    #[test]
+    fn test_routing_tempo_by_calls() {
+        let calls = vec![
+            Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: vec![1].into() },
+            Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: vec![2].into() },
+        ];
+        // Batch request shape: `calls` only, no top-level `to`/`value`/`input`.
+        let tx = TransactionRequest::default()
+            .with_nonce(1)
+            .with_gas_limit(1000000)
+            .with_max_fee_per_gas(1000000)
+            .with_max_priority_fee_per_gas(1000000);
+        let mut other = OtherFields::default();
+        other.insert("calls".to_string(), serde_json::to_value(&calls).unwrap());
+
+        let req: FoundryTransactionRequest = WithOtherFields { inner: tx, other }.into();
+
+        let FoundryTransactionRequest::Tempo(tempo_req) = &req else {
+            panic!("expected Tempo request, got {req:?}");
+        };
+        assert_eq!(tempo_req.calls, calls);
+
+        let Ok(FoundryTypedTx::Tempo(tempo_tx)) = req.build_unsigned() else {
+            panic!("expected Tempo typed tx");
+        };
+        assert_eq!(tempo_tx.calls, calls);
+    }
+
+    #[test]
+    fn test_tempo_typed_tx_request_round_trip_preserves_calls() {
+        let calls = vec![
+            Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: vec![1].into() },
+            Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: vec![2].into() },
+        ];
+        let tempo_tx = TempoTransaction {
+            chain_id: 1,
+            max_fee_per_gas: 1000000,
+            max_priority_fee_per_gas: 1000000,
+            gas_limit: 1000000,
+            calls: calls.clone(),
+            ..Default::default()
+        };
+
+        let req: FoundryTransactionRequest = FoundryTypedTx::Tempo(tempo_tx).into();
+
+        let Ok(FoundryTypedTx::Tempo(rebuilt)) = req.build_unsigned() else {
+            panic!("expected Tempo typed tx");
+        };
+        assert_eq!(rebuilt.calls, calls);
     }
 
     #[test]

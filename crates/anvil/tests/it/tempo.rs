@@ -21,7 +21,9 @@ use alloy_consensus::{BlockHeader, Sealable, Typed2718};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, aliases::U96, keccak256};
+use alloy_primitives::{
+    Address, B256, Bytes, TxKind, U256, address, aliases::U96, bytes, keccak256,
+};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
@@ -1990,6 +1992,141 @@ async fn test_tempo_aa_transaction_basic() {
         recipient_balance_after,
         recipient_balance_before + transfer_amount,
         "Recipient should receive transfer amount"
+    );
+}
+
+/// Builds a node-signed AA batch request: `calls` rides in `other`, no top-level `to`.
+fn tempo_calls_request(from: Address, calls: &[Call]) -> WithOtherFields<TransactionRequest> {
+    let mut tx = WithOtherFields::new(TransactionRequest::default().from(from));
+    tx.inner.transaction_type = Some(0x76);
+    tx.other.insert("calls".to_string(), serde_json::to_value(calls).unwrap());
+    tx
+}
+
+/// Minimal repro: `eth_sendTransaction` silently dropped the `calls` batch of a Tempo
+/// request, mining a single empty call instead.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_with_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+
+    // Data-only calls, as sent by Tempo clients (viem, ...): no top-level `to`/`value`/`input`.
+    let calls = vec![
+        Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: bytes!("dead") },
+        Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: bytes!("beef") },
+    ];
+
+    let tx = tempo_calls_request(from, &calls);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "Tempo AA batch via eth_sendTransaction should succeed");
+
+    // The mined transaction carries the full batch, not a single empty call.
+    let tx_json = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_getTransactionByHash".into(),
+            (receipt.transaction_hash,),
+        )
+        .await
+        .unwrap();
+    let rpc_calls = tx_json["calls"]
+        .as_array()
+        .unwrap_or_else(|| panic!("tempo tx should include calls: {tx_json}"));
+    assert_eq!(rpc_calls.len(), 2, "calls batch was dropped: {rpc_calls:?}");
+    for (rpc_call, call) in rpc_calls.iter().zip(&calls) {
+        assert_eq!(rpc_call["to"], serde_json::to_value(call.to.to().unwrap()).unwrap());
+        assert_eq!(rpc_call["input"], serde_json::to_value(&call.input).unwrap());
+    }
+    assert_eq!(tx_json["type"], "0x76");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_with_calls_executes_batch() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let (from, recipient_a, recipient_b) = (accounts[0], accounts[1], accounts[2]);
+
+    let token = IERC20::new(PATH_USD, &provider);
+    let balance_a_before = token.balanceOf(recipient_a).call().await.unwrap();
+    let balance_b_before = token.balanceOf(recipient_b).call().await.unwrap();
+
+    let (amount_a, amount_b) = (U256::from(100_000), U256::from(200_000));
+    let calls = vec![
+        Call {
+            to: TxKind::Call(PATH_USD),
+            value: U256::ZERO,
+            input: token.transfer(recipient_a, amount_a).calldata().clone(),
+        },
+        Call {
+            to: TxKind::Call(PATH_USD),
+            value: U256::ZERO,
+            input: token.transfer(recipient_b, amount_b).calldata().clone(),
+        },
+    ];
+
+    let tx = tempo_calls_request(from, &calls);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "Tempo AA batch via eth_sendTransaction should succeed");
+
+    assert_eq!(
+        token.balanceOf(recipient_a).call().await.unwrap(),
+        balance_a_before + amount_a,
+        "first call should execute"
+    );
+    assert_eq!(
+        token.balanceOf(recipient_b).call().await.unwrap(),
+        balance_b_before + amount_b,
+        "second call should execute"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_with_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let (from, recipient) = (accounts[0], accounts[1]);
+
+    let token = IERC20::new(PATH_USD, &provider);
+    let calls: Vec<Call> = (1..=2u64)
+        .map(|i| Call {
+            to: TxKind::Call(PATH_USD),
+            value: U256::ZERO,
+            input: token.transfer(recipient, U256::from(i)).calldata().clone(),
+        })
+        .collect();
+
+    let estimate = async |calls: &[Call]| {
+        provider
+            .raw_request::<_, U256>("eth_estimateGas".into(), (tempo_calls_request(from, calls),))
+            .await
+            .unwrap()
+    };
+
+    // Estimation covers the batch: two calls need more gas than one.
+    assert!(estimate(&calls).await > estimate(&calls[..1]).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_with_calls_rejects_value() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let (from, recipient) = (accounts[0], accounts[1]);
+
+    let calls =
+        vec![Call { to: TxKind::Call(recipient), value: U256::ONE, input: Bytes::default() }];
+    let mut tx = tempo_calls_request(from, &calls);
+    tx.inner = tx.inner.with_gas_limit(TIP20_TRANSFER_GAS);
+
+    let err = provider.send_transaction(tx).await.unwrap_err().to_string();
+    assert!(
+        err.contains("native value transfer not allowed"),
+        "Expected 'native value transfer not allowed' error, got: {err}"
     );
 }
 

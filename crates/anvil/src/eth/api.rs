@@ -4255,10 +4255,16 @@ impl EthApi<FoundryNetwork> {
             request.set_from(from);
         }
 
+        // Tempo batch requests keep `to` empty; `build_aa` appends `to` as an extra call.
+        let is_tempo_batch =
+            matches!(&request, FoundryTransactionRequest::Tempo(tx) if !tx.calls.is_empty());
+
         // Fill common fields for all tx types
         request.chain_id().is_none().then(|| request.set_chain_id(self.chain_id()));
         request.nonce().is_none().then(|| request.set_nonce(nonce));
-        request.kind().is_none().then(|| request.set_kind(TxKind::default()));
+        if request.kind().is_none() && !is_tempo_batch {
+            request.set_kind(TxKind::default());
+        }
         if request.gas_limit().is_none() {
             let fallback_gas_limit = {
                 let evm_env = self.backend.evm_env().read();
@@ -4269,8 +4275,13 @@ impl EthApi<FoundryNetwork> {
                     block_gas_limit
                 }
             };
+            // Serialize the full request so Tempo fields (`calls`, ...) reach estimation.
+            let estimate_request = serde_json::to_value(&request)
+                .ok()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_else(|| request.as_ref().clone().into());
             let estimated_gas = self
-                .do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
+                .do_estimate_gas(estimate_request, None, EvmOverrides::default())
                 .await
                 .map(|v| v as u64)
                 .unwrap_or_else(|_| {

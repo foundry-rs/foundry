@@ -200,7 +200,7 @@ use tempo_precompiles::{
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
 };
-use tempo_primitives::TEMPO_TX_TYPE_ID;
+use tempo_primitives::{TEMPO_TX_TYPE_ID, transaction::Call};
 use tempo_revm::{
     TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
     gas_params::tempo_gas_params,
@@ -1635,25 +1635,39 @@ impl<N: Network> Backend<N> {
                 .get_deserialized::<U256>("validAfter")
                 .and_then(|r| r.ok())
                 .map(|v| v.saturating_to::<u64>());
-            (fee_token, nonce_key, valid_before, valid_after)
+            let calls = request
+                .other
+                .get_deserialized::<Vec<Call>>("calls")
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            (fee_token, nonce_key, valid_before, valid_after, calls)
         });
+        let explicit_to = request.to.is_some();
 
         let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block_env);
 
         let ResultAndState { result, state } =
-            if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
-                use tempo_primitives::transaction::Call;
-
+            if let Some((fee_token, nonce_key, valid_before, valid_after, calls)) = tempo_overrides
+            {
                 let base = tx_env;
                 let mut tempo_tx = TempoTxEnv::from(base.clone());
                 tempo_tx.fee_token = fee_token;
 
-                if !nonce_key.is_zero() || valid_before.is_some() || valid_after.is_some() {
+                if !nonce_key.is_zero()
+                    || valid_before.is_some()
+                    || valid_after.is_some()
+                    || !calls.is_empty()
+                {
                     // For gas estimation we don't have a signed tx, so generate a
                     // unique hash for expiring-nonce replay protection.  The nonce
                     // manager needs a non-zero hash; the actual value doesn't matter
                     // because the state is discarded after estimation.
                     let estimation_hash = keccak256(base.data.as_ref());
+                    // The batch is the request's `calls` plus `to`/`value`/`input` as final call.
+                    let mut aa_calls = calls;
+                    if explicit_to || aa_calls.is_empty() {
+                        aa_calls.push(Call { to: base.kind, value: base.value, input: base.data });
+                    }
                     // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
                     // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
                     // Set both so the synthetic env works across hardforks.
@@ -1662,7 +1676,7 @@ impl<N: Network> Backend<N> {
                         nonce_key,
                         valid_before,
                         valid_after,
-                        aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
+                        aa_calls,
                         tx_hash: estimation_hash,
                         expiring_nonce_idx: Some(0),
                         ..Default::default()
