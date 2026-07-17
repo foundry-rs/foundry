@@ -17,6 +17,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `controlled-delegatecall`: Flags `delegatecall` calls whose target is not provably trusted.
   - `encode-packed-collision`: Flags `abi.encodePacked()` calls with multiple dynamic-type arguments (`string`, `bytes`, dynamic arrays) that can produce hash collisions.
   - `enumerable-loop-removal`: Flags `remove` on an EnumerableSet inside a loop that also iterates a set with `at`; swap-and-pop removal corrupts the iteration.
+  - `function-selector-collision`: Flags colliding selectors between a proxy and the statically typed implementation API targeted by its fallback.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
@@ -43,11 +44,15 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
+  - `deprecated-oz-function`: OpenZeppelin deprecated `SafeERC20.safeApprove` (use `safeIncreaseAllowance` / `safeDecreaseAllowance`) and `AccessControl._setupRole` (use `_grantRole`).
+  - `empty-block`: Flags regular functions with an empty body; constructors, `receive`/`fallback`, `virtual` functions, functions with modifiers and value-less `payable` functions are exempt.
   - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
+  - `inconsistent-type-names`: Flags shorthand `uint`/`int` declarations when the same contract also uses `uint256`/`int256`.
   - `missing-events-access-control`: Access control changes should emit events.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
   - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
+  - `solmate-safe-transfer-lib`: solmate's released `SafeTransferLib` does not check that the token has code, so token operations against a token-less address succeed silently.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone.
@@ -68,6 +73,14 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
+  - `todo-comment`: Detects unresolved `TODO` and `FIXME` markers in comments.
+  - `unused-error`: Custom error declarations that are never referenced should be removed.
+  - `literal-instead-of-constant`: A literal value repeated inside a contract should be a named constant.
+  - `function-init-state`: State variable initializers run before the constructor; depending on a non-pure function or another state variable there observes partial state.
+  - `internal-function-used-once`: Internal functions referenced exactly once can usually be inlined into their caller.
+  - `cyclomatic-complexity`: functions with a cyclomatic complexity above 11 should be split into smaller functions.
+  - `incorrect-using-for`: `using ... for` directives naming a library with no function applicable to the type attach nothing and should be fixed or removed.
+  - `modifier-used-only-once`: Modifiers invoked by exactly one function can usually be inlined as checks in that function.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.

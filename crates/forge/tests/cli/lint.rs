@@ -28,7 +28,7 @@ contract ContractWithLints {
     function unoptimizedHashGas(uint256 a, uint256 b) public view {
         keccak256(abi.encodePacked(a, b));
     }
-    function FUNCTION_MIXED_CASE_INFO() public {}
+    function FUNCTION_MIXED_CASE_INFO() public { VARIABLE_MIXED_CASE_INFO = 1; }
 }
 "#;
 
@@ -40,7 +40,7 @@ pragma solidity ^0.8.0;
 import { ContractWithLints } from "./ContractWithLints.sol";
 
 contract OtherContractWithLints {
-    function functionMIXEDCaseInfo() public {}
+    function functionMIXEDCaseInfo() public { uint256 x = 1; }
 }
 "#;
 
@@ -73,7 +73,7 @@ pragma solidity ^0.8.0;
 import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
 
 contract DefaultInfoLints {
-    function BAD_CASE() public {}
+    function BAD_CASE() public { uint256 x = 1; }
 }
 "#;
 
@@ -203,6 +203,22 @@ interface IToken {
 }
 "#;
 
+forgetest!(lint_does_not_write_artifacts, |prj, cmd| {
+    use std::fs;
+
+    prj.add_source("LintTarget", "contract LintTarget {}");
+    let artifact = prj.root().join("out/LintTarget.sol/LintTarget.json");
+
+    cmd.arg("lint").assert_success();
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.forge_fuse().arg("lint").assert_success();
+    assert_eq!(fs::read(artifact).unwrap(), b"sentinel");
+});
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
@@ -248,7 +264,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -280,7 +296,7 @@ forgetest!(default_lint_severity_includes_info, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:8:14
   │
-8 │     function BAD_CASE() public {}
+8 │     function BAD_CASE() public { uint256 x = 1; }
   │              ━━━━━━━━ help: consider using: `badCase`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -656,7 +672,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -924,9 +940,8 @@ Warning (2018): Function state mutability can be restricted to pure
     ]]);
 });
 
-// `deny = notes` + an info-level lint forces the linter to return Err, exercising the same
-// failure-notice path an unhandled solar edge case would take.
-forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
+// Denied lint diagnostics are expected failures and must not be presented as internal errors.
+forgetest!(build_denied_lints_do_not_emit_internal_failure_notice, |prj, cmd| {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
@@ -943,19 +958,55 @@ note[mixed-case-variable]: mutable variables should use mixedCase
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-
-note: internal lint engine failure (compilation itself succeeded).
-note: please file a bug report at
-      https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml
-      and attach the full output above.
-help: rerun with `--no-lint` to skip linting for this build, or consider temporarily
-      disabling forge lint on build:
-      https://getfoundry.sh/forge/linting#disable-linting-on-build
-
 Error: post-build lint step failed
 
 Context:
 - aborting due to 1 linter note(s)
+
+"#]]);
+});
+
+// Solar currently rejects enum `@param` tags while solc accepts them. This recoverable frontend
+// diagnostic must not prevent type-dependent late lints from running.
+forgetest!(build_lints_after_recoverable_solar_diagnostic, |prj, cmd| {
+    prj.add_source(
+        "RecoverableSolarDiagnostic",
+        r#"
+/// @param First The first choice.
+enum Choice { First }
+
+contract RecoverableSolarDiagnostic {
+    function chainId() public view returns (uint64) {
+        return uint64(block.chainid);
+    }
+}
+"#,
+    );
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Med];
+        config.deny = DenyLevel::Warnings;
+    });
+
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  [FILE]:9:16
+  │
+9 │         return uint64(block.chainid);
+  │                ━━━━━━━━━━━━━━━━━━━━━
+  │
+  ├ note: consider disabling this lint if you're certain the cast is safe
+  │ [..]
+  │       // casting to 'uint64' is safe because [explain why]
+  │       // forge-lint: disable-next-line(unsafe-typecast)
+  │ [..]
+  │ [..]
+  ╰ help: https://getfoundry.sh/forge/linting/unsafe-typecast
+
+Error: post-build lint step failed
+
+Context:
+- aborting due to 1 linter warning(s)
 
 "#]]);
 });
@@ -1077,8 +1128,11 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     });
 
     // should produce clean JSON without ANSI escape sequences (for the url nor the snippets)
-    cmd.arg("lint").arg("--json").assert_json_stderr(true,
-        str![[r#"
+    cmd.arg("lint")
+        .arg("--json")
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"
 {
     "$message_type": "diagnostic",
     "message": "wrap modifier logic to reduce code size",
@@ -1189,7 +1243,56 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
-);
+        )
+        .stderr_eq("");
+});
+
+forgetest!(lint_json_compiler_error, |prj, cmd| {
+    prj.add_source(
+        "Broken",
+        r#"pragma solidity ^0.8.30;
+
+contract Broken {
+    function f() public {
+        uint256 value = missing;
+    }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--json"])
+        .assert_json_stdout_with_status(false, str![[r#"
+{
+  "$message_type": "diagnostic",
+  "message": "unresolved symbol `missing`",
+  "code": null,
+  "level": "error",
+  "spans": [
+    {
+      "file_name": "src/Broken.sol",
+      "byte_start": 140,
+      "byte_end": 147,
+      "line_start": 6,
+      "line_end": 6,
+      "column_start": 25,
+      "column_end": 32,
+      "is_primary": true,
+      "text": [
+        {
+          "text": "        uint256 value = missing;",
+          "highlight_start": 25,
+          "highlight_end": 32
+        }
+      ],
+      "label": null,
+      "suggested_replacement": null
+    }
+  ],
+  "children": [],
+  "rendered": "error: unresolved symbol `missing`\n  ╭▸ src/Broken.sol:6:25\n  │\n6 │         uint256 value = missing;\n  ╰╴                        ━━━━━━━\n\n"
+}
+"#]])
+        .stderr_eq("");
 });
 
 forgetest!(can_fail_on_lints, |prj, cmd| {

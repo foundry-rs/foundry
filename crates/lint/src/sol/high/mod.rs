@@ -5,6 +5,7 @@ mod arbitrary_send_eth;
 mod controlled_delegatecall;
 mod encode_packed_collision;
 mod enumerable_loop_removal;
+mod function_selector_collision;
 mod incorrect_exp;
 mod incorrect_shift;
 mod reentrancy;
@@ -17,6 +18,7 @@ use arbitrary_send_eth::ARBITRARY_SEND_ETH;
 use controlled_delegatecall::CONTROLLED_DELEGATECALL;
 use encode_packed_collision::ENCODE_PACKED_COLLISION;
 use enumerable_loop_removal::ENUMERABLE_LOOP_REMOVAL;
+use function_selector_collision::FUNCTION_SELECTOR_COLLISION;
 use incorrect_exp::INCORRECT_EXP;
 use incorrect_shift::INCORRECT_SHIFT;
 use reentrancy::{REENTRANCY_ETH, REENTRANCY_NO_ETH};
@@ -30,6 +32,7 @@ register_lints!(
     (ControlledDelegatecall, late, (CONTROLLED_DELEGATECALL)),
     (EncodedPackedCollision, late, (ENCODE_PACKED_COLLISION)),
     (EnumerableLoopRemoval, late, (ENUMERABLE_LOOP_REMOVAL)),
+    (FunctionSelectorCollision, late, (FUNCTION_SELECTOR_COLLISION)),
     (IncorrectExp, late, (INCORRECT_EXP)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
     (ReentrancyEth, late, (REENTRANCY_ETH, REENTRANCY_NO_ETH)),

@@ -22,7 +22,7 @@ use foundry_evm_core::{
     },
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     Inspector,
@@ -46,6 +46,8 @@ use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
 };
+
+use crate::executors::{EarlyExit, EvmExecutionCancellation};
 
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -360,7 +362,16 @@ pub struct InspectorStack<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub inner: InspectorStackInner,
 }
 
-/// All used inpectors besides [Cheatcodes].
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct EarlyExitTestGate {
+    entered: std::sync::mpsc::Sender<()>,
+    release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+    target_pc: usize,
+    notified: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]
@@ -411,6 +422,14 @@ pub struct InspectorStackInner {
     /// Per-inspector random seed mixed into `--batch` CREATE2 salts, ensuring re-runs
     /// at identical on-chain state still produce distinct salts. Lazily initialized.
     pub batch_rewrite_process_salt: Option<u64>,
+    /// Shared cancellation state for interruptible EVM execution.
+    execution_cancellation: Option<EvmExecutionCancellation>,
+    /// Amortizes deadline checks in the opcode hot path.
+    cancellation_poll_counter: u8,
+    /// Whether this inspector halted the current execution due to cancellation.
+    execution_cancelled: bool,
+    #[cfg(test)]
+    early_exit_test_gate: Option<EarlyExitTestGate>,
     static_step_dispatch: OpcodeStepDispatch,
     has_static_step_end_inspectors: bool,
 }
@@ -520,6 +539,39 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub fn set_analysis(&mut self, analysis: Analysis) {
         self.analysis = Some(analysis);
+    }
+
+    /// Set the cancellation state checked during EVM execution.
+    #[inline]
+    pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
+        self.execution_cancellation = Some(EvmExecutionCancellation::early_exit(early_exit));
+    }
+
+    /// Set the complete cancellation state checked during EVM execution.
+    #[inline]
+    pub(crate) fn set_execution_cancellation(&mut self, cancellation: EvmExecutionCancellation) {
+        self.execution_cancellation = Some(cancellation);
+    }
+
+    /// Returns whether this inspector halted execution due to cancellation.
+    #[inline]
+    pub(crate) const fn execution_cancelled(&self) -> bool {
+        self.inner.execution_cancelled
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_early_exit_test_gate(
+        &mut self,
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+        target_pc: usize,
+    ) {
+        self.early_exit_test_gate = Some(EarlyExitTestGate {
+            entered,
+            release: Arc::new(std::sync::Mutex::new(release)),
+            target_pc,
+            notified: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
     }
 
     /// Sets the block for the relevant inspectors.
@@ -764,14 +816,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer, &mut self.revert_diag],
             |inspector| {
-                let previous_outcome = outcome.clone();
+                let previous_output = outcome.output().clone();
                 inspector.call_end(ecx, inputs, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
+                        && outcome.output() != &previous_output);
                 different.then_some(())
             },
         );
@@ -793,14 +845,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let previous_outcome = outcome.clone();
+                let previous_output = outcome.output().clone();
                 inspector.create_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
+                        && outcome.output() != &previous_output);
                 different.then_some(())
             },
         );
@@ -1055,6 +1107,31 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        #[cfg(test)]
+        if interpreter.bytecode.opcode() == op::JUMPDEST
+            && let Some(gate) = &self.inner.early_exit_test_gate
+            && interpreter.bytecode.pc() == gate.target_pc
+            && !gate.notified.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            let _ = gate.entered.send(());
+            let _ = gate
+                .release
+                .lock()
+                .expect("early-exit test gate lock poisoned")
+                .recv_timeout(std::time::Duration::from_secs(1));
+        }
+
+        if let Some(cancellation) = &self.inner.execution_cancellation {
+            let poll_deadline = self.inner.cancellation_poll_counter == 0;
+            self.inner.cancellation_poll_counter =
+                self.inner.cancellation_poll_counter.wrapping_add(1);
+            if cancellation.should_stop(poll_deadline) {
+                self.inner.execution_cancelled = true;
+                interpreter.halt(InstructionResult::Stop);
+                return;
+            }
+        }
+
         match self.static_step_dispatch {
             OpcodeStepDispatch::None => {}
             OpcodeStepDispatch::FuzzerOnly => {
@@ -1340,6 +1417,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             },
         );
 
+        // The tracer records call inputs before cheatcodes apply caller overrides such as pranks
+        // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
+        // can be synchronized with the inputs that are actually executed.
+        let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
+        let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.
             if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
@@ -1361,9 +1443,27 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 }
             }
 
-            if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
-                return Some(output);
-            }
+            cheatcode_outcome = cheatcodes.call_with_executor(ecx, call, self.inner);
+        }
+
+        if let Some(trace_idx) = trace_idx
+            && let Some(tracer) = self.tracer.as_deref_mut()
+        {
+            let caller = match call.scheme {
+                CallScheme::DelegateCall | CallScheme::CallCode => call.target_address,
+                CallScheme::Call | CallScheme::StaticCall => call.caller,
+            };
+            let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
+            debug_assert_eq!(node.trace.depth, ecx.journal().depth());
+            node.trace.caller = caller;
+        }
+
+        if let Some(output) = cheatcode_outcome {
+            return Some(output);
+        }
+
+        if let Some(outcome) = handle_arbitrum_system_call::<FEN>(ecx, call) {
+            return Some(outcome);
         }
 
         if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
@@ -1451,9 +1551,27 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.line_coverage, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.line_coverage],
             |inspector| inspector.create(ecx, create).map(Some),
         );
+
+        let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
+        let mut cheatcode_outcome = None;
+        if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
+            cheatcode_outcome = cheatcodes.create(ecx, create);
+        }
+
+        if let Some(trace_idx) = trace_idx
+            && let Some(tracer) = self.tracer.as_deref_mut()
+        {
+            let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
+            debug_assert_eq!(node.trace.depth, ecx.journal().depth());
+            node.trace.caller = create.caller();
+        }
+
+        if let Some(output) = cheatcode_outcome {
+            return Some(output);
+        }
 
         // If frame_start detected an invalid CREATE2 deployer, return the error here
         // (after sub-inspectors have been notified) so tracing stays balanced.
@@ -1528,6 +1646,58 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 inspector, contract, target, value,
             )
         });
+    }
+}
+
+fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    call: &CallInputs,
+) -> Option<CallOutcome> {
+    if call.target_address != arbitrum::ARB_SYS_ADDRESS
+        || call.bytecode_address != arbitrum::ARB_SYS_ADDRESS
+        || !arbitrum::is_arbitrum_chain(ecx.cfg().chain_id)
+    {
+        return None;
+    }
+
+    let input = call.input.bytes(ecx);
+    if input.get(..4) != Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR) {
+        return None;
+    }
+
+    let block_number = ecx.db().active_fork_block_number()?;
+    let Some((gas_cost, output)) = arbitrum::arb_block_number_call(call.gas_limit, block_number)
+    else {
+        return Some(arbitrum_call_outcome(
+            call,
+            InstructionResult::PrecompileOOG,
+            0,
+            Bytes::new(),
+        ));
+    };
+
+    Some(arbitrum_call_outcome(call, InstructionResult::Return, gas_cost, output))
+}
+
+fn arbitrum_call_outcome(
+    call: &CallInputs,
+    result: InstructionResult,
+    gas_used: u64,
+    output: Bytes,
+) -> CallOutcome {
+    let mut gas = Gas::new(call.gas_limit);
+    if result.is_ok() {
+        let _ = gas.record_regular_cost(gas_used);
+    } else {
+        gas.spend_all();
+    }
+
+    CallOutcome {
+        result: InterpreterResult { result, output, gas },
+        memory_offset: call.return_memory_offset.clone(),
+        was_precompile_called: true,
+        precompile_call_logs: vec![],
+        charged_new_account_state_gas: call.charged_new_account_state_gas,
     }
 }
 

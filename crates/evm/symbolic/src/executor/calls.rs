@@ -638,9 +638,6 @@ impl SymbolicExecutor {
             Some(true) => Ok((state.constraints.clone(), true)),
             Some(false) => Ok((state.constraints.clone(), false)),
             None => {
-                if condition.contains_gasleft() {
-                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-                }
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
                 let sat = self.solver.is_sat(&mut self.cx, &constraints)?;
@@ -1027,6 +1024,7 @@ impl SymbolicExecutor {
             let mut parent = state.clone();
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
+            parent.inherit_branch_target_progress(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)

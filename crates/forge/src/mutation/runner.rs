@@ -34,7 +34,7 @@ use tempfile::TempDir;
 
 use crate::{
     MultiContractRunnerBuilder,
-    cmd::test::FilterArgs,
+    cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         SurvivedSpans,
         mutant::{Mutant, MutationResult},
@@ -175,6 +175,7 @@ pub fn run_mutations_parallel_with_progress(
     progress: Option<MutationProgress>,
     silent: bool,
     filter_args: FilterArgs,
+    rerun_failures: Option<Vec<RerunFailure>>,
     selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
     cancellation_requested: Arc<AtomicBool>,
@@ -221,6 +222,14 @@ pub fn run_mutations_parallel_with_progress(
 
     workspace::ensure_safe_relative_path(&source_relative, "source", &source_abs)?;
 
+    // `ProjectPathsConfig` canonicalizes its root. Create mutant workspaces beneath the canonical
+    // temp root as well so explicit compiler inputs, project-local remappings, and the project
+    // root all use the same path spelling (notably `/private/var` rather than `/var` on macOS).
+    let temp_root = std::env::temp_dir();
+    let temp_root = dunce::canonicalize(&temp_root).map_err(|err| {
+        eyre::eyre!("failed to canonicalize mutation temp root {}: {err}", temp_root.display())
+    })?;
+
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
@@ -233,6 +242,7 @@ pub fn run_mutations_parallel_with_progress(
         Arc::new(Mutex::new(Vec::with_capacity(total)));
 
     let filter_args = Arc::new(filter_args);
+    let rerun_failures = Arc::new(rerun_failures);
 
     pool.install(|| {
         mutants.into_par_iter().for_each(|mutant| {
@@ -251,7 +261,9 @@ pub fn run_mutations_parallel_with_progress(
                     &config,
                     &evm_opts,
                     &shared_state,
+                    &temp_root,
                     &filter_args,
+                    &rerun_failures,
                     &selected_sources_relative,
                     isolate,
                 )
@@ -328,7 +340,9 @@ fn test_single_mutant_isolated(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
     shared_state: &Arc<SharedMutationState>,
+    temp_root: &Path,
     filter_args: &Arc<FilterArgs>,
+    rerun_failures: &Arc<Option<Vec<RerunFailure>>>,
     selected_sources_relative: &Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> MutantTestResult {
@@ -358,10 +372,11 @@ fn test_single_mutant_isolated(
     }
 
     // Create isolated workspace using TempDir for automatic cleanup on drop
-    let temp_dir = match TempDir::with_prefix("forge_mutation_") {
+    let temp_dir = match TempDir::with_prefix_in("forge_mutation_", temp_root) {
         Ok(dir) => dir,
         Err(e) => {
-            let _ = sh_eprintln!("Failed to create temp directory: {}", e);
+            let _ =
+                sh_eprintln!("Failed to create temp directory in {}: {}", temp_root.display(), e);
             return MutantTestResult { mutant, result: MutationResult::Invalid };
         }
     };
@@ -406,6 +421,7 @@ fn test_single_mutant_isolated(
             temp_dir,
             shared_state,
             filter_args.clone(),
+            rerun_failures.clone(),
             selected_sources_relative.clone(),
             isolate,
         ),
@@ -414,6 +430,7 @@ fn test_single_mutant_isolated(
                 &temp_config,
                 evm_opts,
                 filter_args,
+                rerun_failures.as_ref().as_deref(),
                 selected_sources_relative,
                 isolate,
             ) {
@@ -456,6 +473,7 @@ fn run_compile_and_test_with_timeout(
     temp_dir: TempDir,
     shared_state: &Arc<SharedMutationState>,
     filter_args: Arc<FilterArgs>,
+    rerun_failures: Arc<Option<Vec<RerunFailure>>>,
     selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> MutationResult {
@@ -466,6 +484,7 @@ fn run_compile_and_test_with_timeout(
     // function on timeout.
     let cfg = Arc::clone(&config);
     let filter_for_worker = Arc::clone(&filter_args);
+    let rerun_for_worker = Arc::clone(&rerun_failures);
     let selected_sources_for_worker = Arc::clone(&selected_sources_relative);
 
     let spawn_result = std::thread::Builder::new()
@@ -477,6 +496,7 @@ fn run_compile_and_test_with_timeout(
                     &cfg,
                     &opts,
                     &filter_for_worker,
+                    rerun_for_worker.as_ref().as_deref(),
                     &selected_sources_for_worker,
                     isolate,
                 )
@@ -563,37 +583,7 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
 /// `foundry.toml`, so CLI overrides and runtime normalization stay identical
 /// between the baseline run and every mutant run.
 fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
-    let mut temp_config = config.clone();
-    temp_config.root = temp_path.to_path_buf();
-    temp_config.src = rebase_project_path(&config.root, temp_path, &config.src);
-    temp_config.test = rebase_project_path(&config.root, temp_path, &config.test);
-    temp_config.script = rebase_project_path(&config.root, temp_path, &config.script);
-    temp_config.out = rebase_project_path(&config.root, temp_path, &config.out);
-    temp_config.cache_path = rebase_project_path(&config.root, temp_path, &config.cache_path);
-    temp_config.snapshots = rebase_project_path(&config.root, temp_path, &config.snapshots);
-    temp_config.broadcast = rebase_project_path(&config.root, temp_path, &config.broadcast);
-    temp_config.mutation_dir = rebase_project_path(&config.root, temp_path, &config.mutation_dir);
-    temp_config.libs =
-        config.libs.iter().map(|lib| rebase_project_path(&config.root, temp_path, lib)).collect();
-    temp_config.include_paths = config
-        .include_paths
-        .iter()
-        .map(|path| rebase_project_path(&config.root, temp_path, path))
-        .collect();
-    temp_config.allow_paths = config
-        .allow_paths
-        .iter()
-        .map(|path| rebase_project_path(&config.root, temp_path, path))
-        .collect();
-
-    if let Some(path) = &config.fuzz.failure_persist_dir {
-        temp_config.fuzz.failure_persist_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
-    }
-    if let Some(path) = &config.invariant.failure_persist_dir {
-        temp_config.invariant.failure_persist_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
-    }
+    let mut temp_config = workspace::rebase_config_paths(config, temp_path);
 
     // Propagate the per-mutant timeout into the inner fuzz/invariant harness
     // so the hot test loop itself bails out at the deadline. Without this the
@@ -614,11 +604,6 @@ fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
     temp_config
 }
 
-fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
-    let rel = workspace::relative_to_root(root, path);
-    if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
-}
-
 /// Compile the project and run tests, returning true if any test failed (mutant killed).
 ///
 /// Dispatches to the correct network type based on `evm_opts.networks`.
@@ -626,6 +611,7 @@ fn compile_and_test(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
+    rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
     isolate: bool,
 ) -> Result<bool> {
@@ -634,6 +620,7 @@ fn compile_and_test(
             config,
             evm_opts,
             filter_args,
+            rerun_failures,
             selected_sources_relative,
             isolate,
         )
@@ -644,6 +631,7 @@ fn compile_and_test(
                 config,
                 evm_opts,
                 filter_args,
+                rerun_failures,
                 selected_sources_relative,
                 isolate,
             );
@@ -652,6 +640,7 @@ fn compile_and_test(
             config,
             evm_opts,
             filter_args,
+            rerun_failures,
             selected_sources_relative,
             isolate,
         )
@@ -662,6 +651,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
+    rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
     isolate: bool,
 ) -> Result<bool> {
@@ -683,7 +673,10 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     // `--match-path`, ... are honored against the temp workspace's paths
     // (not the original project root). Without this the mutant runs would
     // ignore user filters and execute a different test set than the baseline.
-    let filter = filter_args.clone().merge_with_config(config);
+    let mut filter = filter_args.clone().merge_with_config(config);
+    if let Some(rerun_failures) = rerun_failures {
+        filter.set_rerun_failures(rerun_failures.to_vec());
+    }
 
     // Run tests - need a multi-threaded Tokio runtime since test() uses rayon internally
     // with par_iter, and rayon workers need tokio handle access

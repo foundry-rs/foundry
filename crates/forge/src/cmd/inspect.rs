@@ -13,7 +13,7 @@ use foundry_compilers::{
         StorageLayout,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection, OutputSelection,
         },
     },
     solc::SolcLanguage,
@@ -54,6 +54,9 @@ impl InspectArgs {
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
+        let user_extra_output = !build.compiler.extra_output.is_empty()
+            || !build.compiler.extra_output_files.is_empty();
+
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
         if !field.can_skip_field() && !cos.iter().any(|selected| field == *selected) {
@@ -77,7 +80,15 @@ impl InspectArgs {
         };
 
         // Build the project
-        let project = modified_build_args.project()?;
+        let mut project = modified_build_args.project()?;
+        if !user_extra_output
+            && !project.build_info
+            && let Some(selection) = field.inspect_output_selection()
+        {
+            project.no_artifacts = true;
+            project
+                .update_output_selection(|output_selection| *output_selection = selection.clone());
+        }
         let target_path = find_target_path(&project, &contract)?;
         if field == ContractArtifactField::Linearization && !is_solidity_source(&target_path) {
             eyre::bail!(
@@ -499,9 +510,8 @@ fn print_linearization(
     let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
     if compiler.sess().dcx.has_errors().is_err() {
         eyre::bail!("{diags}");
-    } else {
-        let _ = sh_eprint!("{diags}");
     }
+    let _ = sh_eprint!("{diags}");
     if !lowered {
         eyre::bail!(
             "unable to inspect linearization: failed to lower Solidity ASTs for `{}`",
@@ -731,6 +741,21 @@ impl ContractArtifactField {
                 | Self::Libraries
                 | Self::Linearization
         )
+    }
+
+    fn inspect_output_selection(&self) -> Option<OutputSelection> {
+        match self {
+            Self::Artifact
+            | Self::Bytecode
+            | Self::DeployedBytecode
+            | Self::StandardJson
+            | Self::Libraries
+            | Self::Linearization => None,
+            _ => {
+                let selection: ContractOutputSelection = (*self).try_into().ok()?;
+                Some(OutputSelection::common_output_selection([selection.to_string()]))
+            }
+        }
     }
 }
 

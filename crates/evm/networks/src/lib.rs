@@ -10,20 +10,25 @@ use alloy_chains::{
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
 use alloy_eips::eip1559::BaseFeeParams;
-use alloy_evm::precompiles::PrecompilesMap;
-use alloy_primitives::{Address, ChainId, map::AddressHashMap};
+use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+use revm::precompile::{
+    Precompile as RevmPrecompile,
+    secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS,
-    RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
-    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
-    VALIDATOR_CONFIG_V2_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CURRENT_COMMITTEE_ADDRESS,
+    NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
+    STABLECOIN_DEX_ADDRESS, STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
+pub mod arbitrum;
 pub mod celo;
 
 #[cfg(feature = "optimism")]
@@ -43,7 +48,36 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("TIP20ChannelReserve", TIP20_CHANNEL_RESERVE_ADDRESS),
     ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
     ("StorageCredits", STORAGE_CREDITS_ADDRESS),
+    ("CurrentCommittee", CURRENT_COMMITTEE_ADDRESS),
 ];
+
+/// BSC secp256r1 precompile address introduced by the Haber hardfork.
+const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
+
+const BSC_MAINNET_CHAIN_ID: u64 = 56;
+const BSC_TESTNET_CHAIN_ID: u64 = 97;
+const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
+const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
+const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
+const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
+
+/// Returns the BSC P256 precompile for the given timestamp. The outer option distinguishes BSC
+/// chains from unrelated chains, while the inner option disables P256 before Haber.
+const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option<RevmPrecompile>> {
+    let (haber_timestamp, osaka_timestamp) = match chain_id {
+        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
+        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
+        _ => return None,
+    };
+
+    if timestamp < haber_timestamp {
+        Some(None)
+    } else if timestamp < osaka_timestamp {
+        Some(Some(P256VERIFY))
+    } else {
+        Some(Some(P256VERIFY_OSAKA))
+    }
+}
 
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
@@ -60,11 +94,14 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     TIP20_CHANNEL_RESERVE_ADDRESS,
     RECEIVE_POLICY_GUARD_ADDRESS,
     STORAGE_CREDITS_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS,
 ];
 
 /// Returns whether a well-known Tempo precompile address is active at `hardfork`.
 pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
-    if address == TIP20_CHANNEL_RESERVE_ADDRESS {
+    if address == CURRENT_COMMITTEE_ADDRESS {
+        hardfork.is_t8()
+    } else if address == TIP20_CHANNEL_RESERVE_ADDRESS {
         hardfork.is_t5()
     } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
         hardfork.is_t6()
@@ -323,6 +360,23 @@ impl NetworkConfigs {
         }
     }
 
+    /// Injects chain-specific precompiles active at the given timestamp.
+    pub fn inject_chain_precompiles(
+        self,
+        precompiles: &mut PrecompilesMap,
+        chain_id: ChainId,
+        timestamp: u64,
+    ) {
+        let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
+        precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
+            p256verify.map(|p256verify| {
+                DynPrecompile::new(p256verify.id().clone(), move |input| {
+                    p256verify.execute(input.data, input.gas, input.reservoir)
+                })
+            })
+        });
+    }
+
     /// Returns precompiles label for configured networks, to be used in traces.
     pub fn precompiles_label(
         self,
@@ -390,6 +444,10 @@ impl From<NetworkVariant> for NetworkConfigs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use revm::precompile::{
+        Precompiles,
+        secp256r1::{P256VERIFY_BASE_GAS_FEE, P256VERIFY_BASE_GAS_FEE_OSAKA},
+    };
 
     // --- Equivalence: new flag == legacy flag ---
 
@@ -401,6 +459,52 @@ mod tests {
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
         assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
         assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
+    }
+
+    fn bsc_p256_gas_used(chain_id: ChainId, timestamp: u64) -> Option<u64> {
+        bsc_p256_precompile(chain_id, timestamp)
+            .flatten()
+            .map(|precompile| precompile.execute(&[], u64::MAX, 0).unwrap().gas_used)
+    }
+
+    fn assert_bsc_p256_boundaries(chain_id: ChainId, haber_timestamp: u64, osaka_timestamp: u64) {
+        assert!(matches!(bsc_p256_precompile(chain_id, haber_timestamp - 1), Some(None)));
+        assert_eq!(bsc_p256_gas_used(chain_id, haber_timestamp), Some(P256VERIFY_BASE_GAS_FEE));
+        assert_eq!(bsc_p256_gas_used(chain_id, osaka_timestamp - 1), Some(P256VERIFY_BASE_GAS_FEE));
+        assert_eq!(
+            bsc_p256_gas_used(chain_id, osaka_timestamp),
+            Some(P256VERIFY_BASE_GAS_FEE_OSAKA)
+        );
+    }
+
+    #[test]
+    fn selects_bsc_p256_at_mainnet_boundaries() {
+        assert_bsc_p256_boundaries(
+            BSC_MAINNET_CHAIN_ID,
+            BSC_MAINNET_HABER_TIMESTAMP,
+            BSC_MAINNET_OSAKA_TIMESTAMP,
+        );
+    }
+
+    #[test]
+    fn selects_bsc_p256_at_testnet_boundaries() {
+        assert_bsc_p256_boundaries(
+            BSC_TESTNET_CHAIN_ID,
+            BSC_TESTNET_HABER_TIMESTAMP,
+            BSC_TESTNET_OSAKA_TIMESTAMP,
+        );
+    }
+
+    #[test]
+    fn removes_bsc_p256_before_haber() {
+        let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
+        assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
+        NetworkConfigs::default().inject_chain_precompiles(
+            &mut precompiles,
+            BSC_MAINNET_CHAIN_ID,
+            BSC_MAINNET_HABER_TIMESTAMP - 1,
+        );
+        assert!(precompiles.get(&BSC_P256_ADDRESS).is_none());
     }
 
     #[test]
@@ -448,6 +552,17 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
         assert!(!cfg.precompiles(Some(TempoHardfork::T6)).contains_key("StorageCredits"));
         assert!(cfg.precompiles(Some(TempoHardfork::T7)).contains_key("StorageCredits"));
+    }
+
+    #[test]
+    fn current_committee_precompile_activates_at_t8() {
+        assert!(!is_tempo_precompile_active_at(CURRENT_COMMITTEE_ADDRESS, TempoHardfork::T7));
+        assert!(is_tempo_precompile_active_at(CURRENT_COMMITTEE_ADDRESS, TempoHardfork::T8));
+        assert!(TEMPO_PRECOMPILE_ADDRESSES.contains(&CURRENT_COMMITTEE_ADDRESS));
+
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
+        assert!(!cfg.precompiles(Some(TempoHardfork::T7)).contains_key("CurrentCommittee"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T8)).contains_key("CurrentCommittee"));
     }
 
     // --- resolved() / active_network_name ---

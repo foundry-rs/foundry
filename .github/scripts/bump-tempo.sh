@@ -14,6 +14,7 @@ set -euo pipefail
 #   Sets outputs in $GITHUB_OUTPUT if it exists:
 #     - current_rev: The current tempo revision
 #     - latest_rev: The latest tempo revision on main
+#     - latest_rev_short: The short latest tempo revision
 #     - updated: "true" if dependencies were updated, "false" otherwise
 #     - changelog: Path to changelog file (if updated)
 
@@ -49,7 +50,7 @@ generate_changelog() {
   local commits
   # shellcheck disable=SC2016 # Single quotes intentional for jq expression
   commits=$(gh api "repos/tempoxyz/tempo/compare/${old_rev}...${new_rev}" \
-    --jq '.commits[] | "- [`\(.sha[0:7])`](https://github.com/tempoxyz/tempo/commit/\(.sha)) \(.commit.message | split("\n")[0])"')
+    --jq '.commits[] | "- [`\(.sha[0:7])`](https://github.com/tempoxyz/tempo/commit/\(.sha)) \(.commit.message | split("\n")[0] | gsub("#(?<number>[0-9]+)"; "[#\(.number)](https://github.com/tempoxyz/tempo/issues/\(.number))"))"')
 
   {
     echo "## Tempo Dependency Updates"
@@ -107,6 +108,7 @@ main() {
   LATEST_REV=$(get_latest_rev)
   echo "Latest revision:  $LATEST_REV"
   set_output "latest_rev" "$LATEST_REV"
+  set_output "latest_rev_short" "${LATEST_REV:0:7}"
 
   if [[ "$CURRENT_REV" == "$LATEST_REV" ]]; then
     echo ""

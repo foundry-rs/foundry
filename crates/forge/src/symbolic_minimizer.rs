@@ -59,6 +59,7 @@ pub(crate) struct MinimizedSequence {
 }
 
 impl MinimizedSequence {
+    #[cfg(test)]
     pub(crate) fn changed(&self) -> bool {
         self.original_calls != self.minimized_calls
     }
@@ -787,6 +788,11 @@ fn minimize_uint(
         return true;
     }
 
+    let one = U256::from(1);
+    if current > one && accept_candidate(value, DynSolValue::Uint(one, bits), try_value) {
+        return true;
+    }
+
     let bit_limit = bits.min(256);
     for bit in (0..bit_limit).rev() {
         let mask = U256::from(1) << bit;
@@ -1254,6 +1260,15 @@ fn minimize_u256_pair_delta_candidates(
     current_right: U256,
     try_candidate: &mut impl FnMut(U256, U256) -> bool,
 ) -> bool {
+    let one = U256::from(1);
+    if (current_left, current_right) != (one, one)
+        && !current_left.is_zero()
+        && !current_right.is_zero()
+        && try_candidate(one, one)
+    {
+        return true;
+    }
+
     match current_left.cmp(&current_right) {
         std::cmp::Ordering::Equal => {
             !current_left.is_zero() && try_candidate(U256::ZERO, U256::ZERO)
@@ -1526,6 +1541,45 @@ mod tests {
             vec![DynSolValue::Uint(U256::from(43), 8)]
         );
         assert!(minimized.attempts < TEST_MAX_MINIMIZATION_ATTEMPTS);
+    }
+
+    #[test]
+    fn uint_minimization_prefers_bit_clearing_before_binary_search() {
+        let mut value = DynSolValue::Uint(U256::from(100), 256);
+        let accepted = [U256::from(100), U256::from(50), U256::from(36)];
+
+        loop {
+            let (current, bits) = match &value {
+                DynSolValue::Uint(current, bits) => (*current, *bits),
+                _ => unreachable!(),
+            };
+            if !minimize_uint(
+                &mut value,
+                current,
+                bits,
+                &mut |candidate| matches!(candidate, DynSolValue::Uint(candidate, _) if accepted.contains(candidate)),
+            ) {
+                break;
+            }
+        }
+
+        assert_eq!(value, DynSolValue::Uint(U256::from(36), 256));
+    }
+
+    #[test]
+    fn uint_pair_delta_minimization_tries_simple_nonzero_pair_first() {
+        let mut candidates = Vec::new();
+
+        assert!(minimize_u256_pair_delta_candidates(
+            U256::from(100),
+            U256::from(50),
+            &mut |left, right| {
+                candidates.push((left, right));
+                (left, right) == (U256::from(1), U256::from(1))
+            },
+        ));
+
+        assert_eq!(candidates, vec![(U256::from(1), U256::from(1))]);
     }
 
     #[test]

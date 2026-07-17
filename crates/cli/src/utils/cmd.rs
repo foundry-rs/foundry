@@ -47,7 +47,7 @@ pub fn find_contract_artifacts(
         Did you mean `{suggestion}`?"#
             );
         }
-        eyre::bail!(err)
+        eyre::bail!(err);
     };
 
     let abi = contract
@@ -138,6 +138,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::Moonbeam
                     | NamedChain::MoonbeamDev
                     | NamedChain::Moonriver
+                    | NamedChain::Plume
+                    | NamedChain::PlumeTestnet
                     | NamedChain::Polkadot
                     | NamedChain::PolkadotTestnet
             );

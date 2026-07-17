@@ -6706,6 +6706,26 @@
     },
     {
       "func": {
+        "id": "getSelectors",
+        "description": "Gets all function selectors from a contract artifact. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getSelectors(string)",
+        "selector": "0x13d5a709",
+        "selectorBytes": [
+          19,
+          213,
+          167,
+          9
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
         "declaration": "function getStateDiff() external view returns (string memory diff);",
@@ -7370,6 +7390,26 @@
     },
     {
       "func": {
+        "id": "mockCall_4",
+        "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.\nOverload to control whether code is injected into `callee`. The other overloads etch a\nsingle byte into an empty account to circumvent Solidity's `extcodesize` check, with the\nside effect that unmocked calls to it no longer revert; `injectCode = false` leaves the\naccount codeless, so unmocked calls to it revert in the caller. Mocked calls that return\ndata still succeed, as Solidity checks `returndatasize()` instead of `extcodesize()` when\nreturn data is expected, but mocked calls to functions without return values may still\nrevert in the caller due to the `extcodesize` check.",
+        "declaration": "function mockCall(address callee, bytes calldata data, bytes calldata returnData, bool injectCode) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCall(address,bytes,bytes,bool)",
+        "selector": "0xb4bc5617",
+        "selectorBytes": [
+          180,
+          188,
+          86,
+          23
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "mockCalls_0",
         "description": "Mocks multiple calls to an address, returning specified data for each call.",
         "declaration": "function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;",
@@ -7582,6 +7622,26 @@
           206,
           120,
           131
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonArrayLength",
+        "description": "Returns the length of the JSON array at `key`.",
+        "declaration": "function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonArrayLength(string,string)",
+        "selector": "0xcdb6e4ac",
+        "selectorBytes": [
+          205,
+          182,
+          228,
+          172
         ]
       },
       "group": "json",

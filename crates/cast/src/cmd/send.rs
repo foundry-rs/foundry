@@ -390,6 +390,11 @@ impl SendTxArgs {
                     .await?;
             }
 
+            if chain.id() != browser.chain_id() {
+                sh_warn!("Switching browser wallet to chain {}", chain)?;
+                browser.switch_chain(chain.id()).await?;
+            }
+
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
             let cast = CastTxSender::new(&provider);
@@ -635,10 +640,12 @@ pub(crate) fn validate_sponsor_url(raw: &str) -> Result<()> {
                  The sponsor relay is a trusted third party; use an encrypted channel."
             );
         }
-        _ => eyre::bail!(
-            "--sponsor-url must start with https:// (got {raw}). \
+        _ => {
+            eyre::bail!(
+                "--sponsor-url must start with https:// (got {raw}). \
              The sponsor relay is a trusted third party; use an encrypted channel."
-        ),
+            );
+        }
     }
 }
 

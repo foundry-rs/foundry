@@ -17,34 +17,41 @@ use std::{
 
 #[cfg(feature = "cli")]
 use crate::utils::http_provider;
-use alloy_consensus::Typed2718;
+use alloy_consensus::{BlockHeader, Sealable, Typed2718};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, aliases::U96, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolEvent, SolValue, sol};
+use alloy_sol_types::{SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, spawn};
+use anvil_core::eth::block::Block;
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
 };
-use tempo_alloy::primitives::TempoTxEnvelope;
-use tempo_hardfork::TempoHardfork;
+use futures::StreamExt;
+use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
+use tempo_hardfork::{
+    TempoHardfork,
+    constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
+};
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
     RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    current_committee::{CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee},
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
-    AASigned, TempoSignature, TempoTransaction,
+    AASigned, TempoHeader, TempoSignature, TempoTransaction,
     transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType},
 };
 
@@ -55,9 +62,17 @@ const THETA_USD: Address = THETA_USD_ADDRESS;
 const TEMPO_ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 
-/// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
-const TIP20_TRANSFER_GAS: u64 = 300_000;
+/// Gas limit for TIP20 transfer calls, including T1+ transaction accounting.
+const TIP20_TRANSFER_GAS: u64 = 1_000_000;
 const T5_PRECOMPILE_GAS: u64 = 10_000_000;
+
+fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
+    let inner: &TempoHeader = header.as_ref();
+    assert_eq!(header.timestamp_millis, inner.timestamp_millis());
+    assert_eq!(inner.general_gas_limit, inner.inner.gas_limit);
+    assert_eq!(inner.shared_gas_limit, 0);
+    assert_eq!(inner.timestamp_millis_part, 0);
+}
 
 #[cfg(feature = "cli")]
 struct ChildGuard(Child);
@@ -82,6 +97,129 @@ fn anvil_binary() -> PathBuf {
         .and_then(|deps| deps.parent())
         .expect("target/debug directory")
         .join("anvil")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tempo_header_by_number() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.mine_one().await;
+
+    let provider = handle.http_provider();
+    for number in ["0x1", "pending"] {
+        let header: Option<TempoHeaderResponse> =
+            provider.client().request("eth_getHeaderByNumber", (number,)).await.unwrap();
+        assert_tempo_header_fields(&header.unwrap());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_new_heads_subscription_returns_full_header() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect(&handle.ws_endpoint())
+        .await
+        .unwrap();
+    let subscription = provider.subscribe_blocks().await.unwrap();
+    let mut blocks = subscription.into_stream();
+
+    api.mine_one().await;
+    let header = blocks.next().await.unwrap();
+    assert_tempo_header_fields(&header);
+
+    let stored_header = api.backend.get_block(header.number()).unwrap().header;
+    assert_eq!(stored_header.as_tempo().unwrap(), header.as_ref());
+    assert_eq!(header.hash, header.as_ref().hash_slow());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_rpc_block_hashes_match_canonical_headers() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let provider = handle.http_provider();
+    let mut parent_hash = None;
+    for number in 0..=2 {
+        let header: TempoHeaderResponse = provider
+            .client()
+            .request("eth_getHeaderByNumber", (format!("0x{number:x}"),))
+            .await
+            .unwrap();
+        let stored_header = api.backend.get_block(number).unwrap().header;
+        assert_eq!(stored_header.as_tempo().unwrap(), header.as_ref());
+        let canonical_hash = header.as_ref().hash_slow();
+        assert_eq!(stored_header.hash_slow(), canonical_hash);
+
+        assert_eq!(header.hash, canonical_hash, "block {number} RPC hash");
+        if let Some(parent_hash) = parent_hash {
+            assert_eq!(header.parent_hash(), parent_hash, "block {number} parent hash");
+        }
+
+        let header_by_hash: Option<TempoHeaderResponse> =
+            provider.client().request("eth_getHeaderByHash", (canonical_hash,)).await.unwrap();
+        assert_eq!(header_by_hash.unwrap().as_ref(), header.as_ref());
+        parent_hash = Some(canonical_hash);
+    }
+
+    let pending: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("pending",)).await.unwrap();
+    assert_eq!(pending.hash, pending.as_ref().hash_slow(), "pending RPC hash");
+    assert_eq!(pending.parent_hash(), parent_hash.unwrap(), "pending parent hash");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_rpc_projects_legacy_ethereum_headers() {
+    let (source_api, _source_handle) = spawn(NodeConfig::test()).await;
+    source_api.mine_one().await;
+    let state = source_api.serialized_state(false).await.unwrap();
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+
+    let stored_header = api.backend.get_block(1).unwrap().header;
+    assert!(stored_header.as_tempo().is_none());
+    let legacy_hash = stored_header.hash_slow();
+
+    let provider = handle.http_provider();
+    let header: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("0x1",)).await.unwrap();
+    assert_tempo_header_fields(&header);
+    assert_eq!(header.hash, legacy_hash);
+    assert_ne!(header.as_ref().hash_slow(), legacy_hash);
+
+    api.mine_one().await;
+    let child: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("0x2",)).await.unwrap();
+    assert_eq!(child.parent_hash(), legacy_hash);
+    assert_eq!(child.hash, child.as_ref().hash_slow());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_raw_header_and_block_use_tempo_rlp() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.mine_one().await;
+
+    let provider = handle.http_provider();
+    let header: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("0x1",)).await.unwrap();
+
+    let raw_header: Bytes = provider
+        .client()
+        .request("debug_getRawHeader", (BlockId::hash(header.hash),))
+        .await
+        .unwrap();
+    let decoded_header = TempoHeader::decode(&mut raw_header.as_ref()).unwrap();
+    assert_eq!(&decoded_header, header.as_ref());
+    assert_eq!(decoded_header.hash_slow(), header.hash);
+
+    let raw_block: Bytes = provider
+        .client()
+        .request("debug_getRawBlock", (BlockId::hash(header.hash),))
+        .await
+        .unwrap();
+    let decoded_block: Block = Block::decode(&mut raw_block.as_ref()).unwrap();
+    assert_eq!(decoded_block.header.as_tempo().unwrap(), header.as_ref());
+    assert_eq!(decoded_block.header.hash_slow(), header.hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -413,6 +551,76 @@ async fn test_tempo_precompiles_have_code() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let token = IERC20::new(ALPHA_USD, &provider);
+    let supply_before = token.totalSupply().call().await.unwrap();
+
+    provider
+        .raw_request::<_, ()>("anvil_dealTIP20".into(), (recipient, ALPHA_USD, U256::from(100)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(100));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+
+    provider
+        .raw_request::<_, ()>("anvil_dealTIP20".into(), (recipient, ALPHA_USD, U256::from(40)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(40));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_erc20_supports_tip20() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let token = IERC20::new(ALPHA_USD, &provider);
+    let supply_before = token.totalSupply().call().await.unwrap();
+
+    provider
+        .raw_request::<_, ()>("anvil_dealERC20".into(), (recipient, ALPHA_USD, U256::from(100)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(100));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+
+    provider
+        .raw_request::<_, ()>("anvil_dealERC20".into(), (recipient, ALPHA_USD, U256::from(40)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(40));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_rejects_invalid_token() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let result: std::result::Result<(), _> = provider
+        .raw_request("anvil_dealTIP20".into(), (Address::random(), Address::random(), U256::ONE))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_rejects_non_tempo_node() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let result: std::result::Result<(), _> = provider
+        .raw_request("anvil_dealTIP20".into(), (Address::random(), ALPHA_USD, U256::ONE))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_pre_t5_channel_reserve_has_no_sentinel_code() {
     let (api, _handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T4.into()))).await;
@@ -458,6 +666,41 @@ async fn test_tempo_config_filters_hardfork_gated_precompiles() {
         config_t6.current.precompiles.get("ReceivePolicyGuard"),
         Some(&RECEIVE_POLICY_GUARD_ADDRESS)
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t8_current_committee_activation_and_empty_genesis() {
+    let (api_t7, handle_t7) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
+    assert!(api_t7.get_code(CURRENT_COMMITTEE_ADDRESS, None).await.unwrap().is_empty());
+    assert!(!api_t7.config().unwrap().current.precompiles.contains_key("CurrentCommittee"));
+    let committee_t7 = ICurrentCommittee::new(CURRENT_COMMITTEE_ADDRESS, handle_t7.http_provider());
+    assert!(committee_t7.getCommitteeMembers().call().await.is_err());
+
+    let (api_t8, handle_t8) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T8.into()))).await;
+    assert!(!api_t8.get_code(CURRENT_COMMITTEE_ADDRESS, None).await.unwrap().is_empty());
+    assert_eq!(
+        api_t8.config().unwrap().current.precompiles.get("CurrentCommittee"),
+        Some(&CURRENT_COMMITTEE_ADDRESS)
+    );
+
+    let provider = handle_t8.http_provider();
+    let committee = ICurrentCommittee::new(CURRENT_COMMITTEE_ADDRESS, &provider);
+    let members = committee.getCommitteeMembers().call().await.unwrap();
+    assert_eq!(members.epoch, 0);
+    assert!(members.publicKeys.is_empty());
+
+    let caller = handle_t8.dev_accounts().next().unwrap();
+    let err = committee
+        .setCommitteeMembers(1, vec![B256::repeat_byte(0x11)])
+        .from(caller)
+        .call()
+        .await
+        .unwrap_err();
+    let unauthorized =
+        alloy_primitives::hex::encode_prefixed(ICurrentCommittee::Unauthorized::SELECTOR);
+    assert!(err.to_string().contains(&unauthorized), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1636,7 +1879,7 @@ async fn test_contract_deployment() {
     let bytecode = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]);
 
     let tx =
-        TransactionRequest::default().from(sender).with_input(bytecode).with_gas_limit(100_000);
+        TransactionRequest::default().from(sender).with_input(bytecode).with_gas_limit(1_000_000);
 
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -3538,7 +3781,8 @@ async fn test_gas_estimation_tempo_aa_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_tempo_aa_with_2d_nonce() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -3592,7 +3836,8 @@ async fn test_gas_estimation_tempo_aa_with_2d_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_tempo_aa_expiring_nonce() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -4089,4 +4334,83 @@ async fn test_anvil_set_fee_amm_liquidity_non_tempo_fails() {
     let result =
         api.anvil_set_fee_amm_liquidity(PATH_USD, ALPHA_USD, U256::from(1_000_000u64)).await;
     assert!(result.is_err(), "anvil_setFeeAmmLiquidity should fail outside of Tempo mode");
+}
+
+/// Pre-T7 Tempo uses a fixed base fee, so mining empty blocks must not drift it (EIP-1559 would).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pre_t7_base_fee_stays_fixed() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()))).await;
+    let provider = handle.http_provider();
+
+    for _ in 0..5 {
+        api.mine_one().await;
+    }
+
+    let latest = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.number;
+    for n in 0..=latest {
+        let block = provider.get_block(BlockId::number(n)).await.unwrap().unwrap();
+        assert_eq!(
+            block.header.base_fee_per_gas,
+            Some(TEMPO_T1_BASE_FEE),
+            "pre-T7 block {n} base fee should stay fixed"
+        );
+    }
+}
+
+/// `anvil_reset` must restore the Tempo base fee, not fall back to Anvil's Ethereum default.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_base_fee_survives_reset() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()))).await;
+    let provider = handle.http_provider();
+
+    for _ in 0..3 {
+        api.mine_one().await;
+    }
+
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(
+        block.header.base_fee_per_gas,
+        Some(TEMPO_T1_BASE_FEE),
+        "base fee after reset should be the fixed Tempo value, not the Ethereum default"
+    );
+}
+
+/// T7 Tempo uses the TIP-1067 dynamic controller: empty blocks lower the base fee within the clamp.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t7_base_fee_is_dynamic() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
+    let provider = handle.http_provider();
+
+    for _ in 0..8 {
+        api.mine_one().await;
+    }
+
+    // The genesis block keeps the 20B seed (matching Tempo's T7 genesis).
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(TEMPO_T1_BASE_FEE));
+
+    let latest = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.number;
+    let mut fees = Vec::new();
+    for n in 1..=latest {
+        let block = provider.get_block(BlockId::number(n)).await.unwrap().unwrap();
+        fees.push(block.header.base_fee_per_gas.unwrap());
+    }
+
+    // Block 1 already clamps the 20B seed down to the TIP-1067 cap; generic EIP-1559 would give
+    // ~17.5B instead, so this pins the T7 path. Later empty blocks decay below the cap.
+    assert_eq!(fees[0], TEMPO_T7_BASE_FEE_CAP, "block 1 clamps to the T7 cap: {fees:?}");
+    assert!(fees[1] < TEMPO_T7_BASE_FEE_CAP, "empty blocks decay below the cap: {fees:?}");
+    // Empty blocks never raise the base fee, and it stays within the TIP-1067 clamp.
+    assert!(fees.windows(2).all(|w| w[1] <= w[0]), "base fee should not rise: {fees:?}");
+    let last = *fees.last().unwrap();
+    assert!(
+        (TEMPO_T7_BASE_FEE_FLOOR..=TEMPO_T7_BASE_FEE_CAP).contains(&last),
+        "base fee should be clamped to the TIP-1067 range: {fees:?}"
+    );
 }

@@ -36,7 +36,7 @@ Options:
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
           
-          [aliases: --jobs]
+          [alias: --jobs]
 
   -V, --version
           Print version
@@ -1733,7 +1733,11 @@ forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
         r"
 pragma solidity *;
 contract A {
-    function testExample() public {}
+    event Example();
+
+    function testExample() public {
+        emit Example();
+    }
 }
    ",
     );
@@ -3891,6 +3895,29 @@ forgetest!(inspect_custom_counter_abi, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
+
+    let artifact_path = prj.paths().artifacts.join("Counter.sol/Counter.json");
+
+    cmd.args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    assert!(!artifact_path.exists());
+
+    cmd.forge_fuse().arg("build").assert_success();
+    let built = std::fs::read(&artifact_path).unwrap();
+    let artifact: serde_json::Value =
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
+    let bytecode = artifact["bytecode"]["object"]
+        .as_str()
+        .expect("build artifact should include creation bytecode");
+    assert!(bytecode.starts_with("0x"));
+    assert!(bytecode.len() > 2);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    let inspected = std::fs::read(&artifact_path).unwrap();
+    assert_eq!(built, inspected);
+});
+
 forgetest!(inspect_custom_counter_events, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -4167,6 +4194,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "viaSSACFG": false,
     "experimental": false,
     "libraries": {}
   }

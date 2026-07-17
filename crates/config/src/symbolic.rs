@@ -38,6 +38,19 @@ pub struct SymbolicConfig {
     pub use_fuzz_corpus: bool,
     /// Maximum number of fuzz corpus seeds to import for one symbolic run.
     pub corpus_seed_limit: usize,
+    /// Whether fuzz branch frontiers should guide targeted symbolic fuzz-test seeding.
+    pub use_fuzz_frontiers: bool,
+    /// Maximum number of fuzz branch frontiers to try for one symbolic run.
+    pub frontier_limit: usize,
+    /// Fuzz branch frontier artifact IDs to import. Empty imports by artifact order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frontier_ids: Vec<u64>,
+    /// Fuzz branch frontier comparison program counters to import. Empty imports any PC.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frontier_pcs: Vec<usize>,
+    /// Fuzz branch frontier calldata selectors to import. Empty imports any selector.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frontier_selectors: Vec<String>,
     /// Solver executable to invoke.
     pub solver: String,
     /// Exact solver command to invoke. When set, this overrides `solver`.
@@ -46,7 +59,8 @@ pub struct SymbolicConfig {
     /// Solver names or exact commands to race in parallel. Ignored when `solver_command` is set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub solver_portfolio: Vec<String>,
-    /// Optional timeout in seconds for solver-backed symbolic execution.
+    /// Optional SMT solver timeout in seconds. Also bounds wall-clock symbolic invariant
+    /// exploration before falling back to invariant fuzzing.
     pub timeout: Option<u32>,
     /// Halmos-compatible loop bound accepted by config and annotations.
     #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
@@ -100,6 +114,11 @@ impl Default for SymbolicConfig {
             seed_corpus: false,
             use_fuzz_corpus: false,
             corpus_seed_limit: 32,
+            use_fuzz_frontiers: false,
+            frontier_limit: 256,
+            frontier_ids: Vec::new(),
+            frontier_pcs: Vec::new(),
+            frontier_selectors: Vec::new(),
             solver: "z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -155,6 +174,11 @@ mod tests {
             "seed_corpus": false,
             "use_fuzz_corpus": false,
             "corpus_seed_limit": 32,
+            "use_fuzz_frontiers": false,
+            "frontier_limit": 256,
+            "frontier_ids": [],
+            "frontier_pcs": [],
+            "frontier_selectors": [],
             "solver": "z3",
             "timeout": 30,
             "max_depth": 10000,

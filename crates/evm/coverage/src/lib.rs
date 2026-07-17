@@ -147,19 +147,41 @@ impl CoverageReport {
         Ok(())
     }
 
-    /// Retains all the coverage items specified by `predicate`.
+    /// Returns the coverage items hit by a [`HitMap`] without mutating this report.
+    pub fn hit_items_for_hit_map<'a>(
+        &'a self,
+        contract_id: &ContractId,
+        hit_map: &HitMap,
+        is_deployed_code: bool,
+    ) -> Vec<(&'a CoverageItem, u32)> {
+        let Some(anchors) = self.anchors.get(contract_id) else { return Vec::new() };
+        let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
+
+        let mut hits_by_item = BTreeMap::<u32, u32>::new();
+        for anchor in anchors {
+            if let Some(hits) = hit_map.get(anchor.instruction) {
+                *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
+            }
+        }
+
+        let Some(items) = self.analyses.get(&contract_id.version) else { return Vec::new() };
+        hits_by_item
+            .into_iter()
+            .filter_map(|(item_id, hits)| {
+                let item = items.get(item_id)?;
+                Some((item, hits))
+            })
+            .collect()
+    }
+
+    /// Retains all the sources specified by `predicate`.
     ///
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
     pub fn retain_sources(&mut self, mut predicate: impl FnMut(&Path) -> bool) {
-        self.analyses.retain(|version, analysis| {
-            analysis.all_items_mut().retain(|item| {
-                self.source_paths
-                    .get(&(version.clone(), item.loc.source_id))
-                    .map(|path| predicate(path))
-                    .unwrap_or(false)
-            });
-            !analysis.all_items().is_empty()
+        self.source_paths.retain(|_, path| predicate(path));
+        self.source_paths_to_ids.retain(|(version, _), source_id| {
+            self.source_paths.contains_key(&(version.clone(), *source_id))
         });
     }
 }
@@ -377,6 +399,8 @@ pub struct CoverageItem {
     pub kind: CoverageItemKind,
     /// The location of the item in the source code.
     pub loc: SourceLocation,
+    /// An alternative source location used only to find the item's bytecode anchor.
+    pub anchor_loc: Option<SourceLocation>,
     /// The number of times this item was hit.
     pub hits: u32,
 }

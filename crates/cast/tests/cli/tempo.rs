@@ -10,7 +10,8 @@ use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
 use tempo_contracts::precompiles::{
-    IReceivePolicyGuard, ITIP20, ITIP403Registry, TIP403_REGISTRY_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, ITIP20, ITIP403Registry,
+    TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
 
@@ -29,6 +30,8 @@ casttest!(tempo_state_changing_help_includes_expires, |_prj, cmd| {
         ("tip20 create", &["tip20", "create", "--help"]),
         ("tip20 logo-set", &["tip20", "logo-set", "--help"]),
         ("tip20 mine", &["tip20", "mine", "--help"]),
+        ("storage-credits set-mode", &["storage-credits", "set-mode", "--help"]),
+        ("storage-credits set-budget", &["storage-credits", "set-budget", "--help"]),
         ("vaddr create", &["vaddr", "create", "--help"]),
     ];
 
@@ -566,6 +569,170 @@ casttest!(tip403_works_pre_t6, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(json_success_data(&check)["authorized"], true);
+});
+
+casttest!(storage_credits_reads_and_writes, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let account = wallet.address();
+
+    // A fresh account starts with no credits, the default `refund` mode, and a zero budget.
+    let balance = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "balance", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&balance)["balance"], 0);
+
+    let mode = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "mode", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&mode)["mode"], "refund");
+
+    let budget = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "budget", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&budget)["budget"], 0);
+
+    // set-mode / set-budget send valid transactions that the precompile accepts.
+    cmd.cast_fuse()
+        .args(["storage-credits", "set-mode", "direct", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["storage-credits", "set-budget", "42", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_success();
+
+    // Mode and budget are transaction-local transient state (TIP-1060), so they reset to defaults
+    // after the setter transaction ends; a standalone read never observes the previous write.
+    let mode = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "mode", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&mode)["mode"], "refund");
+
+    let budget = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "budget", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&budget)["budget"], 0);
+});
+
+casttest!(storage_credits_require_t7, async |_prj, cmd| {
+    // The StorageCredits precompile only activates at T7, so reads must fail cleanly before then.
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+    let account = handle.dev_wallets().next().unwrap().address();
+
+    let pk =
+        format!("0x{}", hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes()));
+    let expected = "requires a Tempo T7-capable StorageCredits RPC";
+
+    let read_err = cmd
+        .cast_fuse()
+        .args(["storage-credits", "balance", &account.to_string(), "--rpc-url", &rpc])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(read_err.contains(expected), "{read_err}");
+
+    // Writes must fail closed too; otherwise a pre-T7 send would look like a successful no-op.
+    let set_mode_err = cmd
+        .cast_fuse()
+        .args(["storage-credits", "set-mode", "direct", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(set_mode_err.contains(expected), "{set_mode_err}");
+
+    let set_budget_err = cmd
+        .cast_fuse()
+        .args(["storage-credits", "set-budget", "1", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(set_budget_err.contains(expected), "{set_budget_err}");
+});
+
+casttest!(current_committee_cast_run_decoding, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T8.into()))).await;
+    let provider = handle.http_provider();
+    let caller = handle.dev_accounts().next().unwrap();
+    let committee = ICurrentCommittee::new(CURRENT_COMMITTEE_ADDRESS, &provider);
+    let public_key = B256::repeat_byte(0x11);
+
+    let getter = TransactionRequest::default()
+        .from(caller)
+        .to(CURRENT_COMMITTEE_ADDRESS)
+        .with_input(committee.getCommitteeMembers().calldata().clone())
+        .with_gas_limit(1_000_000);
+    let getter_receipt = provider
+        .send_transaction(WithOtherFields::new(getter))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(getter_receipt.status());
+
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_HARDFORK", "tempo:T8");
+    let getter_stdout = cmd
+        .args([
+            "run",
+            &getter_receipt.transaction_hash.to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(getter_stdout.contains("CurrentCommittee::getCommitteeMembers()"), "{getter_stdout}");
+    assert!(getter_stdout.contains("← [Return] 0, []"), "{getter_stdout}");
+
+    let setter = TransactionRequest::default()
+        .from(caller)
+        .to(CURRENT_COMMITTEE_ADDRESS)
+        .with_input(committee.setCommitteeMembers(1, vec![public_key]).calldata().clone())
+        .with_gas_limit(1_000_000);
+    let setter_receipt = provider
+        .send_transaction(WithOtherFields::new(setter))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(!setter_receipt.status());
+
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_HARDFORK", "tempo:T8");
+    let setter_stdout = cmd
+        .args([
+            "run",
+            &setter_receipt.transaction_hash.to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(setter_stdout.contains("CurrentCommittee::setCommitteeMembers(1"), "{setter_stdout}");
+    assert!(setter_stdout.contains("← [Revert] Unauthorized()"), "{setter_stdout}");
 });
 
 casttest!(tip20_logo_create_help_includes_logo_uri, |_prj, cmd| {

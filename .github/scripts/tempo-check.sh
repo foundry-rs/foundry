@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Non-verification tempo checks: local tests, fork tests, cast commands, DEX operations
 
-# Hardfork version, defaults to T5.
-HARDFORK="${TEMPO_HARDFORK:-T5}"
+# Optional hardfork override. When unset, tools resolve the latest active Tempo hardfork.
+HARDFORK="${TEMPO_HARDFORK:-latest}"
 HARDFORK_UPPER=$(echo "$HARDFORK" | tr '[:lower:]' '[:upper:]')
 
 # Fee token address, defaults to native fee token
@@ -870,9 +870,13 @@ echo -e "\n=== ANVIL LOCAL TESTS ==="
 
 ANVIL_PORT=8546
 echo "Starting local anvil..."
-# Pass hardfork to anvil (lowercase for CLI compatibility)
-ANVIL_HARDFORK=$(echo "$HARDFORK" | tr '[:upper:]' '[:lower:]')
-anvil --tempo --hardfork "$ANVIL_HARDFORK" --port $ANVIL_PORT &
+# Exercise Anvil's latest-active Tempo default unless a historical hardfork was explicitly selected.
+ANVIL_HARDFORK_ARGS=()
+if [[ -n "${TEMPO_HARDFORK:-}" ]]; then
+  ANVIL_HARDFORK=$(echo "$HARDFORK" | tr '[:upper:]' '[:lower:]')
+  ANVIL_HARDFORK_ARGS=(--hardfork "$ANVIL_HARDFORK")
+fi
+anvil --tempo "${ANVIL_HARDFORK_ARGS[@]}" --port $ANVIL_PORT &
 ANVIL_PID=$!
 
 # Ensure anvil is stopped on script exit
@@ -947,9 +951,7 @@ cast send --rpc-url "$ETH_RPC_URL" 0xfeec000000000000000000000000000000000000 \
 
 ANVIL_PORT=8547
 echo "Starting forked anvil..."
-# Pass hardfork to anvil (lowercase for CLI compatibility)
-ANVIL_HARDFORK=$(echo "$HARDFORK" | tr '[:upper:]' '[:lower:]')
-anvil --tempo --hardfork "$ANVIL_HARDFORK" --fork-url "$ETH_RPC_URL" --port $ANVIL_PORT --retries 10 --timeout 60000 &
+anvil --tempo "${ANVIL_HARDFORK_ARGS[@]}" --fork-url "$ETH_RPC_URL" --port $ANVIL_PORT --retries 10 --timeout 60000 &
 ANVIL_PID=$!
 
 # Ensure anvil is stopped on script exit

@@ -49,15 +49,15 @@ jobs:
       contents: read
     steps:
       # Checkout the repository
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
 
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       # Build and install binaries
       - name: Build and install Foundry binaries
@@ -69,7 +69,7 @@ jobs:
         env:
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
-          TEMPO_DEVNET_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          TEMPO_DEVNET_RPC_URL: ${{ vars.TEMPO_DEVNET_CI != 'false' && secrets.TEMPO_DEVNET_RPC_URL || '' }}
         run: |
           cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
 
@@ -109,11 +109,7 @@ jobs:
           fi
 
       - name: Run Tempo check on devnet
-        if: |
-          github.event_name == 'push' ||
-          github.event_name == 'pull_request' ||
-          github.event.inputs.network == 'devnet' ||
-          github.event.inputs.network == 'all'
+        if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.network == 'devnet' || github.event.inputs.network == 'all')
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
@@ -126,11 +122,7 @@ jobs:
           fi
 
       - name: Run Tempo wallet tests on devnet
-        if: |
-          github.event_name == 'push' ||
-          github.event_name == 'pull_request' ||
-          github.event.inputs.network == 'devnet' ||
-          github.event.inputs.network == 'all'
+        if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.network == 'devnet' || github.event.inputs.network == 'all')
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
         run: ./.github/scripts/tempo-wallet.sh

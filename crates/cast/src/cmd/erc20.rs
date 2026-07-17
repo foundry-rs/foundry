@@ -1,7 +1,10 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::{
-    cmd::send::{cast_send, cast_send_with_access_key},
+    cmd::{
+        call_overrides::CallOverrideOpts,
+        send::{cast_send, cast_send_with_access_key},
+    },
     format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
@@ -27,7 +30,7 @@ use foundry_common::{
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 #[doc(hidden)]
-pub use foundry_config::{Chain, utils::*};
+pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
@@ -86,6 +89,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        #[command(flatten)]
+        overrides: CallOverrideOpts,
     },
 
     /// Transfer ERC20 tokens.
@@ -409,8 +415,14 @@ impl Erc20Subcommand {
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
-                    tempo::fill_access_key_transaction(&$provider, &mut tx, access_key, chain)
-                        .await?;
+                    tempo::fill_access_key_transaction(
+                        &$provider,
+                        &mut tx,
+                        access_key,
+                        chain,
+                        config.eip1559_fee_estimate,
+                    )
+                    .await?;
                     if needs_sponsor_payload {
                         if print_sponsor_hash {
                             if let Some(fee_payer) = sponsor_fee_payer {
@@ -470,7 +482,15 @@ impl Erc20Subcommand {
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
-                    fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
+                    fill_tx(
+                        &$provider,
+                        &mut tx,
+                        browser.address(),
+                        chain,
+                        true,
+                        config.eip1559_fee_estimate,
+                    )
+                    .await?;
                     if print_sponsor_hash {
                         if let Some(fee_payer) = sponsor_fee_payer {
                             resolve_and_set_fee_token(
@@ -528,7 +548,15 @@ impl Erc20Subcommand {
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
                     if needs_sponsor_payload {
-                        fill_tx(&$provider, &mut tx, from, chain, false).await?;
+                        fill_tx(
+                            &$provider,
+                            &mut tx,
+                            from,
+                            chain,
+                            false,
+                            config.eip1559_fee_estimate,
+                        )
+                        .await?;
                         if print_sponsor_hash {
                             if let Some(fee_payer) = sponsor_fee_payer {
                                 resolve_and_set_fee_token(
@@ -555,6 +583,16 @@ impl Erc20Subcommand {
                                 .await?;
                             sponsor.attach_and_print::<N>(&mut tx, from).await?;
                         }
+                    } else {
+                        // Fill only the fees; the provider fills nonce and gas limit.
+                        fill_transaction_gas_fees(
+                            &$provider,
+                            &mut tx,
+                            chain.is_legacy(),
+                            false,
+                            config.eip1559_fee_estimate,
+                        )
+                        .await?;
                     }
                     cast_send(
                         $provider,
@@ -592,16 +630,15 @@ impl Erc20Subcommand {
                     sh_println!("{}", format_uint_exp(allowance))?;
                 }
             }
-            Self::Balance { token, owner, block, .. } => {
+            Self::Balance { token, owner, block, overrides, .. } => {
                 let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
 
-                let balance = IERC20::new(token, &provider)
-                    .balanceOf(owner)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let token = IERC20::new(token, &provider);
+                let balance_call = token.balanceOf(owner).block(block.unwrap_or_default());
+                let call = balance_call.call();
+                let balance = overrides.apply(call)?.await?;
 
                 if shell::is_json() {
                     print_json_success(balance.to_string())?;
@@ -696,6 +733,7 @@ async fn fill_tx<N: Network, P: Provider<N>>(
     from: Address,
     chain: Chain,
     browser: bool,
+    eip1559_fee_estimate: Eip1559FeeEstimatePreset,
 ) -> eyre::Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -709,7 +747,7 @@ where
 
     let legacy = chain.is_legacy();
 
-    fill_transaction_gas_fees(provider, tx, legacy, browser).await?;
+    fill_transaction_gas_fees(provider, tx, legacy, browser, eip1559_fee_estimate).await?;
 
     if tx.gas_limit().is_none() {
         let mut estimated = provider.estimate_gas(tx.clone()).await?;

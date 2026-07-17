@@ -67,6 +67,48 @@ library JsonStructs {
 contract ParseJsonTest is Test {
     using JsonStructs for *;
 
+    struct StaticArray {
+        uint256[1] timestamp;
+    }
+
+    struct NestedStaticArray {
+        uint256[2][1] matrix;
+    }
+
+    struct AmbiguousAStaticArray {
+        uint256[1] ambiguousValues;
+    }
+
+    struct AmbiguousZDynamicArray {
+        uint256[] ambiguousValues;
+    }
+
+    struct StaticBytesArray {
+        bytes4[1] selectors;
+    }
+
+    struct SelectiveStaticArray {
+        uint256[1] fixedValues;
+        string inferredAddress;
+    }
+
+    struct StaticStructChild {
+        uint256 value;
+        string label;
+    }
+
+    struct StaticStructParent {
+        StaticStructChild[1] children;
+    }
+
+    struct NestedStaticStructChild {
+        uint256[1] values;
+    }
+
+    struct NestedStaticStructParent {
+        NestedStaticStructChild[2][1] nestedChildren;
+    }
+
     struct FlatJson {
         uint256 a;
         int24[][] arr;
@@ -152,6 +194,63 @@ contract ParseJsonTest is Test {
         uint256[] memory decodedData = abi.decode(data, (uint256[]));
         assertEq(42, decodedData[0]);
         assertEq(43, decodedData[1]);
+    }
+
+    function test_staticArray() public {
+        bytes memory data = vm.parseJson('{"timestamp":[1655140035]}');
+        StaticArray memory decodedData = abi.decode(data, (StaticArray));
+        assertEq(1655140035, decodedData.timestamp[0]);
+    }
+
+    function test_nestedStaticArray() public {
+        bytes memory data = vm.parseJson('{"matrix":[[42,43]]}');
+        NestedStaticArray memory decodedData = abi.decode(data, (NestedStaticArray));
+        assertEq(42, decodedData.matrix[0][0]);
+        assertEq(43, decodedData.matrix[0][1]);
+    }
+
+    function test_staticArrayLengthMismatch() public {
+        vm._expectCheatcodeRevert("array length mismatch");
+        vm.parseJson('{"timestamp":[1,2]}');
+    }
+
+    function test_ambiguousArrayFallsBackToDynamic() public {
+        bytes memory data = vm.parseJson('{"ambiguousValues":[42]}');
+        AmbiguousZDynamicArray memory decodedData = abi.decode(data, (AmbiguousZDynamicArray));
+        assertEq(42, decodedData.ambiguousValues[0]);
+    }
+
+    function test_staticArrayUsesElementType() public {
+        bytes memory data = vm.parseJson('{"selectors":["0x12345678"]}');
+        StaticBytesArray memory decodedData = abi.decode(data, (StaticBytesArray));
+        assertEq(bytes32(decodedData.selectors[0]), bytes32(bytes4(0x12345678)));
+    }
+
+    function test_staticArrayPreservesSiblingInference() public {
+        address inferredAddress = address(0x1234);
+        bytes memory data =
+            vm.parseJson(string.concat('{"fixedValues":[42],"inferredAddress":"', vm.toString(inferredAddress), '"}'));
+        uint256[1] memory fixedValues = [uint256(42)];
+        assertEq(data, abi.encode(fixedValues, inferredAddress));
+    }
+
+    function test_staticStructArray() public {
+        bytes memory data = vm.parseJson('{"children":[{"label":"child","value":42}]}');
+        StaticStructParent memory decodedData = abi.decode(data, (StaticStructParent));
+        assertEq(42, decodedData.children[0].value);
+        assertEq("child", decodedData.children[0].label);
+    }
+
+    function test_nestedStaticStructArray() public {
+        bytes memory data = vm.parseJson('{"nestedChildren":[[{"values":[42]},{"values":[43]}]]}');
+        NestedStaticStructParent memory decodedData = abi.decode(data, (NestedStaticStructParent));
+        assertEq(42, decodedData.nestedChildren[0][0].values[0]);
+        assertEq(43, decodedData.nestedChildren[0][1].values[0]);
+    }
+
+    function test_staticStructArrayLengthMismatch() public {
+        vm._expectCheatcodeRevert("array length mismatch");
+        vm.parseJson('{"children":[]}');
     }
 
     // Object keys are sorted alphabetically, regardless of input.
@@ -284,6 +383,27 @@ contract ParseJsonTest is Test {
 
         vm._expectCheatcodeRevert("key \".*\" must return exactly one JSON object");
         vm.parseJsonKeys(jsonString, ".*");
+    }
+
+    function test_parseJsonArrayLength() public {
+        string memory jsonString = '{"array":[1,{"nested":true},"three"],"empty":[],"object":{"array":[1,2]}}';
+
+        assertEq(vm.parseJsonArrayLength("[1,2,3]", "$"), 3);
+        assertEq(vm.parseJsonArrayLength(jsonString, ".array"), 3);
+        assertEq(vm.parseJsonArrayLength(jsonString, ".empty"), 0);
+        assertEq(vm.parseJsonArrayLength(jsonString, ".object.array"), 2);
+
+        vm._expectCheatcodeRevert('JSON value at ".object" is not an array');
+        vm.parseJsonArrayLength(jsonString, ".object");
+
+        vm._expectCheatcodeRevert('JSON value at ".array[0]" is not an array');
+        vm.parseJsonArrayLength(jsonString, ".array[0]");
+
+        vm._expectCheatcodeRevert('key ".missing" must return exactly one JSON array');
+        vm.parseJsonArrayLength(jsonString, ".missing");
+
+        vm._expectCheatcodeRevert('key ".array[*]" must return exactly one JSON array');
+        vm.parseJsonArrayLength(jsonString, ".array[*]");
     }
 
     // forge eip712 testdata/default/cheats/Json.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^FlatJson

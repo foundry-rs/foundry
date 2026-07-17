@@ -2,7 +2,7 @@
 
 use alloy_evm::precompiles::{Precompile, PrecompileInput};
 use alloy_primitives::{
-    Address, Bytes,
+    Address, B256, Bytes,
     map::{AddressHashSet, foldhash::HashMap},
 };
 use parking_lot::RwLock;
@@ -83,6 +83,30 @@ impl CheatsManager {
     pub fn has_recover_overrides(&self) -> bool {
         !self.state.read().signature_overrides.is_empty()
     }
+
+    /// Sets the `prevrandao` value to use for the next mined block.
+    ///
+    /// This is a one-shot override that is consumed by the next block and applies to that block
+    /// only.
+    pub fn set_next_block_prevrandao(&self, prevrandao: B256) {
+        trace!(target: "cheats", %prevrandao, "set next block prevrandao");
+        self.state.write().next_block_prevrandao.replace(prevrandao);
+    }
+
+    /// Takes the manually set `prevrandao` value for the next block, if any.
+    ///
+    /// This consumes the override so it only applies to a single block.
+    pub fn take_next_block_prevrandao(&self) -> Option<B256> {
+        self.state.write().next_block_prevrandao.take()
+    }
+
+    /// Clears any manually set `prevrandao` value for the next block.
+    ///
+    /// Used on reset/revert so a set-but-unmined override does not leak into a later block,
+    /// mirroring how the next-block timestamp override is cleared by `TimeManager::reset`.
+    pub fn clear_next_block_prevrandao(&self) {
+        self.state.write().next_block_prevrandao.take();
+    }
 }
 
 /// Container type for all the state variables
@@ -94,6 +118,9 @@ pub struct CheatsState {
     pub auto_impersonate_accounts: bool,
     /// Overrides for ecrecover: Signature => Address
     pub signature_overrides: HashMap<Bytes, Address>,
+    /// The `prevrandao` value to use for the next mined block, if manually set via
+    /// `anvil_setNextBlockPrevRandao`.
+    pub next_block_prevrandao: Option<B256>,
 }
 
 impl CheatEcrecover {

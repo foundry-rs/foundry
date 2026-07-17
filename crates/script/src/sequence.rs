@@ -33,7 +33,7 @@ where
     }
 
     // Show decoded function if available
-    if let (Some(func), Some(args)) = (&tx.function, &tx.arguments) {
+    if let (Some(func), Some(args)) = (&tx.display_function, &tx.arguments) {
         if args.is_empty() {
             writeln!(output, "data (decoded): {func}()")?;
         } else {

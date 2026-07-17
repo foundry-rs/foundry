@@ -107,7 +107,7 @@ impl ExternalIdentifier {
                 let project = etherscan_project(metadata, root_path)?;
                 let output = project.compile()?;
                 if output.has_compiler_errors() {
-                    eyre::bail!("{output}")
+                    eyre::bail!("{output}");
                 }
 
                 Ok((project, output, root))
@@ -145,6 +145,7 @@ impl ExternalIdentifier {
             label: Some(label.clone()),
             contract: Some(label),
             abi,
+            constructor_args_offset: None,
             artifact_id: None,
         }
     }

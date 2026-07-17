@@ -16,10 +16,7 @@ use foundry_common::{
     shell,
 };
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::{
-    OpcodeFilter,
-    types::{DecodedTraceStep, TraceMemberOrder},
-};
+use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -35,7 +32,7 @@ pub use revm_inspectors::tracing::{
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
         CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
-        DecodedCallTrace,
+        DecodedCallTrace, TraceMemberOrder,
     },
 };
 
@@ -209,22 +206,51 @@ pub fn render_trace_arena_inner(
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
-    let resolved = arena.resolve_arena();
+    let mut resolved = arena.resolve_arena();
+
+    let mut tempo_changes = None;
+    if with_storage_changes {
+        tempo_changes = tempo_channel_storage_decodes(&resolved);
+
+        let needs_dedup = resolved.as_ref().nodes().iter().any(|node| {
+            node.trace.steps.iter().any(|step| {
+                step.storage_change.is_some()
+                    && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+            })
+        });
+        if needs_dedup {
+            // Remove storage text that is already represented by an opcode line.
+            for node in resolved.to_mut().nodes_mut() {
+                for step in &mut node.trace.steps {
+                    if step.storage_change.is_some()
+                        && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                    {
+                        step.storage_change = None;
+                    }
+                }
+            }
+        }
+    }
+
     let mut w = TraceWriter::new(Vec::<u8>::new())
         .color_cheatcodes(true)
         .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
-    w.write_arena(&resolved).expect("Failed to write traces");
+    w.write_arena(resolved.as_ref()).expect("Failed to write traces");
     let mut rendered =
         String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
-    if with_storage_changes {
-        append_tempo_channel_storage_decodes(&mut rendered, &resolved);
+    if let Some(tempo_changes) = tempo_changes {
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        rendered.push_str(&tempo_changes);
     }
+
     rendered
 }
 
-fn append_tempo_channel_storage_decodes(rendered: &mut String, arena: &CallTraceArena) {
+fn tempo_channel_storage_decodes(arena: &CallTraceArena) -> Option<String> {
     let decoded_changes = arena
         .nodes()
         .iter()
@@ -233,12 +259,10 @@ fn append_tempo_channel_storage_decodes(rendered: &mut String, arena: &CallTrace
         .collect::<Vec<_>>();
 
     if decoded_changes.is_empty() {
-        return;
+        return None;
     }
 
-    if !rendered.ends_with('\n') {
-        rendered.push('\n');
-    }
+    let mut rendered = String::new();
     rendered.push_str("Decoded TIP20ChannelReserve storage:\n");
     for (slot, before, after) in decoded_changes {
         rendered.push_str(&format!(
@@ -248,6 +272,7 @@ fn append_tempo_channel_storage_decodes(rendered: &mut String, arena: &CallTrace
             format_channel_state(after),
         ));
     }
+    Some(rendered)
 }
 
 fn compact_channel_storage_changes(node: &CallTraceNode) -> Vec<(U256, U256, U256)> {
@@ -520,6 +545,9 @@ impl TraceRequirements {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::Bytes;
+    use revm::interpreter::InstructionResult;
+    use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
 
     #[test]
     fn decodes_tip1034_packed_channel_state() {
@@ -533,6 +561,48 @@ mod tests {
             format_channel_state(packed),
             "{settled: 123, deposit: 456, closeRequestedAt: 1780495200}"
         );
+    }
+
+    #[test]
+    fn tempo_storage_decodes_do_not_insert_extra_blank_line() {
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.ordering.push(TraceMemberOrder::Step(0));
+        root.trace = CallTrace {
+            address: TIP20_CHANNEL_RESERVE_ADDRESS,
+            success: true,
+            steps: vec![CallTraceStep {
+                pc: 0,
+                op: OpCode::SSTORE,
+                stack: None,
+                push_stack: None,
+                memory: None,
+                returndata: Bytes::new(),
+                gas_remaining: 0,
+                gas_refund_counter: 0,
+                gas_used: 0,
+                gas_cost: 0,
+                storage_change: Some(Box::new(StorageChange {
+                    key: U256::from(1),
+                    value: U256::from(2),
+                    had_value: Some(U256::from(1)),
+                    reason: StorageChangeReason::SSTORE,
+                })),
+                status: Some(InstructionResult::Stop),
+                immediate_bytes: None,
+                decoded: None,
+            }],
+            ..Default::default()
+        };
+
+        let rendered = render_trace_arena_inner(
+            &SparsedTraceArena { arena, ignored: Default::default() },
+            false,
+            true,
+        );
+
+        assert!(rendered.contains("\nDecoded TIP20ChannelReserve storage:\n"));
+        assert!(!rendered.contains("\n\nDecoded TIP20ChannelReserve storage:\n"));
     }
 
     #[test]

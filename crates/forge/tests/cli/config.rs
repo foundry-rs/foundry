@@ -98,6 +98,7 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+via_ssa_cfg = false
 experimental = false
 ast = false
 no_storage_caching = false
@@ -121,26 +122,6 @@ transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
 script_execution_protection = true
-
-[profile.default.symbolic]
-enabled = false
-seed_corpus = false
-use_fuzz_corpus = false
-corpus_seed_limit = 32
-solver = "z3"
-timeout = 30
-max_depth = 10000
-max_paths = 1024
-invariant_depth = 10
-exploration_order = "bfs"
-max_solver_queries = 10000
-default_dynamic_length = 2
-max_dynamic_length = 256
-array_lengths = []
-max_calldata_bytes = 4096
-symbolic_call_targets = false
-dump_smt = false
-storage_layout = "solidity"
 
 [profile.default.rpc_storage_caching]
 chains = "all"
@@ -237,7 +218,7 @@ runs = 256
 depth = 500
 min_depth = 1
 depth_mode = "fixed"
-workers = 1
+workers = "auto"
 fail_on_revert = false
 call_override = false
 dictionary_weight = 80
@@ -271,6 +252,28 @@ failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
 check_interval = 1
+
+[symbolic]
+enabled = false
+seed_corpus = false
+use_fuzz_corpus = false
+corpus_seed_limit = 32
+use_fuzz_frontiers = false
+frontier_limit = 256
+solver = "z3"
+timeout = 30
+max_depth = 10000
+max_paths = 1024
+invariant_depth = 10
+exploration_order = "bfs"
+max_solver_queries = 10000
+default_dynamic_length = 2
+max_dynamic_length = 256
+array_lengths = []
+max_calldata_bytes = 4096
+symbolic_call_targets = false
+dump_smt = false
+storage_layout = "solidity"
 
 [coverage]
 report = ["summary"]
@@ -371,6 +374,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             seed_corpus: true,
             use_fuzz_corpus: true,
             corpus_seed_limit: 17,
+            use_fuzz_frontiers: true,
+            frontier_limit: 11,
+            frontier_ids: vec![4, 9],
+            frontier_pcs: vec![123, 456],
+            frontier_selectors: vec!["0x12345678".to_string(), "deadbeef".to_string()],
             solver: "custom-z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -476,6 +484,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         experimental: false,
+        via_ssa_cfg: false,
         networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
@@ -701,9 +710,11 @@ forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
     prj.initialize_default_contracts();
-    let config = prj.config_from_output(["--via-ir", "--experimental", "--no-metadata"]);
+    let config =
+        prj.config_from_output(["--via-ir", "--experimental", "--via-ssa-cfg", "--no-metadata"]);
     assert!(config.via_ir);
     assert!(config.experimental);
+    assert!(config.via_ssa_cfg);
     assert_eq!(config.cbor_metadata, false);
     assert_eq!(config.bytecode_hash, BytecodeHash::None);
 });
@@ -1304,6 +1315,24 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Cancun);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.35", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Osaka);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.36", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Amsterdam);
 });
 
 // Tests that root paths are properly resolved even if submodule specifies remappings for them.
@@ -1488,7 +1517,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "depth": 500,
     "min_depth": 1,
     "depth_mode": "fixed",
-    "workers": 1,
+    "workers": "auto",
     "fail_on_revert": false,
     "call_override": false,
     "dictionary_weight": 80,
@@ -1533,6 +1562,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "seed_corpus": false,
     "use_fuzz_corpus": false,
     "corpus_seed_limit": 32,
+    "use_fuzz_frontiers": false,
+    "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,
     "max_depth": 10000,
@@ -1593,6 +1624,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "names": false,
   "sizes": false,
   "via_ir": false,
+  "via_ssa_cfg": false,
   "experimental": false,
   "ast": false,
   "rpc_storage_caching": {
@@ -2212,12 +2244,7 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]]);
+    cmd.args(["lint"]).assert_success().stdout_eq("");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6529>

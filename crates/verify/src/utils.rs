@@ -104,7 +104,7 @@ pub fn print_result(
     res: Option<VerificationType>,
     bytecode_type: BytecodeType,
     json_results: &mut Vec<JsonResult>,
-    etherscan_config: &Metadata,
+    etherscan_metadata: Option<&Metadata>,
     config: &Config,
 ) {
     if let Some(res) = res {
@@ -122,9 +122,11 @@ pub fn print_result(
         let _ = sh_err!(
             "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
         );
-        let mismatches = find_mismatch_in_settings(etherscan_config, config);
-        for mismatch in mismatches {
-            let _ = sh_eprintln!("{}", mismatch.red().bold());
+        if let Some(etherscan_metadata) = etherscan_metadata {
+            let mismatches = find_mismatch_in_settings(etherscan_metadata, config);
+            for mismatch in mismatches {
+                let _ = sh_eprintln!("{}", mismatch.red().bold());
+            }
         }
     } else {
         let json_res = JsonResult {
@@ -218,7 +220,9 @@ pub fn maybe_predeploy_contract(
             maybe_predeploy = true;
             Ok((None, maybe_predeploy))
         }
-        Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
+        Err(e) => {
+            eyre::bail!("Error fetching creation data from verifier-url: {:?}", e);
+        }
     }
 }
 
@@ -240,7 +244,7 @@ pub fn check_and_encode_args(
     }
 }
 
-pub fn check_explorer_args(source_code: ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
+pub fn check_explorer_args(source_code: &ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
     if let Some(args) = source_code.items.first() {
         Ok(args.constructor_arguments.clone())
     } else {

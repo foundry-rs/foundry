@@ -78,18 +78,18 @@ fn write_expr_structural_key(out: &mut String, expr: &SymExpr) {
             let _ = write!(out, "0:{value:064x}");
         }
         SymExprKind::Var(name) => {
-            let _ = write!(out, "1:{}", name.as_str());
+            let _ = write!(out, "1:{}", name.id());
         }
-        SymExprKind::GasLeft(id) => {
-            let _ = write!(out, "2:{id:020}");
+        SymExprKind::GasLeft(symbol) => {
+            let _ = write!(out, "2:{}", symbol.id());
         }
         SymExprKind::Keccak { name, len, bytes } => {
-            let _ = write!(out, "3:{}:", name.as_str());
+            let _ = write!(out, "3:{}:", name.id());
             write_expr_structural_key(out, len);
             write_exprs_structural_key(out, bytes);
         }
         SymExprKind::Hash { name, algorithm, bytes } => {
-            let _ = write!(out, "4:{}:{algorithm}:", name.as_str());
+            let _ = write!(out, "4:{}:{algorithm}:", name.id());
             write_exprs_structural_key(out, bytes);
         }
         SymExprKind::Not(value) => {
@@ -210,20 +210,27 @@ impl SymBoolExpr {
     }
 }
 
-pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]) {
+pub(super) fn write_smt_assertions(
+    cx: &SymCx,
+    out: &mut String,
+    constraints: &[SymBoolExpr],
+) -> Result<(), SymbolicError> {
     if constraints.is_empty() {
-        return;
+        return Ok(());
+    }
+    if constraints.iter().any(SymBoolExpr::contains_gasleft) {
+        return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
     }
 
     let plan = SmtCsePlan::new(constraints);
     if plan.bindings.is_empty() {
         for constraint in constraints {
-            let _ = writeln!(out, "(assert {})", constraint.smt());
+            let _ = writeln!(out, "(assert {})", constraint.smt(cx));
         }
-        return;
+        return Ok(());
     }
 
-    let writer = SmtCseWriter { plan: &plan };
+    let writer = SmtCseWriter { cx, plan: &plan };
     // define binding_0 = term_0
     // ...
     // define binding_n = term_n
@@ -244,6 +251,7 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
         writer.write_bool(out, constraint, None, None);
         out.push_str(")\n");
     }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -457,6 +465,7 @@ impl SmtBinding {
 }
 
 struct SmtCseWriter<'a> {
+    cx: &'a SymCx,
     plan: &'a SmtCsePlan,
 }
 
@@ -479,12 +488,10 @@ impl SmtCseWriter<'_> {
             SymExprKind::Const(value) => {
                 let _ = write!(out, "(_ bv{value} 256)");
             }
-            SymExprKind::Var(var) => out.push_str(var.as_str()),
-            SymExprKind::GasLeft(id) => {
-                let _ = write!(out, "gasleft_{id}");
-            }
-            SymExprKind::Keccak { name, .. } => out.push_str(name.as_str()),
-            SymExprKind::Hash { name, .. } => out.push_str(name.as_str()),
+            SymExprKind::Var(symbol)
+            | SymExprKind::GasLeft(symbol)
+            | SymExprKind::Keccak { name: symbol, .. }
+            | SymExprKind::Hash { name: symbol, .. } => out.push_str(self.cx.symbol_name(*symbol)),
             SymExprKind::Not(value) => {
                 out.push_str("(bvnot ");
                 self.write_expr(out, value, skip_expr, skip_bool);
@@ -614,15 +621,52 @@ fn normalize_cmp_for_solver(
 
 /// Simple facts learned from the normalized conjunction currently being queried.
 #[derive(Default)]
-struct ConstraintContext {
+pub(super) struct ConstraintContext {
     upper_bounds: HashMap<SymExpr, U256>,
+    lower_bounds: HashMap<SymExpr, U256>,
+}
+
+#[derive(Clone, Copy)]
+struct WordInterval {
+    min: U256,
+    max: U256,
+}
+
+impl WordInterval {
+    fn new(min: U256, max: U256) -> Option<Self> {
+        (min <= max).then_some(Self { min, max })
+    }
+
+    const fn exact(value: U256) -> Self {
+        Self { min: value, max: value }
+    }
+
+    fn with_bounds(self, lower: Option<U256>, upper: Option<U256>) -> Option<Self> {
+        Self::new(
+            self.min.max(lower.unwrap_or(U256::ZERO)),
+            self.max.min(upper.unwrap_or(U256::MAX)),
+        )
+    }
 }
 
 impl ConstraintContext {
-    fn new(constraints: &[SymBoolExpr]) -> Self {
+    pub(super) fn new(constraints: &[SymBoolExpr]) -> Self {
         let mut context = Self::default();
         for constraint in constraints {
             context.record_upper_bound_constraint(constraint);
+            context.record_lower_bound_constraint(constraint);
+        }
+        // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
+        // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
+        // cycles cannot tighten a bound one integer at a time across the uint256 domain.
+        for _ in 0..constraints.len() {
+            let mut changed = false;
+            for constraint in constraints {
+                changed |= context.propagate_order_bounds(constraint);
+            }
+            if !changed {
+                break;
+            }
         }
         context
     }
@@ -631,8 +675,25 @@ impl ConstraintContext {
         self.upper_bounds.get(expr).copied()
     }
 
+    fn lower_bound(&self, expr: &SymExpr) -> Option<U256> {
+        self.lower_bounds.get(expr).copied()
+    }
+
     fn normalize_bool(&self, cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
         match expr.kind() {
+            SymBoolExprKind::Not(value) if self.unsigned_bool_always_true(value) => {
+                SymBoolExpr::constant(cx, false)
+            }
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                if self.masked_word_eq_self(left, right) =>
+            {
+                // `x & mask == x => true` when the current context proves `x <= mask`.
+                SymBoolExpr::constant(cx, true)
+            }
+            SymBoolExprKind::Not(value) if self.masked_eq_self_condition(value) => {
+                // `x & mask != x => false` when the current context proves `x <= mask`.
+                SymBoolExpr::constant(cx, false)
+            }
             _ if expr
                 .zero_check_operand()
                 .is_some_and(|left| self.word_bool_always_true(cx, left)) =>
@@ -652,17 +713,107 @@ impl ConstraintContext {
         }
     }
 
+    fn masked_eq_self_condition(&self, expr: &SymBoolExpr) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                self.masked_word_eq_self(left, right)
+            }
+            _ => false,
+        }
+    }
+
+    fn masked_word_eq_self(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        self.masked_word_side_eq_self(left, right) || self.masked_word_side_eq_self(right, left)
+    }
+
+    fn masked_word_side_eq_self(&self, masked: &SymExpr, value: &SymExpr) -> bool {
+        let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else { return false };
+        let Some((source, mask)) = right
+            .as_const()
+            .map(|mask| (left, mask))
+            .or_else(|| left.as_const().map(|mask| (right, mask)))
+        else {
+            return false;
+        };
+        let Some(bits) = mask_low_bits(mask) else { return false };
+        source == value && self.unsigned_bits(value) <= bits
+    }
+
     fn record_upper_bound_constraint(&mut self, constraint: &SymBoolExpr) {
         if let Some((expr, bound)) = self.upper_bound_constraint(constraint) {
             self.record_upper_bound(expr.clone(), bound);
         }
     }
 
-    fn record_upper_bound(&mut self, expr: SymExpr, bound: U256) {
-        self.upper_bounds
-            .entry(expr)
-            .and_modify(|existing| *existing = (*existing).min(bound))
-            .or_insert(bound);
+    fn record_upper_bound(&mut self, expr: SymExpr, bound: U256) -> bool {
+        match self.upper_bounds.entry(expr) {
+            alloy_primitives::map::Entry::Occupied(mut entry) if bound < *entry.get() => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Vacant(entry) => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Occupied(_) => false,
+        }
+    }
+
+    fn record_lower_bound_constraint(&mut self, constraint: &SymBoolExpr) {
+        if let Some((expr, bound)) = self.lower_bound_constraint(constraint) {
+            self.record_lower_bound(expr.clone(), bound);
+        }
+    }
+
+    fn record_lower_bound(&mut self, expr: SymExpr, bound: U256) -> bool {
+        match self.lower_bounds.entry(expr) {
+            alloy_primitives::map::Entry::Occupied(mut entry) if bound > *entry.get() => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Vacant(entry) => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Occupied(_) => false,
+        }
+    }
+
+    fn propagate_order_bounds(&mut self, constraint: &SymBoolExpr) -> bool {
+        match constraint.kind() {
+            SymBoolExprKind::Cmp(op, left, right) => match op {
+                SymCmpOp::Ult | SymCmpOp::Ule => self.propagate_less_or_equal_bounds(left, right),
+                SymCmpOp::Ugt | SymCmpOp::Uge => self.propagate_less_or_equal_bounds(right, left),
+                SymCmpOp::Eq => {
+                    let changed = self.propagate_less_or_equal_bounds(left, right);
+                    self.propagate_less_or_equal_bounds(right, left) || changed
+                }
+                SymCmpOp::Slt | SymCmpOp::Sgt => false,
+            },
+            SymBoolExprKind::Not(value) => match value.kind() {
+                SymBoolExprKind::Cmp(op, left, right) => match op {
+                    SymCmpOp::Ult | SymCmpOp::Ule => {
+                        self.propagate_less_or_equal_bounds(right, left)
+                    }
+                    SymCmpOp::Ugt | SymCmpOp::Uge => {
+                        self.propagate_less_or_equal_bounds(left, right)
+                    }
+                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => false,
+                },
+                _ => false,
+            },
+            SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
+        }
+    }
+
+    /// Propagates interval bounds through the known unsigned relation `left <= right`.
+    fn propagate_less_or_equal_bounds(&mut self, left: &SymExpr, right: &SymExpr) -> bool {
+        let upper = self.upper_bound(right);
+        let lower = self.lower_bound(left);
+        let upper_changed = upper.is_some_and(|bound| self.record_upper_bound(left.clone(), bound));
+        let lower_changed =
+            lower.is_some_and(|bound| self.record_lower_bound(right.clone(), bound));
+        upper_changed || lower_changed
     }
 
     fn upper_bound_constraint<'a>(
@@ -671,11 +822,7 @@ impl ConstraintContext {
     ) -> Option<(&'a SymExpr, U256)> {
         match constraint.kind() {
             SymBoolExprKind::Cmp(op, left, right) => match *op {
-                SymCmpOp::Eq => match (left.as_const(), right.as_const()) {
-                    (_, Some(value)) => Some((left, value)),
-                    (Some(value), _) => Some((right, value)),
-                    _ => None,
-                },
+                SymCmpOp::Eq => const_side_bound(left, right),
                 SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
                     (_, Some(bound)) => (!bound.is_zero()).then(|| (left, bound - U256::from(1))),
                     _ => None,
@@ -723,6 +870,109 @@ impl ConstraintContext {
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => None,
         }
     }
+
+    fn lower_bound_constraint<'a>(
+        &self,
+        constraint: &'a SymBoolExpr,
+    ) -> Option<(&'a SymExpr, U256)> {
+        match constraint.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => const_side_bound(left, right),
+            SymBoolExprKind::Not(value) => match value.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                    nonzero_bound(left, right).or_else(|| nonzero_bound(right, left))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn unsigned_bool_always_true(&self, expr: &SymBoolExpr) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Cmp(op, left, right) => {
+                self.unsigned_cmp_always_true(*op, left, right)
+            }
+            _ => false,
+        }
+    }
+
+    fn unsigned_cmp_always_true(&self, op: SymCmpOp, left: &SymExpr, right: &SymExpr) -> bool {
+        let Some(left) = self.interval(left) else { return false };
+        let Some(right) = self.interval(right) else { return false };
+        match op {
+            SymCmpOp::Ult => left.max < right.min,
+            SymCmpOp::Ule => left.max <= right.min,
+            SymCmpOp::Ugt => left.min > right.max,
+            SymCmpOp::Uge => left.min >= right.max,
+            SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => false,
+        }
+    }
+
+    fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
+        let lower = self.lower_bound(expr);
+        let upper = self.upper_bound(expr);
+        let interval = self.structural_interval(expr).or_else(|| {
+            (lower.is_some() || upper.is_some()).then(|| WordInterval {
+                min: lower.unwrap_or(U256::ZERO),
+                max: upper.unwrap_or(U256::MAX),
+            })
+        })?;
+        interval.with_bounds(lower, upper)
+    }
+
+    fn structural_interval(&self, expr: &SymExpr) -> Option<WordInterval> {
+        match expr.kind() {
+            SymExprKind::Const(value) => Some(WordInterval::exact(*value)),
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
+                let mask = left.as_const().or_else(|| right.as_const())?;
+                Some(WordInterval { min: U256::ZERO, max: mask })
+            }
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                Some(WordInterval {
+                    min: left.min.checked_add(right.min)?,
+                    max: left.max.checked_add(right.max)?,
+                })
+            }
+            SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                if left.min < right.max {
+                    return None;
+                }
+                Some(WordInterval {
+                    min: left.min.checked_sub(right.max)?,
+                    max: left.max.checked_sub(right.min)?,
+                })
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                Some(WordInterval {
+                    min: left.min.checked_mul(right.min)?,
+                    max: left.max.checked_mul(right.max)?,
+                })
+            }
+            SymExprKind::Ite(_, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                Some(WordInterval { min: left.min.min(right.min), max: left.max.max(right.max) })
+            }
+            _ => None,
+        }
+    }
+}
+
+fn const_side_bound<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+    right
+        .as_const()
+        .map(|value| (left, value))
+        .or_else(|| left.as_const().map(|value| (right, value)))
+}
+
+fn nonzero_bound<'a>(expr: &'a SymExpr, value: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+    value.as_const().is_some_and(|value| value.is_zero()).then(|| (expr, U256::from(1)))
 }
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
@@ -776,10 +1026,6 @@ impl SymExpr {
     fn word_bool_always_true(&self, cx: &mut SymCx) -> bool {
         ConstraintContext::default().word_bool_always_true(cx, self)
     }
-
-    pub(crate) fn mul_cannot_overflow_256(&self, right: &Self) -> bool {
-        self.unsigned_bits().saturating_add(right.unsigned_bits()) <= 256
-    }
 }
 
 impl SymBoolExpr {
@@ -799,29 +1045,10 @@ impl SymBoolExpr {
                 })
             }
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
-                if left.as_const().is_some_and(|value| value.is_zero()) =>
-            {
-                right.normalized_bool_word_condition(cx).map(|value| value.not(cx)).or_else(|| {
-                    if right.word_bool_always_true(cx) {
-                        // `0 == always_true_word => false`.
-                        Some(Self::constant(cx, false))
-                    } else {
-                        let zero = SymExpr::zero(cx);
-                        Self::normalize_udiv_eq_zero(cx, &zero, right)
-                    }
-                })
-            }
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if right.as_const() == Some(U256::from(1)) =>
             {
                 // `bool_word(c) == 1 => c`.
                 left.normalized_bool_word_condition(cx)
-            }
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
-                if left.as_const() == Some(U256::from(1)) =>
-            {
-                // `1 == bool_word(c) => c`.
-                right.normalized_bool_word_condition(cx)
             }
             SymBoolExprKind::Not(value) => match value.kind() {
                 SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
@@ -833,17 +1060,6 @@ impl SymBoolExpr {
                     } else {
                         let zero = SymExpr::zero(cx);
                         Self::normalize_udiv_eq_zero(cx, left, &zero).map(|value| value.not(cx))
-                    }
-                }
-                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
-                    if left.as_const().is_some_and(|value| value.is_zero()) =>
-                {
-                    if right.word_bool_always_true(cx) {
-                        // `0 != always_true_word => true`.
-                        Some(Self::constant(cx, true))
-                    } else {
-                        let zero = SymExpr::zero(cx);
-                        Self::normalize_udiv_eq_zero(cx, &zero, right).map(|value| value.not(cx))
                     }
                 }
                 SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
@@ -892,12 +1108,6 @@ impl SymBoolExpr {
             // `word_bool(c) == 0 => !c`.
             return Some(condition);
         }
-        if left.as_const().is_some_and(|value| value.is_zero())
-            && let Some(condition) = right.normalize_eq_zero_for_solver(cx)
-        {
-            // `0 == word_bool(c) => !c`.
-            return Some(condition);
-        }
         None
     }
 
@@ -910,38 +1120,55 @@ impl SymBoolExpr {
         match op {
             SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
                 // `a > 0 => a != 0`.
-                (_, Some(value)) if value.is_zero() => left.normalize_ne_zero_for_solver(cx),
+                (_, Some(value)) if value.is_zero() => left
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, left).not(cx))),
                 // `1 > a => a == 0`.
-                (Some(value), _) if value == U256::from(1) => {
-                    right.normalize_eq_zero_for_solver(cx)
-                }
+                (Some(value), _) if value == U256::from(1) => right
+                    .normalize_eq_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right))),
                 _ => None,
             },
             SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
                 // `a >= 1 => a != 0`.
-                (_, Some(value)) if value == U256::from(1) => left.normalize_ne_zero_for_solver(cx),
+                (_, Some(value)) if value == U256::from(1) => left
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, left).not(cx))),
                 // `0 >= a => a == 0`.
-                (Some(value), _) if value.is_zero() => right.normalize_eq_zero_for_solver(cx),
+                (Some(value), _) if value.is_zero() => right
+                    .normalize_eq_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right))),
                 _ => None,
             },
             SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
                 // `a <= 0 => a == 0`.
-                (_, Some(value)) if value.is_zero() => left.normalize_eq_zero_for_solver(cx),
-                // `1 <= a => a != 0`.
-                (Some(value), _) if value == U256::from(1) => {
-                    right.normalize_ne_zero_for_solver(cx)
+                (_, Some(value)) if value.is_zero() => {
+                    left.normalize_eq_zero_for_solver(cx).or_else(|| Some(Self::eq_zero(cx, left)))
                 }
+                // `1 <= a => a != 0`.
+                (Some(value), _) if value == U256::from(1) => right
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right).not(cx))),
                 _ => None,
             },
             SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
                 // `a < 1 => a == 0`.
-                (_, Some(value)) if value == U256::from(1) => left.normalize_eq_zero_for_solver(cx),
+                (_, Some(value)) if value == U256::from(1) => {
+                    left.normalize_eq_zero_for_solver(cx).or_else(|| Some(Self::eq_zero(cx, left)))
+                }
                 // `0 < a => a != 0`.
-                (Some(value), _) if value.is_zero() => right.normalize_ne_zero_for_solver(cx),
+                (Some(value), _) if value.is_zero() => right
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right).not(cx))),
                 _ => None,
             },
             SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
         }
+    }
+
+    fn eq_zero(cx: &mut SymCx, expr: &SymExpr) -> Self {
+        let zero = SymExpr::zero(cx);
+        Self::eq(cx, expr.clone(), zero)
     }
 }
 
@@ -1127,11 +1354,11 @@ impl ConstraintContext {
         other == expected && self.mul_cannot_overflow_256(zero_operand, other)
     }
 
-    fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
+    pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
         self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)) <= 256
     }
 
-    fn unsigned_bits(&self, expr: &SymExpr) -> usize {
+    pub(super) fn unsigned_bits(&self, expr: &SymExpr) -> usize {
         let bits = match expr.kind() {
             SymExprKind::Const(_)
             | SymExprKind::Var(_)
@@ -1142,8 +1369,6 @@ impl ConstraintContext {
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
                     self.unsigned_bits(left).min(mask.bit_len())
-                } else if let Some(mask) = left.as_const() {
-                    self.unsigned_bits(right).min(mask.bit_len())
                 } else {
                     256
                 }

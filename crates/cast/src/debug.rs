@@ -31,7 +31,8 @@ pub(crate) async fn handle_traces(
     tempo_hardfork: Option<TempoHardfork>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
-        let _ = sh_println!("Compiling project to generate artifacts");
+        // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
+        let _ = sh_status!("Compiling project to generate artifacts");
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         let output = compiler.compile(&project)?;
@@ -56,12 +57,13 @@ pub(crate) async fn handle_traces(
         None
     });
     let config_labels = config.labels.clone().into_iter();
+    let is_tempo = tempo_hardfork.is_some() || chain.is_tempo();
 
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_label_disabled(disable_label)
-        .with_chain_id(Some(chain.id()))
+        .with_chain_id((!is_tempo).then(|| chain.id()))
         .with_tempo_hardfork(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),

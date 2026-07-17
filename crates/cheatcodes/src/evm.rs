@@ -288,7 +288,10 @@ impl Cheatcode for loadCall {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
-                let rand_value = ccx.state.rng().random();
+                let rand_value = ccx
+                    .state
+                    .cached_arbitrary_storage_value(target, slot.into())
+                    .unwrap_or_else(|| ccx.state.rng().random());
                 ccx.state.arbitrary_storage.as_mut().unwrap().save(
                     ccx.ecx,
                     target,

@@ -38,6 +38,7 @@ use foundry_common::{
     flatten,
     fmt::*,
     fs, shell,
+    tempo::classify_payment_lane,
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
@@ -71,6 +72,7 @@ pub mod call_spec;
 pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
+pub mod rpc_trace;
 pub mod tx;
 
 use rlp_converter::Item;
@@ -176,7 +178,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                                 .await
                                 && code.is_empty()
                             {
-                                eyre::bail!("contract {addr:?} does not have any code")
+                                eyre::bail!("contract {addr:?} does not have any code");
                             }
                         } else if req.to().is_none() {
                             eyre::bail!("tx req is a contract deployment");
@@ -997,7 +999,7 @@ where
     ) -> Result<String> {
         let block = block.into();
         if fields.contains(&"transactions".into()) && !full {
-            eyre::bail!("use --full to view transactions")
+            eyre::bail!("use --full to view transactions");
         }
 
         let block = self
@@ -1210,7 +1212,7 @@ where
                     eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
                 })?
         } else {
-            eyre::bail!("tx hash or from address is required")
+            eyre::bail!("tx hash or from address is required");
         };
 
         Ok(if raw {
@@ -1218,10 +1220,9 @@ where
             format!("0x{}", hex::encode(encoded))
         } else if lane {
             let encoded = tx.as_ref().encoded_2718();
-            let mut data = encoded.as_slice();
-            let tx = FoundryTxEnvelope::decode_2718(&mut data)
+            FoundryTxEnvelope::decode_2718(&mut encoded.as_slice())
                 .wrap_err("failed to decode transaction for lane classification")?;
-            crate::args::format_lane_classification(&tx.classify_t5_payment_lane())?
+            crate::args::format_lane_classification(&classify_payment_lane(&encoded))?
         } else if let Some(ref field) = field {
             if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
                 value
@@ -1934,7 +1935,9 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
+            Err(e) => {
+                eyre::bail!("Could not ABI encode the function and arguments: {e}");
+            }
         }
     }
 
@@ -1964,7 +1967,9 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
+            Err(e) => {
+                eyre::bail!("Could not ABI encode the function and arguments: {e}");
+            }
         };
         Ok(format!("0x{encoded}"))
     }
@@ -2121,7 +2126,7 @@ impl SimpleCast {
             | DynSolType::FixedArray(..)
             | DynSolType::Tuple(..)
             | DynSolType::CustomStruct { .. } => {
-                eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
+                eyre::bail!("Type `{k_ty}` is not supported as a mapping key");
             }
         }
 
@@ -2312,7 +2317,7 @@ impl SimpleCast {
         let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         let Some(metadata) = metadata.items.first() else {
-            eyre::bail!("Empty contract source code")
+            eyre::bail!("Empty contract source code");
         };
 
         let tmp = tempfile::tempdir()?;
@@ -2404,7 +2409,9 @@ impl SimpleCast {
 
         match result {
             Some((_nonce, selector, signature)) => Ok((selector, signature)),
-            None => eyre::bail!("No selector found"),
+            None => {
+                eyre::bail!("No selector found");
+            }
         }
     }
 
