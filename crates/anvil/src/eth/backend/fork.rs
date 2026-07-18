@@ -397,9 +397,12 @@ impl<N: Network> ClientFork<N> {
         number: u64,
         trace_types: HashSet<TraceType>,
     ) -> Result<Vec<TraceResultsWithTransactionHash>, TransportError> {
-        // Forward to upstream provider for historical blocks
-        let params = (number, trace_types.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>());
-        self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
+        // Forward to upstream provider for historical blocks. Use the typed trace API so the block
+        // and trace types are serialized in the format upstream providers expect.
+        self.provider()
+            .trace_replay_block_transactions(BlockId::number(number))
+            .trace_types(trace_types)
+            .await
     }
 
     pub async fn trace_replay_transaction(
