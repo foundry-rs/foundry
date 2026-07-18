@@ -324,13 +324,6 @@ impl CachedDiskCorpus {
     }
 }
 
-/// Corpus entry selected by a worker and returned for logical-campaign persistence.
-#[derive(Debug, Clone)]
-pub(crate) struct CampaignCorpusEntry {
-    tx_seq: Vec<BasicTxDetails>,
-    dedupe_by_coverage: bool,
-}
-
 /// Persists one call sequence as a corpus seed in the canonical worker0 corpus directory.
 pub fn persist_corpus_seed(
     config: &FuzzCorpusConfig,
@@ -367,11 +360,63 @@ fn same_tx_sequence(left: &[BasicTxDetails], right: &[BasicTxDetails]) -> bool {
         })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CorpusInsertionMode {
-    Live,
-    Deferred,
-    MemoryOnly,
+/// Expands compressed corpus entries before a campaign so workers can share and mutate regular
+/// files while the campaign is running.
+pub(crate) fn prepare_corpus_for_campaign(config: &FuzzCorpusConfig) -> Result<()> {
+    if !config.corpus_gzip {
+        return Ok(());
+    }
+    rewrite_campaign_corpus(config, false)
+}
+
+/// Compresses eligible corpus entries after a campaign has stopped writing them.
+pub(crate) fn finalize_corpus_after_campaign(config: &FuzzCorpusConfig) -> Result<()> {
+    if !config.corpus_gzip {
+        return Ok(());
+    }
+    rewrite_campaign_corpus(config, true)
+}
+
+fn rewrite_campaign_corpus(config: &FuzzCorpusConfig, gzip: bool) -> Result<()> {
+    let Some(root) = &config.corpus_dir else { return Ok(()) };
+    for dir in canonical_replay_dirs(root) {
+        for entry in read_corpus_dir(&dir) {
+            let is_gzip = entry
+                .path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"));
+            if is_gzip == gzip {
+                continue;
+            }
+            let tx_seq = entry.read_tx_seq()?;
+            if gzip
+                && tx_seq.iter().map(|tx| tx.estimate_serialized_size()).sum::<usize>()
+                    <= GZIP_THRESHOLD
+            {
+                continue;
+            }
+
+            let target = if gzip {
+                PathBuf::from(format!("{}.gz", entry.path.display()))
+            } else {
+                entry.path.with_extension("")
+            };
+            let temp = target.with_file_name(format!(
+                ".{}.{}.tmp",
+                target.file_name().unwrap().to_string_lossy(),
+                Uuid::new_v4()
+            ));
+            if gzip {
+                foundry_common::fs::write_json_gzip_file(&temp, &tx_seq)?;
+            } else {
+                foundry_common::fs::write_json_file(&temp, &tx_seq)?;
+            }
+            std::fs::rename(&temp, &target)?;
+            std::fs::remove_file(&entry.path)?;
+        }
+    }
+    Ok(())
 }
 
 struct ReplayOutcome {
@@ -598,50 +643,6 @@ impl WorkerCorpusSeed {
         );
 
         Ok(seed)
-    }
-
-    /// Filters and persists logical-campaign corpus entries after worker results have merged.
-    ///
-    /// This consumes the deferred entries and writes each retained entry as soon as replay proves
-    /// it contributes new coverage. Keeping this path streaming avoids building a second filtered
-    /// copy of every campaign entry during invariant finalization.
-    pub(crate) fn persist_filtered_campaign_outputs<FEN: FoundryEvmNetwork>(
-        &self,
-        config: &FuzzCorpusConfig,
-        entries: impl IntoIterator<Item = CampaignCorpusEntry>,
-        executor: &Executor<FEN>,
-        target: ReplayTarget<'_>,
-        optimization_best: Option<(I256, &[BasicTxDetails])>,
-    ) -> Result<()> {
-        let mut history_map = self.history_map.clone();
-        let mut edge_indices = self.edge_indices.clone();
-        let mut sancov_history_map = self.sancov_history_map.clone();
-
-        let mut output_dir_ready = false;
-        for entry in entries {
-            if entry.dedupe_by_coverage {
-                let coverage = ReplayCoverage {
-                    history_map: &mut history_map,
-                    edge_indices: &mut edge_indices,
-                    sancov_history_map: &mut sancov_history_map,
-                    metrics: None,
-                };
-                let ReplayOutcome { keep_entry, new_coverage, .. } =
-                    replay_corpus_sequence(&entry.tx_seq, executor, target, coverage)?;
-                if !keep_entry || !new_coverage {
-                    continue;
-                }
-            }
-
-            if !output_dir_ready {
-                prepare_campaign_output_dir(config);
-                output_dir_ready = true;
-            }
-            persist_campaign_entry(config, entry);
-        }
-
-        persist_optimization_output(config, optimization_best);
-        Ok(())
     }
 }
 
@@ -1034,28 +1035,7 @@ impl WorkerCorpus {
         edges_covered: Vec<usize>,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
-        let _ = self.process_inputs_inner(
-            inputs,
-            cmp_seq,
-            new_coverage,
-            edges_covered,
-            optimization,
-            true,
-        );
-    }
-
-    /// Updates worker-local corpus state and returns any corpus entry to persist after the
-    /// logical campaign has merged worker outputs.
-    #[instrument(skip_all)]
-    pub fn process_inputs_for_campaign(
-        &mut self,
-        inputs: &[BasicTxDetails],
-        cmp_seq: &[Vec<CmpOperands>],
-        new_coverage: bool,
-        edges_covered: Vec<usize>,
-        optimization: Option<(I256, Vec<BasicTxDetails>)>,
-    ) -> Option<CampaignCorpusEntry> {
-        self.process_inputs_inner(inputs, cmp_seq, new_coverage, edges_covered, optimization, false)
+        self.process_inputs_inner(inputs, cmp_seq, new_coverage, edges_covered, optimization);
     }
 
     fn process_inputs_inner(
@@ -1065,8 +1045,7 @@ impl WorkerCorpus {
         new_coverage: bool,
         edges_covered: Vec<usize>,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
-        persist_now: bool,
-    ) -> Option<CampaignCorpusEntry> {
+    ) {
         // Check if this run improved the optimization value.
         let improved_optimization = optimization.as_ref().is_some_and(|(value, _)| {
             self.optimization_best_value.is_none_or(|best| *value > best)
@@ -1078,18 +1057,16 @@ impl WorkerCorpus {
         {
             self.optimization_best_value = Some(value);
             self.optimization_best_sequence = best_seq;
-            if persist_now {
-                self.persist_optimization_state();
-            }
+            self.persist_optimization_state();
         }
 
         if !self.config.is_coverage_guided() {
-            return None;
+            return;
         }
 
         // Collect inputs if current run produced new coverage or improved optimization.
         if !new_coverage && !improved_optimization {
-            return None;
+            return;
         }
 
         // When the run is interesting only because of optimization (no new coverage),
@@ -1104,7 +1081,7 @@ impl WorkerCorpus {
             inputs.to_vec()
         };
         if corpus_inputs.is_empty() {
-            return None;
+            return;
         }
         let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
@@ -1116,25 +1093,11 @@ impl WorkerCorpus {
         );
         self.update_top_rated(&corpus);
 
-        self.insert_corpus_entry(
-            corpus,
-            if persist_now { CorpusInsertionMode::Live } else { CorpusInsertionMode::Deferred },
-            new_coverage,
-        )
+        self.insert_corpus_entry(corpus);
     }
 
-    fn insert_corpus_entry(
-        &mut self,
-        corpus: CorpusEntry,
-        insertion_mode: CorpusInsertionMode,
-        dedupe_by_coverage: bool,
-    ) -> Option<CampaignCorpusEntry> {
-        let campaign_entry = matches!(insertion_mode, CorpusInsertionMode::Deferred)
-            .then(|| CampaignCorpusEntry { tx_seq: corpus.tx_seq.clone(), dedupe_by_coverage });
-
-        if matches!(insertion_mode, CorpusInsertionMode::Live)
-            && let Some(worker_dir) = &self.worker_dir
-        {
+    fn insert_corpus_entry(&mut self, corpus: CorpusEntry) {
+        if let Some(worker_dir) = &self.worker_dir {
             let worker_corpus = worker_dir.join(CORPUS_DIR);
             let disk_entry = CorpusDirEntry {
                 path: worker_corpus.join(corpus.file_name(self.config.corpus_gzip)),
@@ -1156,7 +1119,6 @@ impl WorkerCorpus {
         }
 
         self.push_corpus_entry(corpus);
-        campaign_entry
     }
 
     fn push_corpus_entry(&mut self, corpus: CorpusEntry) {
@@ -1200,7 +1162,7 @@ impl WorkerCorpus {
         let optimization_best = self
             .optimization_best_value
             .map(|value| (value, self.optimization_best_sequence.as_slice()));
-        Self::persist_campaign_outputs(&self.config, Vec::new(), optimization_best);
+        persist_optimization_output(&self.config, optimization_best);
     }
 
     fn update_top_rated(&mut self, corpus: &CorpusEntry) {
@@ -1266,24 +1228,6 @@ impl WorkerCorpus {
             &mut self.metrics,
         );
         self.cull_corpus()
-    }
-
-    /// Persists logical-campaign corpus and optimization outputs after worker results have merged.
-    pub(crate) fn persist_campaign_outputs(
-        config: &FuzzCorpusConfig,
-        entries: impl IntoIterator<Item = CampaignCorpusEntry>,
-        optimization_best: Option<(I256, &[BasicTxDetails])>,
-    ) {
-        let mut output_dir_ready = false;
-        for entry in entries {
-            if !output_dir_ready {
-                prepare_campaign_output_dir(config);
-                output_dir_ready = true;
-            }
-            persist_campaign_entry(config, entry);
-        }
-
-        persist_optimization_output(config, optimization_best);
     }
 
     pub fn merge_edge_coverage_with_edges_into<FEN: FoundryEvmNetwork>(
@@ -1716,10 +1660,9 @@ impl WorkerCorpus {
         observed: &[ObservedCall],
         parent_tx: &BasicTxDetails,
         targeted_contracts: &FuzzRunIdentifiedContracts,
-        insertion_mode: CorpusInsertionMode,
-    ) -> Option<CampaignCorpusEntry> {
+    ) {
         if !self.config.is_coverage_guided() || observed.is_empty() {
-            return None;
+            return;
         }
 
         let tx_seq = {
@@ -1732,7 +1675,7 @@ impl WorkerCorpus {
             )
         };
 
-        self.push_observed_sequence(tx_seq, insertion_mode)
+        self.push_observed_sequence(tx_seq)
     }
 
     /// Seeds the corpus from sibling zero-input unit tests by replaying them on a clone of the
@@ -1789,13 +1732,8 @@ impl WorkerCorpus {
                 sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
             };
 
-            let insertion_mode = if self.id == 0 {
-                CorpusInsertionMode::Live
-            } else {
-                CorpusInsertionMode::MemoryOnly
-            };
             let len_before = self.in_memory_corpus.len();
-            let _ = self.push_observed_sequence(seq, insertion_mode);
+            self.push_observed_sequence(seq);
             if self.in_memory_corpus.len() > len_before {
                 debug!(target: "corpus", test = %func.name, "seeded corpus sequence from test trace");
                 added += 1;
@@ -1805,18 +1743,14 @@ impl WorkerCorpus {
         Ok(added)
     }
 
-    fn push_observed_sequence(
-        &mut self,
-        tx_seq: Vec<BasicTxDetails>,
-        insertion_mode: CorpusInsertionMode,
-    ) -> Option<CampaignCorpusEntry> {
+    fn push_observed_sequence(&mut self, tx_seq: Vec<BasicTxDetails>) {
         if !self.config.is_coverage_guided() || tx_seq.is_empty() {
-            return None;
+            return;
         }
 
         let corpus = CorpusEntry::new(tx_seq);
 
-        self.insert_corpus_entry(corpus, insertion_mode, false)
+        self.insert_corpus_entry(corpus)
     }
 
     /// Returns the next call to be used in call sequence.
@@ -2381,35 +2315,6 @@ fn sequence_from_observed(
         .collect()
 }
 
-fn prepare_campaign_output_dir(config: &FuzzCorpusConfig) {
-    let Some(root) = &config.corpus_dir else {
-        return;
-    };
-    let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
-    if let Err(err) = foundry_common::fs::create_dir_all(&corpus_dir) {
-        debug!(target: "corpus", %err, "failed to create campaign corpus dir");
-    }
-}
-
-fn persist_campaign_entry(config: &FuzzCorpusConfig, entry: CampaignCorpusEntry) {
-    let Some(root) = &config.corpus_dir else {
-        return;
-    };
-    let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
-    let corpus = CorpusEntry::new(entry.tx_seq);
-    let write_result = corpus.write_to_disk_in(&corpus_dir, config.corpus_gzip);
-    if let Err(err) = write_result {
-        debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
-    } else {
-        trace!(
-            target: "corpus",
-            "persisted {} inputs for new coverage for {} corpus",
-            corpus.tx_seq.len(),
-            corpus.uuid,
-        );
-    }
-}
-
 fn persist_optimization_output(
     config: &FuzzCorpusConfig,
     optimization_best: Option<(I256, &[BasicTxDetails])>,
@@ -2432,6 +2337,14 @@ fn persist_optimization_output(
             sequence.len()
         );
     }
+}
+
+pub(crate) fn persist_campaign_optimization(
+    config: &FuzzCorpusConfig,
+    value: Option<I256>,
+    sequence: &[BasicTxDetails],
+) {
+    persist_optimization_output(config, value.map(|value| (value, sequence)));
 }
 
 fn has_legacy_invariant_corpus_dirs(path: &Path) -> bool {
@@ -2999,18 +2912,15 @@ mod tests {
     }
 
     #[test]
-    fn campaign_processing_returns_corpus_without_writing_worker_file() {
+    fn campaign_processing_writes_worker_file_immediately() {
         let corpus_root = temp_corpus_dir();
         let worker_subdir = corpus_root.join("worker1");
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        let record = manager.process_inputs_for_campaign(&[basic_tx()], &[], true, vec![1], None);
-
-        let record = record.unwrap();
-        assert!(record.dedupe_by_coverage);
+        manager.process_inputs(&[basic_tx()], &[], true, vec![1], None);
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
-        assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+        assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 1);
     }
 
     /// `RawCallResult` carrying a single edge hit, to drive `merge_edge_coverage` without the EVM.
@@ -3064,9 +2974,7 @@ mod tests {
         let worker_subdir = corpus_root.join("worker1");
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        let record = manager.process_inputs_for_campaign(&[], &[], true, Vec::new(), None);
-
-        assert!(record.is_none());
+        manager.process_inputs(&[], &[], true, Vec::new(), None);
         assert_eq!(manager.in_memory_corpus.len(), 0);
         assert_eq!(manager.metrics.corpus_count, 0);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
@@ -3078,28 +2986,20 @@ mod tests {
     }
 
     #[test]
-    fn merged_campaign_outputs_write_corpus_and_optimization_to_master_dir() {
+    fn processing_writes_corpus_and_optimization_to_worker_dir() {
         let corpus_root = temp_corpus_dir();
         let mut manager = empty_worker_corpus(1, corpus_root.clone());
         let sequence = vec![basic_tx()];
-        let record = manager
-            .process_inputs_for_campaign(
-                &sequence,
-                &[],
-                false,
-                Vec::new(),
-                Some((I256::try_from(7).unwrap(), sequence.clone())),
-            )
-            .unwrap();
-        let inputs = vec![record];
-        WorkerCorpus::persist_campaign_outputs(
-            &corpus_config(corpus_root.clone()),
-            inputs,
-            Some((I256::try_from(7).unwrap(), &sequence)),
+        manager.process_inputs(
+            &sequence,
+            &[],
+            false,
+            Vec::new(),
+            Some((I256::try_from(7).unwrap(), sequence.clone())),
         );
 
-        let master_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
-        let entries = read_corpus_dir(&master_corpus_dir).collect::<Vec<_>>();
+        let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
+        let entries = read_corpus_dir(&worker_corpus_dir).collect::<Vec<_>>();
         assert_eq!(entries.len(), 1);
         let persisted_sequence = entries[0].read_tx_seq().unwrap();
         assert_eq!(persisted_sequence.len(), sequence.len());
@@ -3154,6 +3054,27 @@ mod tests {
     }
 
     #[test]
+    fn campaign_expands_then_recompresses_corpus_entries() {
+        let corpus_root = temp_corpus_dir();
+        let corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
+        fs::create_dir_all(&corpus_dir).unwrap();
+        let mut config = corpus_config(corpus_root);
+        config.corpus_gzip = true;
+        let compressed = CorpusEntry::new(vec![basic_tx_with_calldata(vec![0; 5000])])
+            .write_to_disk_in(&corpus_dir, true)
+            .unwrap();
+        assert_eq!(compressed.extension().unwrap(), "gz");
+
+        prepare_corpus_for_campaign(&config).unwrap();
+        let expanded = read_corpus_dir(&corpus_dir).next().unwrap().path;
+        assert_eq!(expanded.extension().unwrap(), "json");
+
+        finalize_corpus_after_campaign(&config).unwrap();
+        let recompressed = read_corpus_dir(&corpus_dir).next().unwrap().path;
+        assert_eq!(recompressed.extension().unwrap(), "gz");
+    }
+
+    #[test]
     fn persist_corpus_seed_skips_duplicate_sequence() {
         let corpus_root = temp_corpus_dir();
         let config = corpus_config(corpus_root.clone());
@@ -3191,24 +3112,22 @@ mod tests {
         .unwrap();
 
         let worse_sequence = vec![basic_tx()];
-        let worse = manager.process_inputs_for_campaign(
+        manager.process_inputs(
             &worse_sequence,
             &[],
             false,
             Vec::new(),
             Some((I256::try_from(50).unwrap(), worse_sequence.clone())),
         );
-        assert!(worse.is_none());
 
         let better_sequence = vec![basic_tx()];
-        let better = manager.process_inputs_for_campaign(
+        manager.process_inputs(
             &better_sequence,
             &[],
             false,
             Vec::new(),
             Some((I256::try_from(150).unwrap(), better_sequence.clone())),
         );
-        assert!(better.is_some());
     }
 
     #[test]
@@ -3463,14 +3382,7 @@ mod tests {
         };
         let mut manager = empty_worker_corpus(0, temp_corpus_dir());
 
-        let campaign_entry = manager.hoist_observed_calls(
-            &observed,
-            &parent_tx,
-            &targeted_contracts,
-            CorpusInsertionMode::Live,
-        );
-
-        assert!(campaign_entry.is_none());
+        manager.hoist_observed_calls(&observed, &parent_tx, &targeted_contracts);
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
 
@@ -3494,7 +3406,7 @@ mod tests {
     }
 
     #[test]
-    fn hoist_observed_calls_returns_deferred_campaign_entry_without_persisting() {
+    fn hoist_observed_calls_persists_immediately() {
         let target = Address::from([0x42; 20]);
         let foo = Function::parse("foo()").unwrap();
         let selector = foo.selector();
@@ -3510,18 +3422,10 @@ mod tests {
         let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        let campaign_entry = manager.hoist_observed_calls(
-            &observed,
-            &basic_tx(),
-            &targeted_contracts,
-            CorpusInsertionMode::Deferred,
-        );
+        manager.hoist_observed_calls(&observed, &basic_tx(), &targeted_contracts);
 
-        let campaign_entry = campaign_entry.expect("deferred hoist should return campaign entry");
-        assert!(!campaign_entry.dedupe_by_coverage);
-        assert_eq!(campaign_entry.tx_seq.len(), 1);
         assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 0);
+        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 1);
     }
 
     #[test]
@@ -3547,29 +3451,11 @@ mod tests {
             WorkerCorpusSeed::default(),
         )
         .unwrap();
-        assert!(
-            manager
-                .hoist_observed_calls(
-                    &observed,
-                    &basic_tx(),
-                    &targeted_contracts,
-                    CorpusInsertionMode::Live
-                )
-                .is_none()
-        );
+        manager.hoist_observed_calls(&observed, &basic_tx(), &targeted_contracts);
         assert!(manager.in_memory_corpus.is_empty());
 
         let mut manager = empty_worker_corpus(0, temp_corpus_dir());
-        assert!(
-            manager
-                .hoist_observed_calls(
-                    &[],
-                    &basic_tx(),
-                    &targeted_contracts,
-                    CorpusInsertionMode::Live
-                )
-                .is_none()
-        );
+        manager.hoist_observed_calls(&[], &basic_tx(), &targeted_contracts);
         assert!(manager.in_memory_corpus.is_empty());
     }
 
@@ -3630,26 +3516,20 @@ mod tests {
     }
 
     #[test]
-    fn push_observed_sequence_live_persists_and_memory_only_does_not() {
+    fn push_observed_sequence_persists_for_every_worker() {
         let corpus_root = temp_corpus_dir();
         let worker0_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
         let mut manager = empty_worker_corpus(0, corpus_root.clone());
 
-        assert!(
-            manager.push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::Live).is_none()
-        );
+        manager.push_observed_sequence(vec![basic_tx()]);
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(read_corpus_dir(&worker0_corpus_dir).count(), 1);
 
         let mut manager = empty_worker_corpus(1, corpus_root.clone());
         let worker1_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
-        assert!(
-            manager
-                .push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::MemoryOnly)
-                .is_none()
-        );
+        manager.push_observed_sequence(vec![basic_tx()]);
         assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker1_corpus_dir).count(), 0);
+        assert_eq!(read_corpus_dir(&worker1_corpus_dir).count(), 1);
     }
 
     #[test]

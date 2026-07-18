@@ -2,7 +2,7 @@ use super::{
     FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
     InvariantFuzzTestResult, InvariantMetrics,
 };
-use crate::executors::{EarlyExit, EvmExecutionCancellation, corpus::CampaignCorpusEntry};
+use crate::executors::{EarlyExit, EvmExecutionCancellation};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
@@ -206,13 +206,12 @@ impl InvariantCampaignState {
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
     pub result: InvariantFuzzTestResult,
-    pub corpus_entries: Vec<CampaignCorpusEntry>,
 }
 
 impl InvariantWorkerOutput {
     #[cfg(test)]
     pub const fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
-        Self { plan, result, corpus_entries: Vec::new() }
+        Self { plan, result }
     }
 }
 
@@ -245,14 +244,10 @@ impl InvariantCampaignAggregator {
     /// Validates the collected worker ranges and folds them into one logical campaign result.
     #[cfg(test)]
     pub fn finish(self) -> Result<InvariantFuzzTestResult> {
-        Ok(self.finish_with_corpus_entries()?.0)
+        self.finish_campaign()
     }
 
-    /// Validates the collected worker ranges and folds them into one logical campaign result with
-    /// corpus artifacts selected in logical worker order.
-    pub fn finish_with_corpus_entries(
-        mut self,
-    ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+    pub fn finish_campaign(mut self) -> Result<InvariantFuzzTestResult> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
@@ -266,9 +261,7 @@ impl InvariantCampaignAggregator {
     /// worker may have completed fewer than its assigned runs, so the original static ranges can
     /// contain gaps. The merge still validates worker identity and preserves deterministic worker
     /// order, but final run count is derived from the completed worker counters.
-    pub fn finish_partial_with_corpus_entries(
-        mut self,
-    ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+    pub fn finish_partial(mut self) -> Result<InvariantFuzzTestResult> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
@@ -277,9 +270,7 @@ impl InvariantCampaignAggregator {
     }
 }
 
-fn fold_outputs(
-    outputs: Vec<InvariantWorkerOutput>,
-) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTestResult> {
     let workers = outputs.len();
     let mut errors = HashMap::default();
     let mut handler_errors = HashMap::default();
@@ -290,11 +281,10 @@ fn fold_outputs(
     let mut gas_report_traces = Vec::new();
     let mut line_coverage = None;
     let mut metrics = HashMap::default();
-    let mut corpus_entries = Vec::new();
     let mut failed_corpus_replays = 0;
     let mut optimization_best = None;
 
-    for InvariantWorkerOutput { plan, result, corpus_entries: worker_entries } in outputs {
+    for InvariantWorkerOutput { plan, result } in outputs {
         if plan.worker_id == 0 {
             failed_corpus_replays = result.failed_corpus_replays;
         }
@@ -302,7 +292,6 @@ fn fold_outputs(
             errors.entry(invariant).or_insert(error);
         }
         merge_handler_errors(&mut handler_errors, result.handler_errors);
-        corpus_entries.extend(worker_entries);
         runs += result.runs;
         calls += result.calls;
         reverts += result.reverts;
@@ -320,23 +309,20 @@ fn fold_outputs(
     }
     let (optimization_best_value, optimization_best_sequence) =
         optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
-    Ok((
-        InvariantFuzzTestResult::new(
-            errors,
-            handler_errors,
-            runs,
-            calls,
-            reverts,
-            last_run_inputs,
-            gas_report_traces,
-            line_coverage,
-            metrics,
-            failed_corpus_replays,
-            workers,
-            optimization_best_value,
-            optimization_best_sequence,
-        ),
-        corpus_entries,
+    Ok(InvariantFuzzTestResult::new(
+        errors,
+        handler_errors,
+        runs,
+        calls,
+        reverts,
+        last_run_inputs,
+        gas_report_traces,
+        line_coverage,
+        metrics,
+        failed_corpus_replays,
+        workers,
+        optimization_best_value,
+        optimization_best_sequence,
     ))
 }
 
@@ -833,12 +819,11 @@ mod tests {
             result_with_counts(1, 10, true, 0),
         ));
 
-        let (result, corpus_entries) = partial.finish_partial_with_corpus_entries().unwrap();
+        let result = partial.finish_partial().unwrap();
 
         assert_eq!(result.runs, 3);
         assert_eq!(result.calls, 30);
         assert_eq!(result.failed_corpus_replays, 5);
-        assert!(corpus_entries.is_empty());
     }
 
     #[test]
