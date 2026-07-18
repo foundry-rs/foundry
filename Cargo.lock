@@ -77,9 +77,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "alloy"
-version = "2.1.1"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9677ab3454c237abe6307805bea17a7912b3a516b606c7b4d3d948b9fede137"
+checksum = "7bdf7932042b511ad4ad67f7eeac896df62439ac91a8c516d678b79cbe3f9c27"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -1910,9 +1910,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.1"
+version = "1.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4342d8937fc7e5dd9b1c60292261c0670c882a2cd1719cfc11b1af41731e32ad"
+checksum = "00bdb5da18dac48ca2cc7cd4a98e533e8635a58e2361d13a1a4ee3888e0d72f1"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -1921,9 +1921,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d9ceb1da931507a12f4fccea479dccd00da1943e1b4ae72d8e502d707361444"
+checksum = "43103168cc76fe62678a375e722fc9cb3a0146159ac5828bc4f0dfd755c2224c"
 dependencies = [
  "cc",
  "cmake",
@@ -3158,9 +3158,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete_nushell"
-version = "4.6.0"
+version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbb9e9715d29a754b468591be588f6b926f5b0a1eb6a8b62acabeb66ff84d897"
+checksum = "933b05d5d83ff65fd7eaf5d106c792f2264908790a2642aca57429767b762ce2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -6845,9 +6845,9 @@ dependencies = [
 
 [[package]]
 name = "ignore"
-version = "0.4.29"
+version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4ffa3a0547a138e59ddd6fa3b7c672ed47e6ad6a3cd177984ff1116aa5ba742"
+checksum = "7b009b6744c1445efd7244084e25e498636412effb6760b55067553baa925cc7"
 dependencies = [
  "crossbeam-deque",
  "globset",
@@ -8742,9 +8742,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.13.1"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+checksum = "3d20d5497ef88037a52ff98267d066e7f11fcc5e99bbfbd58a42336193aacec3"
 
 [[package]]
 name = "portable-atomic-util"
@@ -12055,7 +12055,7 @@ dependencies = [
 [[package]]
 name = "tempo-alloy"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -12088,7 +12088,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12111,7 +12111,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy-contract",
  "alloy-primitives",
@@ -12122,8 +12122,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
-version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+version = "1.10.2"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12134,8 +12134,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-evm"
-version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+version = "1.10.2"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12166,7 +12166,7 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12177,8 +12177,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles"
-version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+version = "1.10.2"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy",
  "alloy-evm",
@@ -12200,8 +12200,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles-macros"
-version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+version = "1.10.2"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -12212,7 +12212,7 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -12243,8 +12243,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-revm"
-version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
+version = "1.10.2"
+source = "git+https://github.com/tempoxyz/tempo?rev=b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec#b314d4822ed6d7abdfb60cbde25ebad1ae6a98ec"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12457,9 +12457,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.52.4"
+version = "1.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "317fafbbe3f02fc663dad00ea6186197de963cd4190e86a26d8d0fae095539af"
+checksum = "d988bcd52dbe076d3d46903332f58c912b87a2c49b1428419a5845154762ffee"
 dependencies = [
  "bytes",
  "libc",
@@ -12474,9 +12474,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "2.7.0"
+version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
+checksum = "6328af13490e73a9b4694030fafd93f8c8c6a9dede33e821c3fc63eddf8042ba"
 dependencies = [
  "proc-macro2",
  "quote",

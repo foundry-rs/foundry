@@ -230,6 +230,177 @@ async fn test_simulate_create_calls_rpc() {
     assert!(transactions.iter().all(|transaction| transaction["to"].is_null()));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_validation_defaults_base_fee_to_zero() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {},
+                {"blockOverrides": {"baseFeePerGas": "0x9"}},
+                {}
+            ]
+        }, "latest"]),
+    )
+    .await;
+
+    assert_eq!(response["result"][0]["baseFeePerGas"], "0x0");
+    assert_eq!(response["result"][1]["baseFeePerGas"], "0x9");
+    assert_eq!(response["result"][2]["baseFeePerGas"], "0x0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_resolves_nonces_from_state() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let sender = "0xc000000000000000000000000000000000000000";
+    let receiver = "0xc100000000000000000000000000000000000000";
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {"baseFeePerGas": "0x0"},
+                "stateOverrides": {
+                    (sender): {"balance": "0x1", "code": "0x00", "nonce": "0x7"}
+                },
+                "calls": [
+                    {"from": sender, "to": receiver},
+                    {"from": sender, "to": receiver}
+                ]
+            }],
+            "validation": true,
+            "returnFullTransactions": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0x7");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0x8");
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {(sender): {"nonce": "0xfffffffffffffffe"}},
+                "calls": [
+                    {"from": sender, "to": receiver},
+                    {"from": sender, "to": receiver},
+                    {"from": sender, "to": receiver}
+                ]
+            }],
+            "returnFullTransactions": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert!(
+        response["result"][0]["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|call| call["status"] == "0x1")
+    );
+    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xfffffffffffffffe");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
+    assert_eq!(response["result"][0]["transactions"][2]["nonce"], "0x0");
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {(sender): {"nonce": "0xffffffffffffffff"}},
+                "calls": [
+                    {"from": sender},
+                    {"from": sender, "to": receiver}
+                ]
+            }],
+            "returnFullTransactions": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xffffffffffffffff");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_maps_validation_errors() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let sender = "0xc000000000000000000000000000000000000000";
+    let receiver = "0xc100000000000000000000000000000000000000";
+    let cases = [
+        (
+            json!([{
+                "blockStateCalls": [{
+                    "blockOverrides": {"baseFeePerGas": "0x0"},
+                    "stateOverrides": {(sender): {"nonce": "0x1"}},
+                    "calls": [{"from": sender, "to": receiver, "nonce": "0x0"}]
+                }],
+                "validation": true
+            }, "latest"]),
+            -38010,
+        ),
+        (
+            json!([{
+                "blockStateCalls": [{
+                    "blockOverrides": {"baseFeePerGas": "0x0"},
+                    "stateOverrides": {(sender): {"nonce": "0x1"}},
+                    "calls": [{"from": sender, "to": receiver, "nonce": "0x2"}]
+                }],
+                "validation": true
+            }, "latest"]),
+            -38011,
+        ),
+        (
+            json!([{
+                "blockStateCalls": [{
+                    "blockOverrides": {"baseFeePerGas": "0x0"},
+                    "stateOverrides": {(sender): {"nonce": "0xffffffffffffffff"}},
+                    "calls": [{"from": sender, "to": receiver}]
+                }],
+                "validation": true
+            }, "latest"]),
+            -32603,
+        ),
+        (
+            json!([{
+                "blockStateCalls": [{
+                    "blockOverrides": {"baseFeePerGas": "0xa"},
+                    "calls": [{"from": sender, "to": receiver, "maxFeePerGas": "0x0"}]
+                }],
+                "validation": true
+            }, "latest"]),
+            -38012,
+        ),
+        (
+            json!([{
+                "blockStateCalls": [{"calls": [{"from": sender, "to": receiver, "gas": "0x0"}]}]
+            }, "latest"]),
+            -38013,
+        ),
+        (
+            json!([{
+                "blockStateCalls": [{"calls": [{"from": sender, "to": receiver, "value": "0x3e8"}]}]
+            }, "latest"]),
+            -38014,
+        ),
+    ];
+
+    for (params, code) in cases {
+        let response = rpc_request(&endpoint, "eth_simulateV1", params).await;
+        assert_eq!(response["error"]["code"], code, "{response}");
+    }
+}
+
 async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
     let response = reqwest::Client::new()
         .post(endpoint)

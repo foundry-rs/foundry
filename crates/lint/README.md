@@ -16,6 +16,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `arbitrary-send-erc20-permit`: Flags arbitrary `transferFrom` calls preceded by a covering `permit`; on non-permit tokens with a fallback (e.g. WETH) the permit silently succeeds and previously-approved tokens can be drained.
   - `controlled-delegatecall`: Flags `delegatecall` calls whose target is not provably trusted.
   - `encode-packed-collision`: Flags `abi.encodePacked()` calls with multiple dynamic-type arguments (`string`, `bytes`, dynamic arrays) that can produce hash collisions.
+  - `enumerable-loop-removal`: Flags `remove` on an EnumerableSet inside a loop that also iterates a set with `at`; swap-and-pop removal corrupts the iteration.
   - `function-selector-collision`: Flags colliding selectors between a proxy and the statically typed implementation API targeted by its fallback.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.

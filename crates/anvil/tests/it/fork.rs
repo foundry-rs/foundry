@@ -138,6 +138,39 @@ async fn test_fork_debug_get_raw_receipts() {
     }
 }
 
+// `debug_getRawTransactions` must serve pre-fork blocks from the upstream provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_transactions() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // A pre-fork block known to contain transactions.
+    let block_number = BLOCK_NUMBER - 1;
+    let block = provider.get_block(BlockId::number(block_number)).full().await.unwrap().unwrap();
+    assert!(!block.transactions.is_empty());
+
+    let raw_by_number: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), block.transactions.len());
+
+    // Each entry matches the single-transaction raw encoding path for the same hash.
+    for (raw, hash) in raw_by_number.iter().zip(block.transactions.hashes()) {
+        let single: Bytes =
+            provider.client().request("debug_getRawTransaction", (hash,)).await.unwrap();
+        assert_eq!(*raw, single);
+    }
+}
+
 // `debug_accountInfoAt` must delegate pre-fork blocks to the upstream and resolve block tags
 // against the fork's frozen head, not the upstream's advancing head.
 #[tokio::test(flavor = "multi_thread")]
@@ -1477,6 +1510,11 @@ async fn test_base_fork_gas_limit() {
             .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Base))),
     )
     .await;
+
+    // The public Base RPC occasionally returns block zero when it is unhealthy.
+    if api.block_number().unwrap().is_zero() {
+        return;
+    }
 
     let provider = handle.http_provider();
     let block =
