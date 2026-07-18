@@ -733,6 +733,11 @@ pub struct WorkerCorpus {
     pub(crate) metrics: CorpusMetrics,
     /// Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
+    /// Replayable calls observed while executing coverage-increasing inputs.
+    ///
+    /// This is intentionally not part of the coverage corpus: it is a dictionary of useful call
+    /// shapes, analogous to Echidna's `wholeCalls` generator dictionary.
+    observed_call_pool: Vec<BasicTxDetails>,
     /// Call sequence mutation weights used by stateful fuzzing.
     mutation_weights: FuzzCorpusMutationWeights,
     /// Weighted stateful sequence mutation distribution.
@@ -1004,6 +1009,7 @@ impl WorkerCorpus {
             failed_replays: seed.failed_replays,
             metrics: seed.metrics,
             tx_generator,
+            observed_call_pool: Vec::new(),
             mutation_weights,
             mutation_distribution,
             arg_mutation_distribution,
@@ -1614,6 +1620,13 @@ impl WorkerCorpus {
 
     /// Generates single call from corpus strategy.
     pub fn new_tx(&self, test_runner: &mut TestRunner) -> Result<BasicTxDetails> {
+        // Keep synthesizing fresh calls, but regularly use coverage-winning observed shapes as
+        // generation seeds. They are deliberately separate from corpus selection and persistence.
+        if !self.observed_call_pool.is_empty() && test_runner.rng().random_ratio(1, 2) {
+            return Ok(self.observed_call_pool
+                [test_runner.rng().random_range(0..self.observed_call_pool.len())]
+            .clone());
+        }
         Ok(self
             .tx_generator
             .new_tree(test_runner)
@@ -1651,37 +1664,38 @@ impl WorkerCorpus {
         tx_seq.into_iter().nth(tx_idx)
     }
 
-    /// Converts replayable observed sub-calls into one normal multi-transaction corpus entry.
-    ///
-    /// This captures calls shaped by a handler or another target call and lets the existing corpus
-    /// machinery mutate, evict, sync, and persist them like any other interesting sequence.
-    pub fn hoist_observed_calls(
+    /// Adds replayable observed calls to the generation dictionary without promoting them to the
+    /// coverage corpus. A call enters the corpus only when a later fuzz run executes it and gains
+    /// coverage through the normal `process_inputs` path.
+    pub(crate) fn observe_calls(
         &mut self,
         observed: &[ObservedCall],
-        parent_tx: &BasicTxDetails,
         targeted_contracts: &FuzzRunIdentifiedContracts,
-    ) {
+        depth: ObservedCallDepth,
+    ) -> usize {
         if !self.config.is_coverage_guided() || observed.is_empty() {
-            return;
+            return 0;
         }
 
-        let tx_seq = {
+        let calls = {
             let targets = targeted_contracts.targets();
-            sequence_from_observed(
-                observed,
-                &targets,
-                ObservedCallDepth::All,
-                Some((parent_tx.warp, parent_tx.roll)),
-            )
+            sequence_from_observed(observed, &targets, depth, None)
         };
-
-        self.push_observed_sequence(tx_seq)
+        let mut added = 0;
+        for call in calls {
+            if !self.observed_call_pool.iter().any(|existing| {
+                same_tx_sequence(std::slice::from_ref(existing), std::slice::from_ref(&call))
+            }) {
+                self.observed_call_pool.push(call);
+                added += 1;
+            }
+        }
+        added
     }
 
-    /// Seeds the corpus from sibling zero-input unit tests by replaying them on a clone of the
-    /// post-setUp executor and keeping the direct replayable calls made by each test.
+    /// Seeds the observed-call dictionary from sibling zero-input unit tests.
     ///
-    /// Returns the number of test-derived corpus entries added.
+    /// Returns the number of test-derived calls added. These are not corpus entries.
     pub fn seed_from_test_traces<FEN: FoundryEvmNetwork>(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
@@ -1713,12 +1727,18 @@ impl WorkerCorpus {
 
             let exec = executor.clone();
 
-            let raw = match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO)
-            {
-                Ok(raw) => raw,
-                Err(_) => continue,
-            };
+            let mut raw =
+                match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO) {
+                    Ok(raw) => raw,
+                    Err(_) => continue,
+                };
             if raw.reverted {
+                continue;
+            }
+
+            // Match normal observed-call collection: only retain shapes from an execution that
+            // expands coverage, while leaving the coverage corpus evidence-based.
+            if !self.merge_edge_coverage_with_edges_into(&mut raw, &mut Vec::new()) {
                 continue;
             }
 
@@ -1727,30 +1747,15 @@ impl WorkerCorpus {
                 continue;
             }
 
-            let seq = {
-                let targets = targeted_contracts.targets();
-                sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
-            };
-
-            let len_before = self.in_memory_corpus.len();
-            self.push_observed_sequence(seq);
-            if self.in_memory_corpus.len() > len_before {
-                debug!(target: "corpus", test = %func.name, "seeded corpus sequence from test trace");
-                added += 1;
+            let count =
+                self.observe_calls(&observed, targeted_contracts, ObservedCallDepth::DirectOnly);
+            if count > 0 {
+                debug!(target: "corpus", test = %func.name, count, "seeded observed calls from test trace");
+                added += count;
             }
         }
 
         Ok(added)
-    }
-
-    fn push_observed_sequence(&mut self, tx_seq: Vec<BasicTxDetails>) {
-        if !self.config.is_coverage_guided() || tx_seq.is_empty() {
-            return;
-        }
-
-        let corpus = CorpusEntry::new(tx_seq);
-
-        self.insert_corpus_entry(corpus)
     }
 
     /// Returns the next call to be used in call sequence.
@@ -2279,7 +2284,7 @@ impl WorkerCorpus {
 }
 
 #[derive(Clone, Copy)]
-enum ObservedCallDepth {
+pub(crate) enum ObservedCallDepth {
     DirectOnly,
     All,
 }
@@ -3311,7 +3316,7 @@ mod tests {
     }
 
     #[test]
-    fn hoist_observed_calls_bundles_replayable_subcalls_into_one_corpus_entry() {
+    fn observed_calls_seed_generation_without_entering_corpus() {
         let target = Address::from([0x42; 20]);
         let other = Address::from([0x43; 20]);
         let sender = Address::from([0xaa; 20]);
@@ -3370,33 +3375,25 @@ mod tests {
                 value: None,
             },
         ];
-        let parent_tx = BasicTxDetails {
-            warp: Some(U256::from(123)),
-            roll: Some(U256::from(456)),
-            sender,
-            call_details: CallDetails {
-                target: Address::from([0x99; 20]),
-                calldata: Bytes::new(),
-                value: None,
-            },
-        };
         let mut manager = empty_worker_corpus(0, temp_corpus_dir());
 
-        manager.hoist_observed_calls(&observed, &parent_tx, &targeted_contracts);
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(manager.metrics.corpus_count, 1);
+        assert_eq!(
+            manager.observe_calls(&observed, &targeted_contracts, ObservedCallDepth::All),
+            2
+        );
+        assert!(manager.in_memory_corpus.is_empty());
+        assert_eq!(manager.metrics.corpus_count, 0);
+        assert_eq!(manager.observed_call_pool.len(), 2);
 
-        let entry = manager.in_memory_corpus.last().unwrap();
-        assert_eq!(entry.tx_seq.len(), 2);
-        let tx = &entry.tx_seq[0];
-        assert_eq!(tx.warp, parent_tx.warp);
-        assert_eq!(tx.roll, parent_tx.roll);
+        let tx = &manager.observed_call_pool[0];
+        assert_eq!(tx.warp, None);
+        assert_eq!(tx.roll, None);
         assert_eq!(tx.sender, observed_caller);
         assert_eq!(tx.call_details.target, target);
         assert_eq!(&tx.call_details.calldata[..4], &foo_selector[..]);
         assert_eq!(tx.call_details.value, None);
 
-        let tx = &entry.tx_seq[1];
+        let tx = &manager.observed_call_pool[1];
         assert_eq!(tx.warp, None);
         assert_eq!(tx.roll, None);
         assert_eq!(tx.sender, observed_caller);
@@ -3406,7 +3403,7 @@ mod tests {
     }
 
     #[test]
-    fn hoist_observed_calls_persists_immediately() {
+    fn observed_calls_are_not_persisted() {
         let target = Address::from([0x42; 20]);
         let foo = Function::parse("foo()").unwrap();
         let selector = foo.selector();
@@ -3422,14 +3419,15 @@ mod tests {
         let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        manager.hoist_observed_calls(&observed, &basic_tx(), &targeted_contracts);
+        manager.observe_calls(&observed, &targeted_contracts, ObservedCallDepth::All);
 
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 1);
+        assert!(manager.in_memory_corpus.is_empty());
+        assert_eq!(manager.observed_call_pool.len(), 1);
+        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 0);
     }
 
     #[test]
-    fn hoist_observed_calls_skips_empty_or_non_coverage_guided_inputs() {
+    fn observed_calls_skip_empty_or_non_coverage_guided_inputs() {
         let target = Address::from([0x42; 20]);
         let foo = Function::parse("foo()").unwrap();
         let selector = foo.selector();
@@ -3451,12 +3449,14 @@ mod tests {
             WorkerCorpusSeed::default(),
         )
         .unwrap();
-        manager.hoist_observed_calls(&observed, &basic_tx(), &targeted_contracts);
+        manager.observe_calls(&observed, &targeted_contracts, ObservedCallDepth::All);
         assert!(manager.in_memory_corpus.is_empty());
+        assert!(manager.observed_call_pool.is_empty());
 
         let mut manager = empty_worker_corpus(0, temp_corpus_dir());
-        manager.hoist_observed_calls(&[], &basic_tx(), &targeted_contracts);
+        manager.observe_calls(&[], &targeted_contracts, ObservedCallDepth::All);
         assert!(manager.in_memory_corpus.is_empty());
+        assert!(manager.observed_call_pool.is_empty());
     }
 
     #[test]
@@ -3513,23 +3513,6 @@ mod tests {
         assert_eq!(seq[0].sender, sender);
         assert_eq!(seq[0].call_details.target, target);
         assert_eq!(&seq[0].call_details.calldata[..4], &foo_selector[..]);
-    }
-
-    #[test]
-    fn push_observed_sequence_persists_for_every_worker() {
-        let corpus_root = temp_corpus_dir();
-        let worker0_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
-        let mut manager = empty_worker_corpus(0, corpus_root.clone());
-
-        manager.push_observed_sequence(vec![basic_tx()]);
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker0_corpus_dir).count(), 1);
-
-        let mut manager = empty_worker_corpus(1, corpus_root.clone());
-        let worker1_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
-        manager.push_observed_sequence(vec![basic_tx()]);
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker1_corpus_dir).count(), 1);
     }
 
     #[test]
