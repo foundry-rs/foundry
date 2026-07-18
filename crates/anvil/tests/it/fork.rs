@@ -18,6 +18,7 @@ use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
+    trace::parity::{Action, TraceResultsWithTransactionHash, TraceType},
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
@@ -193,6 +194,57 @@ async fn test_fork_debug_account_info_at() {
         .await
         .unwrap();
     assert_eq!(by_tag_after.unwrap().balance, amount);
+}
+
+// Pre-fork `trace_replayBlockTransactions` must be forwarded to the upstream with the trace types
+// serialized as their camelCase JSON names (`trace`, `stateDiff`), not their Rust `Debug`
+// representation, otherwise the upstream rejects the request.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_trace_replay_block_transactions_forwards_trace_types() {
+    // Use a local anvil node as the upstream so the request path is fully exercised in-process.
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+
+    let account = origin_handle.dev_wallets().next().unwrap().address();
+    let to = Address::random();
+    let amount = U256::from(1_000u64);
+
+    // Mine two blocks on the upstream; the first strictly predates the fork head.
+    let mut first_block = None;
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().from(account).to(to).value(amount);
+        let tx = WithOtherFields::new(tx);
+        let receipt =
+            origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        first_block.get_or_insert(receipt.block_number.unwrap());
+    }
+    let pre_fork_block = first_block.unwrap();
+
+    // Fork from the upstream head so `pre_fork_block` is delegated upstream.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork_provider = fork_handle.http_provider();
+
+    let results: Vec<TraceResultsWithTransactionHash> = fork_provider
+        .client()
+        .request(
+            "trace_replayBlockTransactions",
+            (pre_fork_block, vec![TraceType::Trace, TraceType::StateDiff]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    let full_trace = &results[0].full_trace;
+    match &full_trace.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, account);
+            assert_eq!(call.to, to);
+        }
+        other => panic!("expected Call action, got {other:?}"),
+    }
+    // `StateDiff` was also requested, so it must be honored, not just `Trace`.
+    assert!(full_trace.state_diff.is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]
