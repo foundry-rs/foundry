@@ -180,6 +180,9 @@ struct CorpusEntry {
     cmp_seq: Vec<Vec<CmpOperands>>,
     // Whether this corpus is favored (part of the top-rated coverage minset).
     is_favored: bool,
+    /// Monotonic mutation round in which this entry most recently produced new coverage.
+    #[serde(skip_serializing)]
+    last_yield_round: u64,
     /// Timestamp of when this entry was written to disk in seconds.
     #[serde(skip_serializing)]
     timestamp: u64,
@@ -204,6 +207,7 @@ impl CorpusEntry {
             tx_seq,
             cmp_seq,
             is_favored: false,
+            last_yield_round: 0,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("time went backwards")
@@ -746,6 +750,8 @@ pub struct WorkerCorpus {
     arg_mutation_distribution: Option<WeightedIndex<u32>>,
     /// Identifier of current mutated entry for this worker.
     current_mutated_index: Option<usize>,
+    /// Monotonic mutation round used to decay the recent-yield scheduling bonus.
+    mutation_round: u64,
     /// Config
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
@@ -1014,6 +1020,7 @@ impl WorkerCorpus {
             mutation_distribution,
             arg_mutation_distribution,
             current_mutated_index: None,
+            mutation_round: 0,
             config: config.into(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1057,7 +1064,12 @@ impl WorkerCorpus {
             self.optimization_best_value.is_none_or(|best| *value > best)
         });
 
-        self.current_mutated_index = None;
+        if let Some(index) = self.current_mutated_index.take() {
+            self.mutation_round = self.mutation_round.saturating_add(1);
+            if new_coverage && let Some(corpus) = self.in_memory_corpus.get_mut(index) {
+                corpus.last_yield_round = self.mutation_round;
+            }
+        }
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1148,14 +1160,63 @@ impl WorkerCorpus {
                 .map(|entry| entry.map(|entry| (None, entry)));
         }
 
-        if rng.random::<bool>()
+        // Keep a small chance to revisit persisted and non-favored entries. The normal path is
+        // weighted so the coverage minset is a scheduling input, not merely an eviction policy.
+        if rng.random_ratio(1, 10)
             && let Some(entry) = self.disk_corpus.random_entry(rng)?
         {
             return Ok(Some((None, entry)));
         }
 
-        let index = rng.random_range(0..self.in_memory_corpus.len());
+        let index = if rng.random_ratio(1, 10) {
+            rng.random_range(0..self.in_memory_corpus.len())
+        } else {
+            self.weighted_mutation_index(rng)
+        };
         Ok(Some((Some(index), self.in_memory_corpus[index].clone())))
+    }
+
+    /// Selects an in-memory donor with AFL-style energy for favored/minset entries, rare edges,
+    /// and recently productive inputs. A separate exploration branch in
+    /// [`Self::random_mutation_corpus`] keeps this from starving the rest of the corpus.
+    fn weighted_mutation_index(&self, rng: &mut TestRng) -> usize {
+        let mut edge_frequency = HashMap::<usize, usize>::new();
+        for corpus in &self.in_memory_corpus {
+            for &edge in &corpus.unique_edges_covered {
+                *edge_frequency.entry(edge).or_default() += 1;
+            }
+        }
+
+        let weights = self
+            .in_memory_corpus
+            .iter()
+            .map(|corpus| self.mutation_energy(corpus, &edge_frequency))
+            .collect::<Vec<_>>();
+        let total = weights.iter().copied().sum::<u64>();
+        let mut pick = rng.random_range(0..total);
+        for (index, weight) in weights.into_iter().enumerate() {
+            if pick < weight {
+                return index;
+            }
+            pick -= weight;
+        }
+        unreachable!("non-empty corpus has positive mutation energy")
+    }
+
+    fn mutation_energy(&self, corpus: &CorpusEntry, edge_frequency: &HashMap<usize, usize>) -> u64 {
+        let favored_energy = u64::from(corpus.is_favored) * 8;
+        let rare_edge_energy = corpus
+            .unique_edges_covered
+            .iter()
+            .filter_map(|edge| edge_frequency.get(edge))
+            .map(|frequency| (self.in_memory_corpus.len() / (*frequency).max(1)) as u64)
+            .max()
+            .unwrap_or(0);
+        let yield_age = self.mutation_round.saturating_sub(corpus.last_yield_round);
+        let recent_yield_energy =
+            if corpus.last_yield_round == 0 { 0 } else { 8_u64.saturating_sub(yield_age.min(7)) };
+
+        1 + favored_energy + rare_edge_energy + recent_yield_energy
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -3596,6 +3657,35 @@ mod tests {
         assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
         assert_eq!(manager.disk_corpus.cache.len(), 1);
         assert_eq!(manager.disk_corpus.cache[0].uuid, non_favored_uuid);
+    }
+
+    #[test]
+    fn mutation_energy_favors_minset_rare_edges_and_recent_yield() {
+        let mut manager = empty_worker_corpus(0, temp_corpus_dir());
+        manager.mutation_round = 10;
+
+        let mut favored = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
+        favored.is_favored = true;
+        favored.last_yield_round = 9;
+        let common = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![2],
+            Uuid::new_v4(),
+        );
+
+        manager.in_memory_corpus.extend([favored.clone(), common.clone()]);
+        let edge_frequency = HashMap::from([(1, 1), (2, 2)]);
+
+        assert!(
+            manager.mutation_energy(&favored, &edge_frequency)
+                > manager.mutation_energy(&common, &edge_frequency)
+        );
     }
 
     #[test]
