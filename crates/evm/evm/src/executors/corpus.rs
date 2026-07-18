@@ -116,6 +116,9 @@ struct CorpusEntry {
     cmp_seq: Vec<Vec<ComparisonHint>>,
     // Whether this corpus is favored (part of the top-rated coverage minset).
     is_favored: bool,
+    /// Monotonic mutation round in which this entry most recently produced new coverage.
+    #[serde(skip_serializing)]
+    last_yield_round: u64,
     /// Timestamp of when this entry was written to disk in seconds.
     #[serde(skip_serializing)]
     timestamp: u64,
@@ -143,6 +146,7 @@ impl CorpusEntry {
             tx_seq,
             cmp_seq,
             is_favored: false,
+            last_yield_round: 0,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("time went backwards")
@@ -814,6 +818,9 @@ pub struct WorkerCorpus {
     /// Shared transaction-sequence generator.
     sequence_generator: SequenceGenerator,
     /// Identifier of current mutated entry for this worker.
+    current_mutated_index: Option<usize>,
+    /// Monotonic mutation round used to decay the recent-yield scheduling bonus.
+    mutation_round: u64,
     /// Config
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
@@ -1018,11 +1025,13 @@ impl WorkerCorpus {
         if self.config.is_coverage_guided() && !self.in_memory_corpus.is_empty() {
             self.cull_corpus()?;
         }
-        let corpus_len = self.in_memory_corpus.len();
+        let schedule = self.mutation_schedule();
+        let corpus_len = schedule.len();
         let plan = self.sequence_generator.start(
             test_runner,
             corpus_len,
-            |index| {
+            |schedule_index| {
+                let index = schedule[schedule_index];
                 let entry = self
                     .in_memory_corpus
                     .get(index)
@@ -1031,6 +1040,7 @@ impl WorkerCorpus {
             },
             self.config.is_coverage_guided(),
         )?;
+        self.current_mutated_index = plan.source().map(|index| schedule[index]);
         Ok(plan)
     }
 
@@ -1080,6 +1090,8 @@ impl WorkerCorpus {
             failed_replays: seed.failed_replays,
             metrics: seed.metrics,
             sequence_generator,
+            current_mutated_index: None,
+            mutation_round: 0,
             config: config.into(),
             new_entry_indices: Default::default(),
             initial_export_dirs,
@@ -1153,6 +1165,12 @@ impl WorkerCorpus {
             self.optimization_best_value.is_none_or(|best| *value > best)
         });
 
+        if let Some(index) = self.current_mutated_index.take() {
+            self.mutation_round = self.mutation_round.saturating_add(1);
+            if new_coverage && let Some(corpus) = self.in_memory_corpus.get_mut(index) {
+                corpus.last_yield_round = self.mutation_round;
+            }
+        }
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1238,6 +1256,40 @@ impl WorkerCorpus {
         }
     }
 
+    /// Builds an AFL-style weighted schedule favoring minset entries, rare edges, and recently
+    /// productive inputs. Every entry retains base energy so the rest of the corpus is not starved.
+    fn mutation_schedule(&self) -> Vec<usize> {
+        let mut edge_frequency = HashMap::<usize, usize>::new();
+        for corpus in &self.in_memory_corpus {
+            for &edge in &corpus.unique_edges_covered {
+                *edge_frequency.entry(edge).or_default() += 1;
+            }
+        }
+
+        self.in_memory_corpus
+            .iter()
+            .enumerate()
+            .flat_map(|(index, corpus)| {
+                std::iter::repeat_n(index, self.mutation_energy(corpus, &edge_frequency) as usize)
+            })
+            .collect()
+    }
+
+    fn mutation_energy(&self, corpus: &CorpusEntry, edge_frequency: &HashMap<usize, usize>) -> u64 {
+        let favored_energy = u64::from(corpus.is_favored) * 8;
+        let rare_edge_energy = corpus
+            .unique_edges_covered
+            .iter()
+            .filter_map(|edge| edge_frequency.get(edge))
+            .map(|frequency| (self.in_memory_corpus.len() / (*frequency).max(1)) as u64)
+            .max()
+            .unwrap_or(0);
+        let yield_age = self.mutation_round.saturating_sub(corpus.last_yield_round);
+        let recent_yield_energy =
+            if corpus.last_yield_round == 0 { 0 } else { 8_u64.saturating_sub(yield_age.min(7)) };
+
+        1 + favored_energy + rare_edge_energy + recent_yield_energy
+    }
     /// Returns the previously persisted optimization best value and sequence (if any).
     pub fn optimization_initial_state(&self) -> (Option<I256>, Vec<BasicTxDetails>) {
         (self.optimization_best_value, self.optimization_best_sequence.clone())
@@ -3376,6 +3428,35 @@ mod tests {
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert!(manager.in_memory_corpus.iter().all(|entry| entry.uuid != blocked_uuid));
         assert_eq!(manager.metrics.corpus_count, manager.in_memory_corpus.len());
+    }
+
+    #[test]
+    fn mutation_energy_favors_minset_rare_edges_and_recent_yield() {
+        let mut manager = empty_worker_corpus(0, temp_corpus_dir());
+        manager.mutation_round = 10;
+
+        let mut favored = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
+        favored.is_favored = true;
+        favored.last_yield_round = 9;
+        let common = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![2],
+            Uuid::new_v4(),
+        );
+
+        manager.in_memory_corpus.extend([favored.clone(), common.clone()]);
+        let edge_frequency = HashMap::from([(1, 1), (2, 2)]);
+
+        assert!(
+            manager.mutation_energy(&favored, &edge_frequency)
+                > manager.mutation_energy(&common, &edge_frequency)
+        );
     }
 
     #[test]
