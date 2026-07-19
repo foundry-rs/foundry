@@ -1365,7 +1365,6 @@ impl WorkerCorpus {
             let targets = targeted_contracts.targets();
             sequence_from_observed(observed, &targets, depth, None)
         };
-
         calls.into_iter().filter(|call| self.sequence_generator.observe_call(call.clone())).count()
     }
 
@@ -1383,6 +1382,12 @@ impl WorkerCorpus {
         }
 
         let mut added = 0;
+        // Test traces may nominate useful observed-call shapes, but they are not campaign
+        // executions. Keep their coverage accounting isolated so a later fuzzed execution can
+        // still discover and persist the same coverage.
+        let mut test_history_map = self.history_map.clone();
+        let mut test_edge_indices = self.edge_indices.clone();
+        let mut test_sancov_history_map = self.sancov_history_map.clone();
 
         for func in invariant_contract.abi.functions() {
             if !func.is_unit_test() {
@@ -1403,15 +1408,28 @@ impl WorkerCorpus {
 
             let exec = executor.clone();
 
-            let raw = match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO)
-            {
-                Ok(raw) => raw,
-                Err(_) => continue,
-            };
+            let mut raw =
+                match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO) {
+                    Ok(raw) => raw,
+                    Err(_) => continue,
+                };
             if raw.reverted {
                 continue;
             }
 
+            // Retain only shapes that add coverage to the test-seed snapshot. Do not merge that
+            // coverage into the campaign state: otherwise subsequent fuzzed calls are no longer
+            // novel and never enter the persisted corpus.
+            let (new_coverage, _) = raw.merge_all_coverage_with_edges_into(
+                &mut test_history_map,
+                &mut test_edge_indices,
+                &mut test_sancov_history_map,
+                SANCOV_EDGE_OFFSET,
+                &mut Vec::new(),
+            );
+            if !new_coverage {
+                continue;
+            }
             let observed = raw.observed_calls;
             if observed.is_empty() {
                 continue;
