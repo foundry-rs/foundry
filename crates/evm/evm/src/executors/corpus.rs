@@ -1682,6 +1682,12 @@ impl WorkerCorpus {
             sequence_from_observed(observed, &targets, depth, None)
         };
         let mut added = 0;
+        // Test traces may nominate useful observed-call shapes, but they are not
+        // campaign executions. Keep their coverage accounting isolated so a later
+        // fuzzed execution can still discover and persist the same coverage.
+        let mut test_history_map = self.history_map.clone();
+        let mut test_edge_indices = self.edge_indices.clone();
+        let mut test_sancov_history_map = self.sancov_history_map.clone();
         for call in calls {
             if !self.observed_call_pool.iter().any(|existing| {
                 same_tx_sequence(std::slice::from_ref(existing), std::slice::from_ref(&call))
@@ -1736,9 +1742,17 @@ impl WorkerCorpus {
                 continue;
             }
 
-            // Match normal observed-call collection: only retain shapes from an execution that
-            // expands coverage, while leaving the coverage corpus evidence-based.
-            if !self.merge_edge_coverage_with_edges_into(&mut raw, &mut Vec::new()) {
+            // Retain only shapes that add coverage to the test-seed snapshot. Do not merge that
+            // coverage into the campaign state: otherwise subsequent fuzzed calls are no longer
+            // novel and never enter the persisted corpus.
+            let (new_coverage, _) = raw.merge_all_coverage_with_edges_into(
+                &mut test_history_map,
+                &mut test_edge_indices,
+                &mut test_sancov_history_map,
+                SANCOV_EDGE_OFFSET,
+                &mut Vec::new(),
+            );
+            if !new_coverage {
                 continue;
             }
 
