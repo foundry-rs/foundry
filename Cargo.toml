@@ -535,7 +535,7 @@ alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git"
     "std",
     "memory_limit",
 ] }
-monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "fix/preserve-reserve-tracker", default-features = false, features = [
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "foundry-revm-41-compat", default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
@@ -552,7 +552,7 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "fix/preserve-reserve-tracker" }
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "foundry-revm-41-compat" }
 
 ## foundry-core
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "9c4a397f42d254e95a1ee8354b81b17805e147ef" }
