@@ -27,6 +27,15 @@ contract NamedCallArgsInChain {
         (foo{value: 1})().bar({firstExtremelyLongArgumentName: firstExtremelyLongValueName, secondExtremelyLongArgumentName: secondExtremelyLongValueName});
     }
 
+    // https://github.com/foundry-rs/foundry/issues/15823
+    function issue15823(uint256 redactedId, uint256 setId, bytes calldata redactedEngineData) external {
+        RedactedRootConfiguration.getRedactedEngine({
+            redactedId: redactedId
+        }).initializeSetRedacted({
+            setId_: setId, redactedId_: redactedId, redactedEngineData_: redactedEngineData
+        });
+    }
+
     function attempted(address vault, uint256 positionId, uint256 batchId, address account, address operator, uint256 amount, uint256 deadline, bytes calldata data) external {
         try IVault(vault).updatePosition({positionId_: positionId, batchId_: batchId, account_: account, operator_: operator, amount_: amount, deadline_: deadline, data_: data}) {} catch {}
     }
