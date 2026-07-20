@@ -1,4 +1,4 @@
-use super::{UintStrategy, state::FuzzStateReader};
+use super::{UintStrategy, state::DictionaryRead};
 use crate::{
     invariant::SenderFilters,
     strategies::mutators::{
@@ -115,9 +115,9 @@ fn fuzz_param_inner(
 /// fuzz state.
 ///
 /// Works with ABI Encoder v2 tuples.
-pub fn fuzz_param_from_state(
+pub(crate) fn fuzz_param_from_state(
     param: &DynSolType,
-    state: &impl FuzzStateReader,
+    state: &impl DictionaryRead,
 ) -> BoxedStrategy<DynSolValue> {
     // Value strategy that uses the state.
     let value = || {
@@ -299,7 +299,7 @@ pub fn fuzz_param_from_state(
 fn select_random_address(
     current: Address,
     test_runner: &mut TestRunner,
-    state: &impl FuzzStateReader,
+    state: &impl DictionaryRead,
     senders: Option<&SenderFilters>,
 ) -> Option<Address> {
     if let Some(senders) = senders {
@@ -343,34 +343,20 @@ fn select_random_address(
 }
 
 /// Mutates the current value of the given parameter type and value.
-pub fn mutate_param_value(
+pub(crate) fn mutate_param_value(
     param: &DynSolType,
     value: DynSolValue,
     test_runner: &mut TestRunner,
-    state: &impl FuzzStateReader,
+    state: &impl DictionaryRead,
 ) -> DynSolValue {
     mutate_param_value_inner(param, value, test_runner, state, None)
-}
-
-/// Mutates the current value of the given parameter type and value, with optional sender filters.
-///
-/// When `senders` is provided and has targeted addresses, address mutations will prefer
-/// selecting from those targeted addresses (similar to `select_random_sender` behavior).
-pub fn mutate_param_value_with_senders(
-    param: &DynSolType,
-    value: DynSolValue,
-    test_runner: &mut TestRunner,
-    state: &impl FuzzStateReader,
-    senders: &SenderFilters,
-) -> DynSolValue {
-    mutate_param_value_inner(param, value, test_runner, state, Some(senders))
 }
 
 fn mutate_param_value_inner(
     param: &DynSolType,
     value: DynSolValue,
     test_runner: &mut TestRunner,
-    state: &impl FuzzStateReader,
+    state: &impl DictionaryRead,
     senders: Option<&SenderFilters>,
 ) -> DynSolValue {
     let new_value = |param: &DynSolType, test_runner: &mut TestRunner| {
@@ -497,7 +483,7 @@ fn mutate_random_tuple_value(
     tuple_values: &mut [DynSolValue],
     tuple_types: &[DynSolType],
     test_runner: &mut TestRunner,
-    state: &impl FuzzStateReader,
+    state: &impl DictionaryRead,
     senders: Option<&SenderFilters>,
 ) {
     let id = test_runner.rng().random_range(0..tuple_values.len());
@@ -512,7 +498,7 @@ fn mutate_random_array_value(
     array_values: &mut [DynSolValue],
     element_type: &DynSolType,
     test_runner: &mut TestRunner,
-    state: &impl FuzzStateReader,
+    state: &impl DictionaryRead,
     senders: Option<&SenderFilters>,
 ) {
     let elem = array_values.choose_mut(&mut test_runner.rng()).unwrap();

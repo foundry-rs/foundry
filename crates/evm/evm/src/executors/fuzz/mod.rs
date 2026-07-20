@@ -21,14 +21,11 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
     FuzzFixtures, FuzzRunMetadata, FuzzTestResult,
-    strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state, fuzz_msg_value},
+    strategies::{EvmFuzzState, TxGenerator},
 };
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
-use proptest::{
-    strategy::{Just, Strategy},
-    test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner},
-};
+use proptest::test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json::json;
 use std::{
@@ -621,25 +618,23 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         progress: Option<&ProgressBar>,
     ) -> Result<WorkerState<FEN>> {
         // Prepare
-        let fuzz_state = shared_state.state.fork();
-        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let calldata_strategy = proptest::prop_oneof![
-            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state, fuzz_fixtures),
-        ];
-        let value_strategy = if func.state_mutability == alloy_json_abi::StateMutability::Payable {
-            fuzz_msg_value(self.config.corpus.payable_value_weight).boxed()
-        } else {
-            Just(None).boxed()
-        };
-        let sender = self.sender;
-        let strategy =
-            (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| BasicTxDetails {
-                warp: None,
-                roll: None,
-                sender,
-                call_details: CallDetails { target: address, calldata, value },
-            });
+        let fuzz_seed = shared_state.state.fork();
+        let generator = TxGenerator::stateless(
+            fuzz_seed.clone(),
+            fuzz_fixtures.clone(),
+            address,
+            self.sender,
+            func.clone(),
+            self.config.dictionary.dictionary_weight,
+            self.config.corpus.payable_value_weight,
+        );
+        let fuzz_state = fuzz_seed.stateless_worker();
+        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::stateless(
+            generator,
+            fuzz_state.clone(),
+            func.clone(),
+            &self.config.corpus,
+        )?;
 
         let replay_target = ReplayTarget {
             stateless: Some(StatelessReplayTarget { function: func, address }),
@@ -649,7 +644,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let mut corpus = WorkerCorpus::new(
             worker_id,
             self.config.corpus.clone(),
-            strategy.boxed(),
+            generator,
             // Master worker replays the persisted corpus using the executor
             (worker_id == 0).then_some(&self.executor_f),
             replay_target,
@@ -684,7 +679,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         if let Some(target_run) = self.config.run {
             for _ in 1..target_run {
-                if let Err(err) = corpus.new_input(&mut runner, &fuzz_state, func) {
+                if let Err(err) = corpus.new_sequence(&mut runner) {
                     worker.failure = Some(TestCaseError::fail(format!(
                         "failed to generate fuzzed input in worker {}: {err}",
                         worker.id
@@ -760,8 +755,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
-                let input = match corpus.new_input(&mut runner, &fuzz_state, func) {
-                    Ok(input) => input,
+                let input = match corpus.new_sequence(&mut runner) {
+                    Ok(plan) => plan.into_first(),
                     Err(err) => {
                         worker.failure = Some(TestCaseError::fail(format!(
                             "failed to generate fuzzed input in worker {}: {err}",
