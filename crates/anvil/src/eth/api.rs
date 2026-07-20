@@ -2958,13 +2958,17 @@ impl EthApi<FoundryNetwork> {
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
-        let block_interval = self
-            .miner
-            .block_interval()
-            .map(|duration| {
-                duration.as_secs().saturating_add(u64::from(duration.subsec_nanos() != 0)).max(1)
-            })
-            .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS);
+        let block_interval = self.backend.time().block_timestamp_interval().unwrap_or_else(|| {
+            self.miner
+                .block_interval()
+                .map(|duration| {
+                    duration
+                        .as_secs()
+                        .saturating_add(u64::from(duration.subsec_nanos() != 0))
+                        .max(1)
+                })
+                .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS)
+        });
         self.on_blocking_task(|this| async move {
             let simulated_blocks =
                 this.backend.simulate(request, Some(block_request), block_interval).await?;

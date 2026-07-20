@@ -5105,6 +5105,19 @@ impl Backend<FoundryNetwork> {
                 let mut block_state_gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut logs = Vec::new();
+                let overridden_block_hashes = block_overrides
+                    .as_ref()
+                    .and_then(|overrides| overrides.block_hash.as_ref())
+                    .map(|overrides| {
+                        overrides
+                            .keys()
+                            .map(|number| {
+                                let number = U256::from(*number);
+                                (number, cache_db.cache.block_hashes.get(&number).copied())
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
@@ -5313,6 +5326,14 @@ impl Backend<FoundryNetwork> {
                     call_res.push(sim_res);
                 }
 
+                for (number, hash) in overridden_block_hashes {
+                    if let Some(hash) = hash {
+                        cache_db.cache.block_hashes.insert(number, hash);
+                    } else {
+                        cache_db.cache.block_hashes.remove(&number);
+                    }
+                }
+
                 let gas_used = if is_amsterdam {
                     block_regular_gas_used.max(block_state_gas_used)
                 } else {
@@ -5376,7 +5397,7 @@ impl Backend<FoundryNetwork> {
                 cache_db.cache.block_hashes.insert(block_env.number, block_hash);
                 // Route through the fee manager so Tempo chains use their own base fee rules.
                 let header = &simulated_block.inner.header;
-                next_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                next_base_fee = self.fees.calculate_next_block_base_fee_per_gas(
                     header.gas_used(),
                     header.gas_limit(),
                     header.base_fee_per_gas().unwrap_or_default(),
@@ -5392,7 +5413,7 @@ impl Backend<FoundryNetwork> {
             Some(BlockRequest::Pending(pool_transactions)) => {
                 self.with_pending_block(pool_transactions, |state, block| {
                     let header = &block.block.header;
-                    let base_fee = self.fees.get_next_block_base_fee_per_gas(
+                    let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
                         header.gas_used(),
                         header.gas_limit(),
                         header.base_fee_per_gas().unwrap_or_default(),
@@ -5421,7 +5442,7 @@ impl Backend<FoundryNetwork> {
                 let base_number = base_block.header.number();
                 let base_timestamp = base_block.header.timestamp();
                 let base_hash = base_block.header.hash;
-                let base_fee = self.fees.get_next_block_base_fee_per_gas(
+                let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
                     base_block.header.gas_used(),
                     base_block.header.gas_limit(),
                     base_block.header.base_fee_per_gas().unwrap_or_default(),

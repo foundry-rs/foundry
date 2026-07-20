@@ -122,6 +122,18 @@ async fn test_simulate_uses_configured_block_interval_rpc() {
         assert_eq!(quantity(&blocks[0]["timestamp"]), base_timestamp + 2);
         assert_eq!(quantity(&blocks[1]["timestamp"]), base_timestamp + 4);
 
+        api.evm_set_block_timestamp_interval(7).unwrap();
+        let response = rpc_request(
+            &endpoint,
+            "eth_simulateV1",
+            json!([{"blockStateCalls": [{}, {}]}, "latest"]),
+        )
+        .await;
+        let blocks = response["result"].as_array().unwrap();
+        assert_eq!(quantity(&blocks[0]["timestamp"]), base_timestamp + 7);
+        assert_eq!(quantity(&blocks[1]["timestamp"]), base_timestamp + 14);
+        assert!(api.evm_remove_block_timestamp_interval().unwrap());
+
         api.anvil_set_interval_mining(3).unwrap();
         let response =
             rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}, "latest"]))
@@ -218,8 +230,46 @@ async fn test_simulate_chains_block_hashes_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_scopes_block_hash_overrides_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let base = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
+    let base_hash = base["result"]["hash"].clone();
+    let fake_hash = format!("0x{}", "42".repeat(32));
+    let contract = "0xc000000000000000000000000000000000000000";
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {
+                    "blockOverrides": {
+                        "blockHash": {"0": fake_hash}
+                    },
+                    "stateOverrides": {
+                        (contract): {"code": "0x5f405f5260205ff3"}
+                    },
+                    "calls": [{"to": contract}]
+                },
+                {
+                    "calls": [{"to": contract}]
+                }
+            ]
+        }, "latest"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+    let blocks = response["result"].as_array().unwrap();
+
+    assert_eq!(blocks[0]["calls"][0]["returnData"], fake_hash);
+    assert_eq!(blocks[1]["calls"][0]["returnData"], base_hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_scopes_block_overrides_and_derives_base_fee_rpc() {
-    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
     let (_api, handle) = spawn(config).await;
     let endpoint = handle.http_endpoint();
     let random = format!("0x{:064x}", 42);
@@ -292,7 +342,8 @@ async fn test_simulate_derives_from_historical_base_rpc() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_derives_from_pending_base_rpc() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.evm_set_block_timestamp_interval(12).unwrap();
     let endpoint = handle.http_endpoint();
     let pending = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["pending", false])).await;
     let response =
