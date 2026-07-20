@@ -27,7 +27,9 @@ contract NestedNamedCallArgumentChain {
         factory().item(innerFactory().method({value: firstExtremelyLongValueName})).update();
         factory()
             .item(
-                innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({enabled: true})
+                innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({
+                    firstExtremelyLongArgumentName: true
+                })
             )
             .update();
         factory()
