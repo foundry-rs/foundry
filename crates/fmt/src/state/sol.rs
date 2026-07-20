@@ -1864,7 +1864,8 @@ impl<'ast> State<'_, 'ast> {
                     .break_single(true)
                     .without_ind(
                         self.call_stack.has_indented_parent_chain()
-                            && self.chained_named_call.is_none_or(|call| call.keep_inline),
+                            && (self.chained_named_call.is_none_or(|call| call.keep_inline)
+                                || self.call_stack.has_indented_ancestor_chain()),
                     )
                     .with_delimiters(!self.call_with_opts_and_args),
             );
