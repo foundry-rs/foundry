@@ -143,6 +143,9 @@ type OpCallDepositInfo = DepositTransactionParts;
 #[derive(Default, Clone, Debug)]
 struct OpCallDepositInfo;
 
+/// Maximum cumulative gas available to one `eth_simulateV1` request.
+const SIMULATE_GAS_CAP: u64 = 50_000_000;
+
 /// Marker trait that abstracts over the per-network inspector trait bounds
 /// required by the in-memory backend. The OP bound is only included when the
 /// `optimism` feature is enabled.
@@ -5069,6 +5072,7 @@ impl Backend<FoundryNetwork> {
                 let cfg_env = &self.evm_env.read().cfg_env;
                 (cfg_env.spec >= SpecId::AMSTERDAM, cfg_env.tx_gas_limit_cap())
             };
+            let mut rpc_gas_budget = SIMULATE_GAS_CAP;
 
             // execute the blocks
             for block in block_state_calls {
@@ -5121,7 +5125,7 @@ impl Backend<FoundryNetwork> {
                             data: None,
                         }));
                     }
-                    request.gas = Some(requested_gas);
+                    request.gas = Some(requested_gas.min(rpc_gas_budget));
 
                     let caller = request.from.unwrap_or_default();
                     let caller_nonce = RevmDatabase::basic(&mut cache_db, caller)?
@@ -5199,6 +5203,7 @@ impl Backend<FoundryNetwork> {
 
                     // commit the transaction
                     cache_db.commit(state);
+                    rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used =
                         cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used

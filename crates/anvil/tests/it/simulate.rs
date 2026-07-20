@@ -401,6 +401,83 @@ async fn test_simulate_maps_validation_errors() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_enforces_request_block_limits_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": []}, "latest"])).await;
+    assert_eq!(response["error"], json!({"code": -32602, "message": "empty input"}));
+
+    let blocks = vec![json!({}); 256];
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": blocks}, "latest"]))
+            .await;
+    assert_eq!(response["result"].as_array().unwrap().len(), 256);
+
+    let blocks = vec![json!({}); 257];
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": blocks}, "latest"]))
+            .await;
+    assert_eq!(response["error"], json!({"code": -38026, "message": "too many blocks"}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_future_base_block_returns_header_not_found_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{}]}, "0x1"]),
+    )
+    .await;
+
+    assert_eq!(response["error"], json!({"code": -32000, "message": "header not found"}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_enforces_request_gas_budget_rpc() {
+    let config = NodeConfig::test().with_base_fee(Some(0)).with_gas_limit(Some(75_398_208));
+    let (_api, handle) = spawn(config).await;
+    let sender = "0xc000000000000000000000000000000000000000";
+    let receiver = "0xc100000000000000000000000000000000000000";
+    let reverter = "0xc200000000000000000000000000000000000000";
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {
+                    "stateOverrides": {
+                        (sender): {"balance": "0x1"},
+                        (reverter): {"code": "0x5f5ffd"}
+                    },
+                    "calls": [{"from": sender, "to": reverter}]
+                },
+                {"calls": [{"from": sender, "to": receiver}]}
+            ],
+            "validation": true,
+            "returnFullTransactions": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    let blocks = response["result"].as_array().unwrap();
+    assert_eq!(blocks[0]["calls"][0]["status"], "0x0");
+    assert_eq!(blocks[0]["transactions"][0]["gas"], "0x2faf080");
+    let failed_call_gas = u64::from_str_radix(
+        blocks[0]["calls"][0]["gasUsed"].as_str().unwrap().trim_start_matches("0x"),
+        16,
+    )
+    .unwrap();
+    assert_eq!(
+        blocks[1]["transactions"][0]["gas"],
+        format!("0x{:x}", 50_000_000 - failed_call_gas)
+    );
+}
+
 async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
     let response = reqwest::Client::new()
         .post(endpoint)

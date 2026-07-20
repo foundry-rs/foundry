@@ -482,7 +482,7 @@ shlex = "2"
 similar-asserts = "2.0"
 soldeer-commands = "=0.11.0"
 soldeer-core = { version = "=0.11.0", features = ["serde"] }
-strum = "0.27"
+strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }

@@ -5636,7 +5636,7 @@ dependencies = [
  "snapbox",
  "solar-compiler",
  "soldeer-core",
- "strum 0.27.2",
+ "strum 0.28.0",
  "tempfile",
  "thiserror 2.0.18",
  "toml 1.1.3+spec-1.1.0",
