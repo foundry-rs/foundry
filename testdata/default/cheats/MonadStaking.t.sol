@@ -208,6 +208,28 @@ contract MonadStakingTest is Test {
         assertEq(consComm, 0.1e18, "consensus commission should match");
     }
 
+    function testEpochBoundaryRevertsAtomically() public {
+        monad.setEpoch(10, false);
+
+        uint64 valId = _createValidator(address(0xC2), 15_000_000 ether, 0.1e18);
+
+        (bool ok, bytes memory ret) = address(monad).call(abi.encodeWithSelector(MonadVm.epochBoundary.selector, 10));
+        assertTrue(!ok, "non-increasing epoch should revert");
+        assertTrue(_contains(ret, bytes("epochChange failed: invalid epoch change")), "revert reason mismatch");
+
+        (uint64 epoch, bool inDelay) = STAKING.getEpoch();
+        assertEq(epoch, 10, "epoch should be unchanged");
+        assertTrue(!inDelay, "snapshot delay flag should be reverted");
+
+        (bool isDone,, uint64[] memory consSet) = STAKING.getConsensusValidatorSet(0);
+        assertTrue(isDone, "consensus set should be complete");
+        assertEq(consSet.length, 0, "snapshot consensus changes should be reverted");
+
+        (uint256 consStake, uint256 consComm,,) = _getValidatorViews(valId);
+        assertEq(consStake, 0, "snapshot consensus stake should be reverted");
+        assertEq(consComm, 0, "snapshot consensus commission should be reverted");
+    }
+
     function testBlockReward() public {
         monad.setEpoch(1, false);
 
@@ -260,6 +282,31 @@ contract MonadStakingTest is Test {
             address(monad).call(abi.encodeWithSelector(MonadVm.blockReward.selector, address(0xDEAD), 10 ether));
         assertTrue(!ok, "unknown author should revert");
         assertTrue(_contains(ret, bytes("blockReward failed: not in validator set")), "revert reason mismatch");
+    }
+
+    function rewardThenRevert(address author, uint256 reward) external {
+        require(msg.sender == address(this), "only self");
+        monad.blockReward(author, reward);
+        revert("rollback");
+    }
+
+    function testBlockRewardRevertsWithOuterCall() public {
+        monad.setEpoch(1, false);
+
+        address auth = address(this);
+        uint64 valId = _createValidator(auth, 10_000_000 ether, 0.1e18);
+        monad.epochBoundary(2);
+
+        uint256 balanceBefore = address(STAKING).balance;
+        (,,, uint256 accRewardBefore,, uint256 unclaimedBefore) = _getValidatorCore(valId);
+
+        (bool ok,) = address(this).call(abi.encodeWithSelector(this.rewardThenRevert.selector, auth, 10 ether));
+        assertTrue(!ok, "outer call should revert");
+        assertEq(address(STAKING).balance, balanceBefore, "staking balance should be reverted");
+
+        (,,, uint256 accRewardAfter,, uint256 unclaimedAfter) = _getValidatorCore(valId);
+        assertEq(accRewardAfter, accRewardBefore, "accumulator should be reverted");
+        assertEq(unclaimedAfter, unclaimedBefore, "unclaimed rewards should be reverted");
     }
 
     function testRewardCalculationE2E() public {

@@ -1029,29 +1029,36 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         #[cfg(feature = "monad")]
         if is_monad_cheatcode_call::<FEN>(call.target_address) {
+            let checkpoint = ecx.journal_mut().checkpoint();
             return match self.apply_monad_cheatcode(ecx, call) {
-                Ok(retdata) => Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Return,
-                        output: retdata.into(),
-                        gas,
-                    },
-                    memory_offset: call.return_memory_offset.clone(),
-                    was_precompile_called: true,
-                    precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
-                }),
-                Err(err) => Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Revert,
-                        output: err.abi_encode().into(),
-                        gas,
-                    },
-                    memory_offset: call.return_memory_offset.clone(),
-                    was_precompile_called: false,
-                    precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
-                }),
+                Ok(retdata) => {
+                    ecx.journal_mut().checkpoint_commit();
+                    Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Return,
+                            output: retdata.into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: true,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
+                    })
+                }
+                Err(err) => {
+                    ecx.journal_mut().checkpoint_revert(checkpoint);
+                    Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: err.abi_encode().into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
+                    })
+                }
             };
         }
 

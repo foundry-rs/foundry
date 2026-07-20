@@ -196,10 +196,12 @@ fn apply_block_reward<FEN: FoundryEvmNetwork>(
     handle_syscall_reward(&mut storage, &calldata, u64::MAX, &SYSTEM_ADDRESS, U256::ZERO)
         .map_err(|e| fmt_err!("blockReward failed: {e}"))?;
 
-    storage.ccx.ecx.journal_mut().load_account(STAKING_ADDRESS)?;
-    let account =
-        storage.ccx.ecx.journal_mut().evm_state_mut().get_mut(&STAKING_ADDRESS).expect("loaded");
-    account.info.balance = account.info.balance.saturating_add(reward);
+    storage
+        .ccx
+        .ecx
+        .journal_mut()
+        .balance_incr(STAKING_ADDRESS, reward)
+        .map_err(|e| fmt_err!("blockReward balance increment failed: {e:?}"))?;
 
     Ok(Default::default())
 }
