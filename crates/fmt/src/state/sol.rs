@@ -2890,6 +2890,15 @@ impl<'ast> State<'_, 'ast> {
             {
                 Some(1)
             }
+            ast::ExprKind::Lit(lit, None) if matches!(lit.kind, ast::LitKind::Bool(_)) => {
+                Some(lit.symbol.as_str().len())
+            }
+            ast::ExprKind::Binary(lhs, op, rhs) => Some(
+                self.estimate_call_chain_size(lhs)?
+                    + op.to_string().len()
+                    + self.estimate_call_chain_size(rhs)?
+                    + 2,
+            ),
             ast::ExprKind::Member(expr, ident) => {
                 Some(self.estimate_call_chain_size(expr)? + ident.to_string().len() + 1)
             }

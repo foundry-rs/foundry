@@ -25,5 +25,17 @@ contract NestedNamedCallArgumentChain {
             ) // keep this comment
             .update();
         factory().item(innerFactory().method({value: firstExtremelyLongValueName})).update();
+        factory()
+            .item(
+                innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({enabled: true})
+            )
+            .update();
+        factory()
+            .item(
+                innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({
+                    value: firstExtremelyLongValueName + secondExtremelyLongValueName
+                })
+            )
+            .update();
     }
 }

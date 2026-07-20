@@ -5,5 +5,7 @@ contract NestedNamedCallArgumentChain {
         factory().item(innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({firstExtremelyLongArgumentName: firstExtremelyLongValueName, secondExtremelyLongArgumentName: secondExtremelyLongValueName})) // keep this comment
             .update();
         factory().item(innerFactory().method({value: firstExtremelyLongValueName})).update();
+        factory().item(innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({enabled: true})).update();
+        factory().item(innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({value: firstExtremelyLongValueName + secondExtremelyLongValueName})).update();
     }
 }
