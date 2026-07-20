@@ -42,8 +42,9 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor, with_cloned_context,
+        BlockEnvFor, ContextAuxFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor,
+        with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -91,7 +92,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
@@ -121,7 +122,8 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        context_aux: ContextAuxFor<FEN>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
@@ -175,15 +177,21 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
-            *evm.journal_inner_mut() = journal_inner;
+        with_cloned_context(ecx, |db, evm_env, context_state| {
+            let context_aux = context_state.auxiliary.clone();
+            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+                db,
+                evm_env,
+                context_aux,
+                cheats,
+            );
+            evm.set_context_state(context_state);
             f(&mut *evm)?;
-            let sub_inner = evm.journal_inner_mut().clone();
+            let sub_state = evm.context_state();
             let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_inner))
+            Ok((sub_evm_env, sub_state))
         })
     }
 
@@ -192,9 +200,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        context_aux: ContextAuxFor<FEN>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
+        let mut evm =
+            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, context_aux, cheats);
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }

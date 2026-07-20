@@ -1,14 +1,22 @@
-use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
-use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
-use alloy_primitives::{Address, Bytes, U256, address, hex};
+use alloy_consensus::{
+    SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, transaction::TxEip7702,
+};
+use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync};
+use alloy_primitives::{Address, B256, Bytes, U256, address, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
+use alloy_rpc_types::{
+    Authorization, BlockId, BlockNumberOrTag, TransactionRequest,
+    anvil::Forking,
+    trace::parity::{TraceResults, TraceType},
+};
 use alloy_serde::WithOtherFields;
+use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::MonadHardfork;
 
 const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");
+const RESERVE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002000");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 const EIP170_CODE_SIZE_LIMIT: usize = 0x6000;
 const EIP3860_INITCODE_SIZE_LIMIT: usize = 0xc000;
@@ -27,6 +35,163 @@ async fn monad_nine_exposes_reserve_balance_precompile_for_calls() {
     let result = provider.call(tx.into()).await.unwrap();
 
     assert_eq!(result, Bytes::from(vec![0; 32]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_mining_tracks_current_and_ancestor_senders() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let parent_sender = accounts[0];
+    let grandparent_sender = accounts[1];
+    let current_sender = accounts[2];
+    let initial_balance = U256::from(12_000_000_000_000_000_000u128);
+    let first_value = U256::from(2_000_000_000_000_000_000u128);
+    let second_value = U256::from(1_000_000_000_000_000_000u128);
+
+    // Calls dippedIntoReserve(), then stores the returned bool at the calldata-provided slot.
+    api.anvil_set_code(
+        RESERVE_PROBE_ADDRESS,
+        Bytes::from(hex!("633a61584e5f5260205f6004601c5f6110015af1505f515f355500")),
+    )
+    .await
+    .unwrap();
+    for sender in [parent_sender, grandparent_sender, current_sender] {
+        api.anvil_set_balance(sender, initial_balance).await.unwrap();
+    }
+
+    provider
+        .send_transaction(reserve_probe_tx(parent_sender, 0, 0, first_value).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::ZERO).await.unwrap(),
+        U256::ZERO
+    );
+
+    provider
+        .send_transaction(reserve_probe_tx(parent_sender, 1, 1, second_value).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(1)).await.unwrap(),
+        U256::ONE
+    );
+
+    provider
+        .send_transaction(reserve_probe_tx(grandparent_sender, 0, 2, first_value).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(2)).await.unwrap(),
+        U256::ZERO
+    );
+    api.mine_one().await;
+    provider
+        .send_transaction(reserve_probe_tx(grandparent_sender, 1, 3, second_value).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(3)).await.unwrap(),
+        U256::ONE
+    );
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let _ = provider
+        .send_transaction(reserve_probe_tx(current_sender, 0, 4, first_value).into())
+        .await
+        .unwrap();
+    let second_pending = provider
+        .send_transaction(reserve_probe_tx(current_sender, 1, 5, second_value).into())
+        .await
+        .unwrap();
+    api.mine_one().await;
+    let second_receipt = second_pending.get_receipt().await.unwrap();
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(4)).await.unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(5)).await.unwrap(),
+        U256::ONE
+    );
+
+    let replay: TraceResults = provider
+        .client()
+        .request(
+            "trace_replayTransaction",
+            (second_receipt.transaction_hash, vec![TraceType::StateDiff]),
+        )
+        .await
+        .unwrap();
+    let slot = B256::from(U256::from(5).to_be_bytes::<32>());
+    let state_diff = replay.state_diff.unwrap();
+    let delta = &state_diff.get(&RESERVE_PROBE_ADDRESS).unwrap().storage[&slot];
+    let replayed_value =
+        delta.as_added().copied().or_else(|| delta.as_changed().map(|change| change.to)).unwrap();
+    assert_eq!(replayed_value, B256::from(U256::ONE.to_be_bytes::<32>()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_mining_tracks_eip7702_authorities() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let authority = wallets[0].address();
+    let initial_balance = U256::from(12_000_000_000_000_000_000u128);
+
+    api.anvil_set_code(
+        RESERVE_PROBE_ADDRESS,
+        Bytes::from(hex!("633a61584e5f5260205f6004601c5f6110015af1505f515f355500")),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_balance(authority, initial_balance).await.unwrap();
+
+    let authorization =
+        Authorization { chain_id: U256::from(31337), address: Address::ZERO, nonce: 0 };
+    let signature = wallets[0].sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let mut tx = TxEip7702 {
+        chain_id: 31337,
+        nonce: 0,
+        gas_limit: 100_000,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: wallets[2].address(),
+        authorization_list: vec![authorization.into_signed(signature)],
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+    let mut encoded = Vec::new();
+    tx.into_signed(signature).eip2718_encode(&mut encoded);
+    provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+
+    provider
+        .send_transaction(
+            reserve_probe_tx(authority, 1, 6, U256::from(3_000_000_000_000_000_000u128)).into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(6)).await.unwrap(),
+        U256::ONE
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -296,6 +461,16 @@ fn monad_nine_config() -> NodeConfig {
 
 fn monad_eight_config() -> NodeConfig {
     NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadEight.into()))
+}
+
+fn reserve_probe_tx(from: Address, nonce: u64, slot: u64, value: U256) -> TransactionRequest {
+    TransactionRequest::default()
+        .with_from(from)
+        .with_to(RESERVE_PROBE_ADDRESS)
+        .with_nonce(nonce)
+        .with_value(value)
+        .with_gas_limit(100_000)
+        .with_input(Bytes::copy_from_slice(&U256::from(slot).to_be_bytes::<32>()))
 }
 
 fn large_contract_init_code(runtime_len: usize) -> Bytes {

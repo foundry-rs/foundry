@@ -32,7 +32,7 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -1299,16 +1299,23 @@ impl Cheatcode for executeTransactionCall {
 
         let mut res = None;
         let mut cold_state = Some(cold_state);
+        let context_aux = FEN::EvmFactory::default().context_for_transaction(&modified_tx_env);
         let mut nested_evm_env = {
             let (db, _) = ccx.ecx.db_journal_inner_mut();
-            executor.with_fresh_nested_evm(ccx.state, db, modified_evm_env, &mut |evm| {
-                // SAFETY: closure is called exactly once by the executor.
-                evm.journal_inner_mut().state = cold_state.take().expect("called once");
-                // Set depth to 1 for proper trace collection.
-                evm.journal_inner_mut().depth = 1;
-                res = Some(evm.transact_raw(modified_tx_env.clone()));
-                Ok(())
-            })?
+            executor.with_fresh_nested_evm(
+                ccx.state,
+                db,
+                modified_evm_env,
+                context_aux,
+                &mut |evm| {
+                    // SAFETY: closure is called exactly once by the executor.
+                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                    // Set depth to 1 for proper trace collection.
+                    evm.journal_inner_mut().depth = 1;
+                    res = Some(evm.transact_raw(modified_tx_env.clone()));
+                    Ok(())
+                },
+            )?
         };
         let res = res.unwrap();
 
@@ -1487,8 +1494,8 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
             active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
         }
     }
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    let id = db.snapshot_state(inner, &evm_env);
+    let context_state = ccx.ecx.context_state();
+    let id = ccx.ecx.db_mut().snapshot_state(&context_state, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
@@ -1542,15 +1549,15 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    if let Some(restored) = db.revert_state(
+    let context_state = ccx.ecx.context_state();
+    if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        inner,
+        &context_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        *inner = restored;
+        ccx.ecx.set_context_state(restored);
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
@@ -1570,15 +1577,15 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    if let Some(restored) = db.revert_state(
+    let context_state = ccx.ecx.context_state();
+    if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        inner,
+        &context_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        *inner = restored;
+        ccx.ecx.set_context_state(restored);
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;

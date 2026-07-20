@@ -17,7 +17,7 @@ use foundry_evm_core::{
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
+        BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
         FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs, with_cloned_context,
     },
 };
@@ -427,17 +427,22 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm =
-                FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
-            *evm.journal_inner_mut() = journal_inner;
+        with_cloned_context(ecx, |db, evm_env, context_state| {
+            let context_aux = context_state.auxiliary.clone();
+            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+                db,
+                evm_env,
+                context_aux,
+                &mut inspector,
+            );
+            evm.set_context_state(context_state);
             f(&mut *evm)?;
-            let sub_inner = evm.journal_inner_mut().clone();
+            let sub_state = evm.context_state();
             let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_inner))
+            Ok((sub_evm_env, sub_state))
         })
     }
 
@@ -446,11 +451,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnvFor<FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        context_aux: ContextAuxFor<FEN>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm =
-            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+            db,
+            evm_env,
+            context_aux,
+            &mut inspector,
+        );
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -869,15 +879,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
+        let context_aux = ecx.aux_state();
 
         let res = self.with_inspector(|mut inspector| {
-            let (res, nested_env) = {
+            let (res, nested_env, nested_aux) = {
                 let (db, journal) = ecx.db_journal_inner_mut();
                 let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
                     db,
                     evm_env,
+                    context_aux,
                     &mut inspector,
                 );
+                evm.preserve_aux_state_on_transaction();
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();
@@ -906,7 +919,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
                 let res = evm.transact_raw(tx_env);
                 let nested_evm_env = evm.to_evm_env();
-                (res, nested_evm_env)
+                let nested_aux = evm.aux_state();
+                (res, nested_evm_env, nested_aux)
             };
 
             // Restore env, preserving cheatcode cfg/block changes from the nested EVM
@@ -915,6 +929,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
             ecx.set_evm(restored_evm_env);
             ecx.set_tx(cached_tx_env);
+            ecx.set_aux_state(nested_aux);
 
             res
         });

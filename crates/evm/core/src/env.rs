@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 #[cfg(feature = "monad")]
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 
 use alloy_consensus::Typed2718;
 pub use alloy_evm::EvmEnv;
@@ -8,7 +8,10 @@ use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
 #[cfg(feature = "monad")]
-use monad_revm::{MonadCfgEnv, MonadChainContext, MonadJournal};
+use monad_revm::{
+    MonadCfgEnv, MonadChainContext, MonadJournal, MonadJournalTr,
+    reserve_balance::tracker::ReserveBalanceTracker,
+};
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
 use revm::{
@@ -25,6 +28,33 @@ use revm::{
 use tempo_revm::{TempoBlockEnv, TempoTxEnv};
 
 use crate::backend::JournaledState;
+
+/// Network-specific state stored beside the standard REVM journal.
+pub trait FoundryEvmAuxState: Clone + Debug + Default + Send + Sync + 'static {}
+
+impl FoundryEvmAuxState for () {}
+
+/// Complete EVM context state that must move through nested execution and snapshots together.
+#[derive(Clone, Debug)]
+pub struct FoundryContextState<A> {
+    /// Standard REVM journal state.
+    pub journaled_state: JournaledState,
+    /// Network-specific state stored outside [`JournaledState`].
+    pub auxiliary: A,
+}
+
+/// Monad state stored outside the standard REVM journal.
+#[cfg(feature = "monad")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MonadContextAux {
+    /// Chain metadata used by reserve-balance eligibility checks.
+    pub chain: MonadChainContext,
+    /// Live reserve-balance tracker for the current transaction.
+    pub reserve_balance: ReserveBalanceTracker,
+}
+
+#[cfg(feature = "monad")]
+impl FoundryEvmAuxState for MonadContextAux {}
 
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
 pub trait FoundryBlock: Block {
@@ -431,6 +461,9 @@ pub trait FoundryContextExt:
     /// Bubbled-up from `ContextTr::Cfg` for convenience and simplified bounds.
     type Spec: Into<SpecId> + Copy + Debug;
 
+    /// Network-specific state stored outside the standard REVM journal.
+    type Aux: FoundryEvmAuxState;
+
     /// Mutable reference to the block environment.
     fn block_mut(&mut self) -> &mut Self::Block;
 
@@ -448,6 +481,29 @@ pub trait FoundryContextExt:
 
     /// Mutable reference to the db and the journal inner.
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState);
+
+    /// Reference to the journal inner.
+    fn journal_inner(&self) -> &JournaledState;
+
+    /// Clones the network-specific auxiliary state.
+    fn aux_state(&self) -> Self::Aux;
+
+    /// Restores the network-specific auxiliary state.
+    fn set_aux_state(&mut self, auxiliary: Self::Aux);
+
+    /// Clones all context state that must survive nested execution or snapshots.
+    fn context_state(&self) -> FoundryContextState<Self::Aux> {
+        FoundryContextState {
+            journaled_state: self.journal_inner().clone(),
+            auxiliary: self.aux_state(),
+        }
+    }
+
+    /// Restores all context state captured by [`Self::context_state`].
+    fn set_context_state(&mut self, state: FoundryContextState<Self::Aux>) {
+        self.set_journal_inner(state.journaled_state);
+        self.set_aux_state(state.auxiliary);
+    }
 
     /// Sets the spec and refreshes gas params for the concrete EVM family.
     fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
@@ -500,6 +556,7 @@ impl<
 > FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
+    type Aux = ();
 
     fn block_mut(&mut self) -> &mut Self::Block {
         &mut self.block
@@ -524,6 +581,14 @@ impl<
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
         (&mut self.journaled_state.database, &mut self.journaled_state.inner)
     }
+
+    fn journal_inner(&self) -> &JournaledState {
+        &self.journaled_state.inner
+    }
+
+    fn aux_state(&self) -> Self::Aux {}
+
+    fn set_aux_state(&mut self, _auxiliary: Self::Aux) {}
 }
 
 #[cfg(feature = "monad")]
@@ -531,6 +596,7 @@ impl<DB: Database> FoundryContextExt
     for Context<BlockEnv, TxEnv, MonadCfgEnv, DB, MonadJournal<DB>, MonadChainContext>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
+    type Aux = MonadContextAux;
 
     fn block_mut(&mut self) -> &mut Self::Block {
         &mut self.block
@@ -561,6 +627,23 @@ impl<DB: Database> FoundryContextExt
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
         let journal: &mut Journal<DB> = self.journaled_state.deref_mut();
         (&mut journal.database, &mut journal.inner)
+    }
+
+    fn journal_inner(&self) -> &JournaledState {
+        let journal: &Journal<DB> = self.journaled_state.deref();
+        &journal.inner
+    }
+
+    fn aux_state(&self) -> Self::Aux {
+        MonadContextAux {
+            chain: self.chain.clone(),
+            reserve_balance: self.journaled_state.reserve_balance().clone(),
+        }
+    }
+
+    fn set_aux_state(&mut self, auxiliary: Self::Aux) {
+        self.chain = auxiliary.chain;
+        *self.journaled_state.reserve_balance_mut() = auxiliary.reserve_balance;
     }
 }
 

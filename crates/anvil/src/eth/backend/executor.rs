@@ -320,12 +320,20 @@ pub struct PoolTxGasConfig {
     pub is_cancun: bool,
 }
 
+/// Hooks invoked around each candidate transaction's execution.
+pub struct PoolTransactionHooks<BeforeTransaction, OnExecutionError> {
+    /// Runs after validation and immediately before execution.
+    pub before_transaction: BeforeTransaction,
+    /// Runs when execution fails before the candidate can be included.
+    pub on_execution_error: OnExecutionError,
+}
+
 /// Executes pool transactions against a block executor, handling validation,
 /// execution, commit, inspector drain, and result collection.
 ///
 /// This is the shared core of `do_mine_block` and `with_pending_block`.
 #[allow(clippy::type_complexity)]
-pub fn execute_pool_transactions<B>(
+pub fn execute_pool_transactions<B, BeforeTransaction, OnExecutionError>(
     executor: &mut B,
     pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
     gas_config: &PoolTxGasConfig,
@@ -335,6 +343,7 @@ pub fn execute_pool_transactions<B>(
         &PendingTransaction<B::Transaction>,
         &AccountInfo,
     ) -> Result<(), InvalidTransactionError>,
+    hooks: &mut PoolTransactionHooks<BeforeTransaction, OnExecutionError>,
 ) -> ExecutedPoolTransactions<B::Transaction>
 where
     B: BlockExecutor<
@@ -344,6 +353,8 @@ where
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
     <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
+    BeforeTransaction: FnMut(&mut B::Evm, &<B::Evm as Evm>::Tx),
+    OnExecutionError: FnMut(&mut B::Evm),
 {
     let gas_limit = executor.evm().block().gas_limit();
 
@@ -413,6 +424,7 @@ where
 
         let nonce = account.nonce;
 
+        (hooks.before_transaction)(executor.evm_mut(), &tx_env);
         let recovered = Recovered::new_unchecked(pending.transaction.as_ref().clone(), sender);
         trace!(target: "backend", "[{:?}] executing", pool_tx.hash());
         match executor.execute_transaction_without_commit((tx_env, recovered)) {
@@ -474,6 +486,7 @@ where
                 transactions.push(pending.transaction.clone());
             }
             Err(err) => {
+                (hooks.on_execution_error)(executor.evm_mut());
                 if err.as_validation().is_some() {
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
                     invalid.push(pool_tx.clone());

@@ -630,6 +630,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
                 &mut backend,
                 evm_env.clone(),
+                Default::default(),
                 inspector,
             );
             let result =

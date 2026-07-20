@@ -7667,7 +7667,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.3.0"
-source = "git+https://github.com/category-labs/monad-revm.git?branch=foundry-revm-41-compat#0c4f5c4f885c6dcb968ddb50e575bc995c59576b"
+source = "git+https://github.com/category-labs/monad-revm.git?branch=fix%2Fpreserve-reserve-tracker#c761be8057eb0bf1d14fedcd76ad28e84879474f"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",

@@ -2,14 +2,14 @@
 
 use super::BackendError;
 use crate::{
-    FoundryInspectorExt,
+    FoundryContextState, FoundryInspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
     evm::{
-        EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor,
-        TxEnvFor,
+        ContextAuxFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
+        HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId},
 };
@@ -91,9 +91,12 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
-        let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+        let factory = FEN::EvmFactory::default();
+        let context_aux = factory.context_for_transaction(tx_env);
+        let mut evm = factory.create_foundry_evm_with_inspector(
             self,
             evm_env.clone(),
+            context_aux,
             inspector,
         );
 
@@ -136,21 +139,21 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN> {
     fn snapshot_state(
         &mut self,
-        journaled_state: &JournaledState,
+        context_state: &FoundryContextState<ContextAuxFor<FEN>>,
         evm_env: &EvmEnvFor<FEN>,
     ) -> U256 {
-        self.backend_mut().snapshot_state(journaled_state, evm_env)
+        self.backend_mut().snapshot_state(context_state, evm_env)
     }
 
     fn revert_state(
         &mut self,
         id: U256,
-        journaled_state: &JournaledState,
+        context_state: &FoundryContextState<ContextAuxFor<FEN>>,
         evm_env: &mut EvmEnvFor<FEN>,
         caller: Address,
         action: RevertStateSnapshotAction,
-    ) -> Option<JournaledState> {
-        self.backend_mut().revert_state(id, journaled_state, evm_env, caller, action)
+    ) -> Option<FoundryContextState<ContextAuxFor<FEN>>> {
+        self.backend_mut().revert_state(id, context_state, evm_env, caller, action)
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
