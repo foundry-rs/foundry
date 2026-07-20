@@ -3,6 +3,7 @@ use foundry_common::{
     shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity},
     version::{IS_NIGHTLY_VERSION, NIGHTLY_VERSION_WARNING_MESSAGE},
 };
+use foundry_config::{Config, figment::Profile};
 use serde::{Deserialize, Serialize};
 
 /// Global arguments for the CLI.
@@ -48,6 +49,10 @@ pub struct GlobalArgs {
     /// Number of threads to use. Specifying 0 defaults to the number of logical cores.
     #[arg(global = true, long, short = 'j', visible_alias = "jobs")]
     threads: Option<usize>,
+
+    /// The configuration profile to use.
+    #[arg(global = true, long, value_name = "PROFILE")]
+    profile: Option<Profile>,
 }
 
 impl GlobalArgs {
@@ -65,6 +70,14 @@ impl GlobalArgs {
 
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
+        if let Some(profile) = &self.profile {
+            // SAFETY: Global options are initialized before any worker threads are spawned.
+            unsafe {
+                std::env::set_var("FOUNDRY_PROFILE", profile.to_string());
+            }
+        }
+        let _ = Config::selected_profile();
+
         // Set the global shell.
         let shell = self.shell();
         // Argument takes precedence over the env var global color choice.

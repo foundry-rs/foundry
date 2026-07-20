@@ -505,6 +505,27 @@ forgetest!(can_show_config, |prj, cmd| {
     assert_eq!(expected, output);
 });
 
+forgetest!(can_select_profile_with_cli, |prj, cmd| {
+    prj.create_file(
+        Config::FILE_NAME,
+        r#"
+[profile.default]
+optimizer = false
+optimizer_runs = 200
+
+[profile.ci]
+optimizer = true
+optimizer_runs = 1
+"#,
+    );
+    cmd.env("FOUNDRY_PROFILE", "default");
+
+    let config = cmd.args(["--profile", "ci"]).config();
+
+    assert_eq!(config.optimizer, Some(true));
+    assert_eq!(config.optimizer_runs, Some(1));
+});
+
 // checks that config works
 // - foundry.toml is properly generated
 // - paths are resolved properly
