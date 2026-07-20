@@ -1319,7 +1319,6 @@ impl<'ast> State<'_, 'ast> {
                     && is_call_chain(&call_expr.kind, true))
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
-                    nested: chained_named_call_cache.is_some(),
                     keep_inline: !call_chain_contains_options(call_expr)
                         && !self.has_comment_between(call_expr.span.lo(), call_expr.span.hi())
                         && self
@@ -1327,18 +1326,25 @@ impl<'ast> State<'_, 'ast> {
                             .is_some_and(|size| size + named_args_size <= self.space_left()),
                 })
                 .or_else(|| {
-                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span)).map(
-                        |mut call| {
-                            call.nested |= matches!(call_args.kind, ast::CallArgsKind::Named(_));
-                            call
-                        },
-                    )
+                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span))
                 });
                 let list_format = if keep_inline {
                     ListFormat::inline()
                 } else {
                     ListFormat::compact().break_cmnts().break_single(true)
                 };
+                let terminal_callee = call_expr.peel_parens();
+                let callee_has_breakable_comment = self
+                    .has_breakable_comment_between(call_expr.span.lo(), terminal_callee.span.lo())
+                    || self.has_breakable_comment_between(
+                        terminal_callee.span.hi(),
+                        call_expr.span.hi(),
+                    )
+                    || if let ast::ExprKind::Member(member_expr, ident) = &terminal_callee.kind {
+                        self.has_breakable_comment_between(member_expr.span.hi(), ident.span.lo())
+                    } else {
+                        false
+                    };
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
@@ -1346,12 +1352,21 @@ impl<'ast> State<'_, 'ast> {
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
                     |s| {
+                        let callee_suffix_can_break = callee_has_breakable_comment
+                            || match &terminal_callee.kind {
+                                ast::ExprKind::Member(member_expr, _) => {
+                                    s.member_suffix_emits_break(terminal_callee, member_expr)
+                                }
+                                ast::ExprKind::Index(..) => !s.skip_index_break,
+                                _ => false,
+                            };
                         s.print_call_args(
                             call_args,
                             list_format
                                 .without_ind(s.return_bin_expr)
                                 .with_delimiters(!s.call_with_opts_and_args),
                             get_callee_head_size(call_expr),
+                            callee_suffix_can_break,
                         );
                     },
                 );
@@ -1364,7 +1379,7 @@ impl<'ast> State<'_, 'ast> {
                 self.call_with_opts_and_args = false;
 
                 self.print_expr(expr);
-                self.print_named_args(named_args, span.hi());
+                self.print_named_args(named_args, span.hi(), false);
 
                 // restore cached value
                 self.call_with_opts_and_args = cache;
@@ -1387,22 +1402,28 @@ impl<'ast> State<'_, 'ast> {
                     member_expr,
                     MemberOrCallArgs::Member(self.estimate_size(ident.span)),
                     |s| {
-                        s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        match member_expr.kind {
-                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
-                            ast::ExprKind::Index(..) if s.skip_index_break => (),
-                            _ if s.chained_named_call.is_some_and(|call| {
-                                call.keep_inline && call.callee.contains(expr.span)
-                            }) => {}
-                            _ if s.call_has_overlong_named_call_arg(&member_expr.kind) => {
-                                s.hardbreak_if_not_bol()
-                            }
-                            // Don't add break when accessing a field after a call with named args.
-                            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
-                            // on the same line as the closing `})`.
-                            // See: https://github.com/foundry-rs/foundry/issues/12399
-                            _ if is_call_with_named_args(&member_expr.kind) => (),
-                            _ => s.zerobreak(),
+                        let has_mixed_comment = s
+                            .peek_comment_between(member_expr.span.hi(), ident.span.lo())
+                            .is_some_and(|comment| comment.style.is_mixed());
+                        if has_mixed_comment {
+                            s.print_comments(
+                                ident.span.lo(),
+                                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                            );
+                        } else {
+                            s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
+                        }
+                        let keep_inline = s.chained_named_call.is_some_and(|call| {
+                            call.keep_inline && call.callee.contains(expr.span)
+                        });
+                        if has_mixed_comment {
+                            s.zerobreak();
+                        } else if !keep_inline
+                            && s.call_has_overlong_named_call_arg(&member_expr.kind)
+                        {
+                            s.hardbreak_if_not_bol();
+                        } else if s.member_suffix_emits_break(expr, member_expr) {
+                            s.zerobreak();
                         }
                         s.word(".");
                         s.print_ident(ident);
@@ -1415,7 +1436,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args, ListFormat::compact().break_cmnts(), 7);
+                self.print_call_args(args, ListFormat::compact().break_cmnts(), 7, false);
             }
             ast::ExprKind::Ternary(cond, then, els) => self.print_ternary_expr(cond, then, els),
             ast::ExprKind::Tuple(exprs) => self.print_tuple(
@@ -1709,7 +1730,27 @@ impl<'ast> State<'_, 'ast> {
                 arguments,
                 ListFormat::compact().break_cmnts(),
                 name.to_string().len(),
+                false,
             );
+        }
+    }
+
+    fn member_suffix_emits_break(&self, expr: &ast::Expr<'_>, member_expr: &ast::Expr<'_>) -> bool {
+        match member_expr.kind {
+            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => false,
+            ast::ExprKind::Index(..) if self.skip_index_break => false,
+            _ if self
+                .chained_named_call
+                .is_some_and(|call| call.keep_inline && call.callee.contains(expr.span)) =>
+            {
+                false
+            }
+            // Don't add a break when accessing a field after a call with named args.
+            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
+            // on the same line as the closing `})`.
+            // See: https://github.com/foundry-rs/foundry/issues/12399
+            _ if is_call_with_named_args(&member_expr.kind) => false,
+            _ => true,
         }
     }
 
@@ -1802,6 +1843,7 @@ impl<'ast> State<'_, 'ast> {
         args: &'ast ast::CallArgs<'ast>,
         format: ListFormat,
         callee_size: usize,
+        callee_suffix_can_break: bool,
     ) {
         let ast::CallArgs { span, ref kind } = *args;
         if self.handle_span(span, true) {
@@ -1825,7 +1867,11 @@ impl<'ast> State<'_, 'ast> {
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
-                self.print_inside_parens(|state| state.print_named_args(named_args, span.hi()));
+                let without_ind =
+                    self.call_stack.has_indented_parent_chain() && !callee_suffix_can_break;
+                self.print_inside_parens(|state| {
+                    state.print_named_args(named_args, span.hi(), without_ind)
+                });
             }
         }
 
@@ -1834,7 +1880,12 @@ impl<'ast> State<'_, 'ast> {
         self.call_stack.pop();
     }
 
-    fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
+    fn print_named_args(
+        &mut self,
+        args: &'ast [ast::NamedArg<'ast>],
+        pos_hi: BytePos,
+        without_ind: bool,
+    ) {
         let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
@@ -1871,12 +1922,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(
-                        self.call_stack.has_indented_parent_chain()
-                            && self
-                                .chained_named_call
-                                .is_none_or(|call| call.keep_inline || call.nested),
-                    )
+                    .without_ind(without_ind)
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -2406,7 +2452,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             ListFormat::consistent()
         };
-        self.print_call_args(args, format.break_cmnts(), path.to_string().len());
+        self.print_call_args(args, format.break_cmnts(), path.to_string().len(), false);
         self.emit_or_revert = false;
         self.end();
     }
