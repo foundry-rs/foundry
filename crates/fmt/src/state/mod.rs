@@ -100,6 +100,7 @@ impl CallStack {
 struct ChainedNamedCall {
     callee: Span,
     keep_inline: bool,
+    nested: bool,
 }
 
 pub(super) struct State<'sess, 'ast> {

@@ -93,6 +93,13 @@ contract NamedCallArgsInChain {
             });
     }
 
+    // https://github.com/foundry-rs/foundry/issues/15823
+    function issue15823(uint256 redactedId, uint256 setId, bytes calldata redactedEngineData) external {
+        RedactedRootConfiguration.getRedactedEngine({
+            redactedId: redactedId
+        }).initializeSetRedacted({setId_: setId, redactedId_: redactedId, redactedEngineData_: redactedEngineData});
+    }
+
     function attempted(
         address vault,
         uint256 positionId,

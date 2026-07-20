@@ -1319,6 +1319,7 @@ impl<'ast> State<'_, 'ast> {
                     && is_call_chain(&call_expr.kind, true))
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
+                    nested: chained_named_call_cache.is_some(),
                     keep_inline: !call_chain_contains_options(call_expr)
                         && !self.has_comment_between(call_expr.span.lo(), call_expr.span.hi())
                         && self
@@ -1326,7 +1327,12 @@ impl<'ast> State<'_, 'ast> {
                             .is_some_and(|size| size + named_args_size <= self.space_left()),
                 })
                 .or_else(|| {
-                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span))
+                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span)).map(
+                        |mut call| {
+                            call.nested |= matches!(call_args.kind, ast::CallArgsKind::Named(_));
+                            call
+                        },
+                    )
                 });
                 let list_format = if keep_inline {
                     ListFormat::inline()
@@ -1864,7 +1870,9 @@ impl<'ast> State<'_, 'ast> {
                     .break_single(true)
                     .without_ind(
                         self.call_stack.has_indented_parent_chain()
-                            && self.chained_named_call.is_none_or(|call| call.keep_inline),
+                            && self
+                                .chained_named_call
+                                .is_none_or(|call| call.keep_inline || call.nested),
                     )
                     .with_delimiters(!self.call_with_opts_and_args),
             );
