@@ -896,7 +896,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                 stack
                     .logs(self.config.live_logs)
                     .trace_requirements(
-                        TraceRequirements::none().with_calls(true).with_debug(debug),
+                        TraceRequirements::none()
+                            .with_calls(true)
+                            .with_debug(debug)
+                            .with_verbosity(self.evm_opts.verbosity),
                     )
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)

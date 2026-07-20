@@ -31,7 +31,7 @@ use foundry_evm::{
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena,
+        render_trace_arena_inner,
     },
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
@@ -469,7 +469,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if should_include {
                     let mut trace = trace.clone();
                     decode_trace_arena(&mut trace, decoder).await;
-                    sh_println!("{}", render_trace_arena(&trace))?;
+                    sh_println!("{}", render_trace_arena_inner(&trace, false, verbosity > 4))?;
                 }
             }
             sh_println!()?;
