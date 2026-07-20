@@ -28,7 +28,7 @@ pub struct TxGenerator {
 
 impl TxGenerator {
     /// Wraps a prebuilt strategy, primarily for deterministic tests.
-    pub fn from_strategy(strategy: BoxedStrategy<BasicTxDetails>) -> Self {
+    pub const fn from_strategy(strategy: BoxedStrategy<BasicTxDetails>) -> Self {
         Self { strategy }
     }
     /// Creates a fixed-target, fixed-sender stateless generator.

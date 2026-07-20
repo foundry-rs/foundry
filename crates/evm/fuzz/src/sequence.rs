@@ -530,6 +530,60 @@ impl SequenceMutator {
     }
 }
 
+fn cmp_mutated_calldata(
+    calldata: &[u8],
+    hint: ComparisonHint,
+    runner: &mut TestRunner,
+) -> Option<Vec<u8>> {
+    const WIDTHS: [usize; 6] = [32, 16, 8, 4, 2, 1];
+    let lhs = hint.lhs.to_be_bytes::<32>();
+    let rhs = hint.rhs.to_be_bytes::<32>();
+    let start = runner.rng().random_range(0..WIDTHS.len());
+    for offset in 0..WIDTHS.len() {
+        let width = WIDTHS[(start + offset) % WIDTHS.len()];
+        let lhs = &lhs[32 - width..];
+        let rhs = &rhs[32 - width..];
+        if lhs == rhs {
+            continue;
+        }
+        let pairs =
+            if runner.rng().random() { [(lhs, rhs), (rhs, lhs)] } else { [(rhs, lhs), (lhs, rhs)] };
+        for (pattern, replacement) in pairs {
+            if let Some(mutated) = replace_operand(calldata, pattern, replacement, runner) {
+                return Some(mutated);
+            }
+        }
+    }
+    None
+}
+
+fn replace_operand(
+    calldata: &[u8],
+    pattern: &[u8],
+    replacement: &[u8],
+    runner: &mut TestRunner,
+) -> Option<Vec<u8>> {
+    const SELECTOR_LEN: usize = 4;
+    if pattern.is_empty()
+        || pattern.len() != replacement.len()
+        || calldata.len() < SELECTOR_LEN + pattern.len()
+        || (pattern.len() < 32 && pattern.iter().all(|byte| *byte == 0))
+    {
+        return None;
+    }
+    let search_len = calldata.len() - SELECTOR_LEN - pattern.len() + 1;
+    let start = runner.rng().random_range(0..search_len);
+    for offset in 0..search_len {
+        let index = SELECTOR_LEN + ((start + offset) % search_len);
+        if &calldata[index..index + pattern.len()] == pattern {
+            let mut mutated = calldata.to_vec();
+            mutated[index..index + replacement.len()].copy_from_slice(replacement);
+            return Some(mutated);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -906,58 +960,4 @@ mod tests {
             .unwrap();
         assert_eq!(accesses, 2);
     }
-}
-
-fn cmp_mutated_calldata(
-    calldata: &[u8],
-    hint: ComparisonHint,
-    runner: &mut TestRunner,
-) -> Option<Vec<u8>> {
-    const WIDTHS: [usize; 6] = [32, 16, 8, 4, 2, 1];
-    let lhs = hint.lhs.to_be_bytes::<32>();
-    let rhs = hint.rhs.to_be_bytes::<32>();
-    let start = runner.rng().random_range(0..WIDTHS.len());
-    for offset in 0..WIDTHS.len() {
-        let width = WIDTHS[(start + offset) % WIDTHS.len()];
-        let lhs = &lhs[32 - width..];
-        let rhs = &rhs[32 - width..];
-        if lhs == rhs {
-            continue;
-        }
-        let pairs =
-            if runner.rng().random() { [(lhs, rhs), (rhs, lhs)] } else { [(rhs, lhs), (lhs, rhs)] };
-        for (pattern, replacement) in pairs {
-            if let Some(mutated) = replace_operand(calldata, pattern, replacement, runner) {
-                return Some(mutated);
-            }
-        }
-    }
-    None
-}
-
-fn replace_operand(
-    calldata: &[u8],
-    pattern: &[u8],
-    replacement: &[u8],
-    runner: &mut TestRunner,
-) -> Option<Vec<u8>> {
-    const SELECTOR_LEN: usize = 4;
-    if pattern.is_empty()
-        || pattern.len() != replacement.len()
-        || calldata.len() < SELECTOR_LEN + pattern.len()
-        || (pattern.len() < 32 && pattern.iter().all(|byte| *byte == 0))
-    {
-        return None;
-    }
-    let search_len = calldata.len() - SELECTOR_LEN - pattern.len() + 1;
-    let start = runner.rng().random_range(0..search_len);
-    for offset in 0..search_len {
-        let index = SELECTOR_LEN + ((start + offset) % search_len);
-        if &calldata[index..index + pattern.len()] == pattern {
-            let mut mutated = calldata.to_vec();
-            mutated[index..index + replacement.len()].copy_from_slice(replacement);
-            return Some(mutated);
-        }
-    }
-    None
 }
