@@ -146,6 +146,9 @@ use extend::Extends;
 use foundry_evm_networks::NetworkConfigs;
 pub use semver;
 
+#[cfg(not(test))]
+static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -2176,8 +2179,26 @@ impl Config {
         }
         #[cfg(not(test))]
         {
-            static CACHE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
-            CACHE.get_or_init(Self::force_selected_profile).clone()
+            SELECTED_PROFILE.get_or_init(Self::force_selected_profile).clone()
+        }
+    }
+
+    /// Sets the selected profile before it is initialized.
+    ///
+    /// Returns the previously selected profile if it was already initialized to a different value.
+    pub fn try_set_selected_profile(profile: Profile) -> Result<(), Profile> {
+        #[cfg(test)]
+        {
+            let _ = profile;
+            Ok(())
+        }
+        #[cfg(not(test))]
+        {
+            match SELECTED_PROFILE.set(profile) {
+                Ok(()) => Ok(()),
+                Err(profile) if SELECTED_PROFILE.get() == Some(&profile) => Ok(()),
+                Err(_) => Err(SELECTED_PROFILE.get().expect("profile initialized").clone()),
+            }
         }
     }
 

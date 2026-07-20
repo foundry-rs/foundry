@@ -70,11 +70,13 @@ impl GlobalArgs {
 
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
-        if let Some(profile) = &self.profile {
-            // SAFETY: Global options are initialized before any worker threads are spawned.
-            unsafe {
-                std::env::set_var("FOUNDRY_PROFILE", profile.to_string());
-            }
+        if let Some(profile) = &self.profile
+            && let Err(selected) = Config::try_set_selected_profile(profile.clone())
+        {
+            eyre::bail!(
+                "configuration profile was already initialized as `{selected}`, cannot select \
+                 `{profile}`"
+            );
         }
         let _ = Config::selected_profile();
 

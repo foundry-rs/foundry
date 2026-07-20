@@ -518,7 +518,7 @@ optimizer = true
 optimizer_runs = 1
 "#,
     );
-    cmd.env("FOUNDRY_PROFILE", "default");
+    cmd.env("foundry_profile", "default");
 
     let config = cmd.args(["--profile", "ci"]).config();
 
