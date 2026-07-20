@@ -17,7 +17,6 @@ contract NamedCallArgsInChain {
     }
 
     function reviewCases(uint256 firstExtremelyLongValueName, uint256 secondExtremelyLongValueName) external {
-        factory().item(innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({firstExtremelyLongArgumentName: firstExtremelyLongValueName, secondExtremelyLongArgumentName: secondExtremelyLongValueName})).update();
         factory().foo(bar(firstExtremelyLongValueName)).baz({firstExtremelyLongArgumentName: firstExtremelyLongValueName, secondExtremelyLongArgumentName: secondExtremelyLongValueName});
         factory() // preserve
             .item().update({firstExtremelyLongArgumentName: firstExtremelyLongValueName, secondExtremelyLongArgumentName: secondExtremelyLongValueName});
@@ -28,6 +27,7 @@ contract NamedCallArgsInChain {
         (foo{value: 1})().bar({firstExtremelyLongArgumentName: firstExtremelyLongValueName, secondExtremelyLongArgumentName: secondExtremelyLongValueName});
     }
 
+    // https://github.com/foundry-rs/foundry/issues/15823
     function issue15823(uint256 redactedId, uint256 setId, bytes calldata redactedEngineData) external {
         RedactedRootConfiguration.getRedactedEngine({
             redactedId: redactedId

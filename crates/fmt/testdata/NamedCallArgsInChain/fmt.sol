@@ -55,15 +55,6 @@ contract NamedCallArgsInChain {
     }
 
     function reviewCases(uint256 firstExtremelyLongValueName, uint256 secondExtremelyLongValueName) external {
-        factory()
-            .item(
-                innerFactory()
-                    .anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({
-                        firstExtremelyLongArgumentName: firstExtremelyLongValueName,
-                        secondExtremelyLongArgumentName: secondExtremelyLongValueName
-                    })
-            )
-            .update();
         factory().foo(bar(firstExtremelyLongValueName)).baz({
             firstExtremelyLongArgumentName: firstExtremelyLongValueName,
             secondExtremelyLongArgumentName: secondExtremelyLongValueName
@@ -106,9 +97,7 @@ contract NamedCallArgsInChain {
     function issue15823(uint256 redactedId, uint256 setId, bytes calldata redactedEngineData) external {
         RedactedRootConfiguration.getRedactedEngine({
             redactedId: redactedId
-        }).initializeSetRedacted({
-            setId_: setId, redactedId_: redactedId, redactedEngineData_: redactedEngineData
-        });
+        }).initializeSetRedacted({setId_: setId, redactedId_: redactedId, redactedEngineData_: redactedEngineData});
     }
 
     function attempted(

@@ -94,19 +94,13 @@ impl CallStack {
             [.., parent, last] if last.is_nested() && parent.is_chained() && parent.has_indent
         )
     }
-
-    /// Returns true if a chain outside the direct parent chain added its own indentation.
-    pub(crate) fn has_indented_ancestor_chain(&self) -> bool {
-        self.stack
-            .get(..self.stack.len().saturating_sub(2))
-            .is_some_and(|stack| stack.iter().any(|call| call.is_chained() && call.has_indent))
-    }
 }
 
 #[derive(Clone, Copy)]
 struct ChainedNamedCall {
     callee: Span,
     keep_inline: bool,
+    nested: bool,
 }
 
 pub(super) struct State<'sess, 'ast> {

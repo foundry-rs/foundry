@@ -1319,6 +1319,8 @@ impl<'ast> State<'_, 'ast> {
                     && is_call_chain(&call_expr.kind, true))
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
+                    nested: chained_named_call_cache
+                        .is_some_and(|call| call.callee.contains(expr.span)),
                     keep_inline: !call_chain_contains_options(call_expr)
                         && !self.has_comment_between(call_expr.span.lo(), call_expr.span.hi())
                         && self
@@ -1864,8 +1866,9 @@ impl<'ast> State<'_, 'ast> {
                     .break_single(true)
                     .without_ind(
                         self.call_stack.has_indented_parent_chain()
-                            && (self.chained_named_call.is_none_or(|call| call.keep_inline)
-                                || self.call_stack.has_indented_ancestor_chain()),
+                            && self
+                                .chained_named_call
+                                .is_none_or(|call| call.keep_inline || call.nested),
                     )
                     .with_delimiters(!self.call_with_opts_and_args),
             );
