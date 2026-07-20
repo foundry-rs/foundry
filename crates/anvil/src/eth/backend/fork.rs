@@ -515,17 +515,10 @@ impl<N: Network> ClientFork<N> {
     /// Sends `eth_simulateV1`
     pub async fn simulate_v1(
         &self,
-        request: &SimulatePayload,
+        request: &SimulatePayload<WithOtherFields<TransactionRequest>>,
         block: Option<BlockNumber>,
     ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
-        let mut simulate_call = self.provider().simulate(request);
-        if let Some(n) = block {
-            simulate_call = simulate_call.number(n.as_number().unwrap());
-        }
-
-        let res = simulate_call.await?;
-
-        Ok(res)
+        self.provider().raw_request("eth_simulateV1".into(), (request, block)).await
     }
 
     /// Sends `eth_estimateGas`

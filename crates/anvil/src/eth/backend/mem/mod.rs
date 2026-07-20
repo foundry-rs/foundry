@@ -5053,7 +5053,7 @@ impl Backend<FoundryNetwork> {
     /// Simulates the payload by executing the calls in request.
     pub async fn simulate(
         &self,
-        request: SimulatePayload,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
         self.with_database_at(block_request, |state, mut block_env| {
@@ -5090,7 +5090,8 @@ impl Backend<FoundryNetwork> {
                 }
 
                 // execute all calls in that block
-                for (req_idx, mut request) in calls.into_iter().enumerate() {
+                for (req_idx, request) in calls.into_iter().enumerate() {
+                    let mut request = request.inner;
                     let remaining_regular_gas =
                         block_env.gas_limit.saturating_sub(block_regular_gas_used);
                     let remaining_state_gas =
@@ -5181,8 +5182,8 @@ impl Backend<FoundryNetwork> {
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
 
-                    let mut request =
-                        Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    let mut request = FoundryTransactionRequest::new(WithOtherFields::new(request))
+                        .expect("Ethereum transaction request is valid");
                     if request.as_ref().to.is_none() {
                         request.as_mut().to = Some(TxKind::Create);
                     }

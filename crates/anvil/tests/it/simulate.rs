@@ -8,6 +8,7 @@ use alloy_rpc_types::{
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverridesBuilder},
 };
+use alloy_serde::WithOtherFields;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_test_utils::rpc;
 use serde_json::{Value, json};
@@ -36,7 +37,7 @@ async fn test_fork_simulate_v1() {
         block_state_calls: vec![SimBlock {
             block_overrides,
             state_overrides,
-            calls: vec![tx_request],
+            calls: vec![WithOtherFields::new(tx_request)],
         }],
         trace_transfers: true,
         validation: false,
@@ -64,16 +65,16 @@ async fn test_simulate_enforces_block_gas_limit() {
             .build(),
     );
     let calls = vec![
-        TransactionRequest {
+        WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(receiver)),
             ..Default::default()
-        },
-        TransactionRequest {
+        }),
+        WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(gas_burner)),
             ..Default::default()
-        },
+        }),
     ];
     let payload = SimulatePayload {
         block_state_calls: vec![SimBlock {
@@ -160,16 +161,16 @@ async fn test_simulate_tracks_amsterdam_gas_dimensions_separately() {
                     .build(),
             ),
             calls: vec![
-                TransactionRequest {
+                WithOtherFields::new(TransactionRequest {
                     from: Some(sender),
                     to: Some(TxKind::Call(storage)),
                     ..Default::default()
-                },
-                TransactionRequest {
+                }),
+                WithOtherFields::new(TransactionRequest {
                     from: Some(sender),
                     to: Some(TxKind::Call(receiver)),
                     ..Default::default()
-                },
+                }),
             ],
         }],
         ..Default::default()
