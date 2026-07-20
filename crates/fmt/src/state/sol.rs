@@ -1327,7 +1327,12 @@ impl<'ast> State<'_, 'ast> {
                             .is_some_and(|size| size + named_args_size <= self.space_left()),
                 })
                 .or_else(|| {
-                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span))
+                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span)).map(
+                        |mut call| {
+                            call.nested |= matches!(call_args.kind, ast::CallArgsKind::Named(_));
+                            call
+                        },
+                    )
                 });
                 let list_format = if keep_inline {
                     ListFormat::inline()
