@@ -232,6 +232,7 @@ fmt_tests! {
     MappingType,
     ModifierDefinition,
     NamedCallArgsInChain,
+    NestedNamedCallArgumentChain,
     NamedFunctionCallExpression,
     NonKeywords,
     NumberLiteralUnderscore,
