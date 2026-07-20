@@ -987,6 +987,42 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
+/// Neutralize any line MDX would parse as an ESM statement (`import`/`export` at the start of
+/// a line): the keyword's first letter becomes an HTML entity, so the line renders the same
+/// but no longer begins with an ESM token. NatSpec text can be inherited from a dependency
+/// via `@inheritdoc`, so this must run wherever displayed prose is assembled. Lines inside a
+/// fenced code block are left untouched, where the entity would render literally and corrupt
+/// the example; a line legitimately starting with `import`/`export` outside a fence would
+/// break the MDX build anyway.
+fn neutralize_esm(text: &str) -> String {
+    let mut in_fence = false;
+    text.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                in_fence = !in_fence;
+                return line.to_string();
+            }
+            if in_fence {
+                return line.to_string();
+            }
+            for keyword in ["import", "export"] {
+                if let Some(rest) = trimmed.strip_prefix(keyword)
+                    && !rest
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+                {
+                    let indent = &line[..line.len() - trimmed.len()];
+                    let mut chars = keyword.chars();
+                    let first = chars.next().unwrap();
+                    return format!("{indent}&#{};{}{}", first as u32, chars.as_str(), rest);
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn write_comment_block(out: &mut String, data: &CommentData) {
     if !data.titles.is_empty() {
         let label = if data.titles.len() == 1 { "Title" } else { "Titles" };
@@ -1002,9 +1038,13 @@ fn write_comment_block(out: &mut String, data: &CommentData) {
     // `@dev` paragraphs are wrapped in `_..._` per paragraph so each multi-line block renders
     // as a single italic span (markdown emphasis cannot cross blank lines).
     for desc in &data.descriptions {
+        // Neutralize a line MDX would run as an ESM statement (a top-level `import`/`export`),
+        // but never inside a fenced code block, where the character reference would render
+        // literally and corrupt the example.
+        let content = neutralize_esm(&desc.content);
         match desc.kind {
-            DescKind::Notice => writeln!(out, "{}", desc.content).unwrap(),
-            DescKind::Dev => writeln!(out, "{}", italicize_dev(&desc.content)).unwrap(),
+            DescKind::Notice => writeln!(out, "{content}").unwrap(),
+            DescKind::Dev => writeln!(out, "{}", italicize_dev(&content)).unwrap(),
         }
         writeln!(out).unwrap();
     }

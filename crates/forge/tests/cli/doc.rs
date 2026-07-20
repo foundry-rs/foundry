@@ -221,6 +221,81 @@ Withdraw tokens from the vault
     );
 });
 
+// NatSpec text must never reach the MDX page as executable ESM: MDX runs a line whose first
+// token is `import`/`export` as code. The text can even be inherited from another contract
+// through `@inheritdoc`, so a dependency's doc comment could inject into the derived page.
+forgetest_init!(natspec_neutralizes_esm_statement_lines, |prj, cmd| {
+    prj.add_source(
+        "EsmBase.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IEsm {
+    /// @notice export const injected = 1
+    function act(uint256 v) external;
+}
+"#,
+    );
+    prj.add_source(
+        "EsmChild.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./EsmBase.sol";
+
+/// @notice import somesecret from the outside
+contract EsmChild is IEsm {
+    /// @inheritdoc IEsm
+    function act(uint256 v) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.EsmChild.mdx")).unwrap();
+
+    // The inherited `export` notice and the local `import` notice both stay visible but are
+    // neutralized, so MDX no longer parses them as ESM statements.
+    assert!(rendered.contains("&#101;xport const injected = 1"), "{rendered}");
+    assert!(rendered.contains("&#105;mport somesecret from the outside"), "{rendered}");
+    assert!(!rendered.contains("\nexport const injected = 1"), "{rendered}");
+    assert!(!rendered.contains("\nimport somesecret from the outside"), "{rendered}");
+});
+
+// A fenced code block inside NatSpec must keep its `import`/`export` lines verbatim (MDX does
+// not treat fenced content as ESM); only a top-level statement outside the fence is
+// neutralized.
+forgetest_init!(natspec_preserves_esm_inside_code_fences, |prj, cmd| {
+    prj.add_source(
+        "Fenced.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Fenced {
+    /// @notice Usage:
+    /// ```solidity
+    /// import "./Token.sol";
+    /// ```
+    /// export const after = 2
+    function act() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Fenced.mdx")).unwrap();
+    // Inside the fence: kept verbatim, not turned into a character reference.
+    assert!(rendered.contains("import \"./Token.sol\";"), "{rendered}");
+    assert!(!rendered.contains("&#105;mport \"./Token.sol\""), "{rendered}");
+    // Outside the fence: still neutralized.
+    assert!(rendered.contains("&#101;xport const after = 2"), "{rendered}");
+});
+
 // Test that {Ident} cross-references resolve to root-relative vocs links.
 // fixes <https://github.com/foundry-rs/foundry/issues/12361>
 forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {
