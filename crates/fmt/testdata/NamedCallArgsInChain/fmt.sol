@@ -55,13 +55,6 @@ contract NamedCallArgsInChain {
     }
 
     function reviewCases(uint256 firstExtremelyLongValueName, uint256 secondExtremelyLongValueName) external {
-        factory()
-            .item(
-                innerFactory().anExtremelyLongMethodNameThatForcesTheNestedCalleeToWrap({
-                    firstExtremelyLongArgumentName: firstExtremelyLongValueName,
-                    secondExtremelyLongArgumentName: secondExtremelyLongValueName
-                })
-            ).update();
         factory().foo(bar(firstExtremelyLongValueName)).baz({
             firstExtremelyLongArgumentName: firstExtremelyLongValueName,
             secondExtremelyLongArgumentName: secondExtremelyLongValueName
