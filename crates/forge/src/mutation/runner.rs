@@ -224,6 +224,14 @@ pub fn run_mutations_parallel_with_progress(
 
     workspace::ensure_safe_relative_path(&source_relative, "source", &source_abs)?;
 
+    // `ProjectPathsConfig` canonicalizes its root. Create mutant workspaces beneath the canonical
+    // temp root as well so explicit compiler inputs, project-local remappings, and the project
+    // root all use the same path spelling (notably `/private/var` rather than `/var` on macOS).
+    let temp_root = std::env::temp_dir();
+    let temp_root = dunce::canonicalize(&temp_root).map_err(|err| {
+        eyre::eyre!("failed to canonicalize mutation temp root {}: {err}", temp_root.display())
+    })?;
+
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
@@ -255,6 +263,7 @@ pub fn run_mutations_parallel_with_progress(
                     &config,
                     &evm_opts,
                     &shared_state,
+                    &temp_root,
                     &filter_args,
                     &rerun_failures,
                     &selected_sources_relative,
@@ -333,6 +342,7 @@ fn test_single_mutant_isolated(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
     shared_state: &Arc<SharedMutationState>,
+    temp_root: &Path,
     filter_args: &Arc<FilterArgs>,
     rerun_failures: &Arc<Option<Vec<RerunFailure>>>,
     selected_sources_relative: &Arc<Vec<PathBuf>>,
@@ -364,10 +374,11 @@ fn test_single_mutant_isolated(
     }
 
     // Create isolated workspace using TempDir for automatic cleanup on drop
-    let temp_dir = match TempDir::with_prefix("forge_mutation_") {
+    let temp_dir = match TempDir::with_prefix_in("forge_mutation_", temp_root) {
         Ok(dir) => dir,
         Err(e) => {
-            let _ = sh_eprintln!("Failed to create temp directory: {}", e);
+            let _ =
+                sh_eprintln!("Failed to create temp directory in {}: {}", temp_root.display(), e);
             return MutantTestResult { mutant, result: MutationResult::Invalid };
         }
     };

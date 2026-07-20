@@ -1,7 +1,8 @@
 // CLI integration tests for mutation testing
 
+use foundry_compilers::artifacts::Remapping;
 use foundry_test_utils::{str, util::OutputExt};
-use std::fs;
+use std::{fs, str::FromStr};
 
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
@@ -1058,6 +1059,126 @@ contract FooBrokenTest {
     );
 });
 
+#[cfg(unix)]
+forgetest_init!(mutation_uses_canonical_temp_root_for_filtered_sources, |prj, cmd| {
+    let temp_parent = tempfile::tempdir().unwrap();
+    let real_temp = temp_parent.path().join("real");
+    let aliased_temp = temp_parent.path().join("alias");
+    fs::create_dir(&real_temp).unwrap();
+    std::os::unix::fs::symlink(&real_temp, &aliased_temp).unwrap();
+    assert_ne!(aliased_temp, dunce::canonicalize(&aliased_temp).unwrap());
+
+    // Preserve the failing import chain: selected test -> root-style helper -> remapped dependency.
+    let dependency_dir = prj.root().join("lib/local-dependency/src");
+    fs::create_dir_all(&dependency_dir).unwrap();
+    fs::write(
+        dependency_dir.join("Dependency.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+library Dependency {
+    function expected() internal pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("dep/=lib/local-dependency/src/").unwrap().into()];
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Target {
+    function addOne(uint256 value) public pure returns (uint256) {
+        return value + 1;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "helpers/Helper.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import {Dependency} from "dep/Dependency.sol";
+
+library Helper {
+    function expected() internal pure returns (uint256) {
+        return Dependency.expected();
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Selected.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import {Target} from "../src/Target.sol";
+import {Helper} from "test/helpers/Helper.sol";
+
+contract SelectedTest {
+    function test_AddOne() public {
+        Target target = new Target();
+        assert(target.addOne(1) == Helper.expected());
+    }
+}
+"#,
+    );
+
+    cmd.env("TMPDIR", &aliased_temp);
+    let out = cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Target.sol",
+            "--match-path",
+            "test/Selected.t.sol",
+            "--mutation-jobs",
+            "1",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&out);
+    let total = summary["total"].as_u64().unwrap_or(0);
+    let invalid = summary["invalid"].as_u64().unwrap_or(u64::MAX);
+    let killed = summary["killed"].as_u64().unwrap_or(0);
+    let survived = summary["survived"].as_u64().unwrap_or(0);
+
+    assert!(total > 0, "expected mutation testing to generate mutants: summary={summary}");
+    assert!(
+        invalid < total,
+        "aliased temp root must not make every mutant Invalid: summary={summary}"
+    );
+    assert!(
+        killed + survived > 0,
+        "expected at least one Killed/Survived mutant: summary={summary}"
+    );
+    assert!(
+        fs::read_dir(&real_temp).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("forge_mutation_")),
+        "mutation workspaces should be removed after the run"
+    );
+});
+
 forgetest_init!(mutation_compiles_dynamic_linking_artifacts_for_selected_tests, |prj, cmd| {
     prj.add_source(
         "Target.sol",
@@ -1224,6 +1345,79 @@ contract UsesSharedTest {
     assert!(
         invalid < total,
         "include_paths imports should compile inside mutant workspaces: summary={summary}"
+    );
+});
+
+forgetest_init!(mutation_workspace_preserves_external_read_only_remappings, |prj, cmd| {
+    let shared_dir = prj.root().parent().unwrap().join("shared-solidity");
+    fs::create_dir_all(&shared_dir).unwrap();
+    fs::write(
+        shared_dir.join("Shared.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+library Shared {
+    function value() internal pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.update_config(|config| {
+        config.allow_paths = vec!["../shared-solidity".into()];
+        config.remappings =
+            vec![Remapping::from_str("shared/=../shared-solidity/").unwrap().into()];
+    });
+
+    prj.add_source(
+        "UsesShared.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "shared/Shared.sol";
+
+contract UsesShared {
+    function value() public pure returns (uint256) {
+        return Shared.value() + 1;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "UsesShared.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/UsesShared.sol";
+
+contract UsesSharedTest {
+    function test_Value() public {
+        UsesShared usesShared = new UsesShared();
+        assert(usesShared.value() == 2);
+    }
+}
+"#,
+    );
+
+    let out = cmd
+        .args(["test", "--mutate", "src/UsesShared.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&out);
+    let total = summary["total"].as_u64().unwrap_or(0);
+    let invalid = summary["invalid"].as_u64().unwrap_or(u64::MAX);
+
+    assert!(total > 0, "expected mutation testing to generate mutants: summary={summary}");
+    assert!(
+        invalid < total,
+        "external read-only remapping should compile inside mutant workspaces: summary={summary}"
     );
 });
 

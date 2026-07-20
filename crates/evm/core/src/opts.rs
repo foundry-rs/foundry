@@ -133,9 +133,9 @@ impl EvmOpts {
     /// Infers the network configuration from the fork chain ID if not already set.
     ///
     /// When a fork URL is configured and the network has not been explicitly set,
-    /// this fetches the chain ID from the remote endpoint and calls
-    /// [`NetworkConfigs::with_chain_id`] to auto-enable the correct network
-    /// (e.g. Tempo, OP Stack) based on the chain ID.
+    /// this fetches the chain ID from the remote endpoint, caches it for subsequent fork setup,
+    /// and calls [`NetworkConfigs::with_chain_id`] to auto-enable the correct network (e.g. Tempo,
+    /// OP Stack) based on the chain ID.
     pub async fn infer_network_from_fork(&mut self) {
         #[cfg(feature = "optimism")]
         let already_op = self.networks.is_optimism();
@@ -148,6 +148,8 @@ impl EvmOpts {
             && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(fork_url)
             && let Ok(chain_id) = provider.get_chain_id().await
         {
+            self.env.chain_id.get_or_insert(chain_id);
+
             // If Anvil's chain, request anvil_nodeInfo to determine the enabled network.
             if chain_id == NamedChain::AnvilHardhat as u64 {
                 if let Ok(node_info) =
@@ -482,6 +484,7 @@ mod tests {
         evm_opts.infer_network_from_fork().await;
 
         // Plain anvil (chain id 31337) without tempo flag -> Ethereum (no network flags set).
+        assert_eq!(evm_opts.env.chain_id, Some(31337));
         assert!(!evm_opts.networks.is_tempo());
         #[cfg(feature = "optimism")]
         assert!(!evm_opts.networks.is_optimism());

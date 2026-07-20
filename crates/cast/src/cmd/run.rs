@@ -43,10 +43,10 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
-    hardforks::FoundryHardfork,
+    hardforks::{ExecutionSpec, FoundryHardfork},
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
@@ -289,7 +289,10 @@ impl RunArgs {
                 false,
                 disable_labels,
                 self.trace_depth,
-                None,
+                config.hardfork.and_then(|hardfork| match hardfork {
+                    FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+                    _ => None,
+                }),
             )
             .await?;
 
@@ -322,7 +325,13 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
-        let mut resolved_tempo_hardfork = chain.is_tempo().then(|| config.evm_spec_id());
+        let mut resolved_tempo_hardfork = config
+            .hardfork
+            .and_then(|hardfork| match hardfork {
+                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+                _ => None,
+            })
+            .or_else(|| (networks.is_tempo() || chain.is_tempo()).then(|| config.evm_spec_id()));
 
         evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
 
@@ -334,16 +343,21 @@ impl RunArgs {
 
         evm_env.cfg_env.limit_contract_code_size = None;
         evm_env.block_env.set_number(U256::from(tx_block_number));
+        let configured_spec =
+            config.hardfork.and_then(<SpecFor<FEN> as ExecutionSpec>::from_foundry_hardfork);
+        if let Some(spec) = configured_spec {
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+        }
 
         let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
             evm_env.block_env = block_env_from_header(block.header());
             parent_beacon_block_root = block.header().parent_beacon_block_root();
 
-            // Resolve the correct spec for the block using the same approach as reth: walk
-            // known chain activation conditions to find the latest active fork. Falls back
-            // to a blob-gas heuristic for unknown chains.
-            if evm_version.is_none() {
+            // Unless explicitly configured, resolve the correct spec for the block using the same
+            // approach as reth: walk known chain activation conditions to find the latest active
+            // fork. Falls back to a blob-gas heuristic for unknown chains.
+            if evm_version.is_none() && configured_spec.is_none() {
                 if let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
                     evm_env.cfg_env.chain_id,
                     block.header().timestamp(),

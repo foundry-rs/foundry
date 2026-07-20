@@ -400,7 +400,9 @@ impl VerifyBytecodeArgs {
             } else {
                 match self.block {
                     Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
-                    Some(_) => eyre::bail!("Invalid block number"),
+                    Some(_) => {
+                        eyre::bail!("Invalid block number");
+                    }
                     None => provider.get_block_number().await?,
                 }
             };
@@ -498,7 +500,9 @@ impl VerifyBytecodeArgs {
         let transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+            .or_else(|e| {
+                eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e);
+            })?
             .ok_or_else(|| {
                 eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
             })?;
@@ -506,7 +510,9 @@ impl VerifyBytecodeArgs {
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
+            .or_else(|e| {
+                eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e);
+            })?;
         let receipt = if let Some(receipt) = receipt {
             receipt
         } else {
@@ -634,7 +640,7 @@ impl VerifyBytecodeArgs {
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
-                Some(_) => eyre::bail!("Invalid block number"),
+                Some(_) => { eyre::bail!("Invalid block number"); },
                 None => {
                     creation_block.ok_or_else(|| {
                         eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")

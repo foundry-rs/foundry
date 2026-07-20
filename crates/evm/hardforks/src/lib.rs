@@ -596,11 +596,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T8))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T8))
         );
 
         assert_eq!(
@@ -620,6 +620,14 @@ mod tests {
             Some(FoundryHardfork::Tempo(TempoHardfork::T7))
         );
         assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T8_TIMESTAMP - 1),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T8_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T8))
+        );
+        assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T6_TIMESTAMP - 1),
             Some(FoundryHardfork::Tempo(TempoHardfork::T5))
         );
@@ -634,6 +642,14 @@ mod tests {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T7_TIMESTAMP),
             Some(FoundryHardfork::Tempo(TempoHardfork::T7))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T8_TIMESTAMP - 1),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T8_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T8))
         );
     }
 

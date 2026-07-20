@@ -37,7 +37,7 @@ pub async fn parse_function_args<N: Network, P: Provider<N>>(
     etherscan_api_url: Option<&str>,
 ) -> Result<(Vec<u8>, Option<Function>)> {
     if sig.trim().is_empty() {
-        eyre::bail!("Function signature or calldata must be provided.")
+        eyre::bail!("Function signature or calldata must be provided.");
     }
 
     let args = resolve_name_args(&args, provider).await;

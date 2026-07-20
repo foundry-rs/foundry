@@ -203,6 +203,36 @@ async fn unset_user_token_does_not_stamp_default_fee_token() -> eyre::Result<()>
 }
 
 #[tokio::test]
+async fn contract_creation_does_not_stamp_stored_fee_token() -> eyre::Result<()> {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+    let fee_payer = Address::repeat_byte(0x11);
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest {
+            from: Some(fee_payer),
+            to: Some(TxKind::Create),
+            input: vec![0x60, 0x00].into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            Some(&provider),
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            Some(fee_payer),
+        )
+        .await?,
+        None
+    );
+    assert_eq!(tx.fee_token, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn sponsor_fee_token_resolution_uses_sponsor_address() -> eyre::Result<()> {
     let asserter = Asserter::new();
     let provider =

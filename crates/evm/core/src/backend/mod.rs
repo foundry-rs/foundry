@@ -25,6 +25,7 @@ use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, 
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
+use foundry_evm_networks::NetworkConfigs;
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
     Database, DatabaseCommit, JournalEntry,
@@ -1042,6 +1043,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
             // Clone the fork's CacheDB once. The underlying SharedBackend is Arc-backed,
             // so only the local cache layer is actually duplicated.
+            let chain_id = evm_env.cfg_env.chain_id;
+            let timestamp = evm_env.block_env.timestamp().saturating_to();
             let mut replay_db = fork.db.clone();
 
             if let Some((grandparent, parent, current)) = context_inputs {
@@ -1051,6 +1054,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                         factory.context_for_block(&grandparent, &parent, &current, *index);
                     let mut evm =
                         factory.create_evm_with_context(replay_db, evm_env.clone(), context_aux);
+                    NetworkConfigs::default().inject_chain_precompiles(
+                        evm.precompiles_mut(),
+                        chain_id,
+                        timestamp,
+                    );
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     evm.transact_commit(tx_env)
                         .wrap_err("backend: failed committing transaction")?;
@@ -1058,6 +1066,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 }
             } else {
                 let mut evm = factory.create_evm(replay_db, evm_env);
+                NetworkConfigs::default().inject_chain_precompiles(
+                    evm.precompiles_mut(),
+                    chain_id,
+                    timestamp,
+                );
                 for (_, tx) in &txs_to_replay {
                     let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
                     trace!(tx=?tx.tx_hash(), "committing transaction");
@@ -1570,9 +1583,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
                 return Ok(id);
             }
-            eyre::bail!("Requested fork `{}` does not exist", id)
+            eyre::bail!("Requested fork `{}` does not exist", id);
         }
-        if let Some(id) = self.active_fork_id() { Ok(id) } else { eyre::bail!("No fork active") }
+        if let Some(id) = self.active_fork_id() {
+            Ok(id)
+        } else {
+            eyre::bail!("No fork active");
+        }
     }
 
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {

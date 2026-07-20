@@ -36,9 +36,9 @@ use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
-    IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry,
-    IValidatorConfig,
+    CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
+    IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve,
+    ITIP20Factory, ITIP403Registry, IValidatorConfig,
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
@@ -482,11 +482,32 @@ impl CallTraceDecoder {
     }
 
     fn functions_for_selector(&self, address: Address, selector: &Selector) -> Option<&[Function]> {
+        if self.is_current_committee_active(address) {
+            static FUNCTIONS: OnceLock<HashMap<Selector, Vec<Function>>> = OnceLock::new();
+            if let Some(functions) = FUNCTIONS
+                .get_or_init(|| {
+                    ICurrentCommittee::abi::functions()
+                        .into_values()
+                        .flatten()
+                        .map(|function| (function.selector(), vec![function]))
+                        .collect()
+                })
+                .get(selector)
+            {
+                return Some(functions);
+            }
+        }
         self.functions_by_address
             .get(&address)
             .and_then(|functions| functions.get(selector))
             .or_else(|| self.functions.get(selector))
             .map(Vec::as_slice)
+    }
+
+    fn is_current_committee_active(&self, address: Address) -> bool {
+        address == CURRENT_COMMITTEE_ADDRESS
+            && self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t8())
+            && precompiles::is_known_precompile(address, self.chain_id, self.tempo_hardfork)
     }
 
     /// Selects the appropriate function from a list of functions with the same selector by
@@ -658,8 +679,15 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        let label =
-            if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
+        let label = if self.disable_labels {
+            None
+        } else if let Some(label) = self.labels.get(&trace.address) {
+            Some(label.clone())
+        } else if self.is_current_committee_active(trace.address) {
+            Some("CurrentCommittee".to_string())
+        } else {
+            None
+        };
 
         if trace.kind.is_any_create() {
             return DecodedCallTrace {
@@ -706,7 +734,8 @@ impl CallTraceDecoder {
                 let return_data = if trace.success {
                     None
                 } else {
-                    let revert_msg = self.decode_revert(&trace.output, trace.status).await;
+                    let revert_msg =
+                        self.decode_revert_at(trace.address, &trace.output, trace.status).await;
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                         Some(format!(
@@ -1037,7 +1066,7 @@ impl CallTraceDecoder {
         if trace.status.is_none_or(|s| s.is_ok()) || trace.success {
             return None;
         }
-        Some(self.decode_revert(&trace.output, trace.status).await)
+        Some(self.decode_revert_at(trace.address, &trace.output, trace.status).await)
     }
 
     /// Decodes revert data into a human-readable representation.
@@ -1058,6 +1087,23 @@ impl CallTraceDecoder {
             return format!("{}({})", error.name, decoded.iter().map(format_token).format(", "));
         }
         self.revert_decoder.decode(output, status)
+    }
+
+    async fn decode_revert_at(
+        &self,
+        address: Address,
+        output: &[u8],
+        status: Option<InstructionResult>,
+    ) -> String {
+        if self.is_current_committee_active(address) {
+            static DECODER: OnceLock<RevertDecoder> = OnceLock::new();
+            let decoder = DECODER
+                .get_or_init(|| RevertDecoder::new().with_abi(&ICurrentCommittee::abi::contract()));
+            if let Some(reason) = decoder.maybe_decode_known(output) {
+                return reason;
+            }
+        }
+        self.decode_revert(output, status).await
     }
 
     /// Decodes an event.
@@ -2444,6 +2490,77 @@ mod tests {
             Some(&"ReceivePolicyGuard".to_string())
         );
         assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_current_committee_decoding_is_durable_and_context_gated() {
+        let abi = ICurrentCommittee::abi::contract();
+        let function = abi.functions.get("getCommitteeMembers").unwrap().first().unwrap();
+        let output = function
+            .abi_encode_output(&[
+                DynSolValue::Uint(U256::from(7), 64),
+                DynSolValue::Array(vec![DynSolValue::FixedBytes(B256::with_last_byte(1), 32)]),
+            ])
+            .unwrap();
+        let trace = CallTrace {
+            address: CURRENT_COMMITTEE_ADDRESS,
+            data: function.selector().to_vec().into(),
+            output: output.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .build();
+        decoder.clear_addresses();
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("CurrentCommittee"));
+        assert_eq!(decoded.call_data.unwrap().signature, "getCommitteeMembers()");
+        assert_eq!(
+            decoded.return_data.unwrap(),
+            "7, [0x0000000000000000000000000000000000000000000000000000000000000001]"
+        );
+
+        for decoder in [
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(4217))
+                .with_tempo_hardfork(Some(TempoHardfork::T7))
+                .build(),
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(1))
+                .with_tempo_hardfork(Some(TempoHardfork::T8))
+                .build(),
+        ] {
+            let decoded = decoder.decode_function(&trace).await;
+            assert_ne!(decoded.label.as_deref(), Some("CurrentCommittee"));
+            assert!(decoded.call_data.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_current_committee_unauthorized_is_address_scoped() {
+        let output = ICurrentCommittee::Unauthorized {}.abi_encode();
+        let trace = CallTrace {
+            address: CURRENT_COMMITTEE_ADDRESS,
+            output: output.clone().into(),
+            success: false,
+            status: Some(InstructionResult::Revert),
+            ..Default::default()
+        };
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .build();
+        assert_eq!(
+            decoder.decode_function(&trace).await.return_data.as_deref(),
+            Some("Unauthorized()")
+        );
+
+        let unrelated = CallTrace { address: Address::ZERO, ..trace };
+        let baseline = CallTraceDecoder::new().decode_function(&unrelated).await;
+        assert_eq!(decoder.decode_function(&unrelated).await.return_data, baseline.return_data);
     }
 
     #[test]

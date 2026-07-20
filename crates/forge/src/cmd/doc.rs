@@ -106,7 +106,7 @@ impl DocArgs {
         }
 
         let git = Git::new(root);
-        let commit = git.commit_hash(false, "HEAD").ok();
+        let commit = doc_cfg.commit.clone().or_else(|| git.commit_hash(false, "HEAD").ok());
         // Best-effort branch detection for editLink. May yield "HEAD" when in
         // detached HEAD state; treat that as unknown.
         let branch = git.current_rev_branch(root).ok().map(|(_, b)| b).filter(|b| b != "HEAD");

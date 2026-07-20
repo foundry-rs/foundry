@@ -58,7 +58,7 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
     }
-    let vars = fallback_search_vars(cx, vars);
+    let vars = fallback_search_vars(cx, vars, constraints);
     !vars.is_empty() && vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS
 }
 
@@ -80,7 +80,7 @@ pub(crate) fn hard_arith_fallback_model(
     }
     let mut constants = constants.into_iter().collect::<Vec<_>>();
     constants.sort_unstable();
-    let vars = fallback_search_vars(cx, vars);
+    let vars = fallback_search_vars(cx, vars, constraints);
     if vars.is_empty() || vars.len() > HARD_ARITH_FALLBACK_MAX_VARS {
         return None;
     }
@@ -110,8 +110,19 @@ pub(crate) fn hard_arith_fallback_model(
     search.model(0, &mut model, &mut assignments)
 }
 
-fn fallback_search_vars(cx: &SymCx, vars: SymbolicVars) -> Vec<Symbol> {
+fn fallback_search_vars(
+    cx: &SymCx,
+    vars: SymbolicVars,
+    constraints: &[SymBoolExpr],
+) -> Vec<Symbol> {
     if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
+        return vars.into_iter().collect();
+    }
+
+    let hard_arith_vars = hard_arith_fallback_vars(constraints);
+    if !hard_arith_vars.is_empty() && hard_arith_vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
+        let mut vars = hard_arith_vars;
+        add_zero_invalid_support_vars(&mut vars, constraints);
         return vars.into_iter().collect();
     }
 
@@ -125,6 +136,32 @@ fn fallback_search_vars(cx: &SymCx, vars: SymbolicVars) -> Vec<Symbol> {
                 || !var.contains('_')
         })
         .collect()
+}
+
+fn hard_arith_fallback_vars(constraints: &[SymBoolExpr]) -> SymbolicVars {
+    let mut vars = SymbolicVars::default();
+    for constraint in constraints {
+        collect_bool_hard_arith_vars(constraint, &mut vars);
+    }
+    vars
+}
+
+fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBoolExpr]) {
+    let zero_model = SymbolicModel::default();
+    for constraint in constraints {
+        if constraint.eval_model(&zero_model).unwrap_or(false) {
+            continue;
+        }
+
+        let mut constraint_vars = SymbolicVars::default();
+        constraint.collect_vars(&mut constraint_vars);
+        let missing =
+            constraint_vars.iter().filter(|var| !vars.contains(*var)).copied().collect::<Vec<_>>();
+        if vars.len() + missing.len() > HARD_ARITH_FALLBACK_MAX_VARS {
+            continue;
+        }
+        vars.extend(missing);
+    }
 }
 
 fn fallback_candidates_for_var(
@@ -193,8 +230,9 @@ impl FallbackSearch<'_> {
             if *assignments > HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS {
                 return None;
             }
-            return fallback_model_satisfies_all_constraints(self.constraints, model)
-                .then(|| model.clone());
+            let mut completed = model.clone();
+            return complete_fallback_support_model(self.constraints, &mut completed)
+                .then_some(completed);
         }
 
         for candidate in &self.candidates[index] {
@@ -224,6 +262,201 @@ fn fallback_model_satisfies_all_constraints(
     constraints.iter().all(|constraint| constraint.eval_model(model).unwrap_or(false))
 }
 
+fn complete_fallback_support_model(constraints: &[SymBoolExpr], model: &mut SymbolicModel) -> bool {
+    for _ in 0..constraints.len() {
+        let mut changed = false;
+        for constraint in constraints {
+            match constraint.eval_model_if_complete(model) {
+                Ok(Some(true)) => {}
+                Ok(Some(false)) | Err(_) => return false,
+                Ok(None) => {
+                    changed |= complete_support_constraint(constraint, model);
+                }
+            }
+        }
+        if changed {
+            continue;
+        }
+        // Default checked-add bases to zero only after exact/lower-bound completions had a chance
+        // to assign a stronger value required by another constraint.
+        for constraint in constraints {
+            match constraint.eval_model_if_complete(model) {
+                Ok(Some(true)) => {}
+                Ok(Some(false)) | Err(_) => return false,
+                Ok(None) => {
+                    changed |= complete_default_support_constraint(constraint, model);
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    fallback_model_satisfies_all_constraints(constraints, model)
+}
+
+fn complete_support_constraint(constraint: &SymBoolExpr, model: &mut SymbolicModel) -> bool {
+    complete_support_bool(constraint, model, false, false)
+}
+
+fn complete_default_support_constraint(
+    constraint: &SymBoolExpr,
+    model: &mut SymbolicModel,
+) -> bool {
+    complete_support_bool(constraint, model, false, true)
+}
+
+fn complete_support_bool(
+    constraint: &SymBoolExpr,
+    model: &mut SymbolicModel,
+    inverted: bool,
+    defaults_only: bool,
+) -> bool {
+    match constraint.kind() {
+        SymBoolExprKind::Const(_) => false,
+        SymBoolExprKind::Not(value) => {
+            complete_support_bool(value, model, !inverted, defaults_only)
+        }
+        SymBoolExprKind::And(values) if !inverted => {
+            let mut changed = false;
+            for value in values.iter() {
+                changed |= complete_support_bool(value, model, false, defaults_only);
+            }
+            changed
+        }
+        SymBoolExprKind::Cmp(op, left, right) => {
+            let Some(op) = support_cmp_op(*op, inverted) else {
+                return false;
+            };
+            if defaults_only {
+                complete_default_support_comparison(op, left, right, model)
+            } else {
+                complete_support_comparison(op, left, right, model)
+            }
+        }
+        SymBoolExprKind::And(_) => false,
+    }
+}
+
+const fn support_cmp_op(op: SymCmpOp, inverted: bool) -> Option<SymCmpOp> {
+    if !inverted {
+        return Some(op);
+    }
+
+    match op {
+        SymCmpOp::Ult => Some(SymCmpOp::Uge),
+        SymCmpOp::Ugt => Some(SymCmpOp::Ule),
+        SymCmpOp::Ule => Some(SymCmpOp::Ugt),
+        SymCmpOp::Uge => Some(SymCmpOp::Ult),
+        SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
+    }
+}
+
+fn complete_support_comparison(
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+    model: &mut SymbolicModel,
+) -> bool {
+    if complete_checked_sub_guard(op, left, right, model) {
+        return true;
+    }
+    if let Ok(Some(value)) = left.eval_model_if_complete(model)
+        && let Some(target) = support_target_for_known_left(op, value)
+    {
+        return right.assign_model_value(model, target);
+    }
+    if let Ok(Some(value)) = right.eval_model_if_complete(model)
+        && let Some(target) = support_target_for_known_right(op, value)
+    {
+        return left.assign_model_value(model, target);
+    }
+    false
+}
+
+fn complete_default_support_comparison(
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+    model: &mut SymbolicModel,
+) -> bool {
+    complete_checked_add_guard(op, left, right, model)
+}
+
+fn complete_checked_sub_guard(
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+    model: &mut SymbolicModel,
+) -> bool {
+    match op {
+        SymCmpOp::Uge => assign_checked_sub_minuend(left, right, model),
+        SymCmpOp::Ule => assign_checked_sub_minuend(right, left, model),
+        _ => false,
+    }
+}
+
+fn assign_checked_sub_minuend(
+    minuend: &SymExpr,
+    sub_expr: &SymExpr,
+    model: &mut SymbolicModel,
+) -> bool {
+    let SymExprKind::BinOp(SymBinOp::Sub, sub_minuend, amount) = sub_expr.kind() else {
+        return false;
+    };
+    if sub_minuend != minuend {
+        return false;
+    }
+    let Ok(Some(amount)) = amount.eval_model_if_complete(model) else {
+        return false;
+    };
+    minuend.assign_model_value(model, amount)
+}
+
+fn complete_checked_add_guard(
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+    model: &mut SymbolicModel,
+) -> bool {
+    match op {
+        SymCmpOp::Uge => assign_checked_add_base(left, right, model),
+        SymCmpOp::Ule => assign_checked_add_base(right, left, model),
+        _ => false,
+    }
+}
+
+fn assign_checked_add_base(sum: &SymExpr, base: &SymExpr, model: &mut SymbolicModel) -> bool {
+    let SymExprKind::BinOp(SymBinOp::Add, left, right) = sum.kind() else {
+        return false;
+    };
+    if left == base && right.eval_model_if_complete(model).ok().flatten().is_some() {
+        return base.assign_model_value(model, U256::ZERO);
+    }
+    if right == base && left.eval_model_if_complete(model).ok().flatten().is_some() {
+        return base.assign_model_value(model, U256::ZERO);
+    }
+    false
+}
+
+fn support_target_for_known_left(op: SymCmpOp, value: U256) -> Option<U256> {
+    match op {
+        SymCmpOp::Eq | SymCmpOp::Ule | SymCmpOp::Uge => Some(value),
+        SymCmpOp::Ult => value.checked_add(U256::from(1)),
+        SymCmpOp::Ugt => value.checked_sub(U256::from(1)),
+        SymCmpOp::Slt | SymCmpOp::Sgt => None,
+    }
+}
+
+fn support_target_for_known_right(op: SymCmpOp, value: U256) -> Option<U256> {
+    match op {
+        SymCmpOp::Eq | SymCmpOp::Ule | SymCmpOp::Uge => Some(value),
+        SymCmpOp::Ult => value.checked_sub(U256::from(1)),
+        SymCmpOp::Ugt => value.checked_add(U256::from(1)),
+        SymCmpOp::Slt | SymCmpOp::Sgt => None,
+    }
+}
+
 fn fallback_partial_model_satisfies_known_constraints(
     constraints: &[SymBoolExpr],
     constraint_vars: &[SymbolicVars],
@@ -241,6 +474,15 @@ fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit_exprs(&mut |expr| {
         if let Some(var) = expr.kind().get_eval_var() {
             vars.insert(var);
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
+fn collect_bool_hard_arith_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
+    let _ = expr.visit_exprs(&mut |expr| {
+        if is_hard_arith_node(expr) {
+            expr.collect_eval_vars(vars);
         }
         ControlFlow::<()>::Continue(())
     });
@@ -507,5 +749,103 @@ fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<
             right.as_const()
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hard_arith_fallback_ignores_unrelated_abi_vars() {
+        let mut cx = SymCx::new();
+        let amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
+        let zero = SymExpr::zero(&mut cx);
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), amount.clone());
+        let div = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, amount.clone());
+        let amount_is_zero = SymBoolExpr::eq(&mut cx, amount, zero);
+        let guarded_zero = SymExpr::zero(&mut cx);
+        let guarded_div = SymExpr::ite(&mut cx, amount_is_zero.clone(), guarded_zero, div);
+        let overflow_branch = SymBoolExpr::eq(&mut cx, guarded_div, scale).not(&mut cx);
+
+        let address_bound = U256::from(1) << 160;
+        let mut constraints = vec![amount_is_zero.not(&mut cx), overflow_branch];
+        for idx in 0..6 {
+            let abi_word = SymExpr::var(&mut cx, &format!("sequence_0_0_0_addr_{idx}"));
+            constraints.push(SymBoolExpr::cmp_word_const(
+                &mut cx,
+                SymCmpOp::Ult,
+                &abi_word,
+                address_bound,
+            ));
+        }
+
+        assert!(constraints_prefer_hard_arith_fallback_first(&cx, &constraints));
+        let model = hard_arith_fallback_model(&cx, &constraints).expect("fallback model");
+        assert!(model.contains_name(cx.symbol("sequence_0_0_0_1")));
+        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    }
+
+    #[test]
+    fn hard_arith_fallback_keeps_prior_path_vars_needed_by_zero_model() {
+        let mut cx = SymCx::new();
+        let setup_amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
+        let borrow_amount = SymExpr::var(&mut cx, "sequence_2_2_0_1");
+        let zero = SymExpr::zero(&mut cx);
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), borrow_amount.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, borrow_amount.clone());
+
+        let constraints = vec![
+            SymBoolExpr::eq(&mut cx, setup_amount, zero.clone()).not(&mut cx),
+            SymBoolExpr::eq(&mut cx, borrow_amount, zero).not(&mut cx),
+            SymBoolExpr::eq(&mut cx, quotient, scale),
+        ];
+
+        assert!(constraints_prefer_hard_arith_fallback_first(&cx, &constraints));
+        let model = hard_arith_fallback_model(&cx, &constraints).expect("fallback model");
+        assert!(model.contains_name(cx.symbol("sequence_0_0_0_1")));
+        assert!(model.contains_name(cx.symbol("sequence_2_2_0_1")));
+        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    }
+
+    #[test]
+    fn hard_arith_fallback_completes_checked_storage_guards() {
+        let mut cx = SymCx::new();
+        let amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
+        let from_balance = SymExpr::var(&mut cx, "storage_from_balance");
+        let to_balance = SymExpr::var(&mut cx, "storage_to_balance");
+        let zero = SymExpr::zero(&mut cx);
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), amount.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, amount.clone());
+
+        let debited = SymExpr::binop(&mut cx, SymBinOp::Sub, from_balance.clone(), amount.clone());
+        let credited = SymExpr::binop(&mut cx, SymBinOp::Add, to_balance.clone(), amount.clone());
+        let mut constraints = vec![
+            SymBoolExpr::eq(&mut cx, amount, zero).not(&mut cx),
+            SymBoolExpr::eq(&mut cx, quotient, scale),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, from_balance, debited).not(&mut cx),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, credited, to_balance).not(&mut cx),
+        ];
+
+        let address_bound = U256::from(1) << 160;
+        for idx in 0..6 {
+            let abi_word = SymExpr::var(&mut cx, &format!("sequence_0_0_0_addr_{idx}"));
+            constraints.push(SymBoolExpr::cmp_word_const(
+                &mut cx,
+                SymCmpOp::Ult,
+                &abi_word,
+                address_bound,
+            ));
+        }
+
+        assert!(constraints_prefer_hard_arith_fallback_first(&cx, &constraints));
+        let model = hard_arith_fallback_model(&cx, &constraints).expect("fallback model");
+        assert!(model.contains_name(cx.symbol("sequence_0_0_0_1")));
+        assert!(model.contains_name(cx.symbol("storage_from_balance")));
+        assert!(model.contains_name(cx.symbol("storage_to_balance")));
+        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     }
 }

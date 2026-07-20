@@ -332,12 +332,27 @@ pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
     pub targets: Vec<SymbolicInvariantTarget>,
     /// Concrete sender set discovered by Foundry invariant targeting.
     pub senders: Vec<Address>,
+    /// Sender addresses excluded by Foundry invariant targeting.
+    pub excluded_senders: Vec<Address>,
     /// Maximum number of sequence calls to execute.
     pub depth: usize,
+    /// Concrete invariant check interval. `0` means only check at sequence end.
+    pub check_interval: u32,
     /// Whether ordinary target-call reverts should be reported as failures.
     pub fail_on_revert: bool,
     /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
     pub ffi_enabled: bool,
+}
+
+/// One concrete storage value required to replay a symbolic invariant candidate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicStorageAssignment {
+    /// Account whose storage slot should be initialized.
+    pub address: Address,
+    /// Concrete storage slot.
+    pub slot: U256,
+    /// Concrete value extracted from the solver model.
+    pub value: U256,
 }
 
 /// Outcome of bounded symbolic invariant execution.
@@ -347,8 +362,12 @@ pub enum SymbolicInvariantRunResult {
     Safe(SymbolicStats),
     /// A feasible invariant or handler failure was found.
     Counterexample {
+        /// Which part of the invariant run produced the failure.
+        kind: SymbolicInvariantCounterexampleKind,
         /// Concrete sequence extracted from the solver model.
         sequence: Vec<SymbolicInvariantStep>,
+        /// Concrete setup-storage values needed for replay.
+        storage: Vec<SymbolicStorageAssignment>,
         /// Execution counters collected before the counterexample was returned.
         stats: SymbolicStats,
     },
@@ -361,6 +380,15 @@ pub enum SymbolicInvariantRunResult {
         /// Execution counters collected before execution stopped.
         stats: SymbolicStats,
     },
+}
+
+/// Part of a symbolic invariant run that produced a replayable counterexample.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SymbolicInvariantCounterexampleKind {
+    /// An `invariant_*` or `afterInvariant` check failed.
+    Predicate,
+    /// A fuzzed target/handler call failed with an assertion.
+    Handler,
 }
 
 /// One concrete step in a symbolic invariant counterexample sequence.
@@ -448,6 +476,7 @@ pub struct SymbolicExecutor {
     cx: runtime::SymCx,
     solver: Box<dyn runtime::SymbolicSolver>,
     deferred_incomplete: Option<DeferredIncomplete>,
+    deadline: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug)]

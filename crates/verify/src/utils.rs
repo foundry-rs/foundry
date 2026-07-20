@@ -11,8 +11,14 @@ use foundry_block_explorers::{
     utils::lookup_compiler_version,
 };
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, shell};
-use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
+use foundry_common::{
+    abi::encode_args, compile::ProjectCompiler, find_matching_contract_artifact,
+    ignore_metadata_hash, shell,
+};
+use foundry_compilers::{
+    artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
+    utils::canonicalize,
+};
 use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
@@ -90,6 +96,14 @@ pub fn build_project(
 ) -> Result<CompactContractBytecode> {
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
+
+    if let Some(path) = args.contract.path() {
+        let target_path = canonicalize(project.root().join(path))?;
+        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
+        let artifact =
+            find_matching_contract_artifact(&mut output, &target_path, Some(&args.contract.name))?;
+        return Ok(artifact.into_contract_bytecode());
+    }
 
     let mut output = compiler.compile(&project)?;
 
@@ -220,7 +234,9 @@ pub fn maybe_predeploy_contract(
             maybe_predeploy = true;
             Ok((None, maybe_predeploy))
         }
-        Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
+        Err(e) => {
+            eyre::bail!("Error fetching creation data from verifier-url: {:?}", e);
+        }
     }
 }
 
@@ -483,6 +499,16 @@ pragma solidity 0.8.16;
 
 contract Counter {
     uint256 public number;
+}
+"#,
+        );
+        prj.add_source(
+            "Broken.sol",
+            r#"
+pragma solidity 0.8.16;
+
+contract Broken {
+    this is not valid Solidity
 }
 "#,
         );

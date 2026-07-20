@@ -150,6 +150,49 @@ Script ran successfully.
 "#]]);
 });
 
+forgetest!(verbosity_five_shows_script_storage_changes, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "StorageChanges",
+        r#"
+import "forge-std/Script.sol";
+
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) external {
+        number = newNumber;
+    }
+}
+
+contract StorageChanges is Script {
+    Counter public counter = new Counter();
+
+    function run() external {
+        counter.setNumber(1);
+    }
+}
+   "#,
+    );
+
+    let target = format!("{}:StorageChanges", script.display());
+    cmd.args(["script", &target, "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Traces:
+  [..] StorageChanges::run()
+    ├─ [..] Counter::setNumber(1)
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
+
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj.add_source(
@@ -684,6 +727,8 @@ Traces:
     │   └─ ← [Return]
     ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 718 bytes of code
+    ├─  storage changes:
+    │   @ 12: 65537 → [..]
     └─ ← [Stop]
 
 
@@ -767,51 +812,69 @@ Traces:
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
+    ├─  storage changes:
+    │   @ 12: 65537 → [..]
     └─ ← [Stop]
 
 
@@ -1221,6 +1284,65 @@ forgetest_async!(test_custom_sender_balance, |prj, cmd| {
         .add_deployer(0)
         .add_sig("TestInitialBalance", "runCustomSender()")
         .simulate(ScriptOutcome::OkSimulation);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/3887>
+forgetest_async!(broadcast_log_includes_full_function_abi, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_script(
+        "FullSignature.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract Target {
+    uint256 configuredAmount;
+    address configuredRecipient;
+
+    function configure(uint256 amount, address recipient)
+        external
+        returns (bool accepted)
+    {
+        configuredAmount = amount;
+        configuredRecipient = recipient;
+        return amount > 0 && recipient != address(0);
+    }
+}
+
+contract SignatureScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        Target target = new Target();
+        target.configure(1, address(1));
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(script)
+        .args(["--tc", "SignatureScript", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let sequence: ScriptSequence<Ethereum> =
+        foundry_common::fs::read_json_file(&run_latest).unwrap();
+
+    assert_eq!(sequence.transactions.len(), 2);
+    assert_eq!(sequence.transactions[1].function.as_deref(), Some("configure(uint256,address)"));
+    assert_eq!(
+        sequence.transactions[1].function_abi.as_deref(),
+        Some("function configure(uint256 amount, address recipient) returns (bool accepted)")
+    );
 });
 
 #[derive(serde::Deserialize)]
@@ -2077,12 +2199,118 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
 {"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
+});
+
+// https://github.com/foundry-rs/foundry/issues/10050
+forgetest_init!(json_trace_uses_pranked_caller, |prj, cmd| {
+    prj.add_source(
+        "Target",
+        r#"
+contract Target {
+    address public observedCaller;
+
+    function increment() external {
+        observedCaller = msg.sender;
+    }
+}
+   "#,
+    );
+    prj.add_script(
+        "PrankTrace",
+        r#"
+import "forge-std/Script.sol";
+import {Target} from "../src/Target.sol";
+
+contract PrankTrace is Script {
+    function run() external {
+        vm.startPrank(address(0x1234));
+        Target target = Target(vm.deployCode("src/Target.sol:Target"));
+        target.increment();
+        require(target.observedCaller() == address(0x1234));
+        vm.stopPrank();
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .args(["script", "PrankTrace", "-vvvv", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: Value = serde_json::from_slice(&output).unwrap();
+    let execution =
+        output["traces"].as_array().unwrap().iter().find(|trace| trace[0] == "Execution").unwrap();
+    let increment = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["trace"]["data"] == "0xd09de08a")
+        .unwrap();
+    let deployment = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["trace"]["kind"] == "CREATE")
+        .unwrap();
+
+    assert_eq!(increment["trace"]["caller"], "0x0000000000000000000000000000000000001234");
+    assert_eq!(deployment["trace"]["caller"], "0x0000000000000000000000000000000000001234");
+});
+
+forgetest_init!(json_trace_uses_pranked_create_caller, |prj, cmd| {
+    prj.add_script(
+        "PrankCreateTrace",
+        r#"
+import "forge-std/Script.sol";
+
+contract Target {
+    address public creator = msg.sender;
+}
+
+contract PrankCreateTrace is Script {
+    function run() external {
+        vm.startPrank(address(0x1234));
+        Target created = new Target();
+        Target created2 = new Target{salt: bytes32(uint256(1))}();
+        require(created.creator() == address(0x1234));
+        require(created2.creator() == address(0x1234));
+        vm.stopPrank();
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .args(["script", "PrankCreateTrace", "-vvvv", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: Value = serde_json::from_slice(&output).unwrap();
+    let execution =
+        output["traces"].as_array().unwrap().iter().find(|trace| trace[0] == "Execution").unwrap();
+    let deployments = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| matches!(node["trace"]["kind"].as_str(), Some("CREATE" | "CREATE2")))
+        .collect::<Vec<_>>();
+
+    assert_eq!(deployments.len(), 2);
+    assert!(deployments.iter().any(|node| node["trace"]["kind"] == "CREATE2"));
+    assert!(
+        deployments
+            .iter()
+            .all(|node| node["trace"]["caller"] == "0x0000000000000000000000000000000000001234")
+    );
 });
 
 // https://github.com/foundry-rs/foundry/pull/7742
@@ -2601,6 +2829,82 @@ forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
   sender nonce 1124703[..]"#]]);
 });
 
+forgetest_async!(should_override_sender_nonce_via_cli, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "MyScript.s.sol",
+        r#"
+        import {Script} from "forge-std/Script.sol";
+
+        library Lib {
+            function value() public pure returns (uint256) {
+                return 42;
+            }
+        }
+
+        contract UsesLib {
+            uint256 public immutable value;
+
+            constructor() {
+                value = Lib.value();
+            }
+        }
+
+        contract MyScript is Script {
+            function run() public {
+                vm.startBroadcast();
+                new UsesLib();
+                vm.stopBroadcast();
+            }
+        }
+        "#,
+    );
+
+    cmd.args([
+        "script",
+        "MyScript",
+        "--sender",
+        "0x1000000000000000000000000000000000000000",
+        "--sender-nonce",
+        "7",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+});
+
 forgetest_async!(dryrun_without_broadcast, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -2614,10 +2918,11 @@ contract Called {
     event log_string(string);
     uint256 public x;
     uint256 public y;
-    function run(uint256 _x, uint256 _y) external {
+    function run(uint256 _x, uint256 _y) external returns (uint256 result) {
         x = _x;
         y = _y;
         emit log_string("script ran");
+        return _x + _y;
     }
 }
 
@@ -2650,10 +2955,10 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
     ├─ [..] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    │   └─ ← [Return] 567 bytes of code
+    │   └─ ← [Return] 700 bytes of code
     ├─ [..] Called::run(123, 456)
     │   ├─ emit log_string(val: "script ran")
-    │   └─ ← [Stop]
+    │   └─ ← [Return] 579
     └─ ← [Stop]
 
 
@@ -2666,12 +2971,12 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [113557] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    └─ ← [Return] 567 bytes of code
+  [140181] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 700 bytes of code
 
-  [46595] Called::run(123, 456)
+  [46966] Called::run(123, 456)
     ├─ emit log_string(val: "script ran")
-    └─ ← [Stop]
+    └─ ← [Return] 579
 
 
 ==========================
@@ -2712,7 +3017,7 @@ value                0
 
 accessList           []
 chainId              31337
-gasLimit             93856
+gasLimit             99920
 gasPrice             
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
 maxFeePerBlobGas     
@@ -2723,7 +3028,7 @@ to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
-data (decoded): run(uint256,uint256)(
+data (decoded): run(
   123,
   456
 )
@@ -2907,12 +3212,18 @@ Traces:
     ├─ [0] VM::signAndAttachDelegation(0x5FbDB2315678afecb367f032d93F642f64180aa3, "<pk>")
     │   └─ ← [Return] (0, 0xd4301eb9f82f747137a5f2c3dc3a5c2d253917cf99ecdc0d49f7bb85313c3159, 0x786d354f0bbd456f44116ddd3aa50475e989d72d8396005e5b3a12cede83fb68, 4, 0x5FbDB2315678afecb367f032d93F642f64180aa3)
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 1 → 2
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512, "<pk>")
     │   └─ ← [Return] (0, 0xaba9128338f7ff036a0d2ecb96d4f4376389005cd565f87aba33b312570af962, 0x69acbe0831fb8ca95338bc4b908dcfebaf7b81b0f770a12c073ceb07b89fbdf3, 7, 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512)
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    │   ├─  storage changes:
+    │   │   @ 0: 2 → 0
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0, "<pk>")
     │   └─ ← [Return] (1, 0x3a3427b66e589338ce7ea06135650708f9152e93e257b4a5ec6eb86a3e09a2ce, 0x444651c354c89fd3312aafb05948e12c0a16220827a5e467705253ab4d8aa8d3, 9, 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0)
@@ -2939,12 +3250,18 @@ Simulated On-chain Traces:
     └─ ← [Return] 481 bytes of code
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─  storage changes:
+    │   @ 0: 0 → 1
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─  storage changes:
+    │   @ 0: 1 → 2
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    ├─  storage changes:
+    │   @ 0: 2 → 0
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)

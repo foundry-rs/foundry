@@ -77,6 +77,26 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             Ok(res) => (res, None),
             Err(err) => {
                 debug!(?err, %input, "execution failed");
+                let should_execute = self
+                    .clone_with_new_line(input.to_string())
+                    .ok()
+                    .and_then(|(source, do_execute)| {
+                        if !do_execute {
+                            return None;
+                        }
+                        source.build().ok().map(|output| {
+                            output.enter(|output| {
+                                let body = output.run_func_body();
+                                let Some(last) = body.last() else { return false };
+                                let StmtKind::Expr(expr) = last.kind else { return false };
+                                should_continue(expr)
+                            })
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_execute {
+                    return Ok((ControlFlow::Continue(()), None));
+                }
                 match source_without_inspector.execute().await {
                     Ok(res) => (res, Some(err)),
                     Err(_) => {
@@ -165,7 +185,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             memory.get(offset..offset + len)
         })();
         let Some(data) = data else {
-            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory")
+            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
         };
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if cont { ControlFlow::Continue(()) } else { ControlFlow::Break(()) };
@@ -259,17 +279,20 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Bool(b) => {
             format!("Type: {}\n└ Value: {}", "bool".red(), b.cyan())
         }
-        DynSolValue::String(_) | DynSolValue::Bytes(_) => {
-            let hex = hex::encode(token.abi_encode());
-            let s = token.as_str();
+        DynSolValue::Bytes(bytes) => {
             format!(
-                "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
-                if s.is_some() { "string" } else { "dynamic bytes" }.red(),
-                if let Some(s) = s {
-                    format!("├ UTF-8: {}\n", s.cyan())
-                } else {
-                    String::default()
-                },
+                "Type: {}\n└ Data: {}",
+                "dynamic bytes".red(),
+                hex::encode_prefixed(bytes).cyan()
+            )
+        }
+        token @ DynSolValue::String(_) => {
+            let hex = hex::encode(token.abi_encode());
+            let s = token.as_str().expect("matched string value");
+            format!(
+                "Type: {}\n├ UTF-8: {}\n├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
+                "string".red(),
+                s.cyan(),
                 "[0x00:0x20]".yellow(),
                 format!("0x{}", &hex[64..128]).cyan(),
                 "[0x20:..]".yellow(),
@@ -381,6 +404,8 @@ fn should_continue(expr: &Expr<'_>) -> bool {
     match &expr.kind {
         // assignments and compound assignments
         ExprKind::Assign(_, _, _) => true,
+        // Delete expressions.
+        ExprKind::Delete(_) => true,
         // ++/-- pre/post operations
         ExprKind::Unary(op, _) => matches!(
             op.kind,

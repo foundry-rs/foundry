@@ -48,8 +48,7 @@ contract Dummy {
 ",
     );
 
-    // set up command
-    cmd.args(["compile", "--format-json"]).assert_success().stderr_eq("").stdout_eq(str![[r#"
+    let expected = str![[r#"
 {
   "errors": [
     {
@@ -70,7 +69,18 @@ contract Dummy {
   "contracts": {},
   "build_infos": "{...}"
 }
-"#]].is_json());
+"#]]
+    .is_json();
+
+    cmd.args(["compile", "--format-json"])
+        .assert_failure()
+        .stderr_eq("")
+        .stdout_eq(expected.clone());
+    cmd.forge_fuse()
+        .args(["compile", "--format-json", "--sizes"])
+        .assert_failure()
+        .stderr_eq("")
+        .stdout_eq(expected);
 });
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {

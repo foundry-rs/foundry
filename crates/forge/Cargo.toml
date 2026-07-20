@@ -52,6 +52,7 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
+foundry-tui.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
 alloy-chains.workspace = true
@@ -68,6 +69,8 @@ tempo-alloy.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
+ctrlc = "3"
+dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
 globset = "0.4"
@@ -116,6 +119,10 @@ svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+# Keep this aligned with the Chisel PTY test dependency.
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]

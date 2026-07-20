@@ -30,9 +30,10 @@ use foundry_common::{
         pretty_calldata,
     },
     shell, stdin,
+    tempo::{PaymentLaneClassification, classify_payment_lane},
 };
 use foundry_evm_networks::NetworkVariant;
-use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope, PaymentLaneClassification};
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
@@ -305,7 +306,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     get_event(event.signature().as_str())?
                         .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
                 } else {
-                    eyre::bail!("No matching event signature found for selector `{selector}`")
+                    eyre::bail!("No matching event signature found for selector `{selector}`");
                 }
             };
             print_tokens(&decoded_event.body)?;
@@ -322,7 +323,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     let _ = sh_println!("{}", error.signature());
                     error
                 } else {
-                    eyre::bail!("No matching error signature found for selector `{selector}`")
+                    eyre::bail!("No matching error signature found for selector `{selector}`");
                 }
             };
             let decoded_error = error.decode_error(&hex::decode(data)?)?;
@@ -369,18 +370,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             );
             print_scalar(out)?;
         }
-        CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
+        CastSubcommand::Balance { block, who, ether, rpc, erc20, overrides } => {
+            if erc20.is_none() && !overrides.is_empty() {
+                eyre::bail!("call overrides require `--erc20` when using `cast balance`");
+            }
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let account_addr = who.resolve(&provider).await?;
 
             match erc20 {
                 Some(token) => {
-                    let balance = IERC20::new(token, &provider)
-                        .balanceOf(account_addr)
-                        .block(block.unwrap_or_default())
-                        .call()
-                        .await?;
+                    let token = IERC20::new(token, &provider);
+                    let balance_call =
+                        token.balanceOf(account_addr).block(block.unwrap_or_default());
+                    let call = balance_call.call();
+                    let balance = overrides.apply(call)?.await?;
 
                     sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
                     print_scalar(format_uint_exp(balance))?;
@@ -777,7 +781,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             });
 
             let sig = match sigs.len() {
-                0 => eyre::bail!("No signatures found"),
+                0 => {
+                    eyre::bail!("No signatures found");
+                }
                 1 => sigs.first().unwrap(),
                 _ => {
                     let i: usize = prompt!("Select a function signature by number: ")?;
@@ -986,9 +992,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
     let raw_tx = hex::decode(raw_tx)?;
     let mut data = raw_tx.as_slice();
-    let tx =
-        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
-    format_lane_classification(&tx.classify_t5_payment_lane())
+    FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
+    format_lane_classification(&classify_payment_lane(&raw_tx))
 }
 
 pub(crate) fn format_lane_classification(
