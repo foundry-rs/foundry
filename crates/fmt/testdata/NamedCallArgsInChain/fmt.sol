@@ -61,7 +61,8 @@ contract NamedCallArgsInChain {
                     firstExtremelyLongArgumentName: firstExtremelyLongValueName,
                     secondExtremelyLongArgumentName: secondExtremelyLongValueName
                 })
-            ).update();
+            )
+            .update();
         factory().foo(bar(firstExtremelyLongValueName)).baz({
             firstExtremelyLongArgumentName: firstExtremelyLongValueName,
             secondExtremelyLongArgumentName: secondExtremelyLongValueName

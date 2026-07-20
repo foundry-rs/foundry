@@ -1394,6 +1394,7 @@ impl<'ast> State<'_, 'ast> {
                             _ if s.chained_named_call.is_some_and(|call| {
                                 call.keep_inline && call.callee.contains(expr.span)
                             }) => {}
+                            _ if call_has_named_call_arg(&member_expr.kind) => s.hardbreak(),
                             // Don't add break when accessing a field after a call with named args.
                             // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
                             // on the same line as the closing `})`.
@@ -3115,6 +3116,11 @@ const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
     } else {
         false
     }
+}
+
+fn call_has_named_call_arg(expr_kind: &ast::ExprKind<'_>) -> bool {
+    let ast::ExprKind::Call(_, args) = expr_kind else { return false };
+    matches!(&args.kind, ast::CallArgsKind::Unnamed(args) if args.iter().any(|arg| is_call_with_named_args(&arg.kind)))
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
