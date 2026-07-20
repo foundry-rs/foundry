@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     erc4337::TransactionConditional,
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
-    simulate::{SimulatePayload, SimulatedBlock},
+    simulate::{MAX_SIMULATE_BLOCKS, SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
@@ -81,7 +81,10 @@ use anvil_core::{
     },
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use foundry_common::{
     provider::ProviderBuilder,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
@@ -2922,7 +2925,27 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
         node_info!("eth_simulateV1");
-        let block_request = self.block_request(block_number).await?;
+        if request.block_state_calls.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params("empty input")));
+        }
+        if request.block_state_calls.len() > MAX_SIMULATE_BLOCKS as usize {
+            return Err(BlockchainError::RpcError(RpcError {
+                code: ErrorCode::ServerError(-38026),
+                message: "too many blocks".into(),
+                data: None,
+            }));
+        }
+        let block_request =
+            self.block_request(block_number).await.map_err(|error| match error {
+                BlockchainError::BlockOutOfRange(_, _) | BlockchainError::BlockNotFound => {
+                    BlockchainError::RpcError(RpcError {
+                        code: ErrorCode::ServerError(-32000),
+                        message: "header not found".into(),
+                        data: None,
+                    })
+                }
+                error => error,
+            })?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
