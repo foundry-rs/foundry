@@ -849,7 +849,7 @@ mod tests {
     use alloy_serde::WithOtherFields;
     use foundry_evm_hardforks::TempoHardfork;
     #[cfg(feature = "monad")]
-    use monad_revm::MonadHardfork;
+    use monad_revm::{MonadHardfork, cfg::MONAD_MEMORY_LIMIT};
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
@@ -905,6 +905,26 @@ mod tests {
         evm.ctx_mut().set_tx(tx_env);
         let evm_env = evm.ctx().evm_clone();
         evm.ctx_mut().set_evm(evm_env);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_memory_limit_follows_hardfork_transitions() {
+        const FOUNDRY_MEMORY_LIMIT: u64 = 128 * 1024 * 1024;
+
+        let mut cfg = CfgEnv::new_with_spec(MonadHardfork::MonadEight);
+        cfg.memory_limit = FOUNDRY_MEMORY_LIMIT;
+        let mut evm = MonadEvmFactory::default()
+            .create_evm(EmptyDB::default(), EvmEnv::new(cfg, BlockEnv::default()));
+
+        assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
+
+        evm.ctx_mut().set_spec_and_gas_params(MonadHardfork::MonadNine);
+        assert_eq!(evm.ctx().cfg().inner().memory_limit, FOUNDRY_MEMORY_LIMIT);
+        assert_eq!(evm.ctx().cfg().memory_limit(), MONAD_MEMORY_LIMIT);
+
+        evm.ctx_mut().set_spec_and_gas_params(MonadHardfork::MonadEight);
+        assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
     }
 
     #[test]

@@ -242,6 +242,70 @@ contract MonadEvmVersionTest is Test {
     cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
 });
 
+#[cfg(feature = "monad")]
+forgetest_init!(test_monad_memory_limit, |prj, cmd| {
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadNine".parse().unwrap());
+        config.memory_limit = 128 * 1024 * 1024;
+    });
+    prj.add_test(
+        "MonadMemoryLimit.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract MonadMemoryLimitTest is Test {
+    function test_memory_ending_at_limit() public {
+        uint256 value;
+        assembly {
+            // The stored word ends exactly at 8 MiB.
+            mstore(0x7fffe0, 1)
+            value := mload(0x7fffe0)
+        }
+        assertEq(value, 1);
+    }
+
+    function test_memory_ending_above_limit() public {
+        uint256 value;
+        assembly {
+            // The stored word starts at 8 MiB and ends one word above the limit.
+            mstore(0x800000, 1)
+            value := mload(0x800000)
+        }
+        assertEq(value, 1);
+    }
+}
+   "#,
+    );
+
+    cmd.args([
+        "test",
+        "--network",
+        "monad",
+        "--mc",
+        "MonadMemoryLimitTest",
+        "--mt",
+        "test_memory_ending_at_limit",
+    ])
+    .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--mc",
+            "MonadMemoryLimitTest",
+            "--mt",
+            "test_memory_ending_above_limit",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: EvmError: MemoryLimitOOG] test_memory_ending_above_limit() ([GAS])
+...
+"#]]);
+});
+
 forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
