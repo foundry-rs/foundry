@@ -35,8 +35,9 @@ pub struct LineSuffixHandle {
     depth: usize,
 }
 
+/// Identifies a retained fit probe used by conditional documents.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct ChoiceId(usize);
+pub struct FitId(usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndentStyle {
@@ -71,7 +72,9 @@ pub(crate) struct BeginToken {
     indent: IndentStyle,
     breaks: Breaks,
     group: Option<GroupId>,
-    probe: Option<ChoiceId>,
+    probe: Option<FitId>,
+    probe_size: Option<isize>,
+    probe_line_offset: Option<isize>,
     force_break: bool,
 }
 
@@ -86,6 +89,8 @@ pub(crate) enum Token {
     End,
     LineSuffix(Vec<Self>),
     BreakChildren(GroupId),
+    FlattenChildren(GroupId),
+    SetIndent(GroupId, isize),
 }
 
 /// Retained input to the pretty printer.
@@ -99,9 +104,12 @@ struct Document {
 enum Doc {
     Token(Token),
     IfBreak { group: GroupId, broken: Document, flat: Document },
-    Choice { id: ChoiceId, preferred: Document, fallback: Document },
+    IfFits { id: FitId, fits: Document, overflow: Document },
+    Choice { id: FitId, preferred: Document, fallback: Document },
     BreakParent,
     BreakChildren(GroupId),
+    FlattenChildren(GroupId),
+    SetIndent(GroupId, isize),
     LineSuffixStart,
     LineSuffixEnd,
 }
@@ -146,7 +154,7 @@ pub struct Printer {
     /// Named groups corresponding to `print_stack` frames.
     group_stack: Vec<Option<GroupId>>,
     group_states: HashMap<GroupId, bool>,
-    choice_states: HashMap<ChoiceId, bool>,
+    choice_states: HashMap<FitId, bool>,
     /// Level of indentation of current line.
     indent: usize,
     /// Buffered indentation to avoid writing trailing whitespace.
@@ -219,7 +227,7 @@ impl Printer {
         Some(index)
     }
 
-    fn render(mut self) -> (String, HashMap<GroupId, bool>, HashMap<ChoiceId, bool>) {
+    fn render(mut self) -> (String, HashMap<GroupId, bool>, HashMap<FitId, bool>) {
         self.scan_eof();
         (self.out, self.group_states, self.choice_states)
     }
@@ -229,7 +237,8 @@ impl Printer {
         let mut fallback_choices = HashSet::new();
 
         loop {
-            let tokens = self.document.resolve(&broken_groups, &fallback_choices);
+            let mut tokens = self.document.resolve(&broken_groups, &fallback_choices);
+            annotate_probe_sizes(&mut tokens, self.tab_width);
             let mut renderer =
                 Self::new_inner(self.margin as usize, self.indent_config, self.tab_width, false);
             for token in tokens {
@@ -256,7 +265,9 @@ impl Printer {
             Token::Begin(token) => self.scan_begin(token),
             Token::End => self.scan_end(),
             Token::LineSuffix(tokens) => self.scan_line_suffix(tokens),
-            Token::BreakChildren(_) => unreachable!("unresolved break-children marker"),
+            Token::BreakChildren(_) | Token::FlattenChildren(_) | Token::SetIndent(..) => {
+                unreachable!("unresolved child-layout marker")
+            }
         }
     }
 
@@ -424,7 +435,12 @@ impl Printer {
         match &mut entry.token {
             Token::Break(token) => token.offset += offset,
             Token::Begin(_) => {}
-            Token::String(_) | Token::End | Token::LineSuffix(_) | Token::BreakChildren(_) => {
+            Token::String(_)
+            | Token::End
+            | Token::LineSuffix(_)
+            | Token::BreakChildren(_)
+            | Token::FlattenChildren(_)
+            | Token::SetIndent(..) => {
                 unreachable!()
             }
         }
@@ -476,7 +492,9 @@ impl Printer {
                     self.left_total = self.left_total.saturating_add(left.size).min(SIZE_INFINITY);
                     self.pending_line_suffixes.push(tokens.clone());
                 }
-                Token::BreakChildren(_) => unreachable!("unresolved break-children marker"),
+                Token::BreakChildren(_) | Token::FlattenChildren(_) | Token::SetIndent(..) => {
+                    unreachable!("unresolved child-layout marker")
+                }
             }
 
             self.last_printed = Some(left.token);
@@ -542,7 +560,12 @@ impl Printer {
         }
         self.group_stack.push(token.group);
         if let Some(choice) = token.probe {
-            self.choice_states.insert(choice, broken);
+            let space = if let Some(offset) = token.probe_line_offset {
+                cmp::max(self.margin - (self.indent as isize + offset), MIN_SPACE)
+            } else {
+                self.space
+            };
+            self.choice_states.insert(choice, token.probe_size.is_some_and(|size| size > space));
         }
         if broken {
             self.print_stack.push(PrintFrame::Broken(self.indent, token.breaks));
@@ -655,19 +678,21 @@ impl Document {
     fn resolve(
         &self,
         broken_groups: &HashSet<GroupId>,
-        fallback_choices: &HashSet<ChoiceId>,
+        fallback_choices: &HashSet<FitId>,
     ) -> Vec<Token> {
         let mut tokens = Vec::new();
         let mut groups = Vec::new();
         self.resolve_into(broken_groups, fallback_choices, &mut groups, &mut tokens);
         force_break_children(&mut tokens);
+        flatten_children(&mut tokens);
+        set_group_indents(&mut tokens);
         tokens
     }
 
     fn resolve_into(
         &self,
         broken_groups: &HashSet<GroupId>,
-        fallback_choices: &HashSet<ChoiceId>,
+        fallback_choices: &HashSet<FitId>,
         groups: &mut Vec<usize>,
         tokens: &mut Vec<Token>,
     ) {
@@ -688,6 +713,10 @@ impl Document {
                     let branch = if broken_groups.contains(group) { broken } else { flat };
                     branch.resolve_into(broken_groups, fallback_choices, groups, tokens);
                 }
+                Doc::IfFits { id, fits, overflow } => {
+                    let branch = if fallback_choices.contains(id) { overflow } else { fits };
+                    branch.resolve_into(broken_groups, fallback_choices, groups, tokens);
+                }
                 Doc::Choice { id, preferred, fallback } => {
                     if fallback_choices.contains(id) {
                         fallback.resolve_into(broken_groups, fallback_choices, groups, tokens);
@@ -697,6 +726,8 @@ impl Document {
                             breaks: Breaks::Inconsistent,
                             group: None,
                             probe: Some(*id),
+                            probe_size: None,
+                            probe_line_offset: None,
                             force_break: false,
                         };
                         groups.push(tokens.len());
@@ -713,6 +744,8 @@ impl Document {
                     }
                 }
                 Doc::BreakChildren(group) => tokens.push(Token::BreakChildren(*group)),
+                Doc::FlattenChildren(group) => tokens.push(Token::FlattenChildren(*group)),
+                Doc::SetIndent(group, indent) => tokens.push(Token::SetIndent(*group, *indent)),
                 Doc::LineSuffixStart => {
                     let start = index + 1;
                     let mut depth = 1;
@@ -752,7 +785,7 @@ fn flat_size(tokens: &[Token], tab_width: usize) -> isize {
             Token::Break(token) => token.blank_space as isize,
             Token::Begin(_) | Token::End => 0,
             Token::LineSuffix(tokens) => flat_size(tokens, tab_width),
-            Token::BreakChildren(_) => 0,
+            Token::BreakChildren(_) | Token::FlattenChildren(_) | Token::SetIndent(..) => 0,
         };
         size.saturating_add(token_size).min(SIZE_INFINITY)
     })
@@ -764,6 +797,24 @@ fn display_width(string: &str, tab_width: usize) -> isize {
         .map(|ch| if ch == '\t' { tab_width } else { 1 })
         .sum::<usize>()
         .min(SIZE_INFINITY as usize) as isize
+}
+
+fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
+    let mut stack = Vec::new();
+    for index in 0..tokens.len() {
+        match tokens[index] {
+            Token::Begin(_) => stack.push(index),
+            Token::End => {
+                let start = stack.pop().expect("unmatched end token");
+                let size = flat_size(&tokens[start + 1..index], tab_width);
+                let Token::Begin(begin) = &mut tokens[start] else { unreachable!() };
+                if begin.probe.is_some() {
+                    begin.probe_size = Some(size);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn force_break_children(tokens: &mut Vec<Token>) {
@@ -807,6 +858,81 @@ fn force_break_children(tokens: &mut Vec<Token>) {
     for token in tokens {
         if let Token::LineSuffix(tokens) = token {
             force_break_children(tokens);
+        }
+    }
+}
+
+fn flatten_children(tokens: &mut Vec<Token>) {
+    let targets = tokens
+        .iter()
+        .filter_map(|token| match token {
+            Token::FlattenChildren(group) => Some(*group),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    if targets.is_empty() {
+        return;
+    }
+
+    let mut stack = Vec::new();
+    let mut ranges = HashMap::new();
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Token::Begin(begin) => stack.push((index, begin.group)),
+            Token::End => {
+                let (start, group) = stack.pop().expect("unmatched end token");
+                if let Some(group) = group
+                    && targets.contains(&group)
+                {
+                    ranges.insert(group, (start, index));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (group, (start, end)) in ranges {
+        debug_assert!(targets.contains(&group));
+        for token in &mut tokens[start + 1..end] {
+            if let Token::Break(token) = token
+                && token.blank_space < SIZE_INFINITY as usize
+            {
+                token.never_break = true;
+            }
+        }
+    }
+    tokens.retain(|token| !matches!(token, Token::FlattenChildren(_)));
+    for token in tokens {
+        if let Token::LineSuffix(tokens) = token {
+            flatten_children(tokens);
+        }
+    }
+}
+
+fn set_group_indents(tokens: &mut Vec<Token>) {
+    let indents = tokens
+        .iter()
+        .filter_map(|token| match token {
+            Token::SetIndent(group, indent) => Some((*group, *indent)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    if indents.is_empty() {
+        return;
+    }
+
+    for token in tokens.iter_mut() {
+        if let Token::Begin(begin) = token
+            && let Some(group) = begin.group
+            && let Some(indent) = indents.get(&group)
+        {
+            begin.indent = IndentStyle::Block { offset: *indent };
+        }
+    }
+    tokens.retain(|token| !matches!(token, Token::SetIndent(..)));
+    for token in tokens {
+        if let Token::LineSuffix(tokens) = token {
+            set_group_indents(tokens);
         }
     }
 }
@@ -897,6 +1023,78 @@ mod tests {
         p.end();
 
         assert_eq!(p.eof(), "left\n    right\na_suffix_that_makes_the_outer_group_break");
+    }
+
+    #[test]
+    fn fit_condition_can_preserve_a_fitting_child_layout() {
+        let mut p = printer();
+        p.cbox(0);
+        let (group, fit) = p.ibox_with_fit(4);
+        p.word("fitting_child");
+        p.space();
+        p.word("content");
+        p.end();
+        p.space();
+        p.word("a_suffix_that_makes_the_parent_too_wide");
+        p.if_fits(fit, |p| p.flatten_children(group), |_| {});
+        p.end();
+
+        assert_eq!(p.eof(), "fitting_child content\na_suffix_that_makes_the_parent_too_wide");
+    }
+
+    #[test]
+    fn fit_condition_leaves_an_overflowing_child_breakable() {
+        let mut p = printer();
+        let (group, fit) = p.ibox_with_fit(4);
+        p.word("a_child_that_is_too_wide_for_the_margin");
+        p.space();
+        p.word("content");
+        p.end();
+        p.if_fits(fit, |p| p.flatten_children(group), |_| {});
+
+        assert_eq!(p.eof(), "a_child_that_is_too_wide_for_the_margin\n    content");
+    }
+
+    #[test]
+    fn fit_condition_can_change_group_indentation() {
+        let mut p = printer();
+        let outer = p.ibox_with_id(4);
+        let (child, fit) = p.ibox_with_fit(0);
+        p.word("fitting child");
+        p.end();
+        p.space();
+        p.word("a_suffix_that_makes_the_outer_group_break");
+        p.if_fits(
+            fit,
+            |p| {
+                p.flatten_children(child);
+                p.set_indent(outer, 0);
+            },
+            |_| {},
+        );
+        p.end();
+
+        assert_eq!(p.eof(), "fitting child\na_suffix_that_makes_the_outer_group_break");
+    }
+
+    #[test]
+    fn line_fit_probes_continuation_space() {
+        let mut p = Printer::new(50, None, 4);
+        p.cbox(0);
+        p.word("a_prefix_that_uses_some_space");
+        p.space();
+        let (rhs, fit) = p.ibox_with_line_fit(0, 4);
+        p.word("a_rhs_that_fits");
+        p.space();
+        p.word("on_its_continuation_line");
+        p.end();
+        p.if_fits(fit, |p| p.flatten_children(rhs), |_| {});
+        p.end();
+
+        assert_eq!(
+            p.eof(),
+            "a_prefix_that_uses_some_space\na_rhs_that_fits on_its_continuation_line"
+        );
     }
 
     #[test]

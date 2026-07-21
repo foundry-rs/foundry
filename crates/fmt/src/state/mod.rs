@@ -96,7 +96,6 @@ impl CallStack {
 #[derive(Clone, Copy)]
 struct ChainedNamedCall {
     callee: Span,
-    keep_inline: bool,
 }
 
 pub(super) struct State<'sess, 'ast> {

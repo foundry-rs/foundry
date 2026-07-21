@@ -1,6 +1,6 @@
 use super::{
-    BeginToken, BreakToken, Breaks, ChoiceId, Doc, Document, GroupId, IndentStyle,
-    LineSuffixHandle, Printer, SIZE_INFINITY, Token,
+    BeginToken, BreakToken, Breaks, Doc, Document, FitId, GroupId, IndentStyle, LineSuffixHandle,
+    Printer, SIZE_INFINITY, Token,
 };
 use std::borrow::Cow;
 
@@ -12,6 +12,8 @@ impl Printer {
             breaks,
             group: None,
             probe: None,
+            probe_size: None,
+            probe_line_offset: None,
             force_break: false,
         });
     }
@@ -25,9 +27,50 @@ impl Printer {
             breaks,
             group: Some(group),
             probe: None,
+            probe_size: None,
+            probe_line_offset: None,
             force_break: false,
         });
         group
+    }
+
+    fn fit_box(&mut self, indent: isize, breaks: Breaks) -> (GroupId, FitId) {
+        let group = GroupId(self.next_group);
+        self.next_group += 1;
+        let fit = FitId(self.next_choice);
+        self.next_choice += 1;
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Block { offset: indent },
+            breaks,
+            group: Some(group),
+            probe: Some(fit),
+            probe_size: None,
+            probe_line_offset: None,
+            force_break: false,
+        });
+        (group, fit)
+    }
+
+    fn line_fit_box(
+        &mut self,
+        indent: isize,
+        line_offset: isize,
+        breaks: Breaks,
+    ) -> (GroupId, FitId) {
+        let group = GroupId(self.next_group);
+        self.next_group += 1;
+        let fit = FitId(self.next_choice);
+        self.next_choice += 1;
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Block { offset: indent },
+            breaks,
+            group: Some(group),
+            probe: Some(fit),
+            probe_size: None,
+            probe_line_offset: Some(line_offset),
+            force_break: false,
+        });
+        (group, fit)
     }
 
     /// Inconsistent breaking box
@@ -52,12 +95,24 @@ impl Printer {
         self.group_box(indent, Breaks::Consistent)
     }
 
+    /// Begins an inconsistent box and returns identifiers for its layout and whether it fits.
+    pub fn ibox_with_fit(&mut self, indent: isize) -> (GroupId, FitId) {
+        self.fit_box(indent, Breaks::Inconsistent)
+    }
+
+    /// Begins an inconsistent box and probes whether it fits on a continuation line.
+    pub fn ibox_with_line_fit(&mut self, indent: isize, line_offset: isize) -> (GroupId, FitId) {
+        self.line_fit_box(indent, line_offset, Breaks::Inconsistent)
+    }
+
     pub fn visual_align(&mut self) {
         self.scan_begin(BeginToken {
             indent: IndentStyle::Visual,
             breaks: Breaks::Consistent,
             group: None,
             probe: None,
+            probe_size: None,
+            probe_line_offset: None,
             force_break: false,
         });
     }
@@ -123,12 +178,35 @@ impl Printer {
         self.document.nodes.push(Doc::BreakChildren(group));
     }
 
+    /// Prevents non-forced breaks nested inside `group`.
+    pub fn flatten_children(&mut self, group: GroupId) {
+        self.document.nodes.push(Doc::FlattenChildren(group));
+    }
+
+    /// Changes the indentation of `group` in the selected layout.
+    pub fn set_indent(&mut self, group: GroupId, indent: isize) {
+        self.document.nodes.push(Doc::SetIndent(group, indent));
+    }
+
+    /// Emits one of two documents according to whether the probed box fits.
+    pub fn if_fits(
+        &mut self,
+        fit: FitId,
+        fits: impl FnOnce(&mut Self),
+        overflow: impl FnOnce(&mut Self),
+    ) {
+        let fits = self.capture(fits);
+        let overflow = self.capture(overflow);
+        self.document.nodes.push(Doc::IfFits { id: fit, fits: fits.clone(), overflow });
+        self.preview(&fits);
+    }
+
     /// Emits `preferred` when it fits, otherwise emits `fallback`.
     #[allow(dead_code)] // Used by formatter migrations to the retained document API.
     pub fn choice(&mut self, preferred: impl FnOnce(&mut Self), fallback: impl FnOnce(&mut Self)) {
         let preferred = self.capture(preferred);
         let fallback = self.capture(fallback);
-        let id = ChoiceId(self.next_choice);
+        let id = FitId(self.next_choice);
         self.next_choice += 1;
         self.document.nodes.push(Doc::Choice { id, preferred: preferred.clone(), fallback });
         self.preview(&preferred);
