@@ -2921,7 +2921,7 @@ impl EthApi<FoundryNetwork> {
 
     pub async fn simulate_v1(
         &self,
-        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        request: SimulatePayload,
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
         node_info!("eth_simulateV1");

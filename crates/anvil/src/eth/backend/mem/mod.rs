@@ -5056,7 +5056,7 @@ impl Backend<FoundryNetwork> {
     /// Simulates the payload by executing the calls in request.
     pub async fn simulate(
         &self,
-        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        request: SimulatePayload,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
         self.with_database_at(block_request, |state, mut block_env| {
@@ -5097,8 +5097,7 @@ impl Backend<FoundryNetwork> {
                 }
 
                 // execute all calls in that block
-                for (req_idx, request) in calls.into_iter().enumerate() {
-                    let mut request = request.inner;
+                for (req_idx, mut request) in calls.into_iter().enumerate() {
                     let remaining_regular_gas =
                         block_env.gas_limit.saturating_sub(block_regular_gas_used);
                     let remaining_state_gas =
