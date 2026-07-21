@@ -23,34 +23,35 @@ use crate::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
     },
 };
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_primitives::{
-    Address, B256, Bytes, Selector, U256, address, hex, keccak256, map::HashMap,
+    Address, B256, Bytes, Selector, U256, address, hex, keccak256,
+    map::{HashMap, HashSet},
 };
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
+    SymbolicConfig,
 };
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
-        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
-        RawCallResult, ShowmapOpts, ShowmapReplayTarget, StatelessReplayTarget,
-        canonical_replay_dirs,
-        fuzz::FuzzedExecutor,
+        CallResult, CorpusDirEntry, EvmError, Executor, FuzzedExecutor, ITest,
+        InvariantReplayOptions, MinimizationReplayInput, RawCallResult, ShowmapOpts,
+        ShowmapReplayTarget, StatelessReplayTarget, canonical_replay_dirs,
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, check_sequence,
             execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
-        persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
-        replay_sequence_for_minimization,
+        parse_corpus_filename, persist_corpus_seed, persist_corpus_seed_without_disk_dedupe,
+        read_corpus_dir, replay_corpus_to_showmap, replay_sequence_for_minimization,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -60,6 +61,7 @@ use foundry_evm::{
         },
         strategies::EvmFuzzState,
     },
+    inspectors::EdgeIndexMap,
     revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
@@ -68,7 +70,7 @@ use foundry_evm_symbolic::{
     SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor,
     SymbolicInvariantCounterexampleKind, SymbolicInvariantRunInput, SymbolicInvariantRunResult,
     SymbolicInvariantStep, SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult,
-    SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
+    SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment, symbolic_solver_is_builtin,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -78,11 +80,16 @@ use std::{
     borrow::Cow,
     cmp::min,
     collections::{BTreeMap, BTreeSet},
+    io::Write,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
+use tempfile::TempDir;
 use tokio::signal;
 use tracing::Span;
 
@@ -92,6 +99,35 @@ use tracing::Span;
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+
+/// Targeted frontier solving can be memory intensive, so parallel test suites share one process-
+/// wide symbolic slot.
+static SYMBOLIC_FRONTIER_SEED_GATE: Mutex<()> = Mutex::new(());
+
+/// Automatic bootstrap is deliberately a one-target process-wide assist. This caps aggregate
+/// symbolic work when many test suites run in parallel.
+static AUTOMATIC_FUZZ_BOOTSTRAP_CLAIMED: AtomicBool = AtomicBool::new(false);
+
+const AUTOMATIC_FUZZ_BOOTSTRAP_SCHEMA: &str = "foundry:fuzz.symbolic-bootstrap@v3";
+const AUTOMATIC_FUZZ_BOOTSTRAP_MANIFEST: &str = ".foundry-symbolic-bootstrap.json";
+const AUTOMATIC_FUZZ_BOOTSTRAP_MIN_RUNS: u32 = 2_000_000;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MIN_TIMEOUT_SECS: u32 = 15 * 60;
+const AUTOMATIC_FUZZ_BOOTSTRAP_WARMUP_RUNS: u32 = 16;
+const AUTOMATIC_FUZZ_BOOTSTRAP_WARMUP_TIMEOUT_SECS: u32 = 5;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_REJECTS: u32 = 256;
+const AUTOMATIC_FUZZ_BOOTSTRAP_FRONTIER_LIMIT: usize = 32;
+const AUTOMATIC_FUZZ_BOOTSTRAP_SOLVER_TIMEOUT_SECS: u32 = 1;
+const AUTOMATIC_FUZZ_BOOTSTRAP_SOLVER_MEMORY_MB: u32 = 256;
+const AUTOMATIC_FUZZ_BOOTSTRAP_COVERAGE_REPLAY_LIMIT: usize = 256;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DEPTH: u32 = 10_000;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_PATHS: u32 = 256;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_SOLVER_QUERIES: u32 = 1_024;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_LOOP_BOUND: u32 = 256;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DYNAMIC_LENGTH: u32 = 8;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_CALLDATA_BYTES: u32 = 4_096;
+const AUTOMATIC_FUZZ_BOOTSTRAP_PORTFOLIO_SCAN_LIMIT: usize = 64;
+const AUTOMATIC_FUZZ_BOOTSTRAP_MAX_WORKER_DIRS: usize = 64;
+const AUTOMATIC_FUZZ_BOOTSTRAP_ROOT_SCAN_LIMIT: usize = 256;
 
 fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
@@ -243,6 +279,290 @@ enum SymbolicFuzzSeedReplay {
     Success,
     Failure,
     Rejected,
+}
+
+#[derive(Clone, Debug, Default)]
+struct FuzzFrontierSeedStats {
+    attempts: usize,
+    candidates: usize,
+    replayed: usize,
+    useful: usize,
+    failures: usize,
+    first_failure: Option<SymbolicConcreteInput>,
+    persisted: usize,
+    incomplete: usize,
+    cancelled: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct AutomaticFuzzBootstrapManifest {
+    schema: String,
+    fingerprint: B256,
+    attempts: usize,
+    candidates: usize,
+    useful: usize,
+    failures: usize,
+    persisted: usize,
+    incomplete: usize,
+    corpus_entries: usize,
+    elapsed_millis: u128,
+}
+
+enum AutomaticFuzzBootstrapResult {
+    Continue,
+    ConcreteFailure(Box<FuzzTestResult>),
+    SymbolicFailure(SymbolicConcreteInput),
+}
+
+#[derive(Default)]
+struct AutomaticFuzzBootstrapCoverage {
+    evm_edges: Vec<u8>,
+    edge_indices: EdgeIndexMap,
+}
+
+impl AutomaticFuzzBootstrapCoverage {
+    fn merge(&mut self, candidate: &[u8]) -> bool {
+        if self.evm_edges.len() < candidate.len() {
+            self.evm_edges.resize(candidate.len(), 0);
+        }
+        let mut new_edge = false;
+        for (baseline, &candidate) in self.evm_edges.iter_mut().zip(candidate) {
+            if *baseline < candidate {
+                new_edge |= *baseline == 0;
+                *baseline = candidate;
+            }
+        }
+        new_edge
+    }
+}
+
+fn reject_automatic_fuzz_bootstrap_blocking_cheatcodes<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+) {
+    if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+        cheats.reject_blocking_cheatcodes();
+    }
+}
+
+fn automatic_fuzz_bootstrap_is_eligible(config: &FuzzConfig) -> bool {
+    config.run.is_none()
+        && config.worker.is_none()
+        && config.runs >= AUTOMATIC_FUZZ_BOOTSTRAP_MIN_RUNS
+        && config.timeout.is_none_or(|timeout| timeout >= AUTOMATIC_FUZZ_BOOTSTRAP_MIN_TIMEOUT_SECS)
+        && config.corpus.corpus_dir.is_some()
+}
+
+fn automatic_fuzz_bootstrap_max_rejects(configured: u32) -> u32 {
+    if configured == 0 {
+        AUTOMATIC_FUZZ_BOOTSTRAP_MAX_REJECTS
+    } else {
+        configured.min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_REJECTS)
+    }
+}
+
+fn automatic_fuzz_bootstrap_supports_function(func: &Function) -> bool {
+    func.inputs.iter().all(|input| {
+        matches!(
+            DynSolType::parse(input.selector_type().as_ref()),
+            Ok(DynSolType::Address
+                | DynSolType::Bool
+                | DynSolType::Int(_)
+                | DynSolType::Uint(_)
+                | DynSolType::FixedBytes(_))
+        )
+    })
+}
+
+fn automatic_fuzz_bootstrap_solver_command(solver: &str) -> Option<String> {
+    match solver {
+        "z3" => Some(format!("z3 -in -smt2 -memory:{AUTOMATIC_FUZZ_BOOTSTRAP_SOLVER_MEMORY_MB}")),
+        "bitwuzla" => Some(format!(
+            "bitwuzla --produce-models --memory-limit {AUTOMATIC_FUZZ_BOOTSTRAP_SOLVER_MEMORY_MB}"
+        )),
+        "bitwuzla-abs" => Some(format!(
+            "bitwuzla --produce-models --abstraction --memory-limit {AUTOMATIC_FUZZ_BOOTSTRAP_SOLVER_MEMORY_MB}"
+        )),
+        _ => None,
+    }
+}
+
+fn bounded_automatic_fuzz_bootstrap_symbolic_config(
+    config: &SymbolicConfig,
+) -> std::result::Result<SymbolicConfig, String> {
+    if config.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty()) {
+        return Err(
+            "automatic fuzz corpus bootstrap does not execute project-configured solver commands; use `forge fuzz seed` to run trusted custom commands"
+                .to_string(),
+        );
+    }
+
+    let mut portfolio = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut saw_portfolio_entry = false;
+    for configured in
+        config.solver_portfolio.iter().take(AUTOMATIC_FUZZ_BOOTSTRAP_PORTFOLIO_SCAN_LIMIT)
+    {
+        let solver = configured.trim();
+        if solver.is_empty() {
+            continue;
+        }
+        saw_portfolio_entry = true;
+        if !symbolic_solver_is_builtin(solver) {
+            return Err(
+                "automatic fuzz corpus bootstrap only uses built-in symbolic solver names; use `forge fuzz seed` to run a trusted custom portfolio"
+                    .to_string(),
+            );
+        }
+        if automatic_fuzz_bootstrap_solver_command(solver).is_some() && seen.insert(solver) {
+            portfolio.push(solver.to_string());
+        }
+    }
+    let solver = if saw_portfolio_entry {
+        portfolio.first().cloned().ok_or_else(|| {
+            "automatic fuzz corpus bootstrap requires a built-in solver with a managed memory limit (`z3` or `bitwuzla`); use `forge fuzz seed` for other trusted solvers"
+                .to_string()
+        })?
+    } else {
+        let solver = config.solver.trim();
+        if !symbolic_solver_is_builtin(solver) {
+            return Err(
+                "automatic fuzz corpus bootstrap only uses built-in symbolic solver names; use `forge fuzz seed` to run a trusted custom solver"
+                    .to_string(),
+            );
+        }
+        if automatic_fuzz_bootstrap_solver_command(solver).is_none() {
+            return Err(
+                "automatic fuzz corpus bootstrap requires a built-in solver with a managed memory limit (`z3` or `bitwuzla`); use `forge fuzz seed` for other trusted solvers"
+                    .to_string(),
+            );
+        }
+        solver.to_string()
+    };
+    let max_dynamic_length =
+        config.max_dynamic_length.min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DYNAMIC_LENGTH);
+
+    // Automatic mode accepts scalar ABI inputs only, so do not clone user-provided dynamic-length
+    // maps or vectors. Besides being irrelevant, those collections are intentionally unbounded in
+    // explicit symbolic mode and must not inflate the managed prelude.
+    Ok(SymbolicConfig {
+        enabled: config.enabled,
+        seed_corpus: false,
+        use_fuzz_corpus: false,
+        corpus_seed_limit: 1,
+        use_fuzz_frontiers: true,
+        frontier_limit: AUTOMATIC_FUZZ_BOOTSTRAP_FRONTIER_LIMIT,
+        frontier_ids: Vec::new(),
+        frontier_pcs: Vec::new(),
+        frontier_selectors: Vec::new(),
+        solver,
+        solver_command: None,
+        solver_portfolio: portfolio,
+        timeout: Some(AUTOMATIC_FUZZ_BOOTSTRAP_SOLVER_TIMEOUT_SECS),
+        loop_bound: config
+            .loop_bound
+            .map(|bound| bound.min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_LOOP_BOUND)),
+        depth: config.depth.map(|depth| depth.min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DEPTH)),
+        width: config.width.map(|width| width.min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_PATHS)),
+        max_depth: config.max_depth.min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DEPTH),
+        max_paths: config.max_paths.min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_PATHS),
+        invariant_depth: config.invariant_depth.min(SymbolicConfig::default().invariant_depth),
+        exploration_order: config.exploration_order,
+        max_solver_queries: config
+            .max_solver_queries
+            .min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_SOLVER_QUERIES),
+        default_dynamic_length: config.default_dynamic_length.min(max_dynamic_length),
+        max_dynamic_length,
+        array_lengths: Vec::new(),
+        dynamic_lengths: BTreeMap::new(),
+        default_array_lengths: Vec::new(),
+        default_bytes_lengths: Vec::new(),
+        max_calldata_bytes: config
+            .max_calldata_bytes
+            .min(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_CALLDATA_BYTES),
+        symbolic_call_targets: false,
+        dump_smt: false,
+        storage_layout: config.storage_layout,
+    })
+}
+
+fn automatic_fuzz_bootstrap_solver_configs(config: &SymbolicConfig) -> Vec<SymbolicConfig> {
+    let solvers = if config.solver_portfolio.is_empty() {
+        vec![config.solver.clone()]
+    } else {
+        config.solver_portfolio.clone()
+    };
+    solvers
+        .into_iter()
+        .filter_map(|solver| {
+            let solver_command = automatic_fuzz_bootstrap_solver_command(&solver)?;
+            let mut selected = config.clone();
+            selected.solver_command = Some(solver_command);
+            selected.solver = solver;
+            selected.solver_portfolio.clear();
+            Some(selected)
+        })
+        .collect()
+}
+
+fn bounded_automatic_fuzz_corpus_entries(root: &Path, limit: usize) -> Vec<CorpusDirEntry> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let Ok(root_metadata) = std::fs::symlink_metadata(root) else {
+        return Vec::new();
+    };
+    if root_metadata.file_type().is_symlink() {
+        return Vec::new();
+    }
+
+    let mut replay_dirs = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .take(AUTOMATIC_FUZZ_BOOTSTRAP_ROOT_SCAN_LIMIT)
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file_type = entry.file_type().ok()?;
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            if !file_type.is_dir() || !name.starts_with("worker") {
+                return None;
+            }
+            let corpus = entry.path().join("corpus");
+            std::fs::symlink_metadata(&corpus)
+                .is_ok_and(|metadata| metadata.file_type().is_dir())
+                .then_some(corpus)
+        })
+        .take(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_WORKER_DIRS)
+        .collect::<Vec<_>>();
+    replay_dirs.sort();
+    if replay_dirs.is_empty() {
+        replay_dirs.push(root.to_path_buf());
+    }
+
+    // Count raw directory entries as well as accepted corpus files so a directory full of junk
+    // cannot turn the managed prelude into an unbounded scan.
+    let scan_limit = limit.saturating_mul(8).saturating_add(64);
+    let mut scanned = 0usize;
+    let mut entries = Vec::with_capacity(limit);
+    'dirs: for dir in replay_dirs {
+        let Ok(files) = std::fs::read_dir(dir) else { continue };
+        for entry in files {
+            if scanned >= scan_limit || entries.len() >= limit {
+                break 'dirs;
+            }
+            scanned += 1;
+            let Some(entry) = entry.ok() else { continue };
+            if !entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
+                continue;
+            }
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else { continue };
+            let Ok((uuid, timestamp)) = parse_corpus_filename(name) else { continue };
+            entries.push(CorpusDirEntry { path, uuid, timestamp });
+        }
+    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    entries
 }
 
 fn attach_imported_symbolic_corpus_seeds(
@@ -442,6 +762,185 @@ mod tests {
             .and_then(|value| value.strip_suffix(".json"))
             .expect("file name should include sanitized value prefix and json suffix");
         assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_requires_an_effectively_long_campaign() {
+        let mut config = FuzzConfig::default();
+        config.corpus.corpus_dir = Some(PathBuf::from("corpus"));
+
+        config.runs = AUTOMATIC_FUZZ_BOOTSTRAP_MIN_RUNS - 1;
+        assert!(!automatic_fuzz_bootstrap_is_eligible(&config));
+
+        config.runs = AUTOMATIC_FUZZ_BOOTSTRAP_MIN_RUNS;
+        assert!(automatic_fuzz_bootstrap_is_eligible(&config));
+
+        config.timeout = Some(AUTOMATIC_FUZZ_BOOTSTRAP_MIN_TIMEOUT_SECS - 1);
+        assert!(!automatic_fuzz_bootstrap_is_eligible(&config));
+
+        config.timeout = Some(AUTOMATIC_FUZZ_BOOTSTRAP_MIN_TIMEOUT_SECS);
+        assert!(automatic_fuzz_bootstrap_is_eligible(&config));
+
+        config.runs = FuzzConfig::default().runs;
+        assert!(!automatic_fuzz_bootstrap_is_eligible(&config));
+
+        config.runs = AUTOMATIC_FUZZ_BOOTSTRAP_MIN_RUNS;
+        config.run = Some(1);
+        assert!(!automatic_fuzz_bootstrap_is_eligible(&config));
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_requires_a_corpus() {
+        let config = FuzzConfig { runs: AUTOMATIC_FUZZ_BOOTSTRAP_MIN_RUNS, ..Default::default() };
+
+        assert!(!automatic_fuzz_bootstrap_is_eligible(&config));
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_caps_unlimited_rejects() {
+        assert_eq!(automatic_fuzz_bootstrap_max_rejects(0), AUTOMATIC_FUZZ_BOOTSTRAP_MAX_REJECTS);
+        assert_eq!(automatic_fuzz_bootstrap_max_rejects(17), 17);
+        assert_eq!(
+            automatic_fuzz_bootstrap_max_rejects(u32::MAX),
+            AUTOMATIC_FUZZ_BOOTSTRAP_MAX_REJECTS
+        );
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_accepts_only_bounded_scalar_abi_inputs() {
+        assert!(automatic_fuzz_bootstrap_supports_function(
+            &Function::parse("testFuzz_scalar(uint256,int128,bool,address,bytes32)").unwrap()
+        ));
+        for signature in [
+            "testFuzz_dynamic(bytes)",
+            "testFuzz_function(function)",
+            "testFuzz_array(uint256[])",
+            "testFuzz_fixedArray(uint256[2])",
+            "testFuzz_tuple((uint256,bool))",
+        ] {
+            assert!(
+                !automatic_fuzz_bootstrap_supports_function(&Function::parse(signature).unwrap()),
+                "{signature}"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_coverage_requires_a_new_edge() {
+        let mut coverage = AutomaticFuzzBootstrapCoverage::default();
+
+        assert!(coverage.merge(&[0, 1, 0]));
+        assert!(!coverage.merge(&[0, 8, 0]));
+        assert!(coverage.merge(&[0, 8, 1]));
+        assert_eq!(coverage.evm_edges, [0, 8, 1]);
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_refuses_custom_solver_execution() {
+        assert_eq!(
+            automatic_fuzz_bootstrap_solver_command("bitwuzla").as_deref(),
+            Some("bitwuzla --produce-models --memory-limit 256")
+        );
+        assert!(automatic_fuzz_bootstrap_solver_command("yices").is_none());
+
+        let command = SymbolicConfig {
+            solver_command: Some("sh -c 'touch should-not-run'".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            bounded_automatic_fuzz_bootstrap_symbolic_config(&command)
+                .unwrap_err()
+                .contains("does not execute project-configured solver commands")
+        );
+
+        let portfolio = SymbolicConfig {
+            solver_portfolio: vec!["z3".to_string(), "/tmp/custom-solver".to_string()],
+            ..Default::default()
+        };
+        assert!(
+            bounded_automatic_fuzz_bootstrap_symbolic_config(&portfolio)
+                .unwrap_err()
+                .contains("trusted custom portfolio")
+        );
+
+        let unbounded_builtin =
+            SymbolicConfig { solver: "yices".to_string(), ..Default::default() };
+        assert!(
+            bounded_automatic_fuzz_bootstrap_symbolic_config(&unbounded_builtin)
+                .unwrap_err()
+                .contains("managed memory limit")
+        );
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_bounds_symbolic_resources() {
+        let mut dynamic_lengths = BTreeMap::new();
+        for index in 0..100 {
+            dynamic_lengths.insert(format!("arg{index}"), vec![u32::MAX; 16]);
+        }
+        let config = SymbolicConfig {
+            solver_portfolio: (0..100)
+                .map(|index| if index % 2 == 0 { "z3" } else { "cvc5" }.to_string())
+                .collect(),
+            loop_bound: Some(u32::MAX),
+            depth: Some(u32::MAX),
+            width: Some(u32::MAX),
+            max_depth: u32::MAX,
+            max_paths: u32::MAX,
+            max_solver_queries: u32::MAX,
+            default_dynamic_length: u32::MAX,
+            max_dynamic_length: u32::MAX,
+            array_lengths: vec![u32::MAX; 16],
+            dynamic_lengths,
+            default_array_lengths: vec![u32::MAX; 16],
+            default_bytes_lengths: vec![u32::MAX; 16],
+            max_calldata_bytes: u32::MAX,
+            symbolic_call_targets: true,
+            dump_smt: true,
+            ..Default::default()
+        };
+
+        let bounded = bounded_automatic_fuzz_bootstrap_symbolic_config(&config).unwrap();
+        assert_eq!(bounded.solver_portfolio, ["z3"]);
+        let selected = automatic_fuzz_bootstrap_solver_configs(&bounded);
+        assert_eq!(
+            selected.iter().map(|config| config.solver.as_str()).collect::<Vec<_>>(),
+            ["z3"]
+        );
+        assert!(selected.iter().all(|config| config.solver_portfolio.is_empty()));
+        assert_eq!(selected[0].solver_command.as_deref(), Some("z3 -in -smt2 -memory:256"));
+        assert_eq!(bounded.timeout, Some(AUTOMATIC_FUZZ_BOOTSTRAP_SOLVER_TIMEOUT_SECS));
+        assert_eq!(bounded.loop_bound, Some(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_LOOP_BOUND));
+        assert_eq!(bounded.depth, Some(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DEPTH));
+        assert_eq!(bounded.width, Some(AUTOMATIC_FUZZ_BOOTSTRAP_MAX_PATHS));
+        assert_eq!(bounded.max_depth, AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DEPTH);
+        assert_eq!(bounded.max_paths, AUTOMATIC_FUZZ_BOOTSTRAP_MAX_PATHS);
+        assert_eq!(bounded.max_solver_queries, AUTOMATIC_FUZZ_BOOTSTRAP_MAX_SOLVER_QUERIES);
+        assert_eq!(bounded.max_dynamic_length, AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DYNAMIC_LENGTH);
+        assert_eq!(bounded.default_dynamic_length, AUTOMATIC_FUZZ_BOOTSTRAP_MAX_DYNAMIC_LENGTH);
+        assert!(bounded.array_lengths.is_empty());
+        assert!(bounded.dynamic_lengths.is_empty());
+        assert!(bounded.default_array_lengths.is_empty());
+        assert!(bounded.default_bytes_lengths.is_empty());
+        assert_eq!(bounded.max_calldata_bytes, AUTOMATIC_FUZZ_BOOTSTRAP_MAX_CALLDATA_BYTES);
+        assert!(!bounded.symbolic_call_targets);
+        assert!(!bounded.dump_smt);
+    }
+
+    #[test]
+    fn automatic_fuzz_bootstrap_bounds_corpus_sampling() {
+        let root = tempfile::tempdir().unwrap();
+        let corpus = root.path().join("worker0/corpus");
+        std::fs::create_dir_all(&corpus).unwrap();
+        for timestamp in 0..300 {
+            let name = format!("00000000-0000-0000-0000-{timestamp:012x}-{timestamp}.json");
+            std::fs::write(corpus.join(name), b"[]").unwrap();
+        }
+
+        assert!(bounded_automatic_fuzz_corpus_entries(root.path(), 0).is_empty());
+        let entries = bounded_automatic_fuzz_corpus_entries(root.path(), 7);
+        assert_eq!(entries.len(), 7);
+        assert!(entries.iter().all(|entry| entry.path.starts_with(&corpus)));
     }
 
     #[test]
@@ -910,14 +1409,14 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 })
                 .filter(|func| self.function_matches_network_pass(func))
                 .any(|func| {
-                    matches!(
-                        test_matcher.test_function_kind(
-                            self.name,
-                            func,
-                            generated_symbolic_regression,
-                        ),
-                        TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
-                    )
+                    let kind = test_matcher.test_function_kind(
+                        self.name,
+                        func,
+                        generated_symbolic_regression,
+                    );
+                    matches!(kind, TestFunctionKind::FuzzTest { .. })
+                        || (!self.mcr.tcfg.fuzz_seed
+                            && matches!(kind, TestFunctionKind::InvariantTest))
                 })
         } else {
             false
@@ -993,9 +1492,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 .abi
                 .functions()
                 .filter(|func| {
-                    test_matcher
-                        .test_function_kind(self.name, func, generated_symbolic_regression)
-                        .is_invariant_test()
+                    !self.mcr.tcfg.fuzz_seed
+                        && test_matcher
+                            .test_function_kind(self.name, func, generated_symbolic_regression)
+                            .is_invariant_test()
                 })
                 .collect()
         };
@@ -1088,6 +1588,17 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                             generated_symbolic_regression,
                         ),
                     )
+                })
+                .filter(|func| {
+                    !self.mcr.tcfg.fuzz_seed
+                        || matches!(
+                            test_matcher.test_function_kind(
+                                self.name,
+                                func,
+                                generated_symbolic_regression,
+                            ),
+                            TestFunctionKind::FuzzTest { .. }
+                        )
                 })
                 .filter(|func| self.function_matches_network_pass(func))
                 .collect::<Vec<_>>()
@@ -2170,8 +2681,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         func: &Function,
         fuzz_config: &FuzzConfig,
+        symbolic_config: &SymbolicConfig,
     ) -> Vec<ImportedFuzzFrontier> {
-        let limit = self.config.symbolic.frontier_limit;
+        let limit = symbolic_config.frontier_limit;
         if limit == 0 {
             return Vec::new();
         }
@@ -2219,9 +2731,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Vec::new();
         }
 
-        let requested_ids = &self.config.symbolic.frontier_ids;
-        let requested_pcs = &self.config.symbolic.frontier_pcs;
-        let requested_selectors = &self.config.symbolic.frontier_selectors;
+        let requested_ids = &symbolic_config.frontier_ids;
+        let requested_pcs = &symbolic_config.frontier_pcs;
+        let requested_selectors = &symbolic_config.frontier_selectors;
         let parsed_selectors = parse_frontier_selectors(requested_selectors, &signature);
         let select_frontier_ids = !requested_ids.is_empty();
         let select_frontier_pcs = !requested_pcs.is_empty();
@@ -3054,21 +3566,506 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result
     }
 
-    fn try_seed_fuzz_corpus_from_frontiers(&self, func: &Function, fuzz_config: &FuzzConfig) {
-        if !should_symbolically_use_fuzz_frontiers(&self.config, func) {
-            return;
+    fn automatic_fuzz_bootstrap_symbolic_config(
+        &self,
+    ) -> std::result::Result<SymbolicConfig, String> {
+        bounded_automatic_fuzz_bootstrap_symbolic_config(&self.config.symbolic)
+    }
+
+    fn automatic_fuzz_bootstrap_manifest_path(
+        &self,
+        func: &Function,
+        corpus_dir: &Path,
+    ) -> PathBuf {
+        let target = format!(
+            "{}\0{}\0{:?}",
+            self.cr.name,
+            func.signature(),
+            self.tcfg.multi_network.pass_network
+        );
+        let hash = keccak256(target.as_bytes());
+        corpus_dir.join(format!(
+            "{}-{}.json",
+            AUTOMATIC_FUZZ_BOOTSTRAP_MANIFEST.trim_end_matches(".json"),
+            hex::encode(&hash[..8])
+        ))
+    }
+
+    fn automatic_fuzz_bootstrap_fingerprint(
+        &self,
+        func: &Function,
+        fuzz_config: &FuzzConfig,
+        symbolic_config: &SymbolicConfig,
+    ) -> B256 {
+        let mut input = Vec::new();
+        input.extend_from_slice(AUTOMATIC_FUZZ_BOOTSTRAP_SCHEMA.as_bytes());
+        input.extend_from_slice(self.cr.name.as_bytes());
+        input.extend_from_slice(func.signature().as_bytes());
+        input.extend_from_slice(&self.cr.contract.bytecode);
+        for (id, contract) in &self.cr.mcr.contracts {
+            input.extend_from_slice(id.identifier().as_bytes());
+            input.extend_from_slice(&contract.bytecode);
+        }
+        input.extend_from_slice(format!("{:?}", self.tcfg.spec_id).as_bytes());
+        input.extend_from_slice(format!("{:?}", self.tcfg.multi_network.pass_network).as_bytes());
+        input.extend_from_slice(self.tcfg.sender.as_slice());
+        input.extend_from_slice(self.address.as_slice());
+        input.extend_from_slice(format!("{:?}", self.tcfg.evm_env).as_bytes());
+        input.extend_from_slice(format!("{:?}", self.tcfg.tx_env).as_bytes());
+        input.push(u8::from(self.tcfg.isolation));
+        input.push(u8::from(fuzz_config.fail_on_revert));
+        input.push(u8::from(fuzz_config.corpus.evm_edge_coverage_include_call_depth));
+        if let Ok(config) = serde_json::to_vec(symbolic_config) {
+            input.extend_from_slice(&config);
+        }
+        keccak256(input)
+    }
+
+    fn automatic_fuzz_bootstrap_corpus_entries(corpus_dir: &Path) -> usize {
+        bounded_automatic_fuzz_corpus_entries(
+            corpus_dir,
+            AUTOMATIC_FUZZ_BOOTSTRAP_COVERAGE_REPLAY_LIMIT,
+        )
+        .len()
+    }
+
+    fn automatic_fuzz_bootstrap_manifest_is_current(
+        &self,
+        path: &Path,
+        corpus_dir: &Path,
+        fingerprint: B256,
+    ) -> bool {
+        let Ok(manifest) =
+            foundry_common::fs::read_json_file::<AutomaticFuzzBootstrapManifest>(path)
+        else {
+            return false;
+        };
+        manifest.schema == AUTOMATIC_FUZZ_BOOTSTRAP_SCHEMA
+            && manifest.fingerprint == fingerprint
+            && (manifest.corpus_entries == 0
+                || !bounded_automatic_fuzz_corpus_entries(corpus_dir, 1).is_empty())
+    }
+
+    fn write_automatic_fuzz_bootstrap_manifest(
+        &self,
+        path: &Path,
+        manifest: &AutomaticFuzzBootstrapManifest,
+    ) -> Result<()> {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        foundry_common::fs::create_dir_all(parent)?;
+        let mut temp = tempfile::Builder::new()
+            .prefix(".foundry-symbolic-bootstrap-")
+            .suffix(".tmp")
+            .tempfile_in(parent)?;
+        serde_json::to_writer(&mut temp, manifest)?;
+        temp.flush()?;
+        temp.as_file().sync_all()?;
+        temp.persist(path).map_err(|err| err.error)?;
+        Ok(())
+    }
+
+    fn complete_automatic_fuzz_bootstrap(
+        &self,
+        func: &Function,
+        manifest_path: &Path,
+        fingerprint: B256,
+        corpus_dir: &Path,
+        stats: FuzzFrontierSeedStats,
+        started: Instant,
+    ) -> AutomaticFuzzBootstrapResult {
+        if stats.cancelled || self.tcfg.early_exit.should_stop() {
+            debug!(test = %func.signature(), "automatic fuzz corpus bootstrap cancelled");
+            return AutomaticFuzzBootstrapResult::Continue;
+        }
+        let elapsed = started.elapsed();
+        // A symbolic failure has passed the first concrete branch-flip replay, but it still has to
+        // survive the ordinary persisted-counterexample replay below. Do not leave a completed
+        // manifest behind until that classification is known; a confirmed failure will instead
+        // create the normal persisted failure file, and a mismatch should remain retryable.
+        if stats.first_failure.is_none() {
+            let manifest = AutomaticFuzzBootstrapManifest {
+                schema: AUTOMATIC_FUZZ_BOOTSTRAP_SCHEMA.to_string(),
+                fingerprint,
+                attempts: stats.attempts,
+                candidates: stats.candidates,
+                useful: stats.useful,
+                failures: stats.failures,
+                persisted: stats.persisted,
+                incomplete: stats.incomplete,
+                corpus_entries: Self::automatic_fuzz_bootstrap_corpus_entries(corpus_dir),
+                elapsed_millis: elapsed.as_millis(),
+            };
+            if let Err(err) = self.write_automatic_fuzz_bootstrap_manifest(manifest_path, &manifest)
+            {
+                let _ = sh_warn!(
+                    "Failed to record automatic fuzz bootstrap state for {}: {err}",
+                    func.signature()
+                );
+            }
+        }
+        let _ = sh_status!(
+            "Bootstrapped {} in {:.1?}: {} attempted, {} candidates, {} useful, {} failure candidates, {} corpus writes, {} incomplete",
+            func.signature(),
+            elapsed,
+            stats.attempts,
+            stats.candidates,
+            stats.useful,
+            stats.failures,
+            stats.persisted,
+            stats.incomplete,
+        );
+
+        match stats.first_failure {
+            Some(input) => AutomaticFuzzBootstrapResult::SymbolicFailure(input),
+            None => AutomaticFuzzBootstrapResult::Continue,
+        }
+    }
+
+    fn automatic_fuzz_bootstrap_coverage(
+        &self,
+        func: &Function,
+        fuzz_config: &FuzzConfig,
+    ) -> AutomaticFuzzBootstrapCoverage {
+        let mut coverage = AutomaticFuzzBootstrapCoverage::default();
+        let Some(corpus_dir) = fuzz_config.corpus.corpus_dir.as_ref() else {
+            return coverage;
+        };
+        let entries = bounded_automatic_fuzz_corpus_entries(
+            corpus_dir,
+            AUTOMATIC_FUZZ_BOOTSTRAP_COVERAGE_REPLAY_LIMIT,
+        );
+
+        let mut corpus = fuzz_config.corpus.clone();
+        corpus.sancov_edges = false;
+        corpus.sancov_trace_cmp = false;
+        corpus.evm_edge_coverage_collision_free = true;
+        let mut replay_executor = self.clone_executor();
+        reject_automatic_fuzz_bootstrap_blocking_cheatcodes(&mut replay_executor);
+        for entry in entries {
+            if self.tcfg.early_exit.should_stop() {
+                break;
+            }
+            let Ok(sequence) = entry.read_tx_seq() else {
+                continue;
+            };
+            let replay = replay_sequence_for_minimization(
+                &replay_executor,
+                MinimizationReplayInput {
+                    sequence: &sequence,
+                    evm_edge_indices: &mut coverage.edge_indices,
+                    corpus: &corpus,
+                },
+                ShowmapReplayTarget {
+                    stateless: Some(StatelessReplayTarget {
+                        function: func,
+                        address: self.address,
+                    }),
+                    fuzz_fail_on_revert: fuzz_config.fail_on_revert,
+                    fuzzed_contracts: None,
+                    invariant_address: None,
+                    invariant_fns: &[],
+                    invariant_replay: InvariantReplayOptions::default(),
+                    dynamic: None,
+                },
+            );
+            if let Ok(replay) = replay {
+                coverage.merge(&replay.evm_edges);
+            }
+        }
+        coverage
+    }
+
+    fn automatic_fuzz_bootstrap_candidate_adds_coverage(
+        &self,
+        func: &Function,
+        tx: &BasicTxDetails,
+        fuzz_config: &FuzzConfig,
+        coverage: &mut AutomaticFuzzBootstrapCoverage,
+    ) -> bool {
+        let mut corpus = fuzz_config.corpus.clone();
+        corpus.sancov_edges = false;
+        corpus.sancov_trace_cmp = false;
+        corpus.evm_edge_coverage_collision_free = true;
+        let mut replay_executor = self.clone_executor();
+        reject_automatic_fuzz_bootstrap_blocking_cheatcodes(&mut replay_executor);
+        let replay = replay_sequence_for_minimization(
+            &replay_executor,
+            MinimizationReplayInput {
+                sequence: std::slice::from_ref(tx),
+                evm_edge_indices: &mut coverage.edge_indices,
+                corpus: &corpus,
+            },
+            ShowmapReplayTarget {
+                stateless: Some(StatelessReplayTarget { function: func, address: self.address }),
+                fuzz_fail_on_revert: fuzz_config.fail_on_revert,
+                fuzzed_contracts: None,
+                invariant_address: None,
+                invariant_fns: &[],
+                invariant_replay: InvariantReplayOptions::default(),
+                dynamic: None,
+            },
+        );
+        replay.is_ok_and(|replay| {
+            replay.replayed == 1
+                && replay.unmatched == 0
+                && replay.skipped == 0
+                && replay.failure.is_none()
+                && coverage.merge(&replay.evm_edges)
+        })
+    }
+
+    fn try_automatic_fuzz_bootstrap(
+        &self,
+        func: &Function,
+        fuzz_config: &FuzzConfig,
+        persisted_failure: Option<&BaseCounterExample>,
+    ) -> AutomaticFuzzBootstrapResult {
+        if !self.tcfg.fuzz_auto_bootstrap
+            || self.tcfg.fuzz_seed
+            || self.tcfg.fuzz_seed_only
+            || self.tcfg.fuzz_failure_replay
+            || self.tcfg.showmap.is_some()
+            || self.tcfg.fuzz_minimize.is_some()
+            || self.tcfg.early_exit.should_stop()
+            || !automatic_fuzz_bootstrap_is_eligible(fuzz_config)
+            || !automatic_fuzz_bootstrap_supports_function(func)
+            || self.config.ffi
+            || self.executor.backend().active_fork_db().is_some()
+        {
+            return AutomaticFuzzBootstrapResult::Continue;
+        }
+
+        let fingerprint_config = match self.automatic_fuzz_bootstrap_symbolic_config() {
+            Ok(config) => config,
+            Err(reason) => {
+                if AUTOMATIC_FUZZ_BOOTSTRAP_CLAIMED
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    let _ = sh_warn!("Skipping automatic fuzz corpus bootstrap: {reason}");
+                }
+                return AutomaticFuzzBootstrapResult::Continue;
+            }
+        };
+        let corpus_dir = fuzz_config.corpus.corpus_dir.as_ref().expect("checked by eligibility");
+        let fingerprint =
+            self.automatic_fuzz_bootstrap_fingerprint(func, fuzz_config, &fingerprint_config);
+        let manifest_path = self.automatic_fuzz_bootstrap_manifest_path(func, corpus_dir);
+        if self.automatic_fuzz_bootstrap_manifest_is_current(
+            &manifest_path,
+            corpus_dir,
+            fingerprint,
+        ) {
+            debug!(test = %func.signature(), "automatic fuzz bootstrap manifest is current");
+            return AutomaticFuzzBootstrapResult::Continue;
+        }
+        if persisted_failure.is_some() {
+            debug!(test = %func.signature(), "persisted fuzz failure exists; bootstrap is unnecessary");
+            return AutomaticFuzzBootstrapResult::Continue;
+        }
+        if AUTOMATIC_FUZZ_BOOTSTRAP_CLAIMED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return AutomaticFuzzBootstrapResult::Continue;
+        }
+
+        let mut unavailable = Vec::new();
+        let symbolic_config = automatic_fuzz_bootstrap_solver_configs(&fingerprint_config)
+            .into_iter()
+            .find(|config| {
+                let solver = SymbolicExecutor::new(config.clone());
+                match solver.check_solver_available() {
+                    Ok(()) => true,
+                    Err(err) => {
+                        unavailable.push(format!("{}: {err}", config.solver));
+                        false
+                    }
+                }
+            });
+        let Some(symbolic_config) = symbolic_config else {
+            let _ = sh_warn!(
+                "Skipping automatic fuzz corpus bootstrap for {}: no configured built-in solver is available ({})",
+                func.signature(),
+                unavailable.join("; "),
+            );
+            return AutomaticFuzzBootstrapResult::Continue;
+        };
+        if self.tcfg.early_exit.should_stop() {
+            return AutomaticFuzzBootstrapResult::Continue;
+        }
+
+        let _ = sh_status!(
+            "Bootstrapping stale fuzz corpus for {} ({} concrete runs, up to {} symbolic frontiers)",
+            func.signature(),
+            AUTOMATIC_FUZZ_BOOTSTRAP_WARMUP_RUNS,
+            AUTOMATIC_FUZZ_BOOTSTRAP_FRONTIER_LIMIT,
+        );
+        let started = Instant::now();
+        let frontiers = match TempDir::with_prefix("forge-fuzz-auto-frontiers-") {
+            Ok(frontiers) => frontiers,
+            Err(err) => {
+                let _ = sh_warn!("Failed to prepare automatic fuzz corpus bootstrap: {err}");
+                return AutomaticFuzzBootstrapResult::Continue;
+            }
+        };
+        let mut warmup_config = fuzz_config.clone();
+        warmup_config.runs = AUTOMATIC_FUZZ_BOOTSTRAP_WARMUP_RUNS;
+        warmup_config.run = None;
+        warmup_config.worker = None;
+        warmup_config.timeout = Some(AUTOMATIC_FUZZ_BOOTSTRAP_WARMUP_TIMEOUT_SECS);
+        warmup_config.max_test_rejects =
+            automatic_fuzz_bootstrap_max_rejects(warmup_config.max_test_rejects);
+        warmup_config.corpus.corpus_dir = Some(frontiers.path().join("corpus-sample"));
+        warmup_config.corpus.frontier_dir = Some(frontiers.path().join("frontiers"));
+        warmup_config.corpus.frontier_limit = AUTOMATIC_FUZZ_BOOTSTRAP_FRONTIER_LIMIT;
+        for entry in bounded_automatic_fuzz_corpus_entries(
+            corpus_dir,
+            AUTOMATIC_FUZZ_BOOTSTRAP_COVERAGE_REPLAY_LIMIT,
+        ) {
+            if self.tcfg.early_exit.should_stop() {
+                return AutomaticFuzzBootstrapResult::Continue;
+            }
+            let Ok(sequence) = entry.read_tx_seq() else { continue };
+            if let Err(err) =
+                persist_corpus_seed_without_disk_dedupe(&warmup_config.corpus, sequence)
+            {
+                let _ = sh_warn!(
+                    "Failed to stage bounded automatic fuzz corpus sample from {}: {err}",
+                    entry.path.display()
+                );
+                return AutomaticFuzzBootstrapResult::Continue;
+            }
+        }
+        let warmup_runner = fuzzer_with_cases(
+            warmup_config.seed,
+            warmup_config.runs,
+            warmup_config.max_test_rejects,
+        );
+        let mut warmup_executor = self.clone_executor();
+        reject_automatic_fuzz_bootstrap_blocking_cheatcodes(&mut warmup_executor);
+        warmup_executor.inspector_mut().collect_edge_coverage_with_config(&warmup_config.corpus);
+        warmup_executor
+            .inspector_mut()
+            .collect_evm_cmp_log(warmup_config.corpus.collect_evm_cmp_log());
+        warmup_executor
+            .inspector_mut()
+            .collect_sancov_edges(warmup_config.corpus.collect_sancov_edges());
+        warmup_executor
+            .inspector_mut()
+            .collect_sancov_trace_cmp(warmup_config.corpus.collect_sancov_trace_cmp());
+        let mut warmup = FuzzedExecutor::new(
+            warmup_executor,
+            warmup_runner,
+            self.tcfg.sender,
+            warmup_config.clone(),
+            None,
+        );
+        let state = self.build_fuzz_state(false, Some(func));
+        let warmup_result = warmup.fuzz(
+            func,
+            &self.setup.fuzz_fixtures,
+            state,
+            self.address,
+            &self.cr.mcr.revert_decoder,
+            None,
+            &self.tcfg.early_exit,
+            &self.cr.tokio_handle,
+        );
+        // Release the temporary executor and sampled corpus before symbolic exploration starts.
+        // The managed prelude never needs both executor instances alive at the same time.
+        drop(warmup);
+        let warmup_result = match warmup_result {
+            Ok(result) => result,
+            Err(err) => {
+                let _ = sh_warn!(
+                    "Automatic fuzz corpus bootstrap warmup failed for {}: {err}",
+                    func.signature()
+                );
+                return AutomaticFuzzBootstrapResult::Continue;
+            }
+        };
+        if self.tcfg.early_exit.should_stop() {
+            return AutomaticFuzzBootstrapResult::Continue;
+        }
+        if !warmup_result.success {
+            if warmup_result.counterexample.is_some() {
+                return AutomaticFuzzBootstrapResult::ConcreteFailure(Box::new(warmup_result));
+            }
+            let _ = sh_warn!(
+                "Automatic fuzz corpus bootstrap warmup was inconclusive for {}: {}",
+                func.signature(),
+                warmup_result.reason.as_deref().unwrap_or("bounded warmup did not complete"),
+            );
+            let stats = FuzzFrontierSeedStats { incomplete: 1, ..Default::default() };
+            return self.complete_automatic_fuzz_bootstrap(
+                func,
+                &manifest_path,
+                fingerprint,
+                corpus_dir,
+                stats,
+                started,
+            );
+        }
+
+        let mut coverage = self.automatic_fuzz_bootstrap_coverage(func, &warmup_config);
+        let mut candidate_config = warmup_config;
+        candidate_config.corpus.corpus_dir = Some(corpus_dir.clone());
+        let stats = self.try_seed_fuzz_corpus_from_frontiers(
+            func,
+            &candidate_config,
+            Some(&symbolic_config),
+            Some(&mut coverage),
+        );
+        self.complete_automatic_fuzz_bootstrap(
+            func,
+            &manifest_path,
+            fingerprint,
+            corpus_dir,
+            stats,
+            started,
+        )
+    }
+
+    fn try_seed_fuzz_corpus_from_frontiers(
+        &self,
+        func: &Function,
+        fuzz_config: &FuzzConfig,
+        automatic_symbolic_config: Option<&SymbolicConfig>,
+        mut automatic_coverage: Option<&mut AutomaticFuzzBootstrapCoverage>,
+    ) -> FuzzFrontierSeedStats {
+        if automatic_symbolic_config.is_none()
+            && !should_symbolically_use_fuzz_frontiers(&self.config, func)
+        {
+            return FuzzFrontierSeedStats::default();
         }
         if fuzz_config.corpus.corpus_dir.is_none() {
             let _ = sh_warn!(
                 "`--symbolic-use-fuzz-frontiers` requires `--fuzz-corpus-dir` or \
                  `fuzz.corpus_dir`; skipping targeted frontier seeding"
             );
-            return;
+            return FuzzFrontierSeedStats::default();
         }
+        let Ok(_seed_lease) = SYMBOLIC_FRONTIER_SEED_GATE.lock() else {
+            let _ = sh_warn!("symbolic frontier seed gate was poisoned; skipping targeted seeding");
+            return FuzzFrontierSeedStats::default();
+        };
 
-        for frontier in self.import_symbolic_fuzz_frontiers(func, fuzz_config) {
+        let mut stats = FuzzFrontierSeedStats::default();
+        let symbolic_config = automatic_symbolic_config.unwrap_or(&self.config.symbolic);
+        let coverage_gated = automatic_coverage.is_some();
+        let mut seen_candidates = HashSet::<(Address, Bytes)>::default();
+
+        for frontier in self.import_symbolic_fuzz_frontiers(func, fuzz_config, symbolic_config) {
+            if coverage_gated && self.tcfg.early_exit.should_stop() {
+                stats.cancelled = true;
+                break;
+            }
+            stats.attempts += 1;
             let ImportedFuzzFrontier { id, sender, target, input } = frontier;
-            let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+            let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
             let result = symbolic.run(SymbolicRunInput {
                 executor: self.executor.as_ref(),
                 target: self.address,
@@ -3082,43 +4079,93 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             });
 
             let (input, expect_failure) = match result {
-                SymbolicRunResult::Safe { success_input: Some(input), .. } => (input, false),
+                // Targeted frontier runs may return as soon as the branch is flipped. Concrete
+                // replay decides whether the candidate is a passing cold-path seed or a real
+                // fuzz failure.
+                SymbolicRunResult::Safe { success_input: Some(input), .. } => (input, None),
                 SymbolicRunResult::Safe { success_input: None, .. } => {
-                    warn!(
-                        id,
-                        test = %func.signature(),
-                        "targeted symbolic frontier produced no branch-flipping input"
-                    );
+                    stats.incomplete += 1;
+                    if coverage_gated {
+                        debug!(
+                            id,
+                            test = %func.signature(),
+                            "automatic symbolic frontier produced no branch-flipping input"
+                        );
+                    } else {
+                        warn!(
+                            id,
+                            test = %func.signature(),
+                            "targeted symbolic frontier produced no branch-flipping input"
+                        );
+                    }
                     continue;
                 }
                 SymbolicRunResult::Incomplete { kind, reason, .. } => {
-                    warn!(
-                        id,
-                        ?kind,
-                        %reason,
-                        test = %func.signature(),
-                        "targeted symbolic frontier incomplete"
-                    );
+                    stats.incomplete += 1;
+                    if coverage_gated {
+                        debug!(
+                            id,
+                            ?kind,
+                            %reason,
+                            test = %func.signature(),
+                            "automatic symbolic frontier incomplete"
+                        );
+                    } else {
+                        warn!(
+                            id,
+                            ?kind,
+                            %reason,
+                            test = %func.signature(),
+                            "targeted symbolic frontier incomplete"
+                        );
+                    }
                     continue;
                 }
                 SymbolicRunResult::Counterexample { args, calldata, .. } => {
-                    (SymbolicConcreteInput { args, calldata }, true)
+                    (SymbolicConcreteInput { args, calldata }, Some(true))
                 }
             };
-
-            let replay = self.symbolic_fuzz_seed_replay(sender, &input, fuzz_config);
+            let replay = self.symbolic_fuzz_seed_replay(
+                sender,
+                &input,
+                fuzz_config,
+                Some(target),
+                coverage_gated,
+            );
             let replay_matches = matches!(
                 (expect_failure, replay),
-                (false, SymbolicFuzzSeedReplay::Success) | (true, SymbolicFuzzSeedReplay::Failure)
+                (Some(false), SymbolicFuzzSeedReplay::Success)
+                    | (Some(true), SymbolicFuzzSeedReplay::Failure)
+                    | (None, SymbolicFuzzSeedReplay::Success | SymbolicFuzzSeedReplay::Failure)
             );
             if !replay_matches {
-                warn!(
-                    id,
-                    ?replay,
-                    test = %func.signature(),
-                    "targeted symbolic frontier seed did not replay with the expected outcome"
-                );
+                if coverage_gated {
+                    debug!(
+                        id,
+                        ?replay,
+                        test = %func.signature(),
+                        "automatic symbolic frontier seed did not replay with the expected outcome"
+                    );
+                } else {
+                    warn!(
+                        id,
+                        ?replay,
+                        test = %func.signature(),
+                        "targeted symbolic frontier seed did not replay with the expected outcome"
+                    );
+                }
                 continue;
+            }
+            if !seen_candidates.insert((sender, input.calldata.clone())) {
+                continue;
+            }
+            stats.candidates += 1;
+            stats.replayed += 1;
+            if replay == SymbolicFuzzSeedReplay::Failure {
+                stats.failures += 1;
+                if stats.first_failure.is_none() {
+                    stats.first_failure = Some(input.clone());
+                }
             }
 
             let tx = BasicTxDetails {
@@ -3131,8 +4178,40 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     value: Some(U256::ZERO),
                 },
             };
-            match persist_corpus_seed(&fuzz_config.corpus, vec![tx]) {
+            if replay == SymbolicFuzzSeedReplay::Success
+                && let Some(coverage) = automatic_coverage.as_deref_mut()
+                && !self.automatic_fuzz_bootstrap_candidate_adds_coverage(
+                    func,
+                    &tx,
+                    fuzz_config,
+                    coverage,
+                )
+            {
+                debug!(
+                    id,
+                    test = %func.signature(),
+                    "automatic symbolic frontier seed added no EVM edge coverage"
+                );
+                continue;
+            }
+            if replay == SymbolicFuzzSeedReplay::Success && automatic_coverage.is_some() {
+                stats.useful += 1;
+            }
+            // Automatic failures are handed to the ordinary persisted-counterexample replay
+            // below. Persisting them here would leave an unconfirmed failure in the coverage
+            // corpus if that second replay succeeds or skips. The explicit diagnostic command
+            // continues to retain all exact branch-flipping inputs, including failures.
+            if coverage_gated && replay == SymbolicFuzzSeedReplay::Failure {
+                break;
+            }
+            let persisted = if coverage_gated {
+                persist_corpus_seed_without_disk_dedupe(&fuzz_config.corpus, vec![tx])
+            } else {
+                persist_corpus_seed(&fuzz_config.corpus, vec![tx])
+            };
+            match persisted {
                 Ok(Some(path)) => {
+                    stats.persisted += 1;
                     debug!(
                         id,
                         path = %path.display(),
@@ -3151,6 +4230,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             }
         }
+
+        if !coverage_gated {
+            let _ = sh_status!(
+                "Seeded {}: {} frontiers, {} candidates, {} replay-confirmed ({} failing), {} \
+                 corpus writes, {} incomplete",
+                func.signature(),
+                stats.attempts,
+                stats.candidates,
+                stats.replayed,
+                stats.failures,
+                stats.persisted,
+                stats.incomplete,
+            );
+        }
+        stats
     }
 
     fn try_seed_fuzz_corpus_symbolically(&self, func: &Function, fuzz_config: &FuzzConfig) {
@@ -3222,7 +4316,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         input: &SymbolicConcreteInput,
         fuzz_config: &FuzzConfig,
     ) -> bool {
-        self.symbolic_fuzz_seed_replay(sender, input, fuzz_config)
+        self.symbolic_fuzz_seed_replay(sender, input, fuzz_config, None, false)
             == SymbolicFuzzSeedReplay::Success
     }
 
@@ -3231,17 +4325,52 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         sender: Address,
         input: &SymbolicConcreteInput,
         fuzz_config: &FuzzConfig,
+        branch_target: Option<SymbolicBranchTarget>,
+        reject_blocking_cheatcodes: bool,
     ) -> SymbolicFuzzSeedReplay {
-        let Ok(raw_call_result) = self.clone_executor().call_raw(
+        self.symbolic_fuzz_seed_replay_call(
             sender,
-            self.address,
             input.calldata.clone(),
-            U256::ZERO,
-        ) else {
+            fuzz_config,
+            branch_target,
+            reject_blocking_cheatcodes,
+        )
+    }
+
+    fn symbolic_fuzz_seed_replay_call(
+        &self,
+        sender: Address,
+        calldata: Bytes,
+        fuzz_config: &FuzzConfig,
+        branch_target: Option<SymbolicBranchTarget>,
+        reject_blocking_cheatcodes: bool,
+    ) -> SymbolicFuzzSeedReplay {
+        let mut executor = self.clone_executor();
+        if reject_blocking_cheatcodes {
+            reject_automatic_fuzz_bootstrap_blocking_cheatcodes(&mut executor);
+        }
+        executor.inspector_mut().collect_evm_cmp_log(branch_target.is_some());
+        let Ok(raw_call_result) = executor.call_raw(sender, self.address, calldata, U256::ZERO)
+        else {
             return SymbolicFuzzSeedReplay::Rejected;
         };
 
-        if raw_call_result.result.as_ref() == MAGIC_ASSUME {
+        if raw_call_result.result.as_ref() == MAGIC_ASSUME
+            || (raw_call_result.reverter == Some(CHEATCODE_ADDRESS)
+                && SkipReason::decode(&raw_call_result.result).is_some())
+        {
+            return SymbolicFuzzSeedReplay::Rejected;
+        }
+        if let Some(target) = branch_target
+            && !raw_call_result.evm_cmp_values.as_deref().is_some_and(|comparisons| {
+                comparisons.iter().any(|comparison| {
+                    comparison.address == target.address()
+                        && comparison.pc == target.pc()
+                        && comparison.opcode == target.opcode()
+                        && comparison.result() != target.observed_result()
+                })
+            })
+        {
             return SymbolicFuzzSeedReplay::Rejected;
         }
 
@@ -4806,7 +5935,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         // Load persisted counterexample, if any.
-        let persisted_failure =
+        let mut persisted_failure =
             foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let Some(failure) = persisted_failure.as_ref() else {
@@ -4837,18 +5966,63 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             fuzz_config.corpus.corpus_dir = None;
         }
 
-        self.try_seed_fuzz_corpus_from_frontiers(func, &fuzz_config);
-        self.try_seed_fuzz_corpus_symbolically(func, &fuzz_config);
+        let mut automatic_symbolic_failure = false;
+        match self.try_automatic_fuzz_bootstrap(func, &fuzz_config, persisted_failure.as_ref()) {
+            AutomaticFuzzBootstrapResult::Continue => {}
+            AutomaticFuzzBootstrapResult::ConcreteFailure(result) => {
+                let result = *result;
+                if let Some(CounterExample::Single(counterexample)) = &result.counterexample {
+                    if let Err(err) = foundry_common::fs::create_dir_all(&failure_dir) {
+                        error!(%err, "Failed to create fuzz failure dir");
+                    } else if let Err(err) =
+                        foundry_common::fs::write_json_file(failure_file.as_path(), counterexample)
+                    {
+                        error!(%err, "Failed to record call sequence");
+                    }
+                }
+                self.result.fuzz_result(result);
+                return self.result;
+            }
+            AutomaticFuzzBootstrapResult::SymbolicFailure(input) => {
+                // Feed the replay-confirmed input through the ordinary first-case path so failure
+                // decoding, traces, logs, gas, and persistence stay identical to fuzz-found
+                // counterexamples.
+                persisted_failure =
+                    Some(BaseCounterExample::from_fuzz_call(input.calldata, input.args, None));
+                automatic_symbolic_failure = true;
+            }
+        }
 
-        let progress = start_fuzz_progress(
-            self.cr.progress,
-            self.cr.name,
-            &func.name,
-            fuzz_config.timeout,
-            if fuzz_config.run.is_some() { 1 } else { fuzz_config.runs },
-        );
-
-        let state = self.build_fuzz_state(false, Some(func));
+        if !automatic_symbolic_failure {
+            let frontier_seed =
+                self.try_seed_fuzz_corpus_from_frontiers(func, &fuzz_config, None, None);
+            if self.cr.mcr.tcfg.fuzz_seed_only {
+                let success = frontier_seed.failures == 0;
+                let reason = (!success).then(|| {
+                    format!(
+                        "{} replay-confirmed symbolic frontier input(s) failed; persisted to the fuzz corpus",
+                        frontier_seed.failures
+                    )
+                });
+                let counterexample = frontier_seed.first_failure.map(|input| {
+                    CounterExample::Single(BaseCounterExample::from_fuzz_call(
+                        input.calldata,
+                        input.args,
+                        None,
+                    ))
+                });
+                self.result.fuzz_result(FuzzTestResult {
+                    success,
+                    reason,
+                    counterexample,
+                    ..Default::default()
+                });
+                return self.result;
+            }
+            self.try_seed_fuzz_corpus_symbolically(func, &fuzz_config);
+        }
+        let state = (!self.cr.mcr.tcfg.fuzz_failure_replay)
+            .then(|| self.build_fuzz_state(false, Some(func)));
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
@@ -4858,7 +6032,59 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_sancov_trace_cmp(fuzz_config.corpus.collect_sancov_trace_cmp());
-        // Run fuzz test.
+        let progress_timeout = fuzz_config.timeout;
+        let progress_runs = if fuzz_config.run.is_some() { 1 } else { fuzz_config.runs };
+
+        if automatic_symbolic_failure {
+            // Reconfirm the candidate with the ordinary persisted-failure classifier, but keep
+            // both the normal campaign executor and its persisted-failure slot untouched until
+            // classification succeeds. The replay clone rejects host-blocking cheatcodes; a
+            // nondeterministic candidate that reaches one is a mismatch, not permission for the
+            // automatic prelude to block the process.
+            let mut replay_executor = executor.clone();
+            reject_automatic_fuzz_bootstrap_blocking_cheatcodes(&mut replay_executor);
+            let replay_runner = fuzzer_with_cases(fuzz_config.seed, 1, 1);
+            let mut replay = FuzzedExecutor::new(
+                replay_executor,
+                replay_runner,
+                self.tcfg.sender,
+                fuzz_config.clone(),
+                persisted_failure.clone(),
+            );
+            let result = match replay.replay_persisted_failure(
+                func,
+                self.address,
+                &self.cr.mcr.revert_decoder,
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    self.result.fuzz_setup_fail(e);
+                    return self.result;
+                }
+            };
+            if !result.success
+                && !result.skipped
+                && let Some(CounterExample::Single(counterexample)) = &result.counterexample
+            {
+                if let Err(err) = foundry_common::fs::create_dir_all(&failure_dir) {
+                    error!(%err, "Failed to create fuzz failure dir");
+                } else if let Err(err) =
+                    foundry_common::fs::write_json_file(failure_file.as_path(), counterexample)
+                {
+                    error!(%err, "Failed to record call sequence");
+                }
+                self.result.fuzz_result(result);
+                return self.result;
+            }
+            let _ = sh_warn!(
+                "Automatic symbolic failure for {} did not match standard replay; continuing the concrete campaign",
+                func.signature()
+            );
+            persisted_failure = None;
+        }
+
+        // Run fuzz test, or replay an explicitly requested persisted failure without falling
+        // through to generated inputs.
         let mut fuzzed_executor =
             FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
         if self.cr.mcr.tcfg.fuzz_failure_replay {
@@ -4876,10 +6102,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.fuzz_result(result);
             return self.result;
         }
+
+        let progress = start_fuzz_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            progress_timeout,
+            progress_runs,
+        );
         let result = match fuzzed_executor.fuzz(
             func,
             &self.setup.fuzz_fixtures,
-            state,
+            state.expect("ordinary fuzz campaign builds fuzz state"),
             self.address,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),

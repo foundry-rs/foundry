@@ -36,6 +36,13 @@ use tempfile::{Builder as TempDirBuilder, TempDir};
 
 type FuzzOutcomeFuture = Pin<Box<dyn Future<Output = Result<TestOutcome>>>>;
 
+// Repeated cold-corpus trials on Nerite's unchanged LiquidationsLST fuzz target found the same
+// coverage gain within these bounds. Keep bootstrap work deliberately small; users can raise the
+// existing campaign dials when a target warrants a larger budget.
+const DEFAULT_SEED_WARMUP_RUNS: u64 = 16;
+const DEFAULT_SEED_FRONTIER_LIMIT: usize = 32;
+const DEFAULT_SEED_SOLVER_TIMEOUT_SECS: u32 = 1;
+
 /// Run and manage Forge fuzzing corpora.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzArgs {
@@ -51,6 +58,7 @@ impl FuzzArgs {
                 test.enable_fuzz_only_with_auto_fuzz_corpus();
                 Box::pin(test.run())
             }
+            FuzzSubcommands::Seed(args) => Box::pin(args.run()),
             FuzzSubcommands::Replay(args) => Box::pin(args.run()),
             FuzzSubcommands::Show(args) => Box::pin(async move {
                 args.run()?;
@@ -70,6 +78,7 @@ impl FuzzArgs {
     pub const fn is_junit(&self) -> bool {
         match &self.command {
             FuzzSubcommands::Run(args) => args.junit,
+            FuzzSubcommands::Seed(args) => args.run.junit,
             FuzzSubcommands::Replay(args) => args.is_junit(),
             FuzzSubcommands::Show(_) | FuzzSubcommands::Cmin(_) | FuzzSubcommands::Tmin(_) => false,
         }
@@ -79,8 +88,21 @@ impl FuzzArgs {
 #[derive(Clone, Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum FuzzSubcommands {
-    /// Run only fuzz and invariant tests.
+    /// Run fuzz and invariant campaigns, automatically bootstrapping eligible stale stateless
+    /// corpora.
+    ///
+    /// A stateless target with scalar ABI inputs, at least 2,000,000 configured runs, and no
+    /// timeout below 15 minutes gets one bounded symbolic corpus bootstrap before concrete
+    /// fuzzing. The prelude tries at most 32 frontiers for one second each with a 256 MB Z3 or
+    /// Bitwuzla limit, and persists a passing candidate only after concrete replay adds an EVM
+    /// edge. Replay, showmap, list, rerun, gas-report, fork-backed, FFI-enabled, and
+    /// persisted-failure targets do not bootstrap.
     Run(FuzzRunArgs),
+    /// Force a bounded symbolic bootstrap of a stateless fuzz corpus, then exit.
+    ///
+    /// This diagnostic form retains every exact branch-flipping concrete replay. Use `forge fuzz
+    /// show`, `forge fuzz replay`, and showmap afterward to inspect its value.
+    Seed(FuzzSeedArgs),
     /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
     Replay(FuzzReplayArgs),
     /// Print persisted corpus entries.
@@ -91,8 +113,12 @@ pub enum FuzzSubcommands {
     Tmin(FuzzTminArgs),
 }
 
-/// Run only fuzz and invariant tests.
+/// Run fuzz and invariant campaigns. Effectively long stateless campaigns automatically bootstrap
+/// an empty or stale corpus once before concrete fuzzing.
 #[derive(Clone, Debug, Parser)]
+#[command(
+    long_about = "Run fuzz and invariant campaigns.\n\nFor a stateless target with scalar ABI inputs, at least 2,000,000 configured runs, and no timeout below 15 minutes, Forge automatically gives one empty or stale corpus a bounded symbolic bootstrap before concrete fuzzing. It uses one available memory-bounded built-in solver, concretely replays candidates, and preserves the requested campaign bounds. Replay, showmap, list, rerun, gas-report, fork-backed, FFI-enabled, and persisted-failure targets do not bootstrap."
+)]
 pub struct FuzzRunArgs {
     #[command(flatten)]
     pub(crate) global: GlobalArgs,
@@ -197,6 +223,76 @@ pub struct FuzzRunArgs {
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub(crate) fuzz_input_file: Option<String>,
+}
+
+/// Force or inspect the bounded stateless corpus bootstrap without starting a concrete campaign.
+#[derive(Clone, Debug, Parser)]
+#[command(
+    long_about = "Force or inspect the bounded symbolic bootstrap used automatically by eligible long stateless fuzz campaigns, then exit. This diagnostic form retains every exact branch-flipping concrete replay; use show, replay, and showmap afterward to inspect its value."
+)]
+pub struct FuzzSeedArgs {
+    #[command(flatten)]
+    run: FuzzRunArgs,
+
+    /// Solver timeout in seconds for each retained branch frontier.
+    #[arg(long, default_value_t = DEFAULT_SEED_SOLVER_TIMEOUT_SECS, value_name = "SECONDS")]
+    solver_timeout: u32,
+}
+
+impl FuzzSeedArgs {
+    async fn run(mut self) -> Result<TestOutcome> {
+        if self.solver_timeout == 0 {
+            bail!("--solver-timeout must be greater than 0");
+        }
+        if self.run.list {
+            bail!("`forge fuzz seed` cannot be combined with --list; use `forge fuzz run --list`");
+        }
+        if self.run.showmap_out.is_some() {
+            bail!("`forge fuzz seed` cannot be combined with --showmap-out");
+        }
+
+        let frontier_limit =
+            self.run.campaign.frontier_limit.unwrap_or(DEFAULT_SEED_FRONTIER_LIMIT);
+        if frontier_limit == 0 {
+            bail!("--frontier-limit must be greater than 0");
+        }
+
+        let temporary_frontiers = if self.run.campaign.frontier_dir.is_none() {
+            let dir = TempDirBuilder::new().prefix("forge-fuzz-seed-frontiers-").tempdir()?;
+            self.run.campaign.frontier_dir = Some(dir.path().to_path_buf());
+            Some(dir)
+        } else {
+            None
+        };
+        self.run.campaign.frontier_limit = Some(frontier_limit);
+        self.run.campaign.runs.get_or_insert(DEFAULT_SEED_WARMUP_RUNS);
+
+        sh_status!(
+            "Collecting branch frontiers with {} concrete runs per test",
+            self.run.campaign.runs.unwrap_or(DEFAULT_SEED_WARMUP_RUNS)
+        )?;
+        let mut warmup = TestArgs::from_fuzz_run(self.run.clone());
+        warmup.enable_fuzz_seed_warmup();
+        let outcome = warmup.run().await?;
+        if outcome.failures().next().is_some() {
+            return Ok(outcome);
+        }
+
+        sh_status!(
+            "Seeding fuzz corpus from at most {frontier_limit} branch frontiers ({timeout}s each)",
+            timeout = self.solver_timeout
+        )?;
+        self.run.campaign.runs = Some(1);
+        let mut seed = TestArgs::from_fuzz_run(self.run);
+        seed.enable_fuzz_seed_only();
+        seed.symbolic_use_fuzz_frontiers = true;
+        seed.symbolic_frontier_limit = Some(frontier_limit);
+        seed.symbolic_timeout = Some(self.solver_timeout);
+
+        // The temporary artifact directory must outlive both delegated test invocations.
+        let _temporary_frontiers = temporary_frontiers;
+        seed.run().await
+    }
 }
 
 /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
@@ -1365,6 +1461,35 @@ mod tests {
     #[test]
     fn fuzz_run_rejects_fuzz_run() {
         assert!(FuzzArgs::try_parse_from(["foundry-cli", "run", "--fuzz-run", "1"]).is_err());
+    }
+
+    #[test]
+    fn fuzz_seed_uses_bounded_defaults() {
+        let args = FuzzArgs::parse_from(["foundry-cli", "seed"]);
+        let FuzzSubcommands::Seed(args) = args.command else { panic!("expected seed command") };
+
+        assert_eq!(args.run.campaign.runs, None);
+        assert_eq!(args.run.campaign.frontier_limit, None);
+        assert_eq!(args.solver_timeout, DEFAULT_SEED_SOLVER_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn fuzz_seed_accepts_explicit_bounds() {
+        let args = FuzzArgs::parse_from([
+            "foundry-cli",
+            "seed",
+            "--runs",
+            "64",
+            "--frontier-limit",
+            "8",
+            "--solver-timeout",
+            "2",
+        ]);
+        let FuzzSubcommands::Seed(args) = args.command else { panic!("expected seed command") };
+
+        assert_eq!(args.run.campaign.runs, Some(64));
+        assert_eq!(args.run.campaign.frontier_limit, Some(8));
+        assert_eq!(args.solver_timeout, 2);
     }
 
     fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {

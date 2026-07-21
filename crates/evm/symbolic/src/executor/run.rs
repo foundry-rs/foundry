@@ -112,6 +112,12 @@ impl SymbolicExecutor {
         self.solver.take_diagnostics()
     }
 
+    /// Verifies that at least one configured solver can be invoked without starting symbolic
+    /// exploration.
+    pub fn check_solver_available(&self) -> Result<(), SymbolicError> {
+        self.solver.check_available()
+    }
+
     /// Registers a callback invoked after each solver query for live progress rendering.
     pub fn set_query_observer(&mut self, observer: impl Fn(usize) + Send + Sync + 'static) {
         self.solver.set_query_observer(Some(Box::new(observer)));
@@ -135,7 +141,10 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
-        self.reset_run_state(false);
+        // Targeted frontier solving is used inside live fuzz campaigns, so its configured solver
+        // timeout also bounds total symbolic wall time. Full stateless proof runs retain their
+        // existing per-query timeout semantics.
+        self.reset_run_state(input.branch_target.is_some());
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -307,23 +316,30 @@ impl SymbolicExecutor {
                         && state.satisfies_branch_target()
                         && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                     {
-                        success_input = Some((
-                            state.depth,
-                            self.materialize_stateless_input(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?,
-                        ));
+                        let concrete_input = self.materialize_stateless_input(
+                            state.root_calldata.as_ref().ok_or_else(|| {
+                                SymbolicError::Unsupported("missing root symbolic calldata")
+                            })?,
+                            input.function,
+                            &state,
+                        )?;
+                        if input.branch_target.is_some() {
+                            // Targeted frontier runs are candidate generators, not proofs. Return
+                            // as soon as the opposite branch has a concrete input; the caller
+                            // replays it before corpus insertion or reporting.
+                            return Ok(SymbolicRunResult::Safe {
+                                stats: self.stats_with_paths(completed_paths + 1),
+                                success_input: Some(concrete_input),
+                            });
+                        }
+                        success_input = Some((state.depth, concrete_input));
                     }
                     completed_paths += 1;
                     break;
                 };
 
                 let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
-                match self.step(
+                let outcome = self.step(
                     input.executor,
                     &code,
                     code.jump_table(),
@@ -331,7 +347,24 @@ impl SymbolicExecutor {
                     &mut worklist,
                     &mut completed_paths,
                     op,
-                )? {
+                )?;
+                if input.collect_success_input
+                    && input.branch_target.is_some()
+                    && state.satisfies_branch_target()
+                {
+                    let concrete_input = self.materialize_stateless_input(
+                        state.root_calldata.as_ref().ok_or_else(|| {
+                            SymbolicError::Unsupported("missing root symbolic calldata")
+                        })?,
+                        input.function,
+                        &state,
+                    )?;
+                    return Ok(SymbolicRunResult::Safe {
+                        stats: self.stats_with_paths(completed_paths + 1),
+                        success_input: Some(concrete_input),
+                    });
+                }
+                match outcome {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         if !state.expectations_satisfied() {
@@ -357,16 +390,23 @@ impl SymbolicExecutor {
                             && state.satisfies_branch_target()
                             && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                         {
-                            success_input = Some((
-                                state.depth,
-                                self.materialize_stateless_input(
-                                    state.root_calldata.as_ref().ok_or_else(|| {
-                                        SymbolicError::Unsupported("missing root symbolic calldata")
-                                    })?,
-                                    input.function,
-                                    &state,
-                                )?,
-                            ));
+                            let concrete_input = self.materialize_stateless_input(
+                                state.root_calldata.as_ref().ok_or_else(|| {
+                                    SymbolicError::Unsupported("missing root symbolic calldata")
+                                })?,
+                                input.function,
+                                &state,
+                            )?;
+                            if input.branch_target.is_some() {
+                                // Targeted frontier runs are candidate generators, not proofs.
+                                // Return as soon as the opposite branch has a concrete input; the
+                                // caller replays it before corpus insertion or reporting.
+                                return Ok(SymbolicRunResult::Safe {
+                                    stats: self.stats_with_paths(completed_paths + 1),
+                                    success_input: Some(concrete_input),
+                                });
+                            }
+                            success_input = Some((state.depth, concrete_input));
                         }
                         completed_paths += 1;
                         normal_paths += 1;
@@ -768,7 +808,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stateless_runs_do_not_use_symbolic_timeout_as_wall_clock_deadline() {
+    fn only_targeted_stateless_runs_use_symbolic_wall_clock_deadline() {
         let mut executor =
             SymbolicExecutor::new(SymbolicConfig { timeout: Some(1), ..Default::default() });
 

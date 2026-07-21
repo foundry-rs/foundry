@@ -636,7 +636,7 @@ mod tests {
                     runs: 256,
                     median_gas: 200,
                     mean_gas: 100,
-                    failed_corpus_replays: 0
+                    failed_corpus_replays: 0,
                 }
             }
         );

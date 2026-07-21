@@ -18,6 +18,38 @@ forge test \
   --showmap-domain evm
 ```
 
+For a long stateless campaign, `forge fuzz run` can populate an empty or stale
+corpus automatically before concrete fuzzing. The resolved campaign must have
+at least 2,000,000 runs and no timeout below 15 minutes:
+
+```bash
+# Bootstrap at most one stale target, then run the requested concrete campaign.
+forge fuzz run --match-test test_hard_branch \
+  --runs 50000000 --timeout 900 --corpus-dir fuzz_corpus
+
+# Inspect and replay the resulting corpus.
+forge fuzz show fuzz_corpus
+forge fuzz replay --match-test test_hard_branch --corpus-dir fuzz_corpus
+
+# Measure aggregate EVM coverage without starting another campaign.
+forge fuzz run --match-test test_hard_branch \
+  --showmap-out coverage_data --showmap-approach auto-bootstrap \
+  --showmap-domain evm --showmap-corpus-dir fuzz_corpus
+```
+
+Automatic bootstrap is limited to one eligible stale stateless target per Forge
+process and to scalar ABI inputs without forks, FFI, or a persisted failure.
+Passing symbolic candidates are kept only when concrete replay adds a new EVM
+edge beyond a bounded filesystem sample of up to 256 existing and warmup corpus
+entries; replay-confirmed failures must also fail the ordinary failure-replay
+path and are never retained as coverage seeds. Inputs that reach `vm.sleep` or
+interactive prompts are discarded by automatic warmup and replay. Use
+`forge fuzz seed` only to force or inspect the bounded symbolic step
+independently of a long campaign; unlike automatic mode, it retains every exact
+branch-flipping replay.
+See the [symbolic testing README](../../crates/evm/symbolic/README.md#automatic-fuzz-corpus-bootstrap)
+for eligibility, solver-safety, and manifest details.
+
 This skips the regular fuzz/invariant campaign and unit/table tests, then for
 every selected fuzz/invariant test:
 
@@ -101,3 +133,11 @@ differential-coverage relscore coverage_data
 - Coverage is aggregated across the whole replayed corpus per file. The output
   reflects coverage *reach*, not per-input contribution; use
   `--showmap-per-input` for the latter.
+- EVM IDs intentionally include the deployed-bytecode hash. A target that
+  deploys contracts with fuzz-dependent immutable values can therefore create
+  different hash namespaces for otherwise identical code layouts. Before
+  claiming a differential-coverage win, compare the namespace counts and
+  confirm that the difference survives an appropriate source-level or
+  program-counter diagnostic. Program-counter-only normalization can itself
+  conflate unrelated contracts, so treat it as a diagnostic rather than a
+  replacement coverage identity.

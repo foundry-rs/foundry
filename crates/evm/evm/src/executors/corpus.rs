@@ -256,6 +256,22 @@ pub fn persist_corpus_seed(
             }
         }
     }
+    persist_corpus_seed_without_disk_dedupe(config, tx_seq)
+}
+
+/// Persists one call sequence without scanning the existing corpus for duplicates.
+///
+/// Generated candidates must be replayed and deduplicated in memory before using this path.
+/// Callers may also use it to copy an already bounded sample of trusted corpus entries. It exists
+/// for managed corpus generation where an unbounded on-disk scan would defeat the caller's
+/// resource budget.
+pub fn persist_corpus_seed_without_disk_dedupe(
+    config: &FuzzCorpusConfig,
+    tx_seq: Vec<BasicTxDetails>,
+) -> foundry_common::fs::Result<Option<PathBuf>> {
+    let Some(root) = &config.corpus_dir else {
+        return Ok(None);
+    };
     let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
     foundry_common::fs::create_dir_all(&corpus_dir)?;
     CorpusEntry::new(tx_seq).write_to_disk_in(&corpus_dir, config.corpus_gzip).map(Some)

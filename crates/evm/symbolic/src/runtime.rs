@@ -55,6 +55,26 @@ impl SymbolicBranchTarget {
         Self { address, pc, opcode, result }
     }
 
+    /// Returns the contract address where the comparison executed.
+    pub const fn address(self) -> Address {
+        self.address
+    }
+
+    /// Returns the program counter of the comparison opcode.
+    pub const fn pc(self) -> usize {
+        self.pc
+    }
+
+    /// Returns the comparison opcode.
+    pub const fn opcode(self) -> u8 {
+        self.opcode
+    }
+
+    /// Returns the comparison result observed by concrete fuzzing.
+    pub const fn observed_result(self) -> bool {
+        self.result
+    }
+
     pub(crate) const fn result(self) -> bool {
         self.result
     }
