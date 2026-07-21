@@ -6535,9 +6535,10 @@ mod tests {
             let err = Config::load().unwrap_err().to_string();
             assert_eq!(
                 err,
-                "Key collision detected in profile 'default' when extending 'base.toml'. \
-                 Conflicting keys: [\"tracing\"]. Use 'extends.strategy' or 'extends_strategy' to \
-                 specify how to handle conflicts."
+                "failed to extract foundry config:\n\
+                 foundry config error: Key collision detected in profile 'default' when extending \
+                 'base.toml'. Conflicting keys: [\"tracing\"]. Use 'extends.strategy' or \
+                 'extends_strategy' to specify how to handle conflicts.\n"
             );
 
             Ok(())
