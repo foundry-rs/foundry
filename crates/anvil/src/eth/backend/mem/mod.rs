@@ -3112,15 +3112,14 @@ impl<N: Network> Backend<N> {
 
                 for n in ((num + 1)..=current_height).rev() {
                     trace!(target: "backend", "reverting block {}", n);
-                    if let Some(hash) = storage.hashes.remove(&n) {
-                        if let Some(block) = storage.blocks.remove(&hash) {
-                            for tx in block.body.transactions {
-                                let _ = storage.transactions.remove(&tx.hash());
-                            }
+                    let Some(hash) = storage.hashes.remove(&n) else { continue };
+                    if let Some(block) = storage.blocks.remove(&hash) {
+                        for tx in block.body.transactions {
+                            let _ = storage.transactions.remove(&tx.hash());
                         }
-                        #[cfg(feature = "monad")]
-                        storage.monad_block_participants.remove(&hash);
                     }
+                    #[cfg(feature = "monad")]
+                    storage.monad_block_participants.remove(&hash);
                 }
 
                 storage.best_number = num;
