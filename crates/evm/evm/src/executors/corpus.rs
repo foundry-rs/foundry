@@ -816,6 +816,20 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     })
 }
 
+fn corpus_cmp_seq(cmp_seq: &[Vec<CmpOperands>], input_len: usize) -> Vec<Vec<CmpOperands>> {
+    let mut retained = Vec::new();
+    for (idx, cmp_values) in cmp_seq.iter().take(input_len).enumerate() {
+        if retained.is_empty() {
+            if cmp_values.is_empty() {
+                continue;
+            }
+            retained.resize_with(idx, Vec::new);
+        }
+        retained.push(cmp_values.clone());
+    }
+    retained
+}
+
 impl WorkerCorpus {
     pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
@@ -994,8 +1008,7 @@ impl WorkerCorpus {
         if corpus_inputs.is_empty() {
             return None;
         }
-        let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
-            cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
+        let corpus_cmp_seq = corpus_cmp_seq(cmp_seq, corpus_inputs.len());
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
         self.insert_corpus_entry(
@@ -1566,8 +1579,9 @@ impl WorkerCorpus {
         // Mutate calldata.
         let mut arg_mutation_rounds =
             test_runner.rng().random_range(0..=function.inputs.len()).max(1);
-        let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
-            vec![0]
+        let single_input = function.inputs.len() <= 1;
+        let round_arg_idx: Vec<usize> = if single_input {
+            Vec::new()
         } else {
             (0..arg_mutation_rounds)
                 .map(|_| test_runner.rng().random_range(0..function.inputs.len()))
@@ -1578,7 +1592,7 @@ impl WorkerCorpus {
             .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
 
         while arg_mutation_rounds > 0 {
-            let idx = round_arg_idx[arg_mutation_rounds - 1];
+            let idx = if single_input { 0 } else { round_arg_idx[arg_mutation_rounds - 1] };
             prev_inputs[idx] = mutate_param_value(
                 &function
                     .inputs
@@ -2345,6 +2359,36 @@ mod tests {
         assert_eq!(sequence[0].call_details.calldata, original.call_details.calldata);
     }
 
+    #[test]
+    fn abi_mutate_single_input_keeps_decodable_calldata() {
+        let function = Function::parse("testAbi(uint256)").unwrap();
+        let original = U256::from(7u64);
+        let calldata: Bytes =
+            function.abi_encode_input(&[DynSolValue::Uint(original, 256)]).unwrap().into();
+        let mut tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: foundry_evm_fuzz::CallDetails {
+                target: Address::ZERO,
+                calldata,
+                value: None,
+            },
+        };
+        let config =
+            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = TestRunner::new(config);
+        let manager = empty_worker_corpus(0, temp_corpus_dir());
+        let db = revm::database::CacheDB::<revm::database::EmptyDB>::default();
+        let state =
+            EvmFuzzState::new(&[], &db, foundry_config::FuzzDictionaryConfig::default(), None);
+
+        manager.abi_mutate(&mut tx, &function, &mut runner, &state).unwrap();
+
+        let decoded = function.abi_decode_input(&tx.call_details.calldata[4..]).unwrap();
+        assert_eq!(decoded.len(), 1);
+    }
+
     fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {
         let corpus = CorpusEntry::new(vec![basic_tx()]);
         let seed_uuid = corpus.uuid;
@@ -2484,6 +2528,43 @@ mod tests {
         manager.process_inputs(&[], &[], true, None);
         assert_eq!(manager.in_memory_corpus.len(), 0);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+    }
+
+    #[test]
+    fn all_empty_cmp_sequence_is_not_stored() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = empty_worker_corpus(1, corpus_root);
+        let inputs = vec![basic_tx(), basic_tx()];
+        let cmp_seq = vec![Vec::new(), Vec::new()];
+
+        let record = manager.process_inputs_for_campaign(&inputs, &cmp_seq, true, None);
+
+        assert!(record.is_some());
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert!(manager.in_memory_corpus[0].cmp_seq.is_empty());
+    }
+
+    #[test]
+    fn non_empty_cmp_sequence_keeps_parallel_indexes() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = empty_worker_corpus(1, corpus_root);
+        let inputs = vec![basic_tx(), basic_tx()];
+        let cmp = CmpOperands {
+            op1: U256::from(1),
+            op2: U256::from(2),
+            pc: 3,
+            address: Address::ZERO,
+            opcode: 0,
+        };
+        let cmp_seq = vec![Vec::new(), vec![cmp]];
+
+        let record = manager.process_inputs_for_campaign(&inputs, &cmp_seq, true, None);
+
+        assert!(record.is_some());
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(manager.in_memory_corpus[0].cmp_seq.len(), 2);
+        assert!(manager.in_memory_corpus[0].cmp_seq[0].is_empty());
+        assert_eq!(manager.in_memory_corpus[0].cmp_seq[1], vec![cmp]);
     }
 
     #[test]
