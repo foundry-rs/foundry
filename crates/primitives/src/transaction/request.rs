@@ -31,8 +31,7 @@ use crate::FoundryNetwork;
 /// - **Ethereum**: Default variant when no special fields are present
 /// - **Op**: When `sourceHash`, `mint`, and `isSystemTx` fields are present, or transaction type is
 ///   `DEPOSIT_TX_TYPE_ID`
-/// - **Tempo**: When `feeToken` or `nonceKey` fields are present, or transaction type is
-///   `TEMPO_TX_TYPE_ID`
+/// - **Tempo**: When a Tempo-specific field is present, or transaction type is `TEMPO_TX_TYPE_ID`
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum FoundryTransactionRequest {
@@ -307,21 +306,8 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
             Option<NonZeroU64>,
         );
 
-        const TEMPO_FIELDS: &[&str] = &[
-            "feeToken",
-            "nonceKey",
-            "calls",
-            "keyType",
-            "keyData",
-            "keyId",
-            "aaAuthorizationList",
-            "keyAuthorization",
-            "validBefore",
-            "validAfter",
-            "feePayerSignature",
-        ];
         if tx.transaction_type == Some(TEMPO_TX_TYPE_ID)
-            || TEMPO_FIELDS.iter().any(|field| tx.other.contains_key(*field))
+            || TEMPO_REQUEST_FIELDS.iter().any(|field| tx.other.contains_key(*field))
         {
             let mut tempo_tx_req: TempoTransactionRequest = tx.inner.into();
             tempo_tx_req.fee_token =
@@ -674,8 +660,11 @@ impl TransactionBuilder4844 for FoundryTransactionRequest {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
-    use tempo_primitives::TempoTransaction;
+    use alloy_primitives::{B256, Bytes, Signature};
+    use tempo_primitives::{
+        TempoSignature, TempoTransaction,
+        transaction::{Authorization, KeyAuthorization, PrimitiveSignature},
+    };
 
     use super::*;
 
@@ -798,6 +787,55 @@ mod tests {
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
 
         assert!(matches!(deserialized, FoundryTransactionRequest::Tempo(_)));
+    }
+
+    #[test]
+    fn test_tempo_request_decodes_all_extension_fields() {
+        let signature = Signature::test_signature();
+        let expected = TempoTransactionRequest {
+            inner: TransactionRequest {
+                transaction_type: Some(TEMPO_TX_TYPE_ID),
+                ..default_tx_req()
+            },
+            fee_token: Some(Address::repeat_byte(0x11)),
+            nonce_key: Some(U256::from(42)),
+            calls: vec![Call {
+                to: TxKind::Call(Address::repeat_byte(0x22)),
+                value: U256::from(7),
+                input: Bytes::from_static(&[0xde, 0xad]),
+            }],
+            key_type: Some(SignatureType::WebAuthn),
+            key_data: Some(Bytes::from_static(&[0xbe, 0xef])),
+            key_id: Some(Address::repeat_byte(0x33)),
+            tempo_authorization_list: vec![TempoSignedAuthorization::new_unchecked(
+                Authorization {
+                    chain_id: U256::from(4217),
+                    address: Address::repeat_byte(0x44),
+                    nonce: 3,
+                },
+                TempoSignature::default(),
+            )],
+            key_authorization: Some(
+                KeyAuthorization::unrestricted(
+                    4217,
+                    SignatureType::Secp256k1,
+                    Address::repeat_byte(0x55),
+                )
+                .into_signed(PrimitiveSignature::Secp256k1(signature)),
+            ),
+            valid_before: NonZeroU64::new(100),
+            valid_after: NonZeroU64::new(10),
+            fee_payer_signature: Some(signature),
+        };
+        let request = serde_json::from_value::<WithOtherFields<TransactionRequest>>(
+            serde_json::to_value(&expected).unwrap(),
+        )
+        .unwrap();
+
+        let decoded = FoundryTransactionRequest::try_from_rpc_request(request, true).unwrap();
+
+        let FoundryTransactionRequest::Tempo(decoded) = decoded else { panic!() };
+        assert_eq!(*decoded, expected);
     }
 
     #[test]
