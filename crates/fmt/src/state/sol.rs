@@ -806,33 +806,12 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_var_def(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
-        self.print_var(var, true);
+        self.print_var(var);
         self.word(";");
     }
 
     /// Prints the RHS of an assignment or variable initializer.
-    fn print_assign_rhs(
-        &mut self,
-        rhs: &'ast ast::Expr<'ast>,
-        lhs_size: usize,
-        space_left: usize,
-        ty: Option<&ast::TypeKind<'ast>>,
-        cache: bool,
-    ) {
-        // Check if the total expression overflows but the RHS would fit alone on a new line.
-        // This helps keep the RHS together on a single line when possible.
-        let rhs_size = self.estimate_size(rhs.span);
-        let overflows = lhs_size + rhs_size >= space_left;
-        let fits_alone = rhs_size + self.config.tab_width < space_left;
-        let fits_alone_no_cmnts =
-            fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
-        let force_break = overflows && fits_alone_no_cmnts;
-
-        if lhs_size <= space_left {
-            self.neverbreak();
-        }
-
-        // Handle comments before the RHS expression
+    fn print_assign_rhs(&mut self, rhs: &'ast ast::Expr<'ast>, cache: bool) {
         if let Some(cmnt) = self.peek_comment_before(rhs.span.lo())
             && self.inline_config.is_disabled(cmnt.span)
         {
@@ -848,122 +827,44 @@ impl<'ast> State<'_, 'ast> {
             self.break_offset_if_not_bol(SIZE_INFINITY as usize, self.ind, false);
         }
 
-        // Match on expression kind to determine formatting strategy
-        match &rhs.kind {
-            ast::ExprKind::Lit(lit, ..) if lit.is_str_concatenation() => {
-                // String concatenations stay on the same line with nbsp
+        let string_concatenation =
+            matches!(&rhs.kind, ast::ExprKind::Lit(lit, ..) if lit.is_str_concatenation());
+        let delegates_layout = string_concatenation
+            || matches!(&rhs.kind, ast::ExprKind::Binary(..) | ast::ExprKind::Member(..))
+            || has_complex_successor(&rhs.kind, true);
+
+        if delegates_layout {
+            if !self.is_bol_or_only_ind() {
                 self.print_sep(Separator::Nbsp);
+            }
+            if string_concatenation {
                 self.neverbreak();
                 self.s.ibox(self.ind);
-                self.print_expr(rhs);
+            }
+            let binary_call = matches!(&rhs.kind, ast::ExprKind::Binary(lhs, ..) if matches!(lhs.kind, ast::ExprKind::Call(..)));
+            if binary_call {
+                self.s.ibox(-self.ind);
+            }
+            self.print_expr(rhs);
+            if binary_call {
                 self.end();
             }
-            ast::ExprKind::Lit(..) if ty.is_none() && !fits_alone => {
-                // Long string in assign expr goes on its own line
-                self.print_sep(Separator::Space);
-                self.s.offset(self.ind);
-                self.print_expr(rhs);
-            }
-            ast::ExprKind::Binary(lhs, op, _) => {
-                let print_inline = |this: &mut Self| {
-                    this.print_sep(Separator::Nbsp);
-                    this.neverbreak();
-                    this.print_expr(rhs);
-                };
-                let print_with_break = |this: &mut Self, force_break: bool| {
-                    if !this.is_bol_or_only_ind() {
-                        if force_break {
-                            this.print_sep(Separator::Hardbreak);
-                        } else {
-                            this.print_sep(Separator::Space);
-                        }
-                    }
-                    this.s.offset(this.ind);
-                    this.s.ibox(this.ind);
-                    this.print_expr(rhs);
-                    this.end();
-                };
-
-                // Binary expressions: check if we need to break and indent
-                if force_break {
-                    print_with_break(self, true);
-                } else if self.estimate_lhs_size(rhs, op) + lhs_size > space_left {
-                    if has_complex_successor(&rhs.kind, true)
-                        && get_callee_head_size(lhs) + lhs_size <= space_left
-                    {
-                        // Keep complex exprs (where callee fits) inline, as they will have breaks
-                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
-                            self.s.ibox(-self.ind);
-                            print_inline(self);
-                            self.end();
-                        } else {
-                            print_inline(self);
-                        }
-                    } else {
-                        print_with_break(self, false);
-                    }
-                }
-                // Otherwise, if expr fits, ensure no breaks
-                else {
-                    print_inline(self);
-                }
-            }
-            _ => {
-                // General case: handle calls, complex successors, and other expressions
-                let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &rhs.kind {
-                    let callee_size = get_callee_head_size(call_expr);
-                    callee_size + lhs_size > space_left
-                        && callee_size + self.config.tab_width < space_left
-                } else {
-                    false
-                };
-
-                if (lhs_size + 1 >= space_left && !is_call_chain(&rhs.kind, false))
-                    || callee_doesnt_fit
-                {
-                    self.s.ibox(self.ind);
-                } else {
-                    self.s.ibox(0);
-                };
-
-                if has_complex_successor(&rhs.kind, true)
-                    && !matches!(&rhs.kind, ast::ExprKind::Member(..))
-                {
-                    // delegate breakpoints to `self.commasep(..)` for complex successors
-                    if !self.is_bol_or_only_ind() {
-                        let needs_offset = !callee_doesnt_fit
-                            && rhs_size + lhs_size + 1 >= space_left
-                            && fits_alone_no_cmnts;
-                        let separator = if callee_doesnt_fit || needs_offset {
-                            Separator::Space
-                        } else {
-                            Separator::Nbsp
-                        };
-                        self.print_sep(separator);
-                        if needs_offset {
-                            self.s.offset(self.ind);
-                        }
-                    }
-                } else {
-                    if !self.is_bol_or_only_ind() {
-                        self.print_sep_unhandled(Separator::Space);
-                    }
-                    // apply type-dependent indentation if type info is available
-                    if let Some(ty) = ty
-                        && matches!(ty, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..))
-                    {
-                        self.s.offset(self.ind);
-                    }
-                }
-                self.print_expr(rhs);
+            if string_concatenation {
                 self.end();
             }
+        } else {
+            self.s.ibox(0);
+            if !self.is_bol_or_only_ind() {
+                self.print_sep_unhandled(Separator::SpaceOffset(self.ind));
+            }
+            self.print_expr(rhs);
+            self.end();
         }
 
         self.var_init = cache;
     }
 
-    fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>, is_var_def: bool) {
+    fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
         let ast::VariableDefinition {
             span,
             ty,
@@ -980,13 +881,6 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        // NOTE(rusowsky): this is hacky but necessary to properly estimate if we figure out if we
-        // have double breaks (which should have double indentation) or not.
-        // Alternatively, we could achieve the same behavior with a new box group that supports
-        // "continuation" which would only increase indentation if its parent box broke.
-        let init_space_left = self.space_left();
-        let mut pre_init_size = self.estimate_size(ty.span);
-
         // Non-elementary types use commasep which has its own padding.
         let previous_var_group = self.var_group;
         let var_group = self.s.ibox_with_id(0);
@@ -998,67 +892,60 @@ impl<'ast> State<'_, 'ast> {
         }
         self.print_ty(ty);
 
-        self.print_attribute(visibility.map(|v| v.to_str()), is_var_def, &mut pre_init_size);
-        self.print_attribute(mutability.map(|m| m.to_str()), is_var_def, &mut pre_init_size);
-        self.print_attribute(data_location.map(|d| d.to_str()), is_var_def, &mut pre_init_size);
+        self.print_attribute(visibility.map(|v| v.to_str()));
+        self.print_attribute(mutability.map(|m| m.to_str()));
+        self.print_attribute(data_location.map(|d| d.to_str()));
 
         if let Some(override_) = override_ {
             if self
                 .print_comments(override_.span.lo(), CommentConfig::skip_ws().mixed_prev_space())
                 .is_none()
             {
-                self.print_sep(Separator::SpaceOrNbsp(is_var_def));
+                self.print_sep(Separator::SpaceOrNbsp(false));
             }
             self.ibox(0);
             self.print_override(override_);
-            pre_init_size += self.estimate_size(override_.span) + 1;
         }
 
         if *indexed {
-            self.print_attribute(indexed.then_some("indexed"), is_var_def, &mut pre_init_size);
+            self.print_attribute(indexed.then_some("indexed"));
         }
 
         if let Some(ident) = name {
-            self.print_sep(Separator::SpaceOrNbsp(is_var_def && override_.is_none()));
+            self.print_sep(Separator::SpaceOrNbsp(false));
             self.print_comments(
                 ident.span.lo(),
                 CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
             );
             self.print_ident(ident);
-            pre_init_size += self.estimate_size(ident.span) + 1;
         }
         if let Some(init) = initializer {
             let cache = self.var_init;
             self.var_init = true;
 
-            pre_init_size += 2;
             self.print_word(" =");
             if override_.is_some() {
                 self.end();
             }
             self.end();
+            self.end();
+            self.var_group = previous_var_group;
 
-            self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
-        } else {
-            if override_.is_some() {
-                self.end();
-            }
+            self.print_assign_rhs(init, cache);
+            return;
+        }
+        if override_.is_some() {
             self.end();
         }
+        self.end();
         self.end();
         self.var_group = previous_var_group;
     }
 
-    fn print_attribute(
-        &mut self,
-        attribute: Option<&'static str>,
-        is_var_def: bool,
-        size: &mut usize,
-    ) {
+    fn print_attribute(&mut self, attribute: Option<&'static str>) {
         if let Some(s) = attribute {
-            self.print_sep(Separator::SpaceOrNbsp(is_var_def));
+            self.print_sep(Separator::SpaceOrNbsp(false));
             self.print_word(s);
-            *size += s.len() + 1;
         }
     }
 
@@ -1076,7 +963,7 @@ impl<'ast> State<'_, 'ast> {
             parameters,
             span.lo(),
             span.hi(),
-            |fmt, var| fmt.print_var(var, false),
+            |fmt, var| fmt.print_var(var),
             get_span!(),
             format,
         );
@@ -1488,11 +1375,12 @@ impl<'ast> State<'_, 'ast> {
         let cache = self.var_init;
         self.var_init = true;
 
-        let space_left = self.space_left();
-        let lhs_size = self.estimate_size(lhs.span);
+        let skip_index_break = self.skip_index_break;
+        self.skip_index_break = true;
         self.print_expr(lhs);
+        self.skip_index_break = skip_index_break;
         self.word(" =");
-        self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
+        self.print_assign_rhs(rhs, cache);
     }
 
     /// Prints a binary operator expression. Handles operator chains and formatting.
@@ -1511,9 +1399,7 @@ impl<'ast> State<'_, 'ast> {
             self.binary_expr = Some(bin_op.kind.group());
 
             let indent = if (is_assign && has_complex_successor(&rhs.kind, true))
-                || self.call_stack.is_nested()
-                    && is_call_chain(&lhs.kind, false)
-                    && self.estimate_size(lhs.span) >= self.space_left()
+                || self.call_stack.is_nested() && is_call_chain(&lhs.kind, false)
             {
                 0
             } else {
@@ -1944,7 +1830,7 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Assembly(ast::StmtAssembly { dialect, flags, block }) => {
                 self.print_assembly_stmt(span, dialect, flags, block)
             }
-            ast::StmtKind::DeclSingle(var) => self.print_var(var, true),
+            ast::StmtKind::DeclSingle(var) => self.print_var(var),
             ast::StmtKind::DeclMulti(vars, init_expr) => {
                 self.print_multi_decl_stmt(span, vars, init_expr)
             }
@@ -2051,7 +1937,7 @@ impl<'ast> State<'_, 'ast> {
             span.lo(),
             init_expr.span.lo(),
             |this, var| match var {
-                SpannedOption::Some(var) => this.print_var(var, true),
+                SpannedOption::Some(var) => this.print_var(var),
                 SpannedOption::None(span) => {
                     this.print_comments(span.hi(), CommentConfig::skip_ws().mixed_no_break_post());
                 }
@@ -2277,7 +2163,7 @@ impl<'ast> State<'_, 'ast> {
                     args,
                     span.lo(),
                     span.hi(),
-                    |fmt, var| fmt.print_var(var, false),
+                    |fmt, var| fmt.print_var(var),
                     get_span!(),
                     ListFormat::compact().with_delimiters(false),
                 );
@@ -2756,15 +2642,6 @@ impl<'ast> State<'_, 'ast> {
 
         // Always 6 chars for the else: 'else '
         els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
-    }
-
-    fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
-        match &expr.kind {
-            ast::ExprKind::Binary(lhs, op, _) if op.kind.group() == parent_op.kind.group() => {
-                self.estimate_lhs_size(lhs, op)
-            }
-            _ => self.estimate_size(expr.span),
-        }
     }
 
     fn estimate_call_chain_size(&self, expr: &ast::Expr<'_>) -> Option<usize> {

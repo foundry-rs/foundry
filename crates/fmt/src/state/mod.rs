@@ -183,6 +183,7 @@ impl SourcePos {
 pub(super) enum Separator {
     Nbsp,
     Space,
+    SpaceOffset(isize),
     Hardbreak,
     SpaceOrNbsp(bool),
 }
@@ -192,6 +193,7 @@ impl Separator {
         match self {
             Self::Nbsp => p.nbsp(),
             Self::Space => p.space(),
+            Self::SpaceOffset(offset) => p.break_offset(1, *offset),
             Self::Hardbreak => p.hardbreak(),
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
