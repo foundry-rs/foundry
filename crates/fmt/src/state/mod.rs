@@ -116,7 +116,6 @@ pub(super) struct State<'sess, 'ast> {
     // The current contract being formatted, if inside a contract definition.
     contract: Option<&'ast ast::ItemContract<'ast>>,
     // Current block nesting depth (incremented for each `{...}` block entered).
-    block_depth: usize,
     // Stack tracking nested and chained function calls.
     call_stack: CallStack,
 
@@ -233,7 +232,6 @@ impl<'sess> State<'sess, '_> {
             return_bin_expr: false,
             emit_or_revert: false,
             var_init: false,
-            block_depth: 0,
             call_stack: CallStack::default(),
         }
     }
@@ -255,19 +253,6 @@ impl<'sess> State<'sess, '_> {
     /// The check is only meaningful if `self.has_crlf` is true.
     fn is_at_crlf(&self) -> bool {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
-    }
-
-    /// Computes the space left, bounded by the max space left.
-    fn space_left(&self) -> usize {
-        std::cmp::min(self.s.space_left(), self.max_space_left(0))
-    }
-
-    /// Computes the maximum space left given the context information available:
-    /// `block_depth`, `tab_width`, and a user-defined unavailable size `prefix_len`.
-    fn max_space_left(&self, prefix_len: usize) -> usize {
-        self.config
-            .line_length
-            .saturating_sub(self.block_depth * self.config.tab_width + prefix_len)
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
@@ -406,60 +391,6 @@ impl State<'_, '_> {
         self.print_word("(");
         f(self);
         self.print_word(")");
-    }
-
-    fn estimate_size(&self, span: Span) -> usize {
-        if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let (mut size, mut first, mut prev_needs_space) = (0, true, false);
-
-            for line in snip.lines() {
-                let line = line.trim();
-
-                if prev_needs_space {
-                    size += 1;
-                } else if !first && let Some(char) = line.chars().next() {
-                    // A line break or a space are required if this line:
-                    // - starts with an operator.
-                    // - starts with one of the ternary operators
-                    // - starts with a bracket and fmt config forces bracket spacing.
-                    match char {
-                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
-                        | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
-                        _ => (),
-                    }
-                }
-                first = false;
-
-                // trim spaces before and after mixed comments
-                let mut search = line;
-                loop {
-                    if let Some((lhs, comment)) = search.split_once(r#"/*"#) {
-                        size += lhs.trim_end().len() + 2;
-                        search = comment;
-                    } else if let Some((comment, rhs)) = search.split_once(r#"*/"#) {
-                        size += comment.len() + 2;
-                        search = rhs;
-                    } else {
-                        size += search.trim().len();
-                        break;
-                    }
-                }
-
-                // Next line requires a line break if this one:
-                // - ends with a bracket and fmt config forces bracket spacing.
-                // - ends with ',' a line break or a space are required.
-                // - ends with ';' a line break is required.
-                prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
-                    Some(',' | ';') => true,
-                    _ => false,
-                };
-            }
-            return size;
-        }
-
-        span.to_range().len()
     }
 
     fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
