@@ -54,10 +54,8 @@ contract HelloWorld {
         pure
         returns (uint256 s, uint256 p)
     {
-        s =
-            w * h;
-        p =
-            2 * (w + h);
+        s = w * h;
+        p = 2 * (w + h);
     }
 
     /// A long doc line comment that will be

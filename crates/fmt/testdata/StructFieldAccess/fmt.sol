@@ -2,7 +2,8 @@
 // https://github.com/foundry-rs/foundry/issues/12399
 contract StructFieldAccess {
     function a() external {
-        bytes32 guid = _lzSend({
+        bytes32 guid =
+            _lzSend({
             _dstEid: dstEid,
             _message: message,
             _options: OptionsBuilder.newOptions().addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),
@@ -33,7 +34,8 @@ contract StructFieldAccess {
 
     // Chained calls with named args
     function e() external {
-        bytes32 guid = _lzSend({
+        bytes32 guid =
+            _lzSend({
             _dstEid: dstEid,
             _message: message,
             _options: OptionsBuilder.newOptions().addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),

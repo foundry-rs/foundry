@@ -185,8 +185,8 @@ contract Yul {
         }
 
         assembly {
-            a := 1
-        } /* some really really really long comment that should not fit in one line */
+            a := 1 /* some really really really long comment that should not fit in one line */
+        }
 
         assembly ("memory-safe") {
             let fmp := mload(0x40)
@@ -238,11 +238,12 @@ contract Yul {
                 if iszero(lt(sub(chr(_pOut), 48), 10)) { fail() } // Not '0'..'9'.
                 let c_ := chr(_pOut)
                 _pOut := add(_pOut, 1)
-                if iszero(eq(c_, 48)) { _pOut := skip0To9s(_pOut, end_, 0) } // Not '0'.
-                if eq(
-                    chr(_pOut),
-                    46
-                ) { _pOut := skip0To9s(add(_pOut, 1), end_, 1) } // '.'.
+                if iszero(eq(c_, 48)) {
+                    _pOut := skip0To9s(_pOut, end_, 0)
+                } // Not '0'.
+                if eq(chr(_pOut), 46) {
+                    _pOut := skip0To9s(add(_pOut, 1), end_, 1)
+                } // '.'.
                 let t_ := mload(_pOut)
                 if eq(or(0x20, byte(0, t_)), 101) {
                     // forgefmt: disable-next-item

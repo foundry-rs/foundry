@@ -1,8 +1,7 @@
 contract SimpleComments {
     uint40 constant PERIOD = uint40(12345); // ~578 days
     // Represents the depletion timestamp
-    uint40 constant WARP_PERIOD =
-        FEB_1_2025 + PERIOD;
+    uint40 constant WARP_PERIOD = FEB_1_2025 + PERIOD;
 
     //´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:
     //                         VARIABLES

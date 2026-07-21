@@ -13,8 +13,8 @@ contract NamedFunctionCallExpression {
 
     struct
         StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting {
-        string whyNameSoLong;
-    }
+            string whyNameSoLong;
+        }
 
     function test() external {
         SimpleStruct memory simple = SimpleStruct({val: 0});
@@ -29,18 +29,18 @@ contract NamedFunctionCallExpression {
         StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting
             memory
             long = StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting({
-            whyNameSoLong: "dunno"
-        });
+                whyNameSoLong: "dunno"
+            });
 
         SimpleStruct memory simple2 = SimpleStruct({ // comment1
-                /* comment2 */ val: /* comment3 */ 0
-            });
+            /* comment2 */ val: /* comment3 */ 0
+        });
 
         SimpleStruct memory simple3 = SimpleStruct({ /* comment4 */
-                // comment5
-                val: // comment6
-                0 // comment7
-                // comment8
-            });
+            // comment5
+            val: // comment6
+            0 // comment7
+            // comment8
+        });
     }
 }

@@ -8,9 +8,8 @@ function repros() public {
 
     address lerp = LerpFactoryLike(lerpFab()).newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
 
-    (
-        oracleRouter, eVault
-    ) = execute(oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount);
+    (oracleRouter, eVault) =
+        execute(oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount);
 
     if (eVault == address(0)) {
         eVault = address(
@@ -26,18 +25,16 @@ function repros() public {
         "\"}\n"
     );
 
-    oracleInfo = abi.encode(
-        LidoOracleInfo({ base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH() })
-    );
+    oracleInfo =
+        abi.encode(LidoOracleInfo({ base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH() }));
 
     return someFunction().getValue().modifyValue().negate().scaleBySomeFactor(1000).transformToTuple();
 
     SnapshotRegistry(adapterRegistry)
         .add(adapter, LidoFundamentalOracle(adapter).WSTETH(), LidoFundamentalOracle(adapter).WETH());
 
-    (bool success, bytes memory data) =
-        GenericFactory(eVaultFactory).implementation()
-            .staticcall(abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0)));
+    (bool success, bytes memory data) = GenericFactory(eVaultFactory).implementation()
+        .staticcall(abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0)));
 
     IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
 
@@ -78,9 +75,8 @@ function repros() public {
 }
 
 function returnLongBinaryOp() returns (bytes32) {
-    return bytes32(
-        uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce))
-    );
+    return
+        bytes32(uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce)));
 }
 
 contract Repros {
@@ -101,31 +97,29 @@ contract Repros {
         });
 
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
-                address(fromToken()),
-                amount(),
-                0 /* nonce */
-            );
+            address(fromToken()),
+            amount(),
+            0 /* nonce */
+        );
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
-                address(fromToken()),
-                amount(),
-                0 /* nonce */
-            );
+            address(fromToken()),
+            amount(),
+            0 /* nonce */
+        );
 
         // https://github.com/foundry-rs/foundry/issues/11834
         CurrenciesOutOfOrderOrEqual.selector.revertWith(Currency.unwrap(key.currency0), Currency.unwrap(key.currency1));
 
         nestedStruct.withCalls.thatCause
-                .aBreak(
+            .aBreak(
                 param1,
                 param2,
                 param3 // long line
             );
 
         // https://github.com/foundry-rs/foundry/issues/11835
-        feeGrowthInside0X128 =
-            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
-        feeGrowthInside0X128 =
-            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 = self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 = self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
 
         // https://github.com/foundry-rs/foundry/issues/11875
         lpTail = LpPosition({
@@ -144,8 +138,8 @@ contract Repros {
             streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
         });
         flow.withdraw{
-                value: FLOW_MIN_FEE_WEI /* cmnt */
-            }({
+            value: FLOW_MIN_FEE_WEI /* cmnt */
+        }({
             streamId: defaultStreamId,
             to: users.eve,
             /* cmnt */
