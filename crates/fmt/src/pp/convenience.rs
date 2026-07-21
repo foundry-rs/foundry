@@ -1,10 +1,33 @@
-use super::{BeginToken, BreakToken, Breaks, IndentStyle, Printer, SIZE_INFINITY, Token};
+use super::{
+    BeginToken, BreakToken, Breaks, ChoiceId, Doc, Document, GroupId, IndentStyle, Printer,
+    SIZE_INFINITY, Token,
+};
 use std::borrow::Cow;
 
 impl Printer {
     /// "raw box"
     pub fn rbox(&mut self, indent: isize, breaks: Breaks) {
-        self.scan_begin(BeginToken { indent: IndentStyle::Block { offset: indent }, breaks });
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Block { offset: indent },
+            breaks,
+            group: None,
+            probe: None,
+            force_break: false,
+        });
+    }
+
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    fn group_box(&mut self, indent: isize, breaks: Breaks) -> GroupId {
+        let group = GroupId(self.next_group);
+        self.next_group += 1;
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Block { offset: indent },
+            breaks,
+            group: Some(group),
+            probe: None,
+            force_break: false,
+        });
+        group
     }
 
     /// Inconsistent breaking box
@@ -17,8 +40,26 @@ impl Printer {
         self.rbox(indent, Breaks::Consistent);
     }
 
+    /// Begins an inconsistent box and returns an identifier for conditional content in it.
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn ibox_with_id(&mut self, indent: isize) -> GroupId {
+        self.group_box(indent, Breaks::Inconsistent)
+    }
+
+    /// Begins a consistent box and returns an identifier for conditional content in it.
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn cbox_with_id(&mut self, indent: isize) -> GroupId {
+        self.group_box(indent, Breaks::Consistent)
+    }
+
     pub fn visual_align(&mut self) {
-        self.scan_begin(BeginToken { indent: IndentStyle::Visual, breaks: Breaks::Consistent });
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Visual,
+            breaks: Breaks::Consistent,
+            group: None,
+            probe: None,
+            force_break: false,
+        });
     }
 
     pub fn break_offset(&mut self, n: usize, off: isize) {
@@ -29,9 +70,61 @@ impl Printer {
         self.scan_end();
     }
 
-    pub fn eof(mut self) -> String {
-        self.scan_eof();
-        self.out
+    pub fn eof(self) -> String {
+        self.render_document()
+    }
+
+    /// Emits one of two documents according to the final layout of `group`.
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn if_break(
+        &mut self,
+        group: GroupId,
+        broken: impl FnOnce(&mut Self),
+        flat: impl FnOnce(&mut Self),
+    ) {
+        let broken = self.capture(broken);
+        let flat = self.capture(flat);
+        self.document.nodes.push(Doc::IfBreak { group, broken, flat: flat.clone() });
+        self.preview(&flat);
+    }
+
+    /// Forces all boxes enclosing this marker to use their broken layouts.
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn break_parent(&mut self) {
+        self.document.nodes.push(Doc::BreakParent);
+    }
+
+    /// Emits `preferred` when it fits, otherwise emits `fallback`.
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn choice(&mut self, preferred: impl FnOnce(&mut Self), fallback: impl FnOnce(&mut Self)) {
+        let preferred = self.capture(preferred);
+        let fallback = self.capture(fallback);
+        let id = ChoiceId(self.next_choice);
+        self.next_choice += 1;
+        self.document.nodes.push(Doc::Choice { id, preferred: preferred.clone(), fallback });
+        self.preview(&preferred);
+    }
+
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    fn capture(&mut self, f: impl FnOnce(&mut Self)) -> Document {
+        let mut child = Self::new(self.margin as usize, self.indent_config);
+        child.next_group = self.next_group;
+        child.next_choice = self.next_choice;
+        f(&mut child);
+        self.next_group = child.next_group;
+        self.next_choice = child.next_choice;
+        child.document
+    }
+
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    fn preview(&mut self, document: &Document) {
+        let tokens = document.resolve(&Default::default(), &Default::default());
+        let record_document = self.record_document;
+        self.record_document = false;
+        for token in tokens {
+            self.scan_token(token);
+        }
+        self.record_document = record_document;
     }
 
     pub fn word(&mut self, w: impl Into<Cow<'static, str>>) {

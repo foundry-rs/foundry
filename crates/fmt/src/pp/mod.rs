@@ -3,7 +3,12 @@
 
 use crate::{DEBUG, DEBUG_INDENT};
 use ring::RingBuffer;
-use std::{borrow::Cow, cmp, collections::VecDeque, iter};
+use std::{
+    borrow::Cow,
+    cmp,
+    collections::{HashMap, HashSet, VecDeque},
+    iter,
+};
 
 mod convenience;
 mod helpers;
@@ -18,6 +23,13 @@ pub enum Breaks {
     Consistent,
     Inconsistent,
 }
+
+/// Identifies a box whose final layout can be referenced by conditional documents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GroupId(usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ChoiceId(usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndentStyle {
@@ -51,9 +63,12 @@ pub(crate) struct BreakToken {
 pub(crate) struct BeginToken {
     indent: IndentStyle,
     breaks: Breaks,
+    group: Option<GroupId>,
+    probe: Option<ChoiceId>,
+    force_break: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Token {
     // In practice a string token contains either a `&'static str` or a
     // `String`. `Cow` is overkill for this because we never modify the data,
@@ -62,6 +77,21 @@ pub(crate) enum Token {
     Break(BreakToken),
     Begin(BeginToken),
     End,
+}
+
+/// Retained input to the pretty printer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Document {
+    nodes: Vec<Doc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // Used by formatter migrations to the retained document API.
+enum Doc {
+    Token(Token),
+    IfBreak { group: GroupId, broken: Document, flat: Document },
+    Choice { id: ChoiceId, preferred: Document, fallback: Document },
+    BreakParent,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -74,6 +104,14 @@ pub(crate) const SIZE_INFINITY: isize = 0xffff;
 
 #[derive(Debug)]
 pub struct Printer {
+    /// The authoritative token stream. The other fields form a live preview used by the
+    /// imperative inspection API while the document is being built.
+    document: Document,
+    record_document: bool,
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    next_group: usize,
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    next_choice: usize,
     out: String,
     /// Number of spaces left on line.
     space: isize,
@@ -92,6 +130,8 @@ pub struct Printer {
     scan_stack: VecDeque<usize>,
     /// Stack of blocks-in-progress being flushed by print.
     print_stack: Vec<PrintFrame>,
+    group_states: HashMap<GroupId, bool>,
+    choice_states: HashMap<ChoiceId, bool>,
     /// Level of indentation of current line.
     indent: usize,
     /// Buffered indentation to avoid writing trailing whitespace.
@@ -110,12 +150,21 @@ pub struct Printer {
 pub struct BufEntry {
     token: Token,
     size: isize,
+    document_index: Option<usize>,
 }
 
 impl Printer {
     pub fn new(margin: usize, use_tab_with_size: Option<usize>) -> Self {
+        Self::new_inner(margin, use_tab_with_size, true)
+    }
+
+    fn new_inner(margin: usize, use_tab_with_size: Option<usize>, record_document: bool) -> Self {
         let margin = (margin as isize).clamp(MIN_SPACE, SIZE_INFINITY - 1);
         Self {
+            document: Document::default(),
+            record_document,
+            next_group: 0,
+            next_choice: 0,
             out: String::new(),
             space: margin,
             buf: RingBuffer::new(),
@@ -123,12 +172,61 @@ impl Printer {
             right_total: 0,
             scan_stack: VecDeque::new(),
             print_stack: Vec::new(),
+            group_states: HashMap::new(),
+            choice_states: HashMap::new(),
             indent: 0,
             pending_indentation: 0,
             last_printed: None,
 
             margin,
             indent_config: use_tab_with_size,
+        }
+    }
+
+    fn record(&mut self, token: &Token) -> Option<usize> {
+        if !self.record_document {
+            return None;
+        }
+        let index = self.document.nodes.len();
+        self.document.nodes.push(Doc::Token(token.clone()));
+        Some(index)
+    }
+
+    fn render(mut self) -> (String, HashMap<GroupId, bool>, HashMap<ChoiceId, bool>) {
+        self.scan_eof();
+        (self.out, self.group_states, self.choice_states)
+    }
+
+    fn render_document(&self) -> String {
+        let mut broken_groups = HashSet::new();
+        let mut fallback_choices = HashSet::new();
+
+        loop {
+            let tokens = self.document.resolve(&broken_groups, &fallback_choices);
+            let mut renderer = Self::new_inner(self.margin as usize, self.indent_config, false);
+            for token in tokens {
+                renderer.scan_token(token);
+            }
+            let (out, groups, choices) = renderer.render();
+            let old_group_count = broken_groups.len();
+            let old_choice_count = fallback_choices.len();
+            broken_groups
+                .extend(groups.into_iter().filter_map(|(id, broken)| broken.then_some(id)));
+            fallback_choices
+                .extend(choices.into_iter().filter_map(|(id, broken)| broken.then_some(id)));
+            if broken_groups.len() == old_group_count && fallback_choices.len() == old_choice_count
+            {
+                return out;
+            }
+        }
+    }
+
+    fn scan_token(&mut self, token: Token) {
+        match token {
+            Token::String(string) => self.scan_string(string),
+            Token::Break(token) => self.scan_break(token),
+            Token::Begin(token) => self.scan_begin(token),
+            Token::End => self.scan_end(),
         }
     }
 
@@ -187,7 +285,11 @@ impl Printer {
 
     /// Be very careful with this!
     pub(crate) fn replace_last_token_still_buffered(&mut self, token: Token) {
-        self.buf.last_mut().token = token;
+        let entry = self.buf.last_mut();
+        if let Some(index) = entry.document_index {
+            self.document.nodes[index] = Doc::Token(token.clone());
+        }
+        entry.token = token;
     }
 
     /// WARNING: Be very careful with this!
@@ -222,6 +324,9 @@ impl Printer {
 
             // Apply the predicate and return after the first non-end token.
             if predicate(token) {
+                if let Some(index) = self.buf[i].document_index {
+                    self.document.nodes[index] = Doc::Token(new_token.clone());
+                }
                 self.buf[i].token = new_token;
             }
             break;
@@ -236,16 +341,22 @@ impl Printer {
     }
 
     fn scan_begin(&mut self, token: BeginToken) {
+        let document_index = self.record(&Token::Begin(token));
         if self.scan_stack.is_empty() {
             self.left_total = 1;
             self.right_total = 1;
             self.buf.clear();
         }
-        let right = self.buf.push(BufEntry { token: Token::Begin(token), size: -self.right_total });
+        let right = self.buf.push(BufEntry {
+            token: Token::Begin(token),
+            size: -self.right_total,
+            document_index,
+        });
         self.scan_stack.push_back(right);
     }
 
     fn scan_end(&mut self) {
+        let document_index = self.record(&Token::End);
         if self.scan_stack.is_empty() {
             self.print_end();
         } else {
@@ -268,12 +379,13 @@ impl Printer {
                     self.right_total -= break_token.blank_space as isize;
                 }
             }
-            let right = self.buf.push(BufEntry { token: Token::End, size: -1 });
+            let right = self.buf.push(BufEntry { token: Token::End, size: -1, document_index });
             self.scan_stack.push_back(right);
         }
     }
 
     pub(crate) fn scan_break(&mut self, token: BreakToken) {
+        let document_index = self.record(&Token::Break(token));
         if self.scan_stack.is_empty() {
             self.left_total = 1;
             self.right_total = 1;
@@ -281,17 +393,22 @@ impl Printer {
         } else {
             self.check_stack(0);
         }
-        let right = self.buf.push(BufEntry { token: Token::Break(token), size: -self.right_total });
+        let right = self.buf.push(BufEntry {
+            token: Token::Break(token),
+            size: -self.right_total,
+            document_index,
+        });
         self.scan_stack.push_back(right);
         self.right_total += token.blank_space as isize;
     }
 
     fn scan_string(&mut self, string: Cow<'static, str>) {
+        let document_index = self.record(&Token::String(string.clone()));
         if self.scan_stack.is_empty() {
             self.print_string(&string);
         } else {
             let len = string.len() as isize;
-            self.buf.push(BufEntry { token: Token::String(string), size: len });
+            self.buf.push(BufEntry { token: Token::String(string), size: len, document_index });
             self.right_total += len;
             self.check_stream();
         }
@@ -299,10 +416,14 @@ impl Printer {
 
     #[track_caller]
     pub(crate) fn offset(&mut self, offset: isize) {
-        match &mut self.buf.last_mut().token {
+        let entry = self.buf.last_mut();
+        match &mut entry.token {
             Token::Break(token) => token.offset += offset,
             Token::Begin(_) => {}
             Token::String(_) | Token::End => unreachable!(),
+        }
+        if let Some(index) = entry.document_index {
+            self.document.nodes[index] = Doc::Token(entry.token.clone());
         }
     }
 
@@ -404,7 +525,14 @@ impl Printer {
             }
         }
 
-        if size > self.space {
+        let broken = token.force_break || size > self.space;
+        if let Some(group) = token.group {
+            self.group_states.insert(group, broken);
+        }
+        if let Some(choice) = token.probe {
+            self.choice_states.insert(choice, broken);
+        }
+        if broken {
             self.print_stack.push(PrintFrame::Broken(self.indent, token.breaks));
             self.indent = match token.indent {
                 IndentStyle::Block { offset } => {
@@ -484,5 +612,140 @@ impl Printer {
             self.out.extend(iter::repeat_n(' ', self.pending_indentation));
         }
         self.pending_indentation = 0;
+    }
+}
+
+impl Document {
+    fn resolve(
+        &self,
+        broken_groups: &HashSet<GroupId>,
+        fallback_choices: &HashSet<ChoiceId>,
+    ) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        let mut groups = Vec::new();
+        self.resolve_into(broken_groups, fallback_choices, &mut groups, &mut tokens);
+        tokens
+    }
+
+    fn resolve_into(
+        &self,
+        broken_groups: &HashSet<GroupId>,
+        fallback_choices: &HashSet<ChoiceId>,
+        groups: &mut Vec<usize>,
+        tokens: &mut Vec<Token>,
+    ) {
+        for node in &self.nodes {
+            match node {
+                Doc::Token(Token::Begin(token)) => {
+                    groups.push(tokens.len());
+                    tokens.push(Token::Begin(*token));
+                }
+                Doc::Token(Token::End) => {
+                    groups.pop();
+                    tokens.push(Token::End);
+                }
+                Doc::Token(token) => tokens.push(token.clone()),
+                Doc::IfBreak { group, broken, flat } => {
+                    let branch = if broken_groups.contains(group) { broken } else { flat };
+                    branch.resolve_into(broken_groups, fallback_choices, groups, tokens);
+                }
+                Doc::Choice { id, preferred, fallback } => {
+                    if fallback_choices.contains(id) {
+                        fallback.resolve_into(broken_groups, fallback_choices, groups, tokens);
+                    } else {
+                        let begin = BeginToken {
+                            indent: IndentStyle::Block { offset: 0 },
+                            breaks: Breaks::Inconsistent,
+                            group: None,
+                            probe: Some(*id),
+                            force_break: false,
+                        };
+                        groups.push(tokens.len());
+                        tokens.push(Token::Begin(begin));
+                        preferred.resolve_into(broken_groups, fallback_choices, groups, tokens);
+                        groups.pop();
+                        tokens.push(Token::End);
+                    }
+                }
+                Doc::BreakParent => {
+                    for &index in groups.iter() {
+                        let Token::Begin(begin) = &mut tokens[index] else { unreachable!() };
+                        begin.force_break = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn printer() -> Printer {
+        Printer::new(40, None)
+    }
+
+    #[test]
+    fn retained_document_preserves_imperative_output() {
+        let mut p = printer();
+        p.cbox(4);
+        p.word("call(");
+        p.zerobreak();
+        p.word("argument_that_makes_the_group_too_wide,");
+        p.space();
+        p.word("other_argument");
+        p.word(")");
+        p.end();
+
+        assert_eq!(
+            p.eof(),
+            "call(\n    argument_that_makes_the_group_too_wide,\n    other_argument)"
+        );
+    }
+
+    #[test]
+    fn if_break_uses_named_group_layout() {
+        let mut flat = printer();
+        let group = flat.cbox_with_id(4);
+        flat.word("short");
+        flat.space();
+        flat.if_break(group, |p| p.word("broken"), |p| p.word("flat"));
+        flat.end();
+        assert_eq!(flat.eof(), "short flat");
+
+        let mut broken = printer();
+        let group = broken.ibox_with_id(4);
+        broken.word("a_very_long_prefix_that_uses_the_line");
+        broken.space();
+        broken.if_break(group, |p| p.word("broken"), |p| p.word("flat"));
+        broken.end();
+        assert_eq!(broken.eof(), "a_very_long_prefix_that_uses_the_line\n    broken");
+    }
+
+    #[test]
+    fn break_parent_forces_enclosing_group() {
+        let mut p = printer();
+        p.cbox(4);
+        p.word("left");
+        p.space();
+        p.break_parent();
+        p.word("right");
+        p.end();
+
+        assert_eq!(p.eof(), "left\n    right");
+    }
+
+    #[test]
+    fn choice_uses_first_fitting_document() {
+        let mut preferred = printer();
+        preferred.word("prefix ");
+        preferred.choice(|p| p.word("preferred"), |p| p.word("fallback"));
+        assert_eq!(preferred.eof(), "prefix preferred");
+
+        let mut fallback = printer();
+        fallback.word("a_very_long_prefix_that_uses_the_line ");
+        fallback.choice(|p| p.word("preferred"), |p| p.word("fallback"));
+        assert_eq!(fallback.eof(), "a_very_long_prefix_that_uses_the_line fallback");
     }
 }
