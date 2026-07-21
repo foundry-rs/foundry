@@ -143,6 +143,8 @@ pub struct Printer {
     scan_stack: VecDeque<usize>,
     /// Stack of blocks-in-progress being flushed by print.
     print_stack: Vec<PrintFrame>,
+    /// Named groups corresponding to `print_stack` frames.
+    group_stack: Vec<Option<GroupId>>,
     group_states: HashMap<GroupId, bool>,
     choice_states: HashMap<ChoiceId, bool>,
     /// Level of indentation of current line.
@@ -156,6 +158,8 @@ pub struct Printer {
 
     /// Target line width.
     margin: isize,
+    /// Display width of a tab in source text.
+    tab_width: usize,
     /// If `Some(tab_width)` the printer will use tabs for indentation.
     indent_config: Option<usize>,
 }
@@ -168,11 +172,16 @@ pub struct BufEntry {
 }
 
 impl Printer {
-    pub fn new(margin: usize, use_tab_with_size: Option<usize>) -> Self {
-        Self::new_inner(margin, use_tab_with_size, true)
+    pub fn new(margin: usize, use_tab_with_size: Option<usize>, tab_width: usize) -> Self {
+        Self::new_inner(margin, use_tab_with_size, tab_width, true)
     }
 
-    fn new_inner(margin: usize, use_tab_with_size: Option<usize>, record_document: bool) -> Self {
+    fn new_inner(
+        margin: usize,
+        use_tab_with_size: Option<usize>,
+        tab_width: usize,
+        record_document: bool,
+    ) -> Self {
         let margin = (margin as isize).clamp(MIN_SPACE, SIZE_INFINITY - 1);
         Self {
             document: Document::default(),
@@ -187,6 +196,7 @@ impl Printer {
             right_total: 0,
             scan_stack: VecDeque::new(),
             print_stack: Vec::new(),
+            group_stack: Vec::new(),
             group_states: HashMap::new(),
             choice_states: HashMap::new(),
             indent: 0,
@@ -195,6 +205,7 @@ impl Printer {
             pending_line_suffixes: Vec::new(),
 
             margin,
+            tab_width,
             indent_config: use_tab_with_size,
         }
     }
@@ -219,7 +230,8 @@ impl Printer {
 
         loop {
             let tokens = self.document.resolve(&broken_groups, &fallback_choices);
-            let mut renderer = Self::new_inner(self.margin as usize, self.indent_config, false);
+            let mut renderer =
+                Self::new_inner(self.margin as usize, self.indent_config, self.tab_width, false);
             for token in tokens {
                 renderer.scan_token(token);
             }
@@ -426,7 +438,7 @@ impl Printer {
         if self.scan_stack.is_empty() {
             self.print_string(&string);
         } else {
-            let len = string.len() as isize;
+            let len = display_width(&string, self.tab_width);
             self.buf.push(BufEntry { token: Token::String(string), size: len, document_index });
             self.right_total += len;
             self.check_stream();
@@ -434,7 +446,7 @@ impl Printer {
     }
 
     fn scan_line_suffix(&mut self, tokens: Vec<Token>) {
-        let size = flat_size(&tokens);
+        let size = flat_size(&tokens, self.tab_width);
         if self.scan_stack.is_empty() {
             self.pending_line_suffixes.push(tokens);
         } else {
@@ -568,8 +580,9 @@ impl Printer {
 
         let broken = token.force_break || size > self.space;
         if let Some(group) = token.group {
-            self.group_states.insert(group, broken);
+            self.group_states.insert(group, false);
         }
+        self.group_stack.push(token.group);
         if let Some(choice) = token.probe {
             self.choice_states.insert(choice, broken);
         }
@@ -587,6 +600,7 @@ impl Printer {
     }
 
     fn print_end(&mut self) {
+        self.group_stack.pop().expect("unmatched end token");
         let breaks = match self.print_stack.pop().unwrap() {
             PrintFrame::Broken(indent, breaks) => {
                 self.indent = indent;
@@ -616,6 +630,9 @@ impl Printer {
                 self.out.push('·');
             }
         } else {
+            for group in self.group_stack.iter().flatten() {
+                self.group_states.insert(*group, true);
+            }
             if let Some(pre_break) = token.pre_break {
                 self.print_indent();
                 self.out.push_str(pre_break);
@@ -631,7 +648,7 @@ impl Printer {
             if let Some(post_break) = token.post_break {
                 self.print_indent();
                 self.out.push_str(post_break);
-                self.space -= post_break.len() as isize;
+                self.space -= display_width(post_break, self.tab_width);
             }
         }
     }
@@ -639,12 +656,13 @@ impl Printer {
     fn print_string(&mut self, string: &str) {
         self.print_indent();
         self.out.push_str(string);
-        self.space -= string.len() as isize;
+        self.space -= display_width(string, self.tab_width);
     }
 
     fn flush_line_suffixes(&mut self) {
         for tokens in std::mem::take(&mut self.pending_line_suffixes) {
-            let mut renderer = Self::new_inner(self.margin as usize, self.indent_config, false);
+            let mut renderer =
+                Self::new_inner(self.margin as usize, self.indent_config, self.tab_width, false);
             renderer.space = self.space;
             renderer.indent = self.indent;
             for token in tokens {
@@ -769,17 +787,25 @@ impl Document {
     }
 }
 
-fn flat_size(tokens: &[Token]) -> isize {
+fn flat_size(tokens: &[Token], tab_width: usize) -> isize {
     tokens.iter().fold(0, |size, token| {
         let token_size = match token {
-            Token::String(string) => string.len() as isize,
+            Token::String(string) => display_width(string, tab_width),
             Token::Break(token) => token.blank_space as isize,
             Token::Begin(_) | Token::End => 0,
-            Token::LineSuffix(tokens) => flat_size(tokens),
+            Token::LineSuffix(tokens) => flat_size(tokens, tab_width),
             Token::BreakChildren(_) => 0,
         };
         size.saturating_add(token_size).min(SIZE_INFINITY)
     })
+}
+
+fn display_width(string: &str, tab_width: usize) -> isize {
+    string
+        .chars()
+        .map(|ch| if ch == '\t' { tab_width } else { 1 })
+        .sum::<usize>()
+        .min(SIZE_INFINITY as usize) as isize
 }
 
 fn force_break_children(tokens: &mut Vec<Token>) {
@@ -832,7 +858,7 @@ mod tests {
     use super::*;
 
     fn printer() -> Printer {
-        Printer::new(40, None)
+        Printer::new(40, None, 4)
     }
 
     #[test]
@@ -870,6 +896,17 @@ mod tests {
         broken.if_break(group, |p| p.word("broken"), |p| p.word("flat"));
         broken.end();
         assert_eq!(broken.eof(), "a_very_long_prefix_that_uses_the_line\n    broken");
+    }
+
+    #[test]
+    fn if_break_reflects_emitted_breaks() {
+        let mut p = printer();
+        let group = p.cbox_with_id(4);
+        p.word("an_unbreakable_word_that_exceeds_the_margin");
+        p.end();
+        p.if_break(group, |p| p.word(" broken"), |p| p.word(" flat"));
+
+        assert_eq!(p.eof(), "an_unbreakable_word_that_exceeds_the_margin flat");
     }
 
     #[test]

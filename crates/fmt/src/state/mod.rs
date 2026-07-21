@@ -5,7 +5,7 @@ use crate::{
     state::sol::BinOpGroup,
 };
 use foundry_common::{
-    comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
+    comments::{Comment, CommentStyle, Comments, line_with_tabs},
     iter::IterDelimited,
 };
 use foundry_config::fmt::{DocCommentStyle, IndentStyle};
@@ -212,6 +212,7 @@ impl<'sess> State<'sess, '_> {
             s: pp::Printer::new(
                 config.line_length,
                 matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
+                config.tab_width,
             ),
             ind: config.tab_width as isize,
             sm,
@@ -606,10 +607,13 @@ impl<'sess> State<'sess, '_> {
         prefix: &'static str,
         break_offset: isize,
         is_doc: bool,
-    ) {
+        continuation: Option<pp::GroupId>,
+    ) -> pp::GroupId {
+        let group = self.s.ibox_with_id(0);
         if !line.starts_with(prefix) {
             self.word(line.to_owned());
-            return;
+            self.end();
+            return group;
         }
 
         fn post_break_prefix(prefix: &'static str, has_content: bool) -> &'static str {
@@ -625,10 +629,21 @@ impl<'sess> State<'sess, '_> {
             }
         }
 
-        self.ibox(0);
-        self.word(prefix);
+        let raw_content = &line[prefix.len()..];
+        let leading_ws_len = raw_content
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_whitespace())
+            .last()
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        if let Some(previous) = continuation {
+            let flat_prefix = format!("{prefix}{}", &raw_content[..leading_ws_len]);
+            self.s.if_break(previous, |_| {}, |p| p.word(flat_prefix));
+        } else {
+            self.word(prefix);
+        }
 
-        let content = &line[prefix.len()..];
+        let content =
+            if continuation.is_some() { &raw_content[leading_ws_len..] } else { raw_content };
         let content = if is_doc {
             // Doc comments preserve leading whitespaces (right after the prefix) as nbps.
             let ws_len = content
@@ -690,63 +705,26 @@ impl<'sess> State<'sess, '_> {
         }
 
         self.end();
+        group
     }
 
-    /// Merges consecutive line comments to avoid orphan words.
-    fn merge_comment_lines(&self, lines: &[String], prefix: &str) -> Vec<String> {
-        // Do not apply smart merging to block comments
-        if lines.is_empty() || lines.len() < 2 || !prefix.starts_with("//") {
-            return lines.to_vec();
+    fn can_join_wrapped_comment_lines(current: &str, next: &str, prefix: &str) -> bool {
+        let Some(next_content) = next.strip_prefix(prefix) else { return false };
+        let next_content = next_content.trim_start();
+        prefix.starts_with("//")
+            && !current.trim().is_empty()
+            && current.starts_with(prefix)
+            && !next.trim().is_empty()
+            && !next_content.starts_with('@')
+            && next_content.split_whitespace().nth(1).is_some()
+    }
+
+    fn print_wrapped_comment_boundary(&mut self, group: pp::GroupId, joins: bool) {
+        if joins {
+            self.s.if_break(group, |p| p.nbsp(), |p| p.hardbreak());
+        } else {
+            self.hardbreak();
         }
-
-        let mut result = Vec::new();
-        let mut i = 0;
-
-        while i < lines.len() {
-            let current_line = &lines[i];
-
-            // Keep empty lines, and non-prefixed lines, untouched
-            if current_line.trim().is_empty() || !current_line.starts_with(prefix) {
-                result.push(current_line.clone());
-                i += 1;
-                continue;
-            }
-
-            if i + 1 < lines.len() {
-                let next_line = &lines[i + 1];
-
-                // Check if next line has the same prefix and is not empty.
-                if next_line.starts_with(prefix) && !next_line.trim().is_empty() {
-                    let next_content = next_line[prefix.len()..].trim_start();
-
-                    // Keep each NatSpec tag on its own doc-comment line. Merging a wrapped
-                    // `@dev`/`@param` line with the following tag changes the tag boundary.
-                    if next_content.starts_with('@') {
-                        result.push(current_line.clone());
-                        i += 1;
-                        continue;
-                    }
-
-                    // Only merge if the current line doesn't fit within available width
-                    if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
-                    {
-                        // Merge the lines and let the wrapper handle breaking if needed
-                        let merged_line = format!("{current_line} {next_content}");
-                        result.push(merged_line);
-
-                        // Skip both lines since they are merged
-                        i += 2;
-                        continue;
-                    }
-                }
-            }
-
-            // No merge possible, keep the line as-is
-            result.push(current_line.clone());
-            i += 1;
-        }
-
-        result
     }
 
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
@@ -769,12 +747,19 @@ impl<'sess> State<'sess, '_> {
                     };
                 }
                 if self.config.wrap_comments {
-                    // Merge and wrap comments
-                    let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
-                    for (pos, line) in merged_lines.into_iter().delimited() {
-                        self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
-                        if !pos.is_last {
-                            self.hardbreak();
+                    let mut continuation = None;
+                    for (index, line) in cmnt.lines.iter().enumerate() {
+                        let group = self.print_wrapped_line(
+                            line,
+                            prefix,
+                            0,
+                            cmnt.is_doc,
+                            continuation.take(),
+                        );
+                        if let Some(next) = cmnt.lines.get(index + 1) {
+                            let joins = Self::can_join_wrapped_comment_lines(line, next, prefix);
+                            self.print_wrapped_comment_boundary(group, joins);
+                            continuation = joins.then_some(group);
                         }
                     }
                 } else {
@@ -801,38 +786,50 @@ impl<'sess> State<'sess, '_> {
                 }
 
                 if self.config.wrap_comments {
-                    // Merge and wrap comments
-                    let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
-                    for (pos, line) in merged_lines.into_iter().delimited() {
+                    let mut continuation = None;
+                    for (index, line) in cmnt.lines.iter().enumerate() {
+                        let is_first = index == 0;
+                        let is_last = index + 1 == cmnt.lines.len();
                         let hb = |this: &mut Self| {
                             this.hardbreak();
-                            if pos.is_last {
+                            if is_last {
                                 this.cursor.next_line(this.is_at_crlf());
                             }
                         };
                         if line.is_empty() {
                             hb(self);
+                            continuation = None;
                             continue;
                         }
-                        if pos.is_first {
+                        if is_first {
                             self.ibox(config.offset);
                             if cmnt.is_doc && matches!(prefix, "/**") {
                                 self.word(prefix);
                                 hb(self);
                                 prefix = " * ";
+                                continuation = None;
                                 continue;
                             }
                         }
 
-                        self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
+                        let group = self.print_wrapped_line(
+                            line,
+                            prefix,
+                            0,
+                            cmnt.is_doc,
+                            continuation.take(),
+                        );
 
-                        if pos.is_last {
+                        if is_last {
                             self.end();
                             if !config.iso_no_break {
                                 hb(self);
                             }
                         } else {
-                            hb(self);
+                            let next = &cmnt.lines[index + 1];
+                            let joins = Self::can_join_wrapped_comment_lines(line, next, prefix);
+                            self.print_wrapped_comment_boundary(group, joins);
+                            continuation = joins.then_some(group);
                         }
                     }
                 } else {
@@ -888,7 +885,13 @@ impl<'sess> State<'sess, '_> {
                     }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
-                            self.print_wrapped_line(&line, prefix, config.offset, cmnt.is_doc);
+                            self.print_wrapped_line(
+                                &line,
+                                prefix,
+                                config.offset,
+                                cmnt.is_doc,
+                                None,
+                            );
                         }
                         if !lpos.is_last {
                             config.hardbreak(&mut self.s);

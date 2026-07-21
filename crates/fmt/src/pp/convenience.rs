@@ -136,7 +136,7 @@ impl Printer {
 
     #[allow(dead_code)] // Used by formatter migrations to the retained document API.
     fn capture(&mut self, f: impl FnOnce(&mut Self)) -> Document {
-        let mut child = Self::new(self.margin as usize, self.indent_config);
+        let mut child = Self::new(self.margin as usize, self.indent_config, self.tab_width);
         child.next_group = self.next_group;
         child.next_choice = self.next_choice;
         child.line_suffix_depth = self.line_suffix_depth;
