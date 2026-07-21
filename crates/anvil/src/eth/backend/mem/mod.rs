@@ -6092,7 +6092,7 @@ fn simulate_transaction_error(error: InvalidTransactionError) -> BlockchainError
     simulate_rpc_error(code, format!("err: {error}"))
 }
 
-fn sanitize_simulation_blocks(
+pub(in crate::eth) fn sanitize_simulation_blocks(
     blocks: Vec<SimBlock>,
     base_number: u64,
     base_timestamp: u64,

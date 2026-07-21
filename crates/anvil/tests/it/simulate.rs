@@ -47,6 +47,71 @@ async fn test_fork_simulate_v1() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_normalizes_delegated_block_sequence_rpc() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
+    origin_api.mine_one().await;
+    origin_api.mine_one().await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    api.evm_set_block_timestamp_interval(7).unwrap();
+
+    let endpoint = handle.http_endpoint();
+    let base = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
+    let base_number = quantity(&base["result"]["number"]);
+    let base_timestamp = quantity(&base["result"]["timestamp"]);
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {"number": format!("{:#x}", base_number + 3)}
+            }]
+        }, "0x1"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+
+    let blocks = response["result"].as_array().unwrap();
+    assert_eq!(blocks.len(), 3);
+    for (index, block) in blocks.iter().enumerate() {
+        let offset = index as u64 + 1;
+        assert_eq!(quantity(&block["number"]), base_number + offset);
+        assert_eq!(quantity(&block["timestamp"]), base_timestamp + 7 * offset);
+    }
+
+    let cases = [
+        (
+            json!([{"blockStateCalls": [{
+                "blockOverrides": {"number": format!("{base_number:#x}")}
+            }]}, "0x1"]),
+            -38020,
+        ),
+        (
+            json!([{"blockStateCalls": [{
+                "blockOverrides": {"time": format!("{base_timestamp:#x}")}
+            }]}, "0x1"]),
+            -38021,
+        ),
+        (
+            json!([{"blockStateCalls": [{
+                "blockOverrides": {"number": format!("{:#x}", base_number + 257)}
+            }]}, "0x1"]),
+            -38026,
+        ),
+    ];
+    for (params, code) in cases {
+        let response = rpc_request(&endpoint, "eth_simulateV1", params).await;
+        assert_eq!(response["error"]["code"], code, "{response}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_normalizes_block_sequence_rpc() {
     let (_api, handle) = spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
     let endpoint = handle.http_endpoint();
