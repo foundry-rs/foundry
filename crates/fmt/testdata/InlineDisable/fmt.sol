@@ -70,7 +70,8 @@ contract Constructors is Ownable, Changeable {
 }
 
 function test() {
-    uint256 pi_approx = 666 / 212;
+    uint256 pi_approx =
+        666 / 212;
     uint256 pi_approx = /* forgefmt: disable-start */ 666    /    212; /* forgefmt: disable-end */
 
     // forgefmt: disable-next-item

@@ -2,14 +2,16 @@
 function repros() public {
     require(
         keccak256(abi.encodePacked("this is a long string"))
-            == keccak256(abi.encodePacked("some other long string")),
+        == keccak256(abi.encodePacked("some other long string")),
         "string mismatch"
     );
 
-    address lerp =
-        LerpFactoryLike(lerpFab()).newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
+    address lerp = LerpFactoryLike(lerpFab())
+        .newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
 
-    (oracleRouter, eVault) = execute(
+    (
+        oracleRouter, eVault
+    ) = execute(
         oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount
     );
 
@@ -37,8 +39,9 @@ function repros() public {
     SnapshotRegistry(adapterRegistry)
         .add(adapter, LidoFundamentalOracle(adapter).WSTETH(), LidoFundamentalOracle(adapter).WETH());
 
-    (bool success, bytes memory data) = GenericFactory(eVaultFactory).implementation()
-        .staticcall(abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0)));
+    (bool success, bytes memory data) =
+        GenericFactory(eVaultFactory).implementation()
+            .staticcall(abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0)));
 
     IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
 
@@ -88,10 +91,12 @@ function returnLongBinaryOp() returns (bytes32) {
 
 contract Repros {
     function test() public {
-        uint256 globalBuyAmount =
-            Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
-        uint256 globalBuyAmount =
-            Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+        uint256 globalBuyAmount = Take.take(
+            state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount
+        );
+        uint256 globalBuyAmount = Take.take(
+            state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount
+        );
 
         {
             u.executionData = _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
@@ -106,22 +111,22 @@ contract Repros {
         });
 
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
-            address(fromToken()),
-            amount(),
-            0 /* nonce */
-        );
+                address(fromToken()),
+                amount(),
+                0 /* nonce */
+            );
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
-            address(fromToken()),
-            amount(),
-            0 /* nonce */
-        );
+                address(fromToken()),
+                amount(),
+                0 /* nonce */
+            );
 
         // https://github.com/foundry-rs/foundry/issues/11834
         CurrenciesOutOfOrderOrEqual.selector
             .revertWith(Currency.unwrap(key.currency0), Currency.unwrap(key.currency1));
 
         nestedStruct.withCalls.thatCause
-            .aBreak(
+                .aBreak(
                 param1,
                 param2,
                 param3 // long line
@@ -140,9 +145,9 @@ contract Repros {
     }
 
     // https://github.com/foundry-rs/foundry/issues/11834
-    function test_ffi_fuzz_addLiquidity_defaultPool(IPoolManager.ModifyLiquidityParams memory paramSeed)
-        public
-    {
+    function test_ffi_fuzz_addLiquidity_defaultPool(
+        IPoolManager.ModifyLiquidityParams memory paramSeed
+    ) public {
         a = 1;
     }
 
@@ -152,8 +157,8 @@ contract Repros {
             streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
         });
         flow.withdraw{
-            value: FLOW_MIN_FEE_WEI /* cmnt */
-        }({
+                value: FLOW_MIN_FEE_WEI /* cmnt */
+            }({
             streamId: defaultStreamId,
             to: users.eve,
             /* cmnt */

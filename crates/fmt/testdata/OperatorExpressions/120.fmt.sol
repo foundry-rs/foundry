@@ -1,18 +1,31 @@
 // config: line_length = 120
 function test() {
-    uint256 expr001 = (1 + 2) + 3;
-    uint256 expr002 = 1 + (2 + 3);
-    uint256 expr003 = 1 * 2 + 3;
-    uint256 expr004 = (1 * 2) + 3;
-    uint256 expr005 = 1 * (2 + 3);
-    uint256 expr006 = 1 + 2 * 3;
-    uint256 expr007 = (1 + 2) * 3;
-    uint256 expr008 = 1 + (2 * 3);
-    uint256 expr009 = 1 ** 2 ** 3;
-    uint256 expr010 = 1 ** (2 ** 3);
-    uint256 expr011 = (1 ** 2) ** 3;
-    uint256 expr012 = ++expr011 + 1;
-    bool expr013 = ++expr012 == expr011 - 1;
+    uint256 expr001 =
+        (1 + 2) + 3;
+    uint256 expr002 =
+        1 + (2 + 3);
+    uint256 expr003 =
+        1 * 2 + 3;
+    uint256 expr004 =
+        (1 * 2) + 3;
+    uint256 expr005 =
+        1 * (2 + 3);
+    uint256 expr006 =
+        1 + 2 * 3;
+    uint256 expr007 =
+        (1 + 2) * 3;
+    uint256 expr008 =
+        1 + (2 * 3);
+    uint256 expr009 =
+        1 ** 2 ** 3;
+    uint256 expr010 =
+        1 ** (2 ** 3);
+    uint256 expr011 =
+        (1 ** 2) ** 3;
+    uint256 expr012 =
+        ++expr011 + 1;
+    bool expr013 =
+        ++expr012 == expr011 - 1;
     bool expr014 = ++(++expr013)--;
     if (++batch.movesPerformed == drivers.length) createNewBatch();
     sum += getPrice(
@@ -70,15 +83,19 @@ function new_y(uint256 x, uint256 dx, uint256 x_basis, uint256 y, uint256 y_basi
 }
 
 contract Repro {
-    bytes4 public constant MINIMAL_INTERFACE_ID = this.calculateMinFeeWeiFor.selector ^ this.convertUSDFeeToWei.selector
-        ^ this.execute.selector ^ this.getMinFeeUSDFor.selector;
-    bool isTestnet = chainId == ARBITRUM_SEPOLIA || chainId == BASE_SEPOLIA || chainId == MODE_SEPOLIA
-        || chainId == OPTIMISM_SEPOLIA || chainId == SEPOLIA;
+    bytes4 public constant MINIMAL_INTERFACE_ID =
+        this.calculateMinFeeWeiFor.selector ^ this.convertUSDFeeToWei.selector ^ this.execute.selector
+        ^ this.getMinFeeUSDFor.selector;
+    bool isTestnet =
+        chainId == ARBITRUM_SEPOLIA || chainId == BASE_SEPOLIA || chainId == MODE_SEPOLIA || chainId == OPTIMISM_SEPOLIA
+        || chainId == SEPOLIA;
 
     function test() {
-        assign = this.calculateMinFeeWeiFor.selector ^ this.convertUSDFeeToWei.selector ^ this.execute.selector
+        assign =
+            this.calculateMinFeeWeiFor.selector ^ this.convertUSDFeeToWei.selector ^ this.execute.selector
             ^ this.getMinFeeUSDFor.selector;
-        isMainnet = chainId == ABSTRACT || chainId == ARBITRUM || chainId == AVALANCHE || chainId == BASE
+        isMainnet =
+            chainId == ABSTRACT || chainId == ARBITRUM || chainId == AVALANCHE || chainId == BASE
             || chainId == BERACHAIN || chainId == BLAST || chainId == BSC || chainId == CHILIZ || chainId == COREDAO
             || chainId == ETHEREUM || chainId == GNOSIS || chainId == HYPEREVM || chainId == LIGHTLINK
             || chainId == LINEA || chainId == MODE || chainId == MORPH || chainId == OPTIMISM || chainId == POLYGON

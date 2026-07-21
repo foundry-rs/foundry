@@ -44,9 +44,7 @@ contract ReturnStatement {
         external
         returns (uint256, uint256, bool)
     {
-        if (val == 0) {
-            return /* return mul 1 */ (0, 1, /* return mul 2 */ false);
-        }
+        if (val == 0) return /* return mul 1 */ (0, 1, /* return mul 2 */ false);
 
         if (val == 1) {
             // return mul 3

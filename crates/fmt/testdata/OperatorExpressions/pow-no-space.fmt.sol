@@ -1,18 +1,31 @@
 // config: pow_no_space = true
 function test() {
-    uint256 expr001 = (1 + 2) + 3;
-    uint256 expr002 = 1 + (2 + 3);
-    uint256 expr003 = 1 * 2 + 3;
-    uint256 expr004 = (1 * 2) + 3;
-    uint256 expr005 = 1 * (2 + 3);
-    uint256 expr006 = 1 + 2 * 3;
-    uint256 expr007 = (1 + 2) * 3;
-    uint256 expr008 = 1 + (2 * 3);
-    uint256 expr009 = 1**2**3;
-    uint256 expr010 = 1**(2**3);
-    uint256 expr011 = (1**2)**3;
-    uint256 expr012 = ++expr011 + 1;
-    bool expr013 = ++expr012 == expr011 - 1;
+    uint256 expr001 =
+        (1 + 2) + 3;
+    uint256 expr002 =
+        1 + (2 + 3);
+    uint256 expr003 =
+        1 * 2 + 3;
+    uint256 expr004 =
+        (1 * 2) + 3;
+    uint256 expr005 =
+        1 * (2 + 3);
+    uint256 expr006 =
+        1 + 2 * 3;
+    uint256 expr007 =
+        (1 + 2) * 3;
+    uint256 expr008 =
+        1 + (2 * 3);
+    uint256 expr009 =
+        1**2**3;
+    uint256 expr010 =
+        1**(2**3);
+    uint256 expr011 =
+        (1**2)**3;
+    uint256 expr012 =
+        ++expr011 + 1;
+    bool expr013 =
+        ++expr012 == expr011 - 1;
     bool expr014 = ++(++expr013)--;
     if (++batch.movesPerformed == drivers.length) createNewBatch();
     sum += getPrice(
@@ -48,12 +61,13 @@ function test() {
 function test_nested() {
     require(
         keccak256(abi.encodePacked("some long string"))
-            == keccak256(abi.encodePacked("some other long string")),
+        == keccak256(abi.encodePacked("some other long string")),
         "string mismatch"
     );
 
-    state.zeroForOne = IERC20(Currency.unwrap(state.poolKey1.currency0))
-        == IERC20(Currency.unwrap(state.poolKey0.curerncy1));
+    state.zeroForOne =
+        IERC20(Currency.unwrap(state.poolKey1.currency0))
+    == IERC20(Currency.unwrap(state.poolKey0.curerncy1));
 
     coreAddresses.evc == address(0)
         && coreAddresses.protocolConfig == address(0)
@@ -83,24 +97,27 @@ function new_y(
 contract Repro {
     bytes4 public constant MINIMAL_INTERFACE_ID =
         this.calculateMinFeeWeiFor.selector ^ this.convertUSDFeeToWei.selector
-            ^ this.execute.selector ^ this.getMinFeeUSDFor.selector;
-    bool isTestnet = chainId == ARBITRUM_SEPOLIA || chainId == BASE_SEPOLIA
+        ^ this.execute.selector ^ this.getMinFeeUSDFor.selector;
+    bool isTestnet =
+        chainId == ARBITRUM_SEPOLIA || chainId == BASE_SEPOLIA
         || chainId == MODE_SEPOLIA || chainId == OPTIMISM_SEPOLIA
         || chainId == SEPOLIA;
 
     function test() {
-        assign = this.calculateMinFeeWeiFor.selector
+        assign =
+            this.calculateMinFeeWeiFor.selector
             ^ this.convertUSDFeeToWei.selector ^ this.execute.selector
             ^ this.getMinFeeUSDFor.selector;
-        isMainnet = chainId == ABSTRACT || chainId == ARBITRUM
-            || chainId == AVALANCHE || chainId == BASE || chainId == BERACHAIN
-            || chainId == BLAST || chainId == BSC || chainId == CHILIZ
-            || chainId == COREDAO || chainId == ETHEREUM || chainId == GNOSIS
-            || chainId == HYPEREVM || chainId == LIGHTLINK || chainId == LINEA
-            || chainId == MODE || chainId == MORPH || chainId == OPTIMISM
-            || chainId == POLYGON || chainId == SCROLL || chainId == SEI
-            || chainId == SOPHON || chainId == SUPERSEED || chainId == SONIC
-            || chainId == UNICHAIN || chainId == XDC || chainId == ZKSYNC;
+        isMainnet =
+            chainId == ABSTRACT || chainId == ARBITRUM || chainId == AVALANCHE
+            || chainId == BASE || chainId == BERACHAIN || chainId == BLAST
+            || chainId == BSC || chainId == CHILIZ || chainId == COREDAO
+            || chainId == ETHEREUM || chainId == GNOSIS || chainId == HYPEREVM
+            || chainId == LIGHTLINK || chainId == LINEA || chainId == MODE
+            || chainId == MORPH || chainId == OPTIMISM || chainId == POLYGON
+            || chainId == SCROLL || chainId == SEI || chainId == SOPHON
+            || chainId == SUPERSEED || chainId == SONIC || chainId == UNICHAIN
+            || chainId == XDC || chainId == ZKSYNC;
 
         callsGas += (3 * FixedPointMathLib.divUp(paramsLength, 32))
             + FixedPointMathLib.mulDivUp(paramsLength, paramsLength, 524_288);

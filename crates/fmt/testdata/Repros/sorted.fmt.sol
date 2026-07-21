@@ -117,17 +117,17 @@ contract TestContract {
 // https://github.com/foundry-rs/foundry/issues/5825
 library MyLib {
     bytes32 private constant TYPE_HASH = keccak256(
-        // forgefmt: disable-start
+            // forgefmt: disable-start
         "MyStruct("
             "uint8 myEnum,"
                 "address myAddress"
                     ")"
         // forgefmt: disable-end
-    );
+        );
 
     bytes32 private constant TYPE_HASH_1 = keccak256(
-        "MyStruct("    "uint8 myEnum,"    "address myAddress"    ")" // forgefmt: disable-line
-    );
+            "MyStruct("    "uint8 myEnum,"    "address myAddress"    ")" // forgefmt: disable-line
+        );
 
     // forgefmt: disable-start
     bytes32 private constant TYPE_HASH_2 = keccak256(
@@ -171,12 +171,12 @@ contract DbgFmtTest is Test {
 // https://github.com/foundry-rs/foundry/issues/11249
 function argListRepro(address tokenIn, uint256 amountIn, bool data) {
     maverickV2SwapCallback(
-        tokenIn,
+            tokenIn,
         amountIn, // forgefmt: disable-line
-        // forgefmt: disable-next-line
+            // forgefmt: disable-next-line
         0 /* we didn't bother loading `amountOut` because we don't use it */,
-        data
-    );
+            data
+        );
 }
 
 // https://github.com/foundry-rs/foundry/issues/11905
@@ -384,7 +384,10 @@ contract WETHHook is BaseTokenWrapperHook {
     /// @notice Creates a new WETH wrapper hook
     /// @param _manager The Uniswap V4 pool manager
     /// @param _weth The WETH9 contract address
-    constructor(IPoolManager _manager, address payable _weth)
+    constructor(
+        IPoolManager _manager,
+        address payable _weth
+    )
         BaseTokenWrapperHook(
             _manager,
             Currency.wrap(_weth), // wrapper token is WETH
@@ -444,9 +447,10 @@ struct PoolKey {
 }
 
 interface IPoolManager {
-    function initialize(PoolKey memory key, uint160 sqrtPriceX96)
-        external
-        returns (int24);
+    function initialize(
+        PoolKey memory key,
+        uint160 sqrtPriceX96
+    ) external returns (int24);
 }
 
 contract NestedNamedArgsInChainedCall {
