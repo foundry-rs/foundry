@@ -567,6 +567,67 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(rejects_library_key_collisions_across_versions, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| config.solc = None);
+
+    prj.add_source(
+        "Lib.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+library Lib {
+    function identity(uint256 value) external pure returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "New.t.sol",
+        &format!(
+            r#"
+pragma solidity {SOLC_VERSION};
+
+import "src/Lib.sol";
+
+contract NewTest {{
+    function testIdentity() public {{
+        require(Lib.identity(1) == 1);
+    }}
+}}
+"#
+        ),
+    );
+    prj.add_test(
+        "Old.t.sol",
+        &format!(
+            r#"
+pragma solidity {OTHER_SOLC_VERSION};
+
+import "src/Lib.sol";
+
+contract OldTest {{
+    function testIdentity() public {{
+        require(Lib.identity(1) == 1);
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
+
+"#]]);
+
+    prj.update_config(|config| config.create2_deployer = Address::ZERO);
+    cmd.forge_fuse().arg("test").assert_failure().stderr_eq(str![[r#"
+Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
+
+"#]]);
+});
+
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(

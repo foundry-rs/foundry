@@ -39,7 +39,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 
-use foundry_linking::{LinkOutput, Linker};
+use foundry_linking::{LinkOutput, Linker, LinkerError};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
@@ -789,16 +789,22 @@ impl MultiContractRunnerBuilder {
 
         let configured_libraries = self.config.libraries_with_remappings()?;
         let create2_deployer_available = self.create2_deployer_available(&evm_opts);
-        let create2 = create2_deployer_available.then(|| {
-            linker.link_with_create2(
+        let create2 = if create2_deployer_available {
+            match linker.link_with_create2(
                 configured_libraries.clone(),
                 evm_opts.create2_deployer,
                 self.config.create2_library_salt,
                 linker.contracts.keys(),
-            )
-        });
+            ) {
+                Ok(output) => Some(output),
+                Err(LinkerError::CyclicDependency) => None,
+                Err(err) => return Err(err.into()),
+            }
+        } else {
+            None
+        };
         let (LinkOutput { libraries, library_addresses, libs_to_deploy }, library_deployment) =
-            if let Some(Ok(output)) = create2 {
+            if let Some(output) = create2 {
                 (
                     output,
                     LibraryDeployment::Create2 {

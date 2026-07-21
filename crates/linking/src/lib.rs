@@ -187,6 +187,26 @@ impl<'a> Linker<'a> {
         Ok(())
     }
 
+    fn collect_library_keys(
+        &self,
+        needed_libraries: &BTreeSet<&ArtifactId>,
+        libraries: &Libraries,
+    ) -> Result<BTreeSet<(PathBuf, String)>, LinkerError> {
+        let mut library_keys = BTreeSet::new();
+        for id in needed_libraries {
+            let (file, name) = self.convert_artifact_id_to_lib_path(id);
+            let is_configured =
+                libraries.libs.get(&file).is_some_and(|libraries| libraries.contains_key(&name));
+            if !library_keys.insert((file.clone(), name.clone())) && !is_configured {
+                return Err(LinkerError::ConflictingLibraryArtifacts {
+                    file: file.display().to_string(),
+                    name,
+                });
+            }
+        }
+        Ok(library_keys)
+    }
+
     fn library_addresses(
         &self,
         library_keys: &BTreeSet<(PathBuf, String)>,
@@ -231,8 +251,7 @@ impl<'a> Linker<'a> {
         for target in targets {
             self.collect_dependencies(target, &mut needed_libraries)?;
         }
-        let library_keys =
-            needed_libraries.iter().map(|id| self.convert_artifact_id_to_lib_path(id)).collect();
+        let library_keys = self.collect_library_keys(&needed_libraries, &libraries)?;
 
         let mut libs_to_deploy = Vec::new();
 
@@ -278,16 +297,7 @@ impl<'a> Linker<'a> {
             self.collect_dependencies(target, &mut needed_libraries)?;
         }
 
-        let mut library_keys = BTreeSet::new();
-        for id in &needed_libraries {
-            let (file, name) = self.convert_artifact_id_to_lib_path(id);
-            if !library_keys.insert((file.clone(), name.clone())) {
-                return Err(LinkerError::ConflictingLibraryArtifacts {
-                    file: file.display().to_string(),
-                    name,
-                });
-            }
-        }
+        let library_keys = self.collect_library_keys(&needed_libraries, &libraries)?;
 
         let mut needed_libraries = needed_libraries
             .into_par_iter()
@@ -910,7 +920,7 @@ mod tests {
     }
 
     #[test]
-    fn link_create2_rejects_library_key_collisions_across_versions() {
+    fn linking_handles_library_key_collisions_across_versions() {
         let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
         let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
         let (library_id, library) = linker
@@ -927,7 +937,7 @@ mod tests {
             .unwrap();
 
         let mut contracts = linker.contracts.clone();
-        let mut other_library_id = library_id;
+        let mut other_library_id = library_id.clone();
         other_library_id.version = Version::new(0, 8, 19);
         other_library_id.build_id = "other".to_string();
         contracts.insert(other_library_id, library);
@@ -947,6 +957,44 @@ mod tests {
         };
 
         assert!(matches!(err, LinkerError::ConflictingLibraryArtifacts { .. }));
+
+        let Err(err) = linker.link_with_nonce_or_address(
+            Libraries::default(),
+            Address::ZERO,
+            0,
+            [&consumer_id, &other_consumer_id],
+        ) else {
+            panic!("expected conflicting library artifacts");
+        };
+
+        assert!(matches!(err, LinkerError::ConflictingLibraryArtifacts { .. }));
+
+        let configured_address = address!("0000000000000000000000000000000000000001");
+        let (file, name) = linker.convert_artifact_id_to_lib_path(&library_id);
+        let mut libraries = Libraries::default();
+        libraries.libs.entry(file).or_default().insert(name, configured_address.to_checksum(None));
+
+        let output = linker
+            .link_with_create2(
+                libraries.clone(),
+                Address::ZERO,
+                B256::ZERO,
+                [&consumer_id, &other_consumer_id],
+            )
+            .unwrap();
+        assert!(output.libs_to_deploy.is_empty());
+        assert_eq!(output.library_addresses, [configured_address]);
+
+        let output = linker
+            .link_with_nonce_or_address(
+                libraries,
+                Address::ZERO,
+                0,
+                [&consumer_id, &other_consumer_id],
+            )
+            .unwrap();
+        assert!(output.libs_to_deploy.is_empty());
+        assert_eq!(output.library_addresses, [configured_address]);
     }
 
     #[test]
