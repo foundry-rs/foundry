@@ -6458,6 +6458,55 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
 
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "[labels]".to_string(),
+                    new: "[tracing.labels]".to_string(),
+                }]
+            );
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
             Ok(())
         });
     }
@@ -6478,7 +6527,7 @@ mod tests {
                     [profile.default]
                     extends = { path = "base.toml", strategy = "no-collision" }
 
-                    [profile.default.labels]
+                    [labels]
                     0x0000000000000000000000000000000000000001 = "local"
                 "#,
             )?;

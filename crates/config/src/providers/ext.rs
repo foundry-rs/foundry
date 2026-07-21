@@ -179,14 +179,20 @@ impl TomlFileProvider {
                 )));
             }
 
-            // Normalize the standalone symbolic section before merging so equivalent
-            // profile-qualified values have the same shape across inherited files.
+            // Normalize standalone sections before merging so equivalent profile-qualified values
+            // have the same shape across inherited files.
             let base_provider = NormalizeSymbolicProvider::new(
-                Toml::file(base_path).nested().legacy_labels(),
+                NormalizeTracingProvider::new(
+                    Toml::file(base_path).nested().legacy_labels(),
+                    selected_profile.clone(),
+                ),
                 selected_profile.clone(),
             );
             let local_provider = NormalizeSymbolicProvider::new(
-                local_provider.legacy_labels(),
+                NormalizeTracingProvider::new(
+                    local_provider.legacy_labels(),
+                    selected_profile.clone(),
+                ),
                 selected_profile.clone(),
             );
 
@@ -257,6 +263,55 @@ struct NormalizeSymbolicProvider<P> {
 impl<P> NormalizeSymbolicProvider<P> {
     const fn new(provider: P, selected_profile: Profile) -> Self {
         Self { provider, selected_profile }
+    }
+}
+
+struct NormalizeTracingProvider<P> {
+    provider: P,
+    selected_profile: Profile,
+}
+
+impl<P> NormalizeTracingProvider<P> {
+    const fn new(provider: P, selected_profile: Profile) -> Self {
+        Self { provider, selected_profile }
+    }
+}
+
+impl<P: Provider> Provider for NormalizeTracingProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut data = self.provider.data()?;
+        normalize_tracing_section(&mut data, &self.selected_profile);
+        Ok(data)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.provider.profile()
+    }
+}
+
+/// Moves the standalone tracing section into the selected profile before inherited configs are
+/// merged. The deprecated standalone labels section remains in place for warning generation and
+/// is normalized again after inheritance is resolved.
+fn normalize_tracing_section(data: &mut Map<Profile, Dict>, selected_profile: &Profile) {
+    let Some(tracing) = data.remove(&Profile::new("tracing")) else { return };
+
+    let profiles = data.entry(Profile::new(Config::PROFILE_SECTION)).or_default();
+    let profile =
+        profiles.entry(selected_profile.to_string()).or_insert_with(|| Value::from(Dict::new()));
+    let Value::Dict(_, profile) = profile else { return };
+
+    match (profile.get_mut("tracing"), tracing) {
+        (Some(Value::Dict(_, profile_tracing)), tracing) => {
+            merge_missing(profile_tracing, tracing);
+        }
+        (None, tracing) => {
+            profile.insert("tracing".to_string(), Value::from(tracing));
+        }
+        _ => {}
     }
 }
 
