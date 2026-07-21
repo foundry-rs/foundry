@@ -36,20 +36,17 @@ pub(super) struct CallContext {
     /// The kind call.
     pub(super) kind: CallContextKind,
 
-    /// The size of the callee's head, excluding its arguments.
-    pub(super) size: usize,
-
     /// Whether this chain context added its own indentation box.
     pub(super) has_indent: bool,
 }
 
 impl CallContext {
-    pub(super) const fn nested(size: usize) -> Self {
-        Self { kind: CallContextKind::Nested, size, has_indent: false }
+    pub(super) const fn nested() -> Self {
+        Self { kind: CallContextKind::Nested, has_indent: false }
     }
 
-    pub(super) const fn chained(size: usize, has_indent: bool) -> Self {
-        Self { kind: CallContextKind::Chained, size, has_indent }
+    pub(super) const fn chained(has_indent: bool) -> Self {
+        Self { kind: CallContextKind::Chained, has_indent }
     }
 
     pub(super) const fn is_nested(&self) -> bool {

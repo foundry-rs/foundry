@@ -1365,7 +1365,6 @@ impl<'ast> State<'_, 'ast> {
                             list_format
                                 .without_ind(s.return_bin_expr)
                                 .with_delimiters(!s.call_with_opts_and_args),
-                            get_callee_head_size(call_expr),
                             callee_suffix_can_break,
                         );
                     },
@@ -1427,7 +1426,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args, ListFormat::compact().break_cmnts(), 7, false);
+                self.print_call_args(args, ListFormat::compact().break_cmnts(), false);
             }
             ast::ExprKind::Ternary(cond, then, els) => self.print_ternary_expr(cond, then, els),
             ast::ExprKind::Tuple(exprs) => self.print_tuple(
@@ -1717,12 +1716,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name, false);
         if !arguments.is_empty() || add_parens_if_empty {
-            self.print_call_args(
-                arguments,
-                ListFormat::compact().break_cmnts(),
-                name.to_string().len(),
-                false,
-            );
+            self.print_call_args(arguments, ListFormat::compact().break_cmnts(), false);
         }
     }
 
@@ -1793,7 +1787,7 @@ impl<'ast> State<'_, 'ast> {
 
             // Start a new chain if needed
             if is_call_chain(&child_expr.kind, false) {
-                self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
+                self.call_stack.push(CallContext::chained(chain_has_indent));
             }
 
             if chain_has_indent {
@@ -1833,7 +1827,6 @@ impl<'ast> State<'_, 'ast> {
         &mut self,
         args: &'ast ast::CallArgs<'ast>,
         format: ListFormat,
-        callee_size: usize,
         callee_suffix_can_break: bool,
     ) {
         let ast::CallArgs { span, ref kind } = *args;
@@ -1841,7 +1834,7 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        self.call_stack.push(CallContext::nested(callee_size));
+        self.call_stack.push(CallContext::nested());
 
         // Clear the binary expression cache before the call.
         let cache = self.binary_expr.take();
@@ -2443,7 +2436,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             ListFormat::consistent()
         };
-        self.print_call_args(args, format.break_cmnts(), path.to_string().len(), false);
+        self.print_call_args(args, format.break_cmnts(), false);
         self.emit_or_revert = false;
         self.end();
     }
