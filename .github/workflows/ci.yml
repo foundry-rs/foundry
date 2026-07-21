@@ -83,12 +83,22 @@ jobs:
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Test Monad feature propagation
+      - name: Check Monad release binaries
+        run: cargo check --locked --bins --no-default-features --features "cli,monad"
+      - name: Test Monad libraries
         run: |
-          cargo test --locked -p foundry-config --features monad --lib \
-            tests::monad_hardfork_infers_monad_network -- --exact
-          cargo test --locked -p chisel --features monad --lib \
-            dispatcher::tests::ensure_loaded_session_network_matches_rejects_monad_on_default_network -- --exact
+          cargo test --locked -p foundry-evm-hardforks --features monad --lib monad
+          cargo test --locked -p foundry-evm-networks --features monad --lib monad
+          cargo test --locked -p foundry-config --features monad --lib monad
+          cargo test --locked -p foundry-evm-core --features monad --lib monad
+          cargo test --locked -p chisel --features monad --lib monad
+      - name: Test Monad integrations
+        run: |
+          cargo test --locked -p anvil --features monad --test it monad -- --test-threads=1
+          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
+            --test cli monad -- --test-threads=1
+          cargo test --locked -p forge --features monad --test cli monad -- --test-threads=1
+          cargo test --locked -p chisel --features monad --test it monad -- --test-threads=1
 
   typos:
     runs-on: depot-ubuntu-latest
