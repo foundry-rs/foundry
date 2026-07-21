@@ -5214,8 +5214,8 @@ impl Backend<FoundryNetwork> {
                     // create the transaction from a request
                     let from = caller;
 
-                    let mut request =
-                        Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    let mut request = FoundryTransactionRequest::new(WithOtherFields::new(request))
+                        .expect("Ethereum transaction request is valid");
                     if request.as_ref().to.is_none() {
                         request.as_mut().to = Some(TxKind::Create);
                     }

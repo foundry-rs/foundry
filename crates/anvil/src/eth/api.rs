@@ -112,6 +112,7 @@ use revm::{
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
+use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -4301,7 +4302,15 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
         nonce: u64,
     ) -> Result<FoundryTypedTx> {
-        let mut request = Into::<FoundryTransactionRequest>::into(request);
+        let transaction_type = request.transaction_type;
+        let mut request: FoundryTransactionRequest =
+            request.try_into().map_err(|_| BlockchainError::FailedToDecodeTransaction)?;
+        if matches!(&request, FoundryTransactionRequest::Tempo(_))
+            && self.backend.is_tempo()
+            && transaction_type.is_some_and(|ty| ty != TEMPO_TX_TYPE_ID)
+        {
+            return Err(BlockchainError::FailedToDecodeTransaction);
+        }
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
             request.set_from(from);
@@ -4310,7 +4319,11 @@ impl EthApi<FoundryNetwork> {
         // Fill common fields for all tx types
         request.chain_id().is_none().then(|| request.set_chain_id(self.chain_id()));
         request.nonce().is_none().then(|| request.set_nonce(nonce));
-        request.kind().is_none().then(|| request.set_kind(TxKind::default()));
+        let is_tempo_batch =
+            matches!(&request, FoundryTransactionRequest::Tempo(tx) if !tx.calls.is_empty());
+        if request.kind().is_none() && !is_tempo_batch {
+            request.set_kind(TxKind::default());
+        }
         if request.gas_limit().is_none() {
             let fallback_gas_limit = {
                 let evm_env = self.backend.evm_env().read();
@@ -4321,17 +4334,20 @@ impl EthApi<FoundryNetwork> {
                     block_gas_limit
                 }
             };
-            let estimated_gas = self
-                .do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
-                .await
-                .map(|v| v as u64)
-                .unwrap_or_else(|_| {
-                    if is_simple_transfer_request(request.as_ref()) {
-                        MIN_TRANSACTION_GAS as u64
-                    } else {
-                        fallback_gas_limit
-                    }
-                });
+            let estimated_gas = if matches!(&request, FoundryTransactionRequest::Tempo(_)) {
+                fallback_gas_limit
+            } else {
+                self.do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
+                    .await
+                    .map(|v| v as u64)
+                    .unwrap_or_else(|_| {
+                        if is_simple_transfer_request(request.as_ref()) {
+                            MIN_TRANSACTION_GAS as u64
+                        } else {
+                            fallback_gas_limit
+                        }
+                    })
+            };
             request.set_gas_limit(estimated_gas);
         }
 
