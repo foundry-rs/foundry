@@ -13,7 +13,7 @@ use crate::{
     },
     mem::{self, in_memory_db::StateRootDb},
 };
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -1361,6 +1361,35 @@ impl NodeConfig {
         Ok((db, Some(fork)))
     }
 
+    fn fork_provider(&self, eth_rpc_url: &str) -> Result<RetryProvider> {
+        ProviderBuilder::new(eth_rpc_url)
+            .timeout(self.fork_request_timeout)
+            .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+            .compute_units_per_second(self.compute_units_per_second)
+            .max_retry(self.fork_request_retries)
+            .headers(self.fork_headers.clone())
+            .build()
+            .wrap_err("failed to establish provider to fork url")
+    }
+
+    pub(crate) async fn detect_fork_network(&self, eth_rpc_url: &str) -> Result<NetworkConfigs> {
+        let chain_id = self
+            .fork_provider(eth_rpc_url)?
+            .get_chain_id()
+            .await
+            .wrap_err("failed to fetch network chain ID")?;
+        if chain_id == self.get_chain_id() && self.networks.active_network_name().is_some() {
+            return Ok(self.networks);
+        }
+        let detected = NetworkConfigs::default().with_chain_id(chain_id);
+
+        if detected.active_network_name().is_some() || Chain::from_id(chain_id).named().is_some() {
+            Ok(detected)
+        } else {
+            Ok(self.networks)
+        }
+    }
+
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
     ///  - returning a tuple of a [ForkedDatabase] and [ClientForkConfig] which can be used to build
     ///    a [ClientFork] to fork from.
@@ -1377,16 +1406,7 @@ impl NodeConfig {
         // Always bootstrap with the primary URL only to avoid race conditions
         // where discovery calls (get_chain_id, find_latest_fork_block, get_block)
         // hit different endpoints that may be at different chain tips.
-        let provider = Arc::new(
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(self.fork_request_retries)
-                .headers(self.fork_headers.clone())
-                .build()
-                .wrap_err("failed to establish provider to fork url")?,
-        );
+        let provider = Arc::new(self.fork_provider(&eth_rpc_url)?);
 
         let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
             &self.fork_choice

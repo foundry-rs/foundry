@@ -2850,6 +2850,12 @@ impl<N: Network> Backend<N> {
 
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
+        let target_rpc_url =
+            forking.json_rpc_url.clone().or_else(|| self.get_fork()?.eth_rpc_url());
+        if let Some(target_rpc_url) = target_rpc_url.as_deref() {
+            self.ensure_reset_network(target_rpc_url).await?;
+        }
+
         if !self.is_fork() {
             if let Some(eth_rpc_url) = forking.json_rpc_url.clone() {
                 let mut evm_env = self.evm_env.read().clone();
@@ -2886,7 +2892,6 @@ impl<N: Network> Backend<N> {
             // reset the fork entirely and reapply the genesis config
             let reset_urls =
                 forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
-            let target_rpc_url = forking.json_rpc_url.clone().or_else(|| fork.eth_rpc_url());
             let rpc_url_changed = target_rpc_url != fork.database_rpc_url();
             fork.prepare_reset(reset_urls, block_number.into()).await?;
             if rpc_url_changed {
@@ -2988,6 +2993,20 @@ impl<N: Network> Backend<N> {
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
         }
+    }
+
+    async fn ensure_reset_network(&self, fork_url: &str) -> Result<(), BlockchainError> {
+        let node_config = self.node_config.read().await.clone();
+        let target_networks = node_config.detect_fork_network(fork_url).await?;
+        let current = self.networks.active_network_name().unwrap_or("ethereum");
+        let target = target_networks.active_network_name().unwrap_or("ethereum");
+        if current != target && (self.networks.is_monad() || target_networks.is_monad()) {
+            return Err(RpcError::invalid_params(format!(
+                "cannot reset Anvil across network families ({current} -> {target}); start a new instance with `--network {target}`"
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     /// Resets the backend to a fresh in-memory state, clearing all existing data

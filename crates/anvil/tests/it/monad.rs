@@ -411,6 +411,36 @@ async fn monad_reset_can_start_forking_with_monad_execution() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn plain_anvil_rejects_reset_to_monad_fork() {
+    let origin_config = monad_nine_config().with_chain_id(Some(143u64));
+    let (_origin_api, origin_handle) = spawn(origin_config).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let err = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(origin_handle.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("cannot reset Anvil across network families (ethereum -> monad)"),
+        "unexpected error: {err}"
+    );
+
+    let node_info = api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network, None);
+    assert_eq!(node_info.fork_config.fork_url, None);
+
+    let tx = TransactionRequest::default()
+        .with_to(RESERVE_BALANCE_ADDRESS)
+        .with_input(DIPPED_INTO_RESERVE_SELECTOR);
+    let result = handle.http_provider().call(tx.into()).await.unwrap();
+    assert!(result.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_safe_and_finalized_block_tags_use_configured_epoch_slots() {
     let slots_in_an_epoch = 3;
     let config = monad_eight_config().with_slots_in_an_epoch(slots_in_an_epoch);
