@@ -73,36 +73,6 @@ impl FoundryTransactionRequest {
         }
     }
 
-    /// Fallibly parses an RPC request, optionally inferring Tempo from extension fields.
-    pub fn try_from_rpc_request(
-        tx: WithOtherFields<TransactionRequest>,
-        infer_tempo: bool,
-    ) -> serde_json::Result<Self> {
-        let has_tempo_fields =
-            TEMPO_REQUEST_FIELDS.iter().any(|field| tx.other.contains_key(*field));
-        if infer_tempo
-            && tx.transaction_type.is_some_and(|ty| ty != TEMPO_TX_TYPE_ID)
-            && has_tempo_fields
-        {
-            return Err(serde_json::Error::io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Tempo fields conflict with explicit non-Tempo transaction type",
-            )));
-        }
-        if infer_tempo || tx.transaction_type == Some(TEMPO_TX_TYPE_ID) {
-            return tx.try_into();
-        }
-
-        #[cfg(feature = "optimism")]
-        if tx.transaction_type == Some(DEPOSIT_TX_TYPE_ID)
-            || tx.transaction_type == Some(POST_EXEC_TX_TYPE_ID)
-            || get_deposit_tx_parts(&tx.other).is_ok()
-        {
-            return Ok(Self::Op(tx));
-        }
-        Ok(Self::Ethereum(tx.inner))
-    }
-
     /// Get the deposit transaction parts from the request, calling [`get_deposit_tx_parts`] helper
     /// with OtherFields.
     ///
@@ -832,7 +802,7 @@ mod tests {
         )
         .unwrap();
 
-        let decoded = FoundryTransactionRequest::try_from_rpc_request(request, true).unwrap();
+        let decoded = FoundryTransactionRequest::try_from(request).unwrap();
 
         let FoundryTransactionRequest::Tempo(decoded) = decoded else { panic!() };
         assert_eq!(*decoded, expected);
@@ -847,30 +817,6 @@ mod tests {
             FoundryTransactionRequest::new(WithOtherFields { inner: default_tx_req(), other });
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_tempo_fields_conflict_with_explicit_ethereum_type() {
-        let request = serde_json::from_value::<WithOtherFields<TransactionRequest>>(
-            serde_json::json!({ "type": "0x2", "calls": [] }),
-        )
-        .unwrap();
-
-        let error = FoundryTransactionRequest::try_from_rpc_request(request, true).unwrap_err();
-
-        assert!(error.to_string().contains("conflict"), "{error}");
-    }
-
-    #[test]
-    fn test_tempo_fields_are_not_inferred_on_other_networks() {
-        let request = serde_json::from_value::<WithOtherFields<TransactionRequest>>(
-            serde_json::json!({ "calls": [] }),
-        )
-        .unwrap();
-
-        let request = FoundryTransactionRequest::try_from_rpc_request(request, false).unwrap();
-
-        assert!(matches!(request, FoundryTransactionRequest::Ethereum(_)));
     }
 
     #[test]

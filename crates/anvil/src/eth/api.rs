@@ -112,6 +112,7 @@ use revm::{
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
+use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -4301,9 +4302,15 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
         nonce: u64,
     ) -> Result<FoundryTypedTx> {
-        let mut request =
-            FoundryTransactionRequest::try_from_rpc_request(request, self.backend.is_tempo())
-                .map_err(|_| BlockchainError::FailedToDecodeTransaction)?;
+        let transaction_type = request.transaction_type;
+        let mut request: FoundryTransactionRequest =
+            request.try_into().map_err(|_| BlockchainError::FailedToDecodeTransaction)?;
+        if matches!(&request, FoundryTransactionRequest::Tempo(_))
+            && self.backend.is_tempo()
+            && transaction_type.is_some_and(|ty| ty != TEMPO_TX_TYPE_ID)
+        {
+            return Err(BlockchainError::FailedToDecodeTransaction);
+        }
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
             request.set_from(from);
