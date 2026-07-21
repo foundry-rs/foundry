@@ -36,15 +36,15 @@ contract Contract layout at 69 {
         private
         constant
         override BYTES =
-            0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
+        0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
     bytes32
         private
         constant
         override BYTES_VERY_VERY_VERY_LONG =
-            0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
+        0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
     bytes32 private constant
         BYTES_VERY_VERY_LONG =
-            0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
+        0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
 
     uint256 constant POWER_EXPRESSION =
         10 ** 27;

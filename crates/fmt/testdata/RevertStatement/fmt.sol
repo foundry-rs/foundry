@@ -18,26 +18,26 @@ contract RevertStatement {
 
         // comment2
         revert(
-            // comment3
-        );
+                // comment3
+            );
 
         revert(message);
 
         revert(
-            // comment4
-            message // comment5 /* comment6 */
-        );
+                // comment4
+                message // comment5 /* comment6 */
+            );
 
         revert( /* comment7 */ /* comment8 */
-            message /* comment9 */
-        ); /* comment10 */ // comment11
+                message /* comment9 */
+            ); /* comment10 */ // comment11
 
         revert(
             string.concat(
                 message,
                 someVeryLongFunctionNameToGetDynamicErrorMessageString(
-                    /* comment12 */
-                )
+                        /* comment12 */
+                    )
             )
         );
 

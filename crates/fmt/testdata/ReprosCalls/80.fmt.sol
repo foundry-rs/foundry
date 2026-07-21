@@ -9,7 +9,9 @@ function repros() public {
     address lerp = LerpFactoryLike(lerpFab())
         .newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
 
-    (oracleRouter, eVault) = execute(
+    (
+        oracleRouter, eVault
+    ) = execute(
         oracleRouterFactory,
         deployRouterForOracle,
         eVaultFactory,
@@ -55,11 +57,11 @@ function repros() public {
             LidoFundamentalOracle(adapter).WETH()
         );
 
-    (bool success, bytes memory data) = GenericFactory(eVaultFactory)
-        .implementation()
-        .staticcall(
-            abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0))
-        );
+    (bool success, bytes memory data) =
+        GenericFactory(eVaultFactory).implementation()
+            .staticcall(
+                abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0))
+            );
 
     IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
 
@@ -87,22 +89,25 @@ function repros() public {
         )
     });
 
-    uint256 fork =
-        vm.createSelectFork("arbitrum", bytes32(0xdeadc0ffeedeadbeef));
+    uint256 fork = vm.createSelectFork(
+        "arbitrum", bytes32(0xdeadc0ffeedeadbeef)
+    );
 
-    ConstructorVictim victim =
-        new ConstructorVictim(sender, "msg.sender", "not set during prank");
+    ConstructorVictim victim = new ConstructorVictim(
+        sender, "msg.sender", "not set during prank"
+    );
 
     vm._expectCheatcodeRevert("short msg doesn't break");
     vm._expectCheatcodeRevert(
         "failed parsing as `uint256`: missing hex prefix for hex string"
     );
     vm.thisIsJustAReallyLongMemberWithoutAcall.LetsSeeHowItBreaks
-        .willItBreakAsIntendedOrNot;
+    .willItBreakAsIntendedOrNot;
 
     bytes4[] memory targets = new bytes4[](0);
-    targets[0] =
-        FuzzArtifactSelector("TargetArtifactSelectors.t.sol:Hi", selectors);
+    targets[0] = FuzzArtifactSelector(
+        "TargetArtifactSelectors.t.sol:Hi", selectors
+    );
 
     emit IERC712View.Transfer(
         Create3.predict(_salt, address(_deployer)), address(o), id
@@ -145,27 +150,23 @@ contract Repros {
             );
         }
 
-        ISettlerBase.AllowedSlippage memory allowedSlippage =
-            ISettlerBase.AllowedSlippage({
-                recipient: payable(address(0)),
-                buyToken: IERC20(address(0)),
-                minAmountOut: 0
-            });
-        ISettlerBase.AllowedSlippage memory allowedSlippage =
-            ISettlerBase.AllowedSlippage({
-                recipient: payable(address(0)),
-                buyToken: IERC20(address(0)),
-                minAmountOut: 0
-            });
+        ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
+            recipient: payable(address(0)),
+            buyToken: IERC20(address(0)),
+            minAmountOut: 0
+        });
+        ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
+            recipient: payable(address(0)),
+            buyToken: IERC20(address(0)),
+            minAmountOut: 0
+        });
 
-        ISignatureTransfer.PermitTransferFrom memory permit =
-            defaultERC20PermitTransfer(
+        ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
                 address(fromToken()),
                 amount(),
                 0 /* nonce */
             );
-        ISignatureTransfer.PermitTransferFrom memory permit =
-            defaultERC20PermitTransfer(
+        ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
                 address(fromToken()),
                 amount(),
                 0 /* nonce */
@@ -173,9 +174,9 @@ contract Repros {
 
         // https://github.com/foundry-rs/foundry/issues/11834
         CurrenciesOutOfOrderOrEqual.selector
-            .revertWith(
-                Currency.unwrap(key.currency0), Currency.unwrap(key.currency1)
-            );
+        .revertWith(
+            Currency.unwrap(key.currency0), Currency.unwrap(key.currency1)
+        );
 
         nestedStruct.withCalls.thatCause
             .aBreak(
@@ -185,10 +186,12 @@ contract Repros {
             );
 
         // https://github.com/foundry-rs/foundry/issues/11835
-        feeGrowthInside0X128 = self.feeGrowthGlobal0X128
-            - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
-        feeGrowthInside0X128 = self.feeGrowthGlobal0X128
-            - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 =
+            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128
+                - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 =
+            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128
+                - upper.feeGrowthOutside0X128;
 
         // https://github.com/foundry-rs/foundry/issues/11875
         lpTail = LpPosition({
@@ -212,8 +215,8 @@ contract Repros {
             streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
         });
         flow.withdraw{
-            value: FLOW_MIN_FEE_WEI /* cmnt */
-        }({
+                value: FLOW_MIN_FEE_WEI /* cmnt */
+            }({
             streamId: defaultStreamId,
             to: users.eve,
             /* cmnt */
