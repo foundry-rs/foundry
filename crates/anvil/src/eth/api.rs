@@ -2925,6 +2925,8 @@ impl EthApi<FoundryNetwork> {
         request: SimulatePayload,
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
+        const DEFAULT_BLOCK_INTERVAL_SECS: u64 = 12;
+
         node_info!("eth_simulateV1");
         if request.block_state_calls.is_empty() {
             return Err(BlockchainError::RpcError(RpcError::invalid_params("empty input")));
@@ -2957,8 +2959,20 @@ impl EthApi<FoundryNetwork> {
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
+        let block_interval = self.backend.time().block_timestamp_interval().unwrap_or_else(|| {
+            self.miner
+                .block_interval()
+                .map(|duration| {
+                    duration
+                        .as_secs()
+                        .saturating_add(u64::from(duration.subsec_nanos() != 0))
+                        .max(1)
+                })
+                .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS)
+        });
         self.on_blocking_task(|this| async move {
-            let simulated_blocks = this.backend.simulate(request, Some(block_request)).await?;
+            let simulated_blocks =
+                this.backend.simulate(request, Some(block_request), block_interval).await?;
             trace!(target : "node", "Simulate status {:?}", simulated_blocks);
 
             Ok(simulated_blocks)
