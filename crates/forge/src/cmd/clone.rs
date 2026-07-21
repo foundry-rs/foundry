@@ -666,31 +666,46 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     Ok(remappings.into_iter().map(|r| r.into_relative(root)).collect())
 }
 
-/// Ensure sources moved entirely into `lib` remain buildable from the project's `src` directory.
+/// Ensure sources moved into `lib` remain buildable from the project's `src` directory.
 fn ensure_source_entrypoint(root: &Path) -> Result<()> {
     let src = root.join("src");
-    if fs::files_with_ext(&src, "sol").next().is_some() {
-        return Ok(());
-    }
-
+    let has_src_sources = fs::files_with_ext(&src, "sol").next().is_some();
     let forge_std = root.join("lib/forge-std");
     let mut sources = fs::files_with_ext(root, "sol")
         .filter(|path| !path.starts_with(&src) && !path.starts_with(&forge_std))
         .collect::<Vec<_>>();
-    eyre::ensure!(!sources.is_empty(), "no Solidity sources found in cloned contract");
+    if sources.is_empty() {
+        eyre::ensure!(has_src_sources, "no Solidity sources found in cloned contract");
+        return Ok(());
+    }
     sources.sort_unstable();
 
     let imports = sources
         .into_iter()
         .enumerate()
-        .map(|(index, path)| {
-            let path = path.strip_prefix(root)?;
-            Ok(format!("import * as CloneSource{index} from \"../{}\";", path.to_slash_lossy()))
-        })
+        .map(|(index, path)| source_import(root, index, &path))
         .collect::<Result<Vec<_>>>()?
         .join("\n");
-    fs::write(src.join("Clone.sol"), format!("{imports}\n"))?;
+    let mut entrypoint = src.join("Clone.sol");
+    let mut index = 0;
+    while entrypoint.exists() {
+        index += 1;
+        entrypoint = src.join(format!("Clone{index}.sol"));
+    }
+    fs::write(entrypoint, format!("{imports}\n"))?;
     Ok(())
+}
+
+/// Return a namespaced import for a source path that is safe to embed in Solidity.
+fn source_import(root: &Path, index: usize, path: &Path) -> Result<String> {
+    let path = path.strip_prefix(root)?;
+    eyre::ensure!(path.to_str().is_some(), "source path is not valid UTF-8: {path:?}");
+    let path = path.to_slash_lossy();
+    eyre::ensure!(
+        !path.chars().any(|c| c == '"' || c == '\\' || c.is_control()),
+        "source path contains characters unsupported in a Solidity import: {path:?}"
+    );
+    Ok(format!("import * as CloneSource{index} from \"../{path}\";"))
 }
 
 /// Compile the project in the root directory, and return the compilation result.
@@ -1246,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    fn test_adds_entrypoint_for_library_only_sources() {
+    fn test_adds_entrypoint_for_library_sources() {
         let temp = tempfile::tempdir().unwrap();
         let src = temp.path().join("src");
         let library = temp.path().join("lib/dependency/src");
@@ -1256,6 +1271,7 @@ mod tests {
         std::fs::create_dir_all(&library).unwrap();
         std::fs::create_dir_all(&other_library).unwrap();
         std::fs::create_dir_all(&forge_std).unwrap();
+        std::fs::write(src.join("Unrelated.sol"), "contract Unrelated {}").unwrap();
         std::fs::write(library.join("AToken.sol"), "contract AToken {}").unwrap();
         std::fs::write(library.join("Helper.sol"), "contract Helper {}").unwrap();
         std::fs::write(other_library.join("Helper.sol"), "contract Helper {}").unwrap();
@@ -1275,6 +1291,20 @@ mod tests {
              import * as CloneSource2 from \"../lib/other/src/Helper.sol\";\n"
         );
         compile_project(temp.path()).unwrap();
+    }
+
+    #[test]
+    fn test_rejects_unsafe_source_import_path() {
+        let root = Path::new("root");
+        let path = root.join("lib/dependency/Unsafe\"Source.sol");
+
+        let err = source_import(root, 0, &path).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "source path contains characters unsupported in a Solidity import: \
+             \"lib/dependency/Unsafe\\\"Source.sol\""
+        );
     }
 
     /// Fetch the metadata and creation data from Etherscan and dump them to the testdata folder.
