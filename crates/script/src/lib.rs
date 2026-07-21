@@ -386,7 +386,7 @@ impl ScriptArgs {
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_generic_script::<MonadEvmNetwork>(config, evm_opts).await;
+            return Box::pin(self.run_generic_script::<MonadEvmNetwork>(config, evm_opts)).await;
         }
 
         #[cfg(feature = "optimism")]

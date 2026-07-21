@@ -164,8 +164,10 @@ struct OpCallDepositInfo;
 
 #[cfg(feature = "monad")]
 pub(crate) type MonadReplayContext = MonadContextAux;
+// Opaque stand-in that keeps feature-independent replay context plumbing type-stable.
 #[cfg(not(feature = "monad"))]
-pub(crate) type MonadReplayContext = ();
+#[derive(Clone)]
+pub(crate) struct MonadReplayContext;
 
 #[cfg(feature = "monad")]
 enum MonadExecutionContext<'a> {

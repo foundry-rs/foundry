@@ -59,20 +59,20 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     config.networks = evm_opts.networks;
 
     if evm_opts.networks.is_tempo() {
-        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
+        return Box::pin(run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts)).await;
     }
 
     #[cfg(feature = "monad")]
     if evm_opts.networks.is_monad() {
-        return run_command_with_network::<MonadEvmNetwork>(args, config, evm_opts).await;
+        return Box::pin(run_command_with_network::<MonadEvmNetwork>(args, config, evm_opts)).await;
     }
 
     #[cfg(feature = "optimism")]
     if evm_opts.networks.is_optimism() {
-        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
+        return Box::pin(run_command_with_network::<OpEvmNetwork>(args, config, evm_opts)).await;
     }
 
-    run_command_with_network::<EthEvmNetwork>(args, config, evm_opts).await
+    Box::pin(run_command_with_network::<EthEvmNetwork>(args, config, evm_opts)).await
 }
 
 async fn run_command_with_network<FEN: FoundryEvmNetwork>(
