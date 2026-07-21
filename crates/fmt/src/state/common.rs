@@ -1,5 +1,5 @@
 use super::{CommentConfig, Separator, State};
-use crate::pp::{BreakToken, Printer, SIZE_INFINITY};
+use crate::pp::{BreakToken, GroupId, Printer, SIZE_INFINITY};
 use foundry_common::iter::IterDelimited;
 use foundry_config::fmt as config;
 use itertools::{Either, Itertools};
@@ -421,6 +421,9 @@ impl<'ast> State<'_, 'ast> {
             }
             res
         };
+        if let Some(group) = format.break_if {
+            self.s.if_break(group, |p| p.break_parent(), |_| {});
+        }
 
         if let Some(sym) = format.prev_symbol() {
             self.word_space(sym);
@@ -792,6 +795,8 @@ pub(crate) struct ListFormat {
     with_space: bool,
     /// If `true`, the list is enclosed in delimiters.
     with_delimiters: bool,
+    /// Breaks the list when the referenced group breaks.
+    break_if: Option<GroupId>,
 }
 
 /// The kind of formatting style for a list.
@@ -818,6 +823,7 @@ impl Default for ListFormat {
             breaks_cmnts: false,
             with_space: false,
             with_delimiters: true,
+            break_if: None,
         }
     }
 }
@@ -898,6 +904,11 @@ impl ListFormat {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.breaks_cmnts = true;
         }
+        self
+    }
+
+    pub(crate) const fn break_if(mut self, group: GroupId) -> Self {
+        self.break_if = Some(group);
         self
     }
 
