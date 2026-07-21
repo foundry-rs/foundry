@@ -1,5 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
+    campaign::{CampaignCallKind, CampaignControl, CampaignEvent, FuzzCampaign, FuzzCampaignMode},
     corpus::{GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget, WorkerCorpus},
 };
 use alloy_dyn_abi::JsonAbiExt;
@@ -383,7 +384,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
         &self,
-        executor: &Executor<FEN>,
+        executor: &mut Executor<FEN>,
         address: Address,
         mut tx: BasicTxDetails,
         coverage_metrics: &mut WorkerCorpus,
@@ -396,25 +397,56 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         tx.roll = None;
         self.resolve_stateless_tx_with_executor(executor, &mut tx)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
-        let mut call = executor
-            .call_raw(
-                tx.sender,
-                tx.call_details.target,
-                tx.call_details.calldata.clone(),
-                tx.call_details.value.unwrap_or_default(),
+        let campaign = FuzzCampaign::new(FuzzCampaignMode::Stateless);
+        let mut state = (executor, tx);
+        let mut cmp_values = Vec::new();
+        let mut new_coverage = false;
+        let mut checked = None;
+        campaign
+            .run_sequence(
+                &mut state,
+                1,
+                |state| (state.0, &mut state.1),
+                |_| 0,
+                |_| false,
+                |_, event| {
+                    match event {
+                        CampaignEvent::Feedback(call) => {
+                            cmp_values = call.evm_cmp_values.take().unwrap_or_default();
+                            new_coverage = coverage_metrics.merge_edge_coverage(call);
+                        }
+                        CampaignEvent::Check { result, kind, .. } => {
+                            checked = Some((
+                                result.take().expect("campaign check result is available"),
+                                kind,
+                            ));
+                            return Ok(CampaignControl::Stop);
+                        }
+                        CampaignEvent::Advance | CampaignEvent::Next { .. } => {
+                            unreachable!("depth-one campaigns cannot advance")
+                        }
+                        CampaignEvent::PostCheck => {}
+                    }
+                    Ok(CampaignControl::Continue)
+                },
             )
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
-        let cmp_values = call.evm_cmp_values.take().unwrap_or_default();
-        let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+        let (mut call, kind) = checked.expect("depth-one campaign emits a check event");
+        let tx = state.1.clone();
         // `new_coverage` is only meaningful when edge coverage is collected; otherwise
         // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
         let frontier_new_coverage =
             self.config.corpus.collect_edge_coverage().then_some(new_coverage);
         frontier_recorder.capture_stateless_call(fuzz_run, &tx, &cmp_values, frontier_new_coverage);
-        coverage_metrics.process_inputs(&[tx.clone()], &[cmp_values], new_coverage, None);
+        coverage_metrics.process_inputs(
+            std::slice::from_ref(&tx),
+            &[cmp_values],
+            new_coverage,
+            None,
+        );
 
         // Handle `vm.assume`.
-        if call.result.as_ref() == MAGIC_ASSUME {
+        if kind == CampaignCallKind::AssumptionRejected {
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
@@ -432,7 +464,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         {
             true
         } else {
-            executor.is_raw_call_mut_success(address, &mut call, false)
+            state.0.is_raw_call_mut_success(address, &mut call, false)
         };
 
         if success {
@@ -794,7 +826,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             match self.single_fuzz(
-                &executor,
+                &mut executor,
                 address,
                 input,
                 &mut corpus,
