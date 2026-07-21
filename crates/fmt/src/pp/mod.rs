@@ -162,7 +162,7 @@ pub struct Printer {
     /// The token most recently popped from the left boundary of the
     /// ring-buffer for printing.
     last_printed: Option<Token>,
-    pending_line_suffixes: Vec<Vec<Token>>,
+    pending_line_suffixes: Vec<(Vec<Token>, Vec<GroupId>)>,
 
     /// Target line width.
     margin: isize,
@@ -417,7 +417,8 @@ impl Printer {
     fn scan_line_suffix(&mut self, tokens: Vec<Token>) {
         let size = flat_size(&tokens, self.tab_width);
         if self.scan_stack.is_empty() {
-            self.pending_line_suffixes.push(tokens);
+            let groups = self.group_stack.iter().flatten().copied().collect();
+            self.pending_line_suffixes.push((tokens, groups));
         } else {
             self.buf.push(BufEntry {
                 token: Token::LineSuffix(tokens),
@@ -490,7 +491,8 @@ impl Printer {
                 Token::End => self.print_end(),
                 Token::LineSuffix(tokens) => {
                     self.left_total = self.left_total.saturating_add(left.size).min(SIZE_INFINITY);
-                    self.pending_line_suffixes.push(tokens.clone());
+                    let groups = self.group_stack.iter().flatten().copied().collect();
+                    self.pending_line_suffixes.push((tokens.clone(), groups));
                 }
                 Token::BreakChildren(_) | Token::FlattenChildren(_) | Token::SetIndent(..) => {
                     unreachable!("unresolved child-layout marker")
@@ -637,7 +639,7 @@ impl Printer {
     }
 
     fn flush_line_suffixes(&mut self) {
-        for tokens in std::mem::take(&mut self.pending_line_suffixes) {
+        for (tokens, enclosing_groups) in std::mem::take(&mut self.pending_line_suffixes) {
             let mut renderer =
                 Self::new_inner(self.margin as usize, self.indent_config, self.tab_width, false);
             renderer.space = self.space;
@@ -653,6 +655,11 @@ impl Printer {
             self.pending_indentation = renderer.pending_indentation;
             self.group_states.extend(renderer.group_states);
             self.choice_states.extend(renderer.choice_states);
+            if renderer.out.contains('\n') {
+                for group in enclosing_groups {
+                    self.group_states.insert(group, true);
+                }
+            }
         }
     }
 
@@ -796,7 +803,7 @@ fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
     let mut probes = Vec::new();
     let mut total = 0usize;
     for index in 0..tokens.len() {
-        match &tokens[index] {
+        match &mut tokens[index] {
             Token::Begin(begin) => stack.push((index, begin.probe.is_some().then_some(total))),
             Token::End => {
                 let (start, probe_start) = stack.pop().expect("unmatched end token");
@@ -810,6 +817,7 @@ fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
             }
             Token::Break(token) => total = total.saturating_add(token.blank_space),
             Token::LineSuffix(tokens) => {
+                annotate_probe_sizes(tokens, tab_width);
                 total = total.saturating_add(flat_size(tokens, tab_width) as usize)
             }
             Token::BreakChildren(_) | Token::FlattenChildren(_) | Token::SetIndent(..) => {}
@@ -822,105 +830,129 @@ fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
 }
 
 fn force_break_children(tokens: &mut Vec<Token>) {
-    for token in tokens.iter_mut() {
-        if let Token::LineSuffix(tokens) = token {
-            force_break_children(tokens);
+    fn collect(tokens: &[Token], targets: &mut HashSet<GroupId>) {
+        for token in tokens {
+            match token {
+                Token::BreakChildren(group) => {
+                    targets.insert(*group);
+                }
+                Token::LineSuffix(tokens) => collect(tokens, targets),
+                _ => {}
+            }
         }
     }
-    let targets = tokens
-        .iter()
-        .filter_map(|token| match token {
-            Token::BreakChildren(group) => Some(*group),
-            _ => None,
-        })
-        .collect::<HashSet<_>>();
+
+    fn apply(tokens: &mut Vec<Token>, targets: &HashSet<GroupId>, active: &mut usize) {
+        let mut stack = Vec::new();
+        for token in tokens.iter_mut() {
+            match token {
+                Token::Begin(begin) => {
+                    if *active > 0 {
+                        begin.force_break = true;
+                    }
+                    let targeted = begin.group.is_some_and(|group| targets.contains(&group));
+                    stack.push(targeted);
+                    *active += usize::from(targeted);
+                }
+                Token::End if stack.pop().expect("unmatched end token") => *active -= 1,
+                Token::End => {}
+                Token::LineSuffix(tokens) => apply(tokens, targets, active),
+                _ => {}
+            }
+        }
+        tokens.retain(|token| !matches!(token, Token::BreakChildren(_)));
+    }
+
+    let mut targets = HashSet::new();
+    collect(tokens, &mut targets);
     if targets.is_empty() {
         return;
     }
-
-    let mut stack = Vec::new();
     let mut active = 0usize;
-    for token in tokens.iter_mut() {
-        match token {
-            Token::Begin(begin) => {
-                if active > 0 {
-                    begin.force_break = true;
-                }
-                let targeted = begin.group.is_some_and(|group| targets.contains(&group));
-                stack.push(targeted);
-                active += usize::from(targeted);
-            }
-            Token::End if stack.pop().expect("unmatched end token") => active -= 1,
-            Token::End => {}
-            _ => {}
-        }
-    }
-    tokens.retain(|token| !matches!(token, Token::BreakChildren(_)));
+    apply(tokens, &targets, &mut active);
 }
 
 fn flatten_children(tokens: &mut Vec<Token>) {
-    for token in tokens.iter_mut() {
-        if let Token::LineSuffix(tokens) = token {
-            flatten_children(tokens);
+    fn collect(tokens: &[Token], targets: &mut HashSet<GroupId>) {
+        for token in tokens {
+            match token {
+                Token::FlattenChildren(group) => {
+                    targets.insert(*group);
+                }
+                Token::LineSuffix(tokens) => collect(tokens, targets),
+                _ => {}
+            }
         }
     }
-    let targets = tokens
-        .iter()
-        .filter_map(|token| match token {
-            Token::FlattenChildren(group) => Some(*group),
-            _ => None,
-        })
-        .collect::<HashSet<_>>();
+
+    fn apply(tokens: &mut Vec<Token>, targets: &HashSet<GroupId>, active: &mut usize) {
+        let mut stack = Vec::new();
+        for token in tokens.iter_mut() {
+            match token {
+                Token::Begin(begin) => {
+                    let targeted = begin.group.is_some_and(|group| targets.contains(&group));
+                    stack.push(targeted);
+                    *active += usize::from(targeted);
+                }
+                Token::End if stack.pop().expect("unmatched end token") => *active -= 1,
+                Token::End => {}
+                Token::Break(token)
+                    if *active > 0 && token.blank_space < SIZE_INFINITY as usize =>
+                {
+                    token.never_break = true;
+                }
+                Token::LineSuffix(tokens) => apply(tokens, targets, active),
+                _ => {}
+            }
+        }
+        tokens.retain(|token| !matches!(token, Token::FlattenChildren(_)));
+    }
+
+    let mut targets = HashSet::new();
+    collect(tokens, &mut targets);
     if targets.is_empty() {
         return;
     }
-
-    let mut stack = Vec::new();
     let mut active = 0usize;
-    for token in tokens.iter_mut() {
-        match token {
-            Token::Begin(begin) => {
-                let targeted = begin.group.is_some_and(|group| targets.contains(&group));
-                stack.push(targeted);
-                active += usize::from(targeted);
-            }
-            Token::End if stack.pop().expect("unmatched end token") => active -= 1,
-            Token::End => {}
-            Token::Break(token) if active > 0 && token.blank_space < SIZE_INFINITY as usize => {
-                token.never_break = true;
-            }
-            _ => {}
-        }
-    }
-    tokens.retain(|token| !matches!(token, Token::FlattenChildren(_)));
+    apply(tokens, &targets, &mut active);
 }
 
 fn set_group_indents(tokens: &mut Vec<Token>) {
-    for token in tokens.iter_mut() {
-        if let Token::LineSuffix(tokens) = token {
-            set_group_indents(tokens);
+    fn collect(tokens: &[Token], indents: &mut HashMap<GroupId, isize>) {
+        for token in tokens {
+            match token {
+                Token::SetIndent(group, indent) => {
+                    indents.insert(*group, *indent);
+                }
+                Token::LineSuffix(tokens) => collect(tokens, indents),
+                _ => {}
+            }
         }
     }
-    let indents = tokens
-        .iter()
-        .filter_map(|token| match token {
-            Token::SetIndent(group, indent) => Some((*group, *indent)),
-            _ => None,
-        })
-        .collect::<HashMap<_, _>>();
+
+    fn apply(tokens: &mut Vec<Token>, indents: &HashMap<GroupId, isize>) {
+        for token in tokens.iter_mut() {
+            match token {
+                Token::Begin(begin) => {
+                    if let Some(group) = begin.group
+                        && let Some(indent) = indents.get(&group)
+                    {
+                        begin.indent = IndentStyle::Block { offset: *indent };
+                    }
+                }
+                Token::LineSuffix(tokens) => apply(tokens, indents),
+                _ => {}
+            }
+        }
+        tokens.retain(|token| !matches!(token, Token::SetIndent(..)));
+    }
+
+    let mut indents = HashMap::new();
+    collect(tokens, &mut indents);
     if indents.is_empty() {
         return;
     }
-
-    for token in tokens.iter_mut() {
-        if let Token::Begin(begin) = token
-            && let Some(group) = begin.group
-            && let Some(indent) = indents.get(&group)
-        {
-            begin.indent = IndentStyle::Block { offset: *indent };
-        }
-    }
-    tokens.retain(|token| !matches!(token, Token::SetIndent(..)));
+    apply(tokens, &indents);
 }
 
 #[cfg(test)]
@@ -1115,6 +1147,49 @@ mod tests {
         p.end();
 
         assert_eq!(p.eof(), "value\n    next");
+    }
+
+    #[test]
+    fn line_suffix_uses_retained_fit_probes() {
+        let mut p = printer();
+        p.word("a_very_long_prefix_that_uses_the_line");
+        let suffix = p.begin_line_suffix();
+        p.choice(|p| p.word(" preferred"), |p| p.word(" fallback"));
+        p.end_line_suffix(suffix);
+
+        assert_eq!(p.eof(), "a_very_long_prefix_that_uses_the_line fallback");
+    }
+
+    #[test]
+    fn child_transforms_cross_line_suffixes() {
+        let mut p = printer();
+        let outer = p.cbox_with_id(0);
+        p.word("value");
+        let suffix = p.begin_line_suffix();
+        p.cbox(4);
+        p.word("left");
+        p.space();
+        p.word("right");
+        p.end();
+        p.end_line_suffix(suffix);
+        p.break_children(outer);
+        p.end();
+
+        assert_eq!(p.eof(), "valueleft\n    right");
+    }
+
+    #[test]
+    fn line_suffix_break_updates_enclosing_group() {
+        let mut p = printer();
+        let outer = p.cbox_with_id(0);
+        p.word("value");
+        let suffix = p.begin_line_suffix();
+        p.hardbreak();
+        p.end_line_suffix(suffix);
+        p.end();
+        p.if_break(outer, |p| p.word("broken"), |p| p.word("flat"));
+
+        assert_eq!(p.eof(), "valuebroken\n");
     }
 
     #[test]
