@@ -240,6 +240,11 @@ impl Printer {
         self.scan_string(w.into());
     }
 
+    /// Emits text without applying the surrounding document's indentation.
+    pub fn verbatim(&mut self, w: impl Into<Cow<'static, str>>) {
+        self.scan_verbatim(w.into());
+    }
+
     fn spaces(&mut self, n: usize) {
         self.break_offset(n, 0);
     }
@@ -312,7 +317,7 @@ impl Printer {
 
     fn token_has_non_whitespace_content(token: &Token) -> bool {
         match token {
-            Token::String(s) => !s.trim().is_empty(),
+            Token::String(s) | Token::Verbatim(s) => !s.trim().is_empty(),
             Token::Break(BreakToken { pre_break: Some(s), .. }) => !s.trim().is_empty(),
             _ => false,
         }

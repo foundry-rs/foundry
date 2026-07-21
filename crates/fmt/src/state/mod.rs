@@ -79,10 +79,6 @@ impl CallStack {
         self.stack.pop()
     }
 
-    pub(crate) fn is_nested(&self) -> bool {
-        self.last().is_some_and(|call| call.is_nested())
-    }
-
     /// Returns true if the direct parent chain has its own indentation.
     /// Used to determine if commasep should skip its own indentation (to avoid double indent).
     pub(crate) const fn has_indented_parent_chain(&self) -> bool {
@@ -298,7 +294,7 @@ impl State<'_, '_> {
 
     fn print_span(&mut self, span: Span) {
         match self.sm.span_to_snippet(span) {
-            Ok(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
+            Ok(s) => self.s.verbatim(if matches!(self.config.style, IndentStyle::Tab) {
                 snippet_with_tabs(s, self.config.tab_width)
             } else {
                 s
@@ -648,7 +644,6 @@ impl<'sess> State<'sess, '_> {
             && current.starts_with(prefix)
             && !next.trim().is_empty()
             && !next_content.starts_with('@')
-            && next_content.split_whitespace().nth(1).is_some()
     }
 
     fn print_wrapped_comment_boundary(&mut self, group: pp::GroupId, joins: bool) {

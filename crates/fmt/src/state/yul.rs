@@ -217,15 +217,18 @@ impl<'ast> State<'_, 'ast> {
                 self.s.cbox(self.ind);
                 self.space();
                 self.print_yul_stmt(stmt);
-                if self.peek_comment_before(stmt.span.hi()).is_none()
-                    && self.peek_trailing_comment(stmt.span.hi(), None).is_none()
-                {
+                let has_comment = self.peek_comment_before(stmt.span.hi()).is_some()
+                    || self.peek_trailing_comment(stmt.span.hi(), None).is_some();
+                if has_comment {
+                    let suffix = self.s.begin_line_suffix();
+                    self.print_comments(
+                        stmt.span.hi(),
+                        CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
+                    );
+                    self.s.end_line_suffix(suffix);
+                } else {
                     self.space();
                 }
-                self.print_comments(
-                    stmt.span.hi(),
-                    CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
-                );
                 if !self.last_token_is_space() {
                     self.space();
                 }

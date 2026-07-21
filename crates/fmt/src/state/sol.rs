@@ -5,7 +5,7 @@ use super::{
     common::{BlockFormat, ListFormat},
 };
 use crate::{
-    pp::SIZE_INFINITY,
+    pp::{FitId, GroupId, SIZE_INFINITY},
     state::{CallContext, common::LitExt},
 };
 use foundry_common::{comments::Comment, iter::IterDelimited};
@@ -501,11 +501,14 @@ impl<'ast> State<'_, 'ast> {
             self.print_ident(&name);
             self.cursor.advance_to(name.span.hi(), true);
         }
-        let params_group = if header_style.attrib_first() {
-            Some(self.s.cbox_with_id(-self.ind))
+        let (params_group, params_fit) = if header_style.attrib_first() {
+            let (group, fit) = self.s.ibox_with_fit(-self.ind);
+            (Some(group), Some(fit))
+        } else if header_style.all() {
+            (Some(self.s.cbox_with_id(-self.ind)), None)
         } else {
             self.s.cbox(-self.ind);
-            None
+            (None, None)
         };
         let params_format = match header_style {
             MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
@@ -529,6 +532,13 @@ impl<'ast> State<'_, 'ast> {
         };
         self.print_parameter_list(parameters, parameters.span, params_format);
         self.end();
+        if let Some(fit) = params_fit {
+            self.s.if_fits(
+                fit,
+                |p| p.flatten_children(params_group.expect("parameter group")),
+                |_| {},
+            );
+        }
 
         // Map attributes to their corresponding comments
         let (mut map, attributes, first_attrib_pos) =
@@ -570,15 +580,6 @@ impl<'ast> State<'_, 'ast> {
             || self.config.multiline_func_header.attrib_first();
         if attrib_box {
             self.s.cbox(0);
-            if header_style.attrib_first() {
-                self.s.if_break(
-                    header_group.unwrap(),
-                    |p| {
-                        p.if_break(params_group.unwrap(), |_| {}, |p| p.break_parent());
-                    },
-                    |_| {},
-                );
-            }
         }
         if !(skip_attribs || skip_returns) {
             // Print fn attributes in correct order
@@ -620,6 +621,14 @@ impl<'ast> State<'_, 'ast> {
                 ret,
                 ret.span,
                 ListFormat::consistent(), // .with_cmnts_break(false),
+            );
+        }
+
+        if header_style.all() {
+            self.s.if_break(
+                header_group.expect("function header group"),
+                |p| p.break_children(params_group.expect("parameter group")),
+                |_| {},
             );
         }
 
@@ -831,6 +840,7 @@ impl<'ast> State<'_, 'ast> {
             || has_complex_successor(&rhs.kind, true);
 
         if binary && !inline_disabled {
+            let (suffix_group, suffix_fit) = self.s.ibox_with_fit(0);
             if !self.is_bol_or_only_ind() {
                 self.print_sep_unhandled(Separator::SpaceOffset(self.ind));
             }
@@ -845,6 +855,8 @@ impl<'ast> State<'_, 'ast> {
             }
             self.end();
             self.s.if_fits(rhs_fit, |p| p.flatten_children(rhs_group), |_| {});
+            self.end();
+            self.s.if_fits(suffix_fit, |p| p.flatten_children(suffix_group), |_| {});
         } else if delegates_layout {
             if !self.is_bol_or_only_ind() {
                 self.print_sep(Separator::Nbsp);
@@ -1232,7 +1244,7 @@ impl<'ast> State<'_, 'ast> {
                     MemberOrCallArgs::CallArgs(
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
-                    |s| {
+                    |s, callee_layout| {
                         let callee_suffix_can_break = callee_has_breakable_comment
                             || match &terminal_callee.kind {
                                 ast::ExprKind::Member(member_expr, _) => {
@@ -1247,6 +1259,7 @@ impl<'ast> State<'_, 'ast> {
                                 .without_ind(s.return_bin_expr)
                                 .with_delimiters(!s.call_with_opts_and_args),
                             callee_suffix_can_break,
+                            callee_layout,
                         );
                     },
                 );
@@ -1259,7 +1272,7 @@ impl<'ast> State<'_, 'ast> {
                 self.call_with_opts_and_args = false;
 
                 self.print_expr(expr);
-                self.print_named_args(named_args, span.hi(), false);
+                self.print_named_args(named_args, span.hi(), false, None);
 
                 // restore cached value
                 self.call_with_opts_and_args = cache;
@@ -1278,7 +1291,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Member(member_expr, ident) => {
-                self.print_member_or_call_chain(member_expr, MemberOrCallArgs::Member, |s| {
+                self.print_member_or_call_chain(member_expr, MemberOrCallArgs::Member, |s, _| {
                     let has_mixed_comment = s
                         .peek_comment_between(member_expr.span.hi(), ident.span.lo())
                         .is_some_and(|comment| comment.style.is_mixed());
@@ -1303,7 +1316,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args, ListFormat::compact().break_cmnts(), false);
+                self.print_call_args(args, ListFormat::compact().break_cmnts(), false, None);
             }
             ast::ExprKind::Ternary(cond, then, els) => self.print_ternary_expr(cond, then, els),
             ast::ExprKind::Tuple(exprs) => self.print_tuple(
@@ -1380,13 +1393,8 @@ impl<'ast> State<'_, 'ast> {
         if !is_chain {
             self.binary_expr = Some(bin_op.kind.group());
 
-            let indent = if (is_assign && has_complex_successor(&rhs.kind, true))
-                || self.call_stack.is_nested() && is_call_chain(&lhs.kind, false)
-            {
-                0
-            } else {
-                self.ind
-            };
+            let indent =
+                if is_assign && has_complex_successor(&rhs.kind, true) { 0 } else { self.ind };
             self.s.ibox(indent);
         }
 
@@ -1592,7 +1600,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name, false);
         if !arguments.is_empty() || add_parens_if_empty {
-            self.print_call_args(arguments, ListFormat::compact().break_cmnts(), false);
+            self.print_call_args(arguments, ListFormat::compact().break_cmnts(), false, None);
         }
     }
 
@@ -1615,16 +1623,8 @@ impl<'ast> State<'_, 'ast> {
         member_or_args: MemberOrCallArgs,
         print_suffix: F,
     ) where
-        F: FnOnce(&mut Self),
+        F: FnOnce(&mut Self, Option<NamedCalleeLayout>),
     {
-        fn member_depth(depth: usize, expr: &ast::Expr<'_>) -> usize {
-            if let ast::ExprKind::Member(child, ..) = &expr.kind {
-                member_depth(depth + 1, child)
-            } else {
-                depth
-            }
-        }
-
         let (mut extra_box, skip_cache) = (false, self.skip_index_break);
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         let is_named_callee = !parent_is_chain
@@ -1649,7 +1649,6 @@ impl<'ast> State<'_, 'ast> {
                 || is_call_chain(&child_expr.kind, true)
                 || !(no_cmnt_or_mixed
                     || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                || member_depth(0, child_expr) >= 2
                 || member_or_args.has_comments();
 
             // Start a new chain if needed
@@ -1667,21 +1666,21 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        let callee_layout = can_flatten_named_callee.then(|| self.s.ibox_with_fit(0));
+        let callee_layout = can_flatten_named_callee.then(|| {
+            let (_, fit) = self.s.ibox_with_fit(0);
+            let callee_group = self.s.ibox_with_id(0);
+            NamedCalleeLayout {
+                callee_group,
+                fit,
+                chain_group: named_chain_group.expect("named callee group"),
+            }
+        });
 
         // Recursively print the child/prefix expression.
         self.print_expr(child_expr);
 
-        if let Some((group, fit)) = callee_layout {
+        if callee_layout.is_some() {
             self.end();
-            self.s.if_fits(
-                fit,
-                |p| {
-                    p.flatten_children(group);
-                    p.set_indent(named_chain_group.expect("named callee group"), 0);
-                },
-                |_| {},
-            );
         }
 
         // If an extra box was opened, close it
@@ -1690,7 +1689,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         // Call the closure to print the suffix for the current link, with the calculated position.
-        print_suffix(self);
+        print_suffix(self, callee_layout);
 
         // If a chain was started, clean up the state and end the box.
         if !parent_is_chain {
@@ -1711,9 +1710,13 @@ impl<'ast> State<'_, 'ast> {
         args: &'ast ast::CallArgs<'ast>,
         format: ListFormat,
         callee_suffix_can_break: bool,
+        callee_layout: Option<NamedCalleeLayout>,
     ) {
         let ast::CallArgs { span, ref kind } = *args;
         if self.handle_span(span, true) {
+            if let Some(layout) = callee_layout {
+                self.finish_named_callee_layout(layout);
+            }
             return;
         }
 
@@ -1736,9 +1739,9 @@ impl<'ast> State<'_, 'ast> {
             ast::CallArgsKind::Named(named_args) => {
                 let without_ind =
                     self.call_stack.has_indented_parent_chain() && !callee_suffix_can_break;
-                self.print_inside_parens(|state| {
-                    state.print_named_args(named_args, span.hi(), without_ind)
-                });
+                self.print_word("(");
+                self.print_named_args(named_args, span.hi(), without_ind, callee_layout);
+                self.print_word(")");
             }
         }
 
@@ -1752,6 +1755,7 @@ impl<'ast> State<'_, 'ast> {
         args: &'ast [ast::NamedArg<'ast>],
         pos_hi: BytePos,
         without_ind: bool,
+        callee_layout: Option<NamedCalleeLayout>,
     ) {
         let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
@@ -1761,6 +1765,9 @@ impl<'ast> State<'_, 'ast> {
         };
 
         self.word("{");
+        if let Some(layout) = callee_layout {
+            self.finish_named_callee_layout(layout);
+        }
         // Use the start position of the first argument's name for comment processing.
         if let Some(first_arg) = args.first() {
             let list_lo = first_arg.name.span.lo();
@@ -1796,6 +1803,18 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         }
         self.word("}");
+    }
+
+    fn finish_named_callee_layout(&mut self, layout: NamedCalleeLayout) {
+        self.end();
+        self.s.if_fits(
+            layout.fit,
+            |p| {
+                p.flatten_children(layout.callee_group);
+                p.set_indent(layout.chain_group, 0);
+            },
+            |_| {},
+        );
     }
 
     /* --- Statements --- */
@@ -2301,7 +2320,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             ListFormat::consistent()
         };
-        self.print_call_args(args, format.break_cmnts(), false);
+        self.print_call_args(args, format.break_cmnts(), false, None);
         self.emit_or_revert = false;
         self.end();
     }
@@ -2398,13 +2417,17 @@ impl<'ast> State<'_, 'ast> {
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
             config::SingleLineBlockStyle::Preserve => {
-                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
+                if self.is_stmt_in_new_line(cond, then)
+                    || matches!(&then.kind, ast::StmtKind::Block(_))
+                        && self.is_multiline_block_stmt(then, true)
                 {
                     return Decision { outcome: false, is_cached: false };
                 }
             }
             config::SingleLineBlockStyle::Single => {
-                if self.is_multiline_block_stmt(then, true) {
+                if matches!(&then.kind, ast::StmtKind::Block(_))
+                    && self.is_multiline_block_stmt(then, true)
+                {
                     return Decision { outcome: false, is_cached: false };
                 }
             }
@@ -2449,21 +2472,6 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>) -> bool {
-        fn has_breakable_call(stmt: &ast::Stmt<'_>) -> bool {
-            match &stmt.kind {
-                ast::StmtKind::Block(block) if let [stmt] = block.stmts.as_ref() => {
-                    has_breakable_call(stmt)
-                }
-                ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call(_, args), .. }) => {
-                    !args.is_empty()
-                }
-                _ => false,
-            }
-        }
-
-        if has_breakable_call(stmt) {
-            return false;
-        }
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
             let if_span = cond.span.to(then.span);
             if self.sm.is_multiline(if_span)
@@ -2661,6 +2669,13 @@ impl<'ast> State<'_, 'ast> {
 enum MemberOrCallArgs {
     Member,
     CallArgs(bool),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NamedCalleeLayout {
+    callee_group: GroupId,
+    fit: FitId,
+    chain_group: GroupId,
 }
 
 impl MemberOrCallArgs {

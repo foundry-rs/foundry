@@ -85,6 +85,7 @@ pub(crate) enum Token {
     // `String`. `Cow` is overkill for this because we never modify the data,
     // but it's more convenient than rolling our own more specialized type.
     String(Cow<'static, str>),
+    Verbatim(Cow<'static, str>),
     Break(BreakToken),
     Begin(BeginToken),
     End,
@@ -262,6 +263,7 @@ impl Printer {
     fn scan_token(&mut self, token: Token) {
         match token {
             Token::String(string) => self.scan_string(string),
+            Token::Verbatim(string) => self.scan_verbatim(string),
             Token::Break(token) => self.scan_break(token),
             Token::Begin(token) => self.scan_begin(token),
             Token::End => self.scan_end(),
@@ -415,6 +417,22 @@ impl Printer {
         }
     }
 
+    fn scan_verbatim(&mut self, string: Cow<'static, str>) {
+        let document_index = self.record(&Token::Verbatim(string.clone()));
+        if self.scan_stack.is_empty() {
+            self.print_verbatim(&string);
+        } else {
+            let size = if string.contains('\n') {
+                SIZE_INFINITY
+            } else {
+                display_width(&string, self.tab_width)
+            };
+            self.buf.push(BufEntry { token: Token::Verbatim(string), size, document_index });
+            self.right_total = self.right_total.saturating_add(size).min(SIZE_INFINITY);
+            self.check_stream();
+        }
+    }
+
     fn scan_line_suffix(&mut self, tokens: Vec<Token>) {
         let size = flat_size(&tokens, self.tab_width);
         if self.scan_stack.is_empty() {
@@ -437,6 +455,7 @@ impl Printer {
             Token::Break(token) => token.offset += offset,
             Token::Begin(_) => {}
             Token::String(_)
+            | Token::Verbatim(_)
             | Token::End
             | Token::LineSuffix(_)
             | Token::BreakChildren(_)
@@ -452,7 +471,7 @@ impl Printer {
 
     pub(crate) fn ends_with(&self, ch: char) -> bool {
         for i in self.buf.index_range().rev() {
-            if let Token::String(token) = &self.buf[i].token {
+            if let Token::String(token) | Token::Verbatim(token) = &self.buf[i].token {
                 return token.ends_with(ch);
             }
         }
@@ -482,6 +501,10 @@ impl Printer {
                 Token::String(string) => {
                     self.left_total += left.size;
                     self.print_string(string);
+                }
+                Token::Verbatim(string) => {
+                    self.left_total = self.left_total.saturating_add(left.size).min(SIZE_INFINITY);
+                    self.print_verbatim(string);
                 }
                 Token::Break(token) => {
                     self.left_total += token.blank_space as isize;
@@ -641,6 +664,16 @@ impl Printer {
         self.space -= display_width(string, self.tab_width);
     }
 
+    fn print_verbatim(&mut self, string: &str) {
+        self.pending_indentation = 0;
+        self.out.push_str(string);
+        if let Some((_, last_line)) = string.rsplit_once('\n') {
+            self.space = self.margin - display_width(last_line, self.tab_width);
+        } else {
+            self.space -= display_width(string, self.tab_width);
+        }
+    }
+
     fn flush_line_suffixes(&mut self) {
         for tokens in std::mem::take(&mut self.pending_line_suffixes) {
             let mut renderer =
@@ -780,6 +813,13 @@ fn flat_size(tokens: &[Token], tab_width: usize) -> isize {
     tokens.iter().fold(0, |size, token| {
         let token_size = match token {
             Token::String(string) => display_width(string, tab_width),
+            Token::Verbatim(string) => {
+                if string.contains('\n') {
+                    SIZE_INFINITY
+                } else {
+                    display_width(string, tab_width)
+                }
+            }
             Token::Break(token) => token.blank_space as isize,
             Token::Begin(_) | Token::End => 0,
             Token::LineSuffix(tokens) => flat_size(tokens, tab_width),
@@ -813,6 +853,13 @@ fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
             }
             Token::String(string) => {
                 total = total.saturating_add(display_width(string, tab_width) as usize)
+            }
+            Token::Verbatim(string) => {
+                total = total.saturating_add(if string.contains('\n') {
+                    SIZE_INFINITY as usize
+                } else {
+                    display_width(string, tab_width) as usize
+                })
             }
             Token::Break(token) => total = total.saturating_add(token.blank_space),
             Token::LineSuffix(tokens) => {
@@ -1223,5 +1270,19 @@ mod tests {
     #[test]
     fn display_width_uses_terminal_columns() {
         assert_eq!(display_width("a界e\u{301}", 4), 4);
+    }
+
+    #[test]
+    fn verbatim_text_ignores_group_indentation() {
+        let mut p = printer();
+        p.cbox(4);
+        p.word("call(");
+        p.hardbreak();
+        p.verbatim("  source\n    text");
+        p.hardbreak();
+        p.word(")");
+        p.end();
+
+        assert_eq!(p.eof(), "call(\n  source\n    text\n    )");
     }
 }
