@@ -128,6 +128,8 @@ pub(super) struct State<'sess, 'ast> {
     return_bin_expr: bool,
     // Whether inside a call with call options and at least one argument.
     call_with_opts_and_args: bool,
+    // The variable declaration group currently being printed.
+    var_group: Option<pp::GroupId>,
     // Callee of the current chained call with named arguments, if any.
     chained_named_call: Option<ChainedNamedCall>,
     // Whether to skip the index soft breaks because the callee fits inline.
@@ -221,6 +223,7 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_with_opts_and_args: false,
+            var_group: None,
             chained_named_call: None,
             skip_index_break: false,
             binary_expr: None,

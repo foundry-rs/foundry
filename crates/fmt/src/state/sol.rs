@@ -423,14 +423,13 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_struct(&mut self, strukt: &'ast ast::ItemStruct<'ast>, span: Span) {
         let ast::ItemStruct { name, fields } = strukt;
-        let ind = if self.estimate_size(name.span) + 8 >= self.space_left() { self.ind } else { 0 };
         self.s.ibox(self.ind);
         self.word("struct");
         self.space();
         self.print_ident(name);
         self.word(" {");
         if !fields.is_empty() {
-            self.break_offset(SIZE_INFINITY as usize, ind);
+            self.break_offset(SIZE_INFINITY as usize, 0);
         }
         self.s.ibox(0);
         for var in fields.iter() {
@@ -440,9 +439,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
         self.print_comments(span.hi(), CommentConfig::skip_ws());
-        if ind == 0 {
-            self.s.offset(-self.ind);
-        }
+        self.s.offset(-self.ind);
         self.end();
         self.end();
         self.word("}");
@@ -974,7 +971,9 @@ impl<'ast> State<'_, 'ast> {
         let mut pre_init_size = self.estimate_size(ty.span);
 
         // Non-elementary types use commasep which has its own padding.
-        self.s.ibox(0);
+        let previous_var_group = self.var_group;
+        let var_group = self.s.ibox_with_id(0);
+        self.var_group = Some(var_group);
         if override_.is_some() {
             self.s.cbox(self.ind);
         } else {
@@ -1030,6 +1029,7 @@ impl<'ast> State<'_, 'ast> {
             self.end();
         }
         self.end();
+        self.var_group = previous_var_group;
     }
 
     fn print_attribute(
@@ -1171,20 +1171,11 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         self.print_comments(key.span.lo(), CommentConfig::skip_ws());
                     }
-                }
-                // Fitting a mapping in one line takes, at least, 16 chars (one-char var name):
-                // 'mapping(' + {key} + ' => ' {value} ') ' + {name} + ';'
-                // To be more conservative, we use 18 to decide whether to force a break or not.
-                else if 18
-                    + self.estimate_size(key.span)
-                    + key_name.map(|k| self.estimate_size(k.span)).unwrap_or(0)
-                    + self.estimate_size(value.span)
-                    + value_name.map(|v| self.estimate_size(v.span)).unwrap_or(0)
-                    >= self.space_left()
-                {
-                    self.hardbreak();
                 } else {
                     self.zerobreak();
+                }
+                if let Some(group) = self.var_group {
+                    self.s.if_break(group, |p| p.break_parent(), |_| {});
                 }
                 self.s.cbox(0);
                 self.print_ty(key);
@@ -2025,7 +2016,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_sep(Separator::Nbsp);
             }
         }
-        self.print_yul_block(block, block.span, false, 9);
+        self.print_yul_block(block, block.span, false);
     }
 
     /// Prints a multiple-variable declaration with a single initializer expression,
@@ -2036,8 +2027,6 @@ impl<'ast> State<'_, 'ast> {
         vars: &'ast BoxSlice<'ast, SpannedOption<ast::VariableDefinition<'ast>>>,
         init_expr: &'ast ast::Expr<'ast>,
     ) {
-        let space_left = self.space_left();
-
         self.s.ibox(self.ind);
         self.s.ibox(-self.ind);
         self.print_tuple(
@@ -2060,16 +2049,8 @@ impl<'ast> State<'_, 'ast> {
         self.end();
         self.word(" =");
 
-        if self.estimate_size(init_expr.span) + self.config.tab_width
-            <= std::cmp::max(space_left, self.space_left())
-        {
-            self.print_sep(Separator::Space);
-            self.ibox(0);
-        } else {
-            self.print_sep(Separator::Nbsp);
-            self.neverbreak();
-            self.s.ibox(-self.ind);
-        }
+        self.print_sep(Separator::Space);
+        self.ibox(0);
         self.print_expr(init_expr);
         self.end();
         self.end();
@@ -2216,19 +2197,11 @@ impl<'ast> State<'_, 'ast> {
             self.hardbreak_if_not_bol();
         }
 
-        let space_left = self.space_left();
-        let expr_size = expr.as_ref().map_or(0, |expr| self.estimate_size(expr.span));
-
-        // `return ' + expr + ';'
-        let overflows = space_left < 8 + expr_size;
-        let fits_alone = space_left > expr_size;
-
         if let Some(expr) = expr {
             let is_simple = matches!(expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
-            let allow_break = overflows && fits_alone;
 
             self.return_bin_expr = matches!(expr.kind, ast::ExprKind::Binary(..));
-            self.s.ibox(if is_simple || allow_break { self.ind } else { 0 });
+            self.s.ibox(if is_simple { self.ind } else { 0 });
 
             self.print_word("return");
 
@@ -2237,7 +2210,7 @@ impl<'ast> State<'_, 'ast> {
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
             ) {
                 Some(cmnt) if cmnt.is_trailing() && !is_simple => self.s.offset(self.ind),
-                None => self.print_sep(Separator::SpaceOrNbsp(allow_break)),
+                None => self.print_sep(Separator::SpaceOrNbsp(is_simple)),
                 _ => {}
             }
 
