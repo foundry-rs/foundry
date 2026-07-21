@@ -1073,8 +1073,7 @@ mod tests {
     #[test]
     fn create2_deployer_availability_default_is_conservative() {
         let config = Arc::new(Config::default());
-        let mut builder =
-            MultiContractRunnerBuilder::new(config.clone(), Arc::new(InlineConfig::new()));
+        let mut builder = MultiContractRunnerBuilder::new(config, Arc::new(InlineConfig::new()));
         let mut evm_opts = EvmOpts::default();
         assert!(builder.create2_deployer_available(&evm_opts));
 

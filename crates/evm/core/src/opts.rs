@@ -552,8 +552,8 @@ mod tests {
 
     #[tokio::test]
     async fn create2_deployer_availability_requires_resolved_fork_block() {
-        let mut evm_opts = EvmOpts::default();
-        evm_opts.fork_url = Some("http://127.0.0.1:1".to_string());
+        let evm_opts =
+            EvmOpts { fork_url: Some("http://127.0.0.1:1".to_string()), ..Default::default() };
 
         let err = evm_opts.can_use_create2_deployer(None).await.unwrap_err();
         assert!(err.to_string().contains("fork block must be resolved"));
