@@ -850,11 +850,8 @@ fn force_break_children(tokens: &mut Vec<Token>) {
                 stack.push(targeted);
                 active += usize::from(targeted);
             }
-            Token::End => {
-                if stack.pop().expect("unmatched end token") {
-                    active -= 1;
-                }
-            }
+            Token::End if stack.pop().expect("unmatched end token") => active -= 1,
+            Token::End => {}
             _ => {}
         }
     }
@@ -887,11 +884,8 @@ fn flatten_children(tokens: &mut Vec<Token>) {
                 stack.push(targeted);
                 active += usize::from(targeted);
             }
-            Token::End => {
-                if stack.pop().expect("unmatched end token") {
-                    active -= 1;
-                }
-            }
+            Token::End if stack.pop().expect("unmatched end token") => active -= 1,
+            Token::End => {}
             Token::Break(token) if active > 0 && token.blank_space < SIZE_INFINITY as usize => {
                 token.never_break = true;
             }
