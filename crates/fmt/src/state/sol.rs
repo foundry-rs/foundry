@@ -1596,7 +1596,7 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn member_suffix_emits_break(&self, member_expr: &ast::Expr<'_>) -> bool {
+    const fn member_suffix_emits_break(&self, member_expr: &ast::Expr<'_>) -> bool {
         match member_expr.kind {
             ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => false,
             ast::ExprKind::Index(..) if self.skip_index_break => false,
