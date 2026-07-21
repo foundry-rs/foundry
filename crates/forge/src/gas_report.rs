@@ -1,10 +1,10 @@
 //! Gas reports.
 
 use crate::{
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MONAD_CHEATCODE_ADDRESS},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
-use alloy_primitives::map::HashSet;
+use alloy_primitives::{Address, map::HashSet};
 use comfy_table::{
     Cell, CellAlignment, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
 };
@@ -26,6 +26,9 @@ pub struct GasReport {
     ignore: HashSet<String>,
     /// Whether to include gas reports for tests.
     include_tests: bool,
+    /// Additional network-specific cheatcode addresses omitted from reports.
+    #[serde(skip)]
+    extra_cheatcode_addresses: HashSet<Address>,
     /// All contracts that were analyzed grouped by their identifier
     /// ``test/Counter.t.sol:CounterTest
     pub contracts: BTreeMap<String, ContractInfo>,
@@ -36,11 +39,20 @@ impl GasReport {
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
         include_tests: bool,
+        extra_cheatcode_addresses: impl IntoIterator<Item = Address>,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
+        let extra_cheatcode_addresses = extra_cheatcode_addresses.into_iter().collect();
         let report_any = report_for.is_empty() || report_for.contains("*");
-        Self { report_any, report_for, ignore, include_tests, ..Default::default() }
+        Self {
+            report_any,
+            report_for,
+            ignore,
+            include_tests,
+            extra_cheatcode_addresses,
+            ..Default::default()
+        }
     }
 
     /// Whether the given contract should be reported.
@@ -63,6 +75,12 @@ impl GasReport {
         self.report_any || self.report_for.contains(contract_name)
     }
 
+    fn is_internal_address(&self, address: Address) -> bool {
+        address == CHEATCODE_ADDRESS
+            || address == HARDHAT_CONSOLE_ADDRESS
+            || self.extra_cheatcode_addresses.contains(&address)
+    }
+
     /// Analyzes the given traces and generates a gas report.
     pub async fn analyze(
         &mut self,
@@ -77,10 +95,7 @@ impl GasReport {
     async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
         let trace = &node.trace;
 
-        if trace.address == CHEATCODE_ADDRESS
-            || trace.address == MONAD_CHEATCODE_ADDRESS
-            || trace.address == HARDHAT_CONSOLE_ADDRESS
-        {
+        if self.is_internal_address(trace.address) {
             return;
         }
 
@@ -281,4 +296,19 @@ pub struct GasInfo {
 
     #[serde(skip)]
     pub frames: Vec<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm::constants::MONAD_CHEATCODE_ADDRESS;
+
+    #[test]
+    fn network_cheatcode_addresses_are_opt_in() {
+        let ethereum = GasReport::new([], [], false, []);
+        assert!(!ethereum.is_internal_address(MONAD_CHEATCODE_ADDRESS));
+
+        let monad = GasReport::new([], [], false, [MONAD_CHEATCODE_ADDRESS]);
+        assert!(monad.is_internal_address(MONAD_CHEATCODE_ADDRESS));
+    }
 }

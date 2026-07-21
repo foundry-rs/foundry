@@ -88,9 +88,15 @@ const RESERVED_KEYS: &[&str] = &["extends"];
 
 /// Keys kept for backward compatibility that should not trigger unknown key warnings.
 ///
-/// `tempo`, `optimism`, and `monad` are legacy aliases for canonical `network = "..."`
-/// values - still accepted on input but no longer serialized in the default config.
-const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism", "monad"];
+/// Network flags are legacy aliases for canonical `network = "..."` values. They remain accepted
+/// when the corresponding network support is compiled, but are no longer serialized.
+const BACKWARD_COMPATIBLE_KEYS: &[&str] = &[
+    "solc_version",
+    "tempo",
+    "optimism",
+    #[cfg(feature = "monad")]
+    "monad",
+];
 
 /// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {

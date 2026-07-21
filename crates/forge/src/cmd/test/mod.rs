@@ -2872,6 +2872,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
+                FEN::EXTRA_CHEATCODE_ADDRESSES.iter().copied(),
             )
         });
 

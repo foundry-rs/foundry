@@ -7351,6 +7351,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn no_unknown_key_warning_for_legacy_monad_alias() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -7367,6 +7368,30 @@ mod tests {
                     .iter()
                     .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
                 "did not expect UnknownKey warning for `monad`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn warns_for_monad_alias_without_monad_support() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
+                "expected UnknownKey warning for `monad`, got: {:?}",
                 cfg.warnings
             );
             Ok(())

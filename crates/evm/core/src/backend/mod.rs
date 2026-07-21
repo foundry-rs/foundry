@@ -3,10 +3,7 @@
 use crate::{
     FoundryBlock, FoundryContextState, FoundryInspectorExt, FoundryTransaction,
     FromAnyRpcTransaction,
-    constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, MONAD_CHEATCODE_ADDRESS,
-        TEST_CONTRACT_ADDRESS,
-    },
+    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
         FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
@@ -81,8 +78,8 @@ struct TransactionInputs<FEN: FoundryEvmNetwork> {
 }
 
 /// All accounts that will have persistent storage across fork swaps.
-const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 4] =
-    [CHEATCODE_ADDRESS, MONAD_CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
+const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
+    [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
 /// `bytes32("failed")`, as a storage slot key into [`CHEATCODE_ADDRESS`].
 ///
@@ -542,10 +539,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
-        let inner = BackendInner {
-            persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
-            ..Default::default()
-        };
+        let mut persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
+        persistent_accounts.extend(FEN::EXTRA_CHEATCODE_ADDRESSES);
+        let inner = BackendInner { persistent_accounts, ..Default::default() };
 
         let mut backend = Self {
             forks,
@@ -2367,7 +2363,12 @@ fn fork_block_number(fork: &ForkId) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{backend::Backend, evm::EthEvmNetwork, fork::ForkId, opts::EvmOpts};
+    #[cfg(feature = "monad")]
+    use crate::evm::MonadEvmNetwork;
+    use crate::{
+        backend::Backend, constants::MONAD_CHEATCODE_ADDRESS, evm::EthEvmNetwork, fork::ForkId,
+        opts::EvmOpts,
+    };
     use alloy_primitives::{U256, address};
     use alloy_provider::Provider;
     use foundry_common::provider::get_http_provider;
@@ -2378,6 +2379,18 @@ mod tests {
         database::DatabaseRef,
         primitives::hardfork::SpecId,
     };
+
+    #[test]
+    fn persistent_accounts_follow_the_active_network() {
+        let ethereum = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        assert!(!ethereum.inner.persistent_accounts.contains(&MONAD_CHEATCODE_ADDRESS));
+
+        #[cfg(feature = "monad")]
+        {
+            let monad = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
+            assert!(monad.inner.persistent_accounts.contains(&MONAD_CHEATCODE_ADDRESS));
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
