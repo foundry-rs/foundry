@@ -266,6 +266,51 @@ async fn test_simulate_scopes_block_hash_overrides_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_inherits_parent_block_context_rpc() {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::London.into()));
+    let (_api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let contract = "0xc000000000000000000000000000000000000000";
+    let fee_recipient = "0xc200000000000000000000000000000000000000";
+    let gas_limit = 1_000_000;
+    let difficulty = 42;
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {
+                    "blockOverrides": {
+                        "gasLimit": format!("{gas_limit:#x}"),
+                        "feeRecipient": fee_recipient,
+                        "difficulty": format!("{difficulty:#x}")
+                    },
+                    "stateOverrides": {
+                        (contract): {"code": "0x45600052416020524460405260606000f3"}
+                    },
+                    "calls": [{"to": contract}]
+                },
+                {"calls": [{"to": contract}]}
+            ]
+        }, "latest"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+    let blocks = response["result"].as_array().unwrap();
+    let return_data = format!(
+        "0x{gas_limit:064x}{}{}{difficulty:064x}",
+        "0".repeat(24),
+        fee_recipient.trim_start_matches("0x")
+    );
+
+    for block in blocks {
+        assert_eq!(quantity(&block["gasLimit"]), gas_limit);
+        assert_eq!(block["miner"], fee_recipient);
+        assert_eq!(block["calls"][0]["returnData"], return_data);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_scopes_block_overrides_and_derives_base_fee_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Cancun.into()))

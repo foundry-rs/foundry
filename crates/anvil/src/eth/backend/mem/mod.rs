@@ -5086,6 +5086,7 @@ impl Backend<FoundryNetwork> {
             let mut block_res = Vec::with_capacity(block_state_calls.len());
             let mut parent_hash = base_hash;
             let mut next_base_fee = base_fee;
+            let mut inherited_block_env = base_block_env;
             let (is_amsterdam, tx_gas_limit_cap) = {
                 let cfg_env = &self.evm_env.read().cfg_env;
                 (cfg_env.spec >= SpecId::AMSTERDAM, cfg_env.tx_gas_limit_cap())
@@ -5095,7 +5096,7 @@ impl Backend<FoundryNetwork> {
             // execute the blocks
             for block in block_state_calls {
                 let SimBlock { block_overrides, state_overrides, calls } = block;
-                let mut block_env = base_block_env.clone();
+                let mut block_env = inherited_block_env.clone();
                 block_env.basefee = if validation { next_base_fee } else { 0 };
                 block_env.prevrandao = Some(B256::ZERO);
                 let mut call_res = Vec::with_capacity(calls.len());
@@ -5395,6 +5396,9 @@ impl Backend<FoundryNetwork> {
 
                 parent_hash = block_hash;
                 cache_db.cache.block_hashes.insert(block_env.number, block_hash);
+                inherited_block_env.beneficiary = block_env.beneficiary;
+                inherited_block_env.difficulty = block_env.difficulty;
+                inherited_block_env.gas_limit = block_env.gas_limit;
                 // Route through the fee manager so Tempo chains use their own base fee rules.
                 let header = &simulated_block.inner.header;
                 next_base_fee = self.fees.calculate_next_block_base_fee_per_gas(
