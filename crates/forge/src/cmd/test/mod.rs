@@ -2501,6 +2501,7 @@ impl TestArgs {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork_block) =
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
 
         let config = Arc::new(config);
         let showmap = self.showmap_config()?;
@@ -2519,6 +2520,7 @@ impl TestArgs {
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
+            .with_create2_deployer_available(create2_deployer_available)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
@@ -2535,6 +2537,7 @@ impl TestArgs {
     ) -> eyre::Result<MultiContractRunner<FEN>> {
         let (evm_env, tx_env, fork_block) =
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
 
         let config = Arc::new(config);
         MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
@@ -2546,6 +2549,7 @@ impl TestArgs {
             .with_multi_network(options.multi_network)
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
+            .with_create2_deployer_available(create2_deployer_available)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
     }
 

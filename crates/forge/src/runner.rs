@@ -5,8 +5,8 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{
-        FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig,
-        is_generated_symbolic_regression_contract,
+        FuzzMinimizeObservation, LibraryDeployment, TestContract, TestFunctionMatcher,
+        TestRunnerConfig, is_generated_symbolic_regression_contract,
     },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
@@ -36,7 +36,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
-    core::evm::FoundryEvmNetwork,
+    core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
@@ -733,27 +733,81 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
         let mut result = TestSetup::default();
-        for code in &self.mcr.libs_to_deploy {
-            let deploy_result = self.executor.deploy(
-                LIBRARY_DEPLOYER,
-                code.clone(),
-                U256::ZERO,
-                Some(&self.mcr.revert_decoder),
-            );
+        match self.mcr.library_deployment {
+            LibraryDeployment::Nonce => {
+                for code in &self.mcr.libs_to_deploy {
+                    let deploy_result = self.executor.deploy(
+                        LIBRARY_DEPLOYER,
+                        code.clone(),
+                        U256::ZERO,
+                        Some(&self.mcr.revert_decoder),
+                    );
 
-            // Record deployed library address.
-            if let Ok(deployed) = &deploy_result {
-                result.deployed_libs.push(deployed.address);
+                    if let Ok(deployed) = &deploy_result {
+                        result.deployed_libs.push(deployed.address);
+                    }
+
+                    let (raw, reason) =
+                        RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
+                    result.extend(raw, TraceKind::Deployment);
+                    if reason.is_some() {
+                        debug!(?reason, "deployment of library failed");
+                        result.reason = reason;
+                        return Ok(result);
+                    }
+                }
             }
-
-            let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-            result.extend(raw, TraceKind::Deployment);
-            if reason.is_some() {
-                debug!(?reason, "deployment of library failed");
-                result.reason = reason;
-                return Ok(result);
+            LibraryDeployment::Create2 { deployer, salt } => {
+                // Foundry only knows how to install the canonical factory locally. A custom
+                // factory is usable only when it already exists in fork state.
+                if deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER {
+                    self.executor.deploy_create2_deployer()?;
+                }
+                for code in &self.mcr.libs_to_deploy {
+                    let address = deployer.create2_from_code(salt, code);
+                    if self.executor.is_empty_code(address)? {
+                        let calldata = [salt.as_slice(), code.as_ref()].concat().into();
+                        let raw = self.executor.transact_raw(
+                            LIBRARY_DEPLOYER,
+                            deployer,
+                            calldata,
+                            U256::ZERO,
+                        )?;
+                        let (raw, reason) = if raw.reverted {
+                            RawCallResult::from_evm_result(Err(
+                                raw.into_evm_error(Some(&self.mcr.revert_decoder))
+                            ))?
+                        } else {
+                            (raw, None)
+                        };
+                        result.extend(raw, TraceKind::Deployment);
+                        if reason.is_some() {
+                            debug!(?reason, "CREATE2 deployment of library failed");
+                            result.reason = reason;
+                            return Ok(result);
+                        }
+                        if self.executor.is_empty_code(address)? {
+                            result.reason = Some(format!(
+                                "CREATE2 library deployment succeeded but no code was found at {address}"
+                            ));
+                            return Ok(result);
+                        }
+                    }
+                    self.executor.backend_mut().add_persistent_account(address);
+                    result.deployed_libs.push(address);
+                }
             }
         }
+
+        // Configured libraries may already exist and are not present in `libs_to_deploy`.
+        for address in self.mcr.libraries.libs.values().flat_map(|libs| libs.values()) {
+            let address = address.parse::<Address>()?;
+            if !self.executor.is_empty_code(address)? {
+                result.deployed_libs.push(address);
+            }
+        }
+        result.deployed_libs.sort_unstable();
+        result.deployed_libs.dedup();
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
         result.address = address;
@@ -788,7 +842,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(CALLER, self.initial_balance())?;
         self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance())?;
 
-        self.executor.deploy_create2_deployer()?;
+        if matches!(self.mcr.library_deployment, LibraryDeployment::Nonce) {
+            self.executor.deploy_create2_deployer()?;
+        }
 
         // Optionally call the `setUp` function
         if call_setup {

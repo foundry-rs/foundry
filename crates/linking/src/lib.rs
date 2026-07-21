@@ -240,14 +240,16 @@ impl<'a> Linker<'a> {
         libraries: Libraries,
         sender: Address,
         salt: B256,
-        target: &'a ArtifactId,
+        targets: impl IntoIterator<Item = &'a ArtifactId>,
     ) -> Result<LinkOutput, LinkerError> {
         // Library paths in `link_references` keys are always stripped, so we have to strip
         // user-provided paths to be able to match them correctly.
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
 
         let mut needed_libraries = BTreeSet::new();
-        self.collect_dependencies(target, &mut needed_libraries)?;
+        for target in targets {
+            self.collect_dependencies(target, &mut needed_libraries)?;
+        }
 
         let mut needed_libraries = needed_libraries
             .into_par_iter()
@@ -256,12 +258,14 @@ impl<'a> Linker<'a> {
                 let (file, name) = self.convert_artifact_id_to_lib_path(id);
                 libraries.libs.get(&file).is_none_or(|lib| !lib.contains_key(&name))
             })
-            .map(|id| {
+            .map(|id| -> Result<_, LinkerError> {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).
-                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
-                (id, bytecode)
+                let bytecode = self.link(id, &libraries)?.bytecode.ok_or_else(|| {
+                    LinkerError::LinkingFailed { artifact: id.source.to_string_lossy().into() }
+                })?;
+                Ok((id, bytecode))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut libs_to_deploy = Vec::new();
 
@@ -279,7 +283,9 @@ impl<'a> Linker<'a> {
                 return Err(LinkerError::CyclicDependency);
             };
             let (_, bytecode) = needed_libraries.swap_remove(index);
-            let code = bytecode.bytes().unwrap();
+            let code = bytecode.bytes().ok_or_else(|| LinkerError::LinkingFailed {
+                artifact: id.source.to_string_lossy().into(),
+            })?;
             let address = sender.create2_from_code(salt, code);
             libs_to_deploy.push(code.clone());
 
@@ -438,7 +444,7 @@ mod tests {
             let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
             for (id, identifier) in self.iter_linking_targets(&linker) {
                 let output = linker
-                    .link_with_create2(Default::default(), sender, salt, id)
+                    .link_with_create2(Default::default(), sender, salt, [id])
                     .expect("Linking failed");
                 self.validate_assertions(identifier, output);
             }
@@ -819,6 +825,49 @@ mod tests {
                 )
                 .test_with_sender_and_nonce(Address::default(), 1);
         });
+    }
+
+    #[test]
+    fn link_create2_multiple_targets_deduplicates_shared_dependencies() {
+        let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
+        let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
+        let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
+        let test_contract =
+            linker.contracts.keys().find(|id| id.name == "SimpleLibraryLinkingTest").unwrap();
+
+        let output = linker
+            .link_with_create2(
+                Libraries::default(),
+                Address::ZERO,
+                B256::with_last_byte(1),
+                [consumer, test_contract],
+            )
+            .unwrap();
+
+        assert_eq!(output.libs_to_deploy.len(), 1);
+        assert_eq!(output.libraries.libs.values().map(BTreeMap::len).sum::<usize>(), 1);
+
+        let linked_address = output
+            .libraries
+            .libs
+            .values()
+            .flat_map(|libraries| libraries.values())
+            .next()
+            .unwrap()
+            .parse::<Address>()
+            .unwrap();
+        for target in [consumer, test_contract] {
+            let bytecode = linker.link(target, &output.libraries).unwrap().bytecode.unwrap();
+            assert!(
+                bytecode
+                    .bytes()
+                    .unwrap()
+                    .windows(Address::len_bytes())
+                    .any(|window| { window == linked_address.as_slice() }),
+                "{} was not linked to {linked_address}",
+                target.name
+            );
+        }
     }
 
     #[test]

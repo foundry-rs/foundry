@@ -9,7 +9,7 @@ use alloy_consensus::BlockHeader;
 use alloy_network::{AnyNetwork, BlockResponse, Network};
 use alloy_primitives::{Address, B256, BlockNumber, ChainId, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types::{BlockNumberOrTag, anvil::NodeInfo};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, anvil::NodeInfo};
 use eyre::WrapErr;
 use foundry_common::{ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, provider::ProviderBuilder};
 use foundry_config::{Chain, Config, GasLimit};
@@ -116,6 +116,38 @@ impl Default for EvmOpts {
 }
 
 impl EvmOpts {
+    /// Resolves and pins an unpinned fork to the current latest block.
+    pub async fn pin_fork_block(&mut self) -> eyre::Result<Option<BlockNumber>> {
+        if self.fork_block_number.is_none()
+            && let Some(fork_url) = &self.fork_url
+        {
+            self.fork_block_number = Some(
+                self.fork_provider_with_url::<AnyNetwork>(fork_url)?.get_block_number().await?,
+            );
+        }
+        Ok(self.fork_block_number)
+    }
+
+    /// Returns whether the configured CREATE2 deployer can be used for library linking.
+    ///
+    /// Locally Foundry can only install its canonical deployer. On forks, any deployer with code
+    /// is usable because the call executes against the forked state.
+    pub async fn can_use_create2_deployer(
+        &self,
+        fork_block: Option<BlockNumber>,
+    ) -> eyre::Result<bool> {
+        let Some(fork_url) = &self.fork_url else {
+            return Ok(self.create2_deployer == DEFAULT_CREATE2_DEPLOYER);
+        };
+        let block = fork_block.ok_or_else(|| eyre::eyre!("fork block must be resolved"))?;
+        let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
+        Ok(!provider
+            .get_code_at(self.create2_deployer)
+            .block_id(BlockId::number(block))
+            .await?
+            .is_empty())
+    }
+
     /// Returns a `RootProvider` for the given fork URL configured with options in `self` and
     /// annotated `Network` type.
     pub fn fork_provider_with_url<N: Network>(
@@ -516,6 +548,15 @@ mod tests {
 
         // Should still be tempo, the early-return guard skips the RPC call.
         assert!(evm_opts.networks.is_tempo());
+    }
+
+    #[tokio::test]
+    async fn create2_deployer_availability_requires_resolved_fork_block() {
+        let mut evm_opts = EvmOpts::default();
+        evm_opts.fork_url = Some("http://127.0.0.1:1".to_string());
+
+        let err = evm_opts.can_use_create2_deployer(None).await.unwrap_err();
+        assert!(err.to_string().contains("fork block must be resolved"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

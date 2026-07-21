@@ -799,11 +799,14 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     pub async fn new(
         config: Config,
-        evm_opts: EvmOpts,
+        mut evm_opts: EvmOpts,
         batch: bool,
         tempo: TempoOpts,
         sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
+        // Linking happens before runner construction, so pin now to ensure its CREATE2 factory
+        // lookup and all later environment/backend construction use the same fork block.
+        evm_opts.pin_fork_block().await?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if let Some(fork_url) = evm_opts.fork_url.as_ref() {
