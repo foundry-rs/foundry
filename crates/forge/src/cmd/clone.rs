@@ -241,9 +241,9 @@ impl CloneArgs {
         let mut meta = client.contract_source_code(address).await?;
         eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
         let meta = meta.items.remove(0);
-        eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
 
         if !implementation || meta.proxy == 0 {
+            eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
             return Ok((address, meta));
         }
 
@@ -1193,6 +1193,31 @@ mod tests {
 
         assert_eq!(resolved, implementation);
         assert_eq!(meta.contract_name, "AToken");
+    }
+
+    #[tokio::test]
+    async fn test_resolves_solidity_implementation_from_vyper_proxy() {
+        let proxy = "0x0000000000000000000000000000000000000001".parse().unwrap();
+        let implementation = "0x0000000000000000000000000000000000000002".parse().unwrap();
+        let mut proxy_meta = contract_metadata("VyperProxy", true, Some(implementation));
+        proxy_meta.items[0].compiler_version = "vyper:0.3.10".to_string();
+        let implementation_meta = contract_metadata("Implementation", false, None);
+        let mut client = super::MockExplorerClient::new();
+        client.expect_contract_source_code().times(2).returning(move |address| {
+            if address == proxy {
+                Ok(proxy_meta.clone())
+            } else if address == implementation {
+                Ok(implementation_meta.clone())
+            } else {
+                unreachable!("unexpected address: {address}")
+            }
+        });
+
+        let (resolved, meta) =
+            CloneArgs::collect_metadata_from_client(proxy, &client, true).await.unwrap();
+
+        assert_eq!(resolved, implementation);
+        assert_eq!(meta.contract_name, "Implementation");
     }
 
     #[tokio::test]
