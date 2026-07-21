@@ -5,7 +5,11 @@ use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler, shell};
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
+#[cfg(feature = "monad")]
+use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     hardforks::TempoHardfork,
     traces::{
@@ -58,6 +62,9 @@ pub(crate) async fn handle_traces(
     });
     let config_labels = config.labels.clone().into_iter();
     let is_tempo = tempo_hardfork.is_some() || chain.is_tempo();
+    #[cfg(feature = "monad")]
+    let is_monad = config.networks.is_monad()
+        || matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet));
 
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
@@ -68,6 +75,11 @@ pub(crate) async fn handle_traces(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),
         );
+    #[cfg(feature = "monad")]
+    {
+        builder =
+            builder.with_monad_hardfork(is_monad.then(|| config.evm_spec_id::<MonadHardfork>()));
+    }
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);

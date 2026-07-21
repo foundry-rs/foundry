@@ -5913,6 +5913,7 @@ dependencies = [
  "foundry-config",
  "foundry-evm-core",
  "foundry-evm-hardforks",
+ "foundry-evm-networks",
  "foundry-linking",
  "futures",
  "itertools 0.15.0",

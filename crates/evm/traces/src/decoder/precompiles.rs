@@ -1,3 +1,4 @@
+use super::MonadHardfork;
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
@@ -11,6 +12,8 @@ use foundry_evm_core::{
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses},
 };
 use foundry_evm_hardforks::TempoHardfork;
+#[cfg(feature = "monad")]
+use foundry_evm_networks::is_monad_precompile_active_at;
 use itertools::Itertools;
 #[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
@@ -61,7 +64,11 @@ pub(crate) fn is_known_precompile(
     address: Address,
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
 ) -> bool {
+    #[cfg(not(feature = "monad"))]
+    let _ = monad_hardfork;
+
     // Standard EVM precompiles (all chains).
     let is_standard = address[..19].iter().all(|&x| x == 0)
         && matches!(
@@ -99,13 +106,23 @@ pub(crate) fn is_known_precompile(
     if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
         return true;
     }
-    // Monad precompiles (only on Monad chains).
+    // Monad precompiles (only on a Monad chain or in an explicitly configured Monad context).
     #[cfg(feature = "monad")]
-    if chain_id.is_some_and(|id| {
-        matches!(Chain::from_id(id).named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
-    }) && matches!(address, STAKING_ADDRESS | RESERVE_BALANCE_ADDRESS)
     {
-        return true;
+        let is_monad_chain = chain_id.is_some_and(|id| {
+            matches!(Chain::from_id(id).named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
+        });
+        if is_monad_chain || monad_hardfork.is_some() {
+            if address == STAKING_ADDRESS {
+                return true;
+            }
+            if address == RESERVE_BALANCE_ADDRESS
+                && monad_hardfork
+                    .is_none_or(|hardfork| is_monad_precompile_active_at(address, hardfork))
+            {
+                return true;
+            }
+        }
     }
     // Celo transfer precompile (only on Celo chains).
     if chain_id.is_some_and(|id| {
@@ -122,8 +139,9 @@ pub(super) fn decode(
     trace: &CallTrace,
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
 ) -> Option<DecodedCallTrace> {
-    if !is_known_precompile(trace.address, chain_id, tempo_hardfork) {
+    if !is_known_precompile(trace.address, chain_id, tempo_hardfork, monad_hardfork) {
         return None;
     }
 

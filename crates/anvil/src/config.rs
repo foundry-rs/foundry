@@ -1293,6 +1293,12 @@ impl NodeConfig {
         let mut decoder_builder = CallTraceDecoderBuilder::new().with_tempo_hardfork(
             self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork())),
         );
+        #[cfg(feature = "monad")]
+        {
+            decoder_builder = decoder_builder.with_monad_hardfork(
+                self.networks.is_monad().then(|| MonadHardfork::from(self.get_hardfork())),
+            );
+        }
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {

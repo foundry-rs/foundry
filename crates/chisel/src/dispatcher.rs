@@ -11,7 +11,11 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
+#[cfg(feature = "monad")]
+use foundry_config::NamedChain;
 use foundry_config::{Config, RpcEndpointUrl};
+#[cfg(feature = "monad")]
+use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
@@ -165,8 +169,14 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let chain_id = session_config.evm_opts.get_remote_chain_id().await;
         let is_tempo = session_config.evm_opts.networks.is_tempo()
             || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
+        #[cfg(feature = "monad")]
+        let is_monad = session_config.evm_opts.networks.is_monad()
+            || chain_id.as_ref().is_some_and(|chain| {
+                matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
+            });
 
-        let mut decoder = CallTraceDecoderBuilder::new()
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut builder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::from_config(
                 &session_config.foundry_config,
@@ -174,8 +184,14 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             .with_chain_id(chain_id.map(|c| c.id()))
             .with_tempo_hardfork(
                 is_tempo.then(|| session_config.foundry_config.evm_spec_id::<TempoHardfork>()),
-            )
-            .build();
+            );
+        #[cfg(feature = "monad")]
+        {
+            builder = builder.with_monad_hardfork(
+                is_monad.then(|| session_config.foundry_config.evm_spec_id::<MonadHardfork>()),
+            );
+        }
+        let mut decoder = builder.build();
 
         let mut identifier =
             TraceIdentifiers::new().with_external(&session_config.foundry_config, chain_id)?;

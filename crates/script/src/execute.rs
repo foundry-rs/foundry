@@ -23,6 +23,8 @@ use foundry_common::{
 };
 use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
+#[cfg(feature = "monad")]
+use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
@@ -345,8 +347,14 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
         let is_tempo = self.script_config.evm_opts.networks.is_tempo()
             || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
+        #[cfg(feature = "monad")]
+        let is_monad = self.script_config.evm_opts.networks.is_monad()
+            || chain_id.as_ref().is_some_and(|chain| {
+                matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
+            });
 
-        let mut decoder = CallTraceDecoderBuilder::new()
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut builder = CallTraceDecoderBuilder::new()
             .with_labels(self.execution_result.labeled_addresses.clone())
             .with_verbosity(self.script_config.evm_opts.verbosity)
             .with_known_contracts(known_contracts)
@@ -357,8 +365,14 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             .with_chain_id(chain_id.map(|c| c.id()))
             .with_tempo_hardfork(
                 is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
-            )
-            .build();
+            );
+        #[cfg(feature = "monad")]
+        {
+            builder = builder.with_monad_hardfork(
+                is_monad.then(|| self.script_config.config.evm_spec_id::<MonadHardfork>()),
+            );
+        }
+        let mut decoder = builder.build();
 
         let use_debug_bytecodes =
             self.args.debug && !self.execution_result.debug_bytecodes.is_empty();

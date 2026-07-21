@@ -63,6 +63,8 @@ use foundry_debugger::{Debugger, DebuggerLayout};
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
+#[cfg(feature = "monad")]
+use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
@@ -2824,6 +2826,8 @@ impl TestArgs {
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
         let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
+        #[cfg(feature = "monad")]
+        let is_monad_network = runner.tcfg.evm_opts.networks.is_monad();
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -2854,6 +2858,12 @@ impl TestArgs {
                 (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
                     .then(|| config.evm_spec_id::<TempoHardfork>()),
             );
+        #[cfg(feature = "monad")]
+        {
+            builder = builder.with_monad_hardfork(
+                is_monad_network.then(|| config.evm_spec_id::<MonadHardfork>()),
+            );
+        }
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
