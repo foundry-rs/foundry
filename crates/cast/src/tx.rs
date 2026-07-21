@@ -189,7 +189,7 @@ The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
-            )
+            );
     }
     Ok(())
 }
@@ -343,7 +343,7 @@ where
                     // if the async flag is provided, immediately exit if no tx is found, otherwise
                     // try to poll for it
                     if cast_async {
-                        eyre::bail!("tx not found: {:?}", tx_hash)
+                        eyre::bail!("tx not found: {:?}", tx_hash);
                     }
                     PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
                         .with_required_confirmations(confs)
@@ -589,8 +589,12 @@ where
         self.tx.clear_batch_to();
 
         // resolve
-        let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
-        self.resolve_auth(&sender, tx_nonce).await?;
+        // Read-only calls do not need a nonce unless it is required to sign an authorization.
+        // Avoid an otherwise unused `eth_getTransactionCount` request for raw transactions.
+        if fill || !self.auth.is_empty() {
+            let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
+            self.resolve_auth(&sender, tx_nonce).await?;
+        }
         if let Some(access_key) = access_key {
             self.tx
                 .prepare_access_key_authorization(
@@ -748,10 +752,10 @@ where
                         && let Some(data) = &payload.data
                         && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
                     {
-                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
+                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error);
                     }
                 }
-                eyre::bail!("Failed to estimate gas: {}", err)
+                eyre::bail!("Failed to estimate gas: {}", err);
             }
         }
     }
@@ -850,4 +854,35 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         return Ok(Some(decoded_error));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use clap::Parser;
+
+    #[tokio::test]
+    async fn raw_build_skips_nonce_request() {
+        // No responses are queued, so any RPC request would fail this test. In particular, this
+        // guards against restoring the unused `eth_getTransactionCount` request.
+        let provider =
+            ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(Asserter::new());
+        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
+
+        CastTxBuilder::new(&provider, TransactionOpts::parse_from(["test"]), &config)
+            .await
+            .unwrap()
+            .with_to(Some(Address::repeat_byte(0x11).into()))
+            .await
+            .unwrap()
+            .with_code_sig_and_args(None, None, Vec::new())
+            .await
+            .unwrap()
+            .raw()
+            .build(Address::repeat_byte(0x22))
+            .await
+            .unwrap();
+    }
 }

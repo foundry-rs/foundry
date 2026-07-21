@@ -42,7 +42,7 @@ impl<N: Network> Backend<N> {
             op_env,
             inspector,
         );
-        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
         let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
             EVMError::Database(db) => EVMError::Database(db),
             EVMError::Header(h) => EVMError::Header(h),

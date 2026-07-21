@@ -67,6 +67,15 @@ pub struct MakeTxArgs {
     /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
     ethsign: bool,
+
+    /// Generate a raw signed transaction using the provided 65-byte signature.
+    #[arg(
+        long,
+        value_name = "SIGNATURE",
+        requires = "from",
+        conflicts_with_all = ["raw_unsigned", "ethsign"]
+    )]
+    signature: Option<Signature>,
 }
 
 #[derive(Debug, Parser)]
@@ -101,8 +110,18 @@ impl MakeTxArgs {
         N::UnsignedTx: SignableTransaction<Signature>,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, mut sig, mut args, command, mut tx, path, eth, raw_unsigned, ethsign } =
-            self;
+        let Self {
+            to,
+            mut sig,
+            mut args,
+            command,
+            mut tx,
+            path,
+            eth,
+            raw_unsigned,
+            ethsign,
+            signature,
+        } = self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_fee_payer = tx.tempo.sponsor;
@@ -213,6 +232,45 @@ impl MakeTxArgs {
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             print_scalar(raw_tx)?;
+            return Ok(());
+        }
+
+        if let Some(signature) = signature {
+            let signature = signature.normalized_s();
+            let from = eth.wallet.from.expect("required by clap");
+            let (mut tx, _) = tx_builder.build(from).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx,
+                    )
+                    .await?;
+                sponsor.attach_and_print::<N>(&mut tx, from).await?;
+            } else {
+                let fee_token = resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(from),
+                )
+                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
+            }
+
+            let tx = tx.build_unsigned()?;
+            let recovered = signature.recover_address_from_prehash(&tx.signature_hash())?;
+            if recovered != from {
+                eyre::bail!(
+                    "The provided signature recovers to {recovered}, which does not match the specified sender {from}"
+                );
+            }
+
+            let tx = N::TxEnvelope::from(tx.into_signed(signature));
+            print_scalar(hex::encode_prefixed(tx.encoded_2718()))?;
             return Ok(());
         }
 

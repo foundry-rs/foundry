@@ -8,6 +8,7 @@ use crate::cmd::{
     batch_send::BatchSendArgs,
     bind::BindArgs,
     call::CallArgs,
+    call_overrides::CallOverrideOpts,
     constructor_args::ConstructorArgsArgs,
     create2::Create2Args,
     creation_code::CreationCodeArgs,
@@ -859,6 +860,9 @@ pub enum CastSubcommand {
         /// with '--erc721'
         #[arg(long, alias = "erc721")]
         erc20: Option<Address>,
+
+        #[command(flatten)]
+        overrides: CallOverrideOpts,
     },
 
     /// Get the basefee of a block.

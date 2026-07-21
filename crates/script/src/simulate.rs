@@ -22,7 +22,7 @@ use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell};
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
-    traces::{decode_trace_arena, render_trace_arena},
+    traces::{decode_trace_arena, render_trace_arena_inner},
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
@@ -183,7 +183,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
-                    sh_println!("{}", render_trace_arena(trace))?;
+                    sh_println!(
+                        "{}",
+                        render_trace_arena_inner(
+                            trace,
+                            false,
+                            self.script_config.evm_opts.verbosity > 4,
+                        )
+                    )?;
                 }
             }
 
@@ -212,7 +219,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         }
 
         if abort {
-            eyre::bail!("Simulated execution failed.")
+            eyre::bail!("Simulated execution failed.");
         }
 
         Ok(final_txs)

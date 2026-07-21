@@ -57,7 +57,7 @@ pub fn branch_always_exits(stmt: &Stmt<'_>) -> bool {
 }
 
 fn is_exit_call(expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
+    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
     if is_builtin(callee, kw::Revert) {
         return true;
     }

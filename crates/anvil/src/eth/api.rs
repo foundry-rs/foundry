@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     erc4337::TransactionConditional,
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
-    simulate::{SimulatePayload, SimulatedBlock},
+    simulate::{MAX_SIMULATE_BLOCKS, SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
@@ -81,7 +81,10 @@ use anvil_core::{
     },
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use foundry_common::{
     provider::ProviderBuilder,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
@@ -2922,7 +2925,27 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
         node_info!("eth_simulateV1");
-        let block_request = self.block_request(block_number).await?;
+        if request.block_state_calls.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params("empty input")));
+        }
+        if request.block_state_calls.len() > MAX_SIMULATE_BLOCKS as usize {
+            return Err(BlockchainError::RpcError(RpcError {
+                code: ErrorCode::ServerError(-38026),
+                message: "too many blocks".into(),
+                data: None,
+            }));
+        }
+        let block_request =
+            self.block_request(block_number).await.map_err(|error| match error {
+                BlockchainError::BlockOutOfRange(_, _) | BlockchainError::BlockNotFound => {
+                    BlockchainError::RpcError(RpcError {
+                        code: ErrorCode::ServerError(-32000),
+                        message: "header not found".into(),
+                        data: None,
+                    })
+                }
+                error => error,
+            })?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
@@ -3348,15 +3371,44 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawTransactions`.
     pub async fn raw_transactions(&self, block: BlockId) -> Result<Vec<Bytes>> {
         node_info!("debug_getRawTransactions");
-        let Some(block) = self.backend.get_block(block) else {
+
+        if let Some(block) = self.backend.get_block(block) {
+            return Ok(block
+                .body
+                .transactions
+                .into_iter()
+                .map(|tx| canonical_block_transaction(tx.into_inner()).encoded_2718().into())
+                .collect());
+        }
+
+        // In fork mode, serve pre-fork blocks from the upstream provider. Genuinely unknown or
+        // out-of-range blocks yield an empty result, mirroring reth; transport errors propagate.
+        let Some(fork) = self.get_fork() else {
             return Ok(Vec::new());
         };
-        Ok(block
-            .body
-            .transactions
-            .into_iter()
-            .map(|tx| canonical_block_transaction(tx.into_inner()).encoded_2718().into())
-            .collect())
+        let block = match block {
+            BlockId::Number(BlockNumber::Pending) => None,
+            BlockId::Number(number) => {
+                let number = self.backend.convert_block_number(Some(number));
+                if !fork.predates_fork_inclusive(number) {
+                    return Ok(Vec::new());
+                }
+                fork.block_by_number_full(number).await?
+            }
+            BlockId::Hash(hash) => fork
+                .block_by_hash_full(hash.block_hash)
+                .await?
+                .filter(|block| fork.predates_fork_inclusive(block.header().number())),
+        };
+        let Some(block) = block else {
+            return Ok(Vec::new());
+        };
+        let BlockTransactions::Full(txs) = block.transactions() else {
+            return Err(BlockchainError::Internal(
+                "fork provider returned a non-full block for a full block request".to_string(),
+            ));
+        };
+        Ok(txs.iter().map(|tx| tx.as_ref().encoded_2718().into()).collect())
     }
 
     /// Returns RLP encoded raw block header.

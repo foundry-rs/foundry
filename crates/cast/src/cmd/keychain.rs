@@ -3035,10 +3035,12 @@ fn decode_and_validate_key_authorization(
             }
             Err(signed_err) => match tempo::decode_key_authorization::<KeyAuthorization>(raw) {
                 Ok(unsigned) => (unsigned, false, None),
-                Err(unsigned_err) => eyre::bail!(
-                    "could not decode key authorization as signed ({signed_err}) or unsigned \
+                Err(unsigned_err) => {
+                    eyre::bail!(
+                        "could not decode key authorization as signed ({signed_err}) or unsigned \
                  ({unsigned_err})"
-                ),
+                    );
+                }
             },
         };
 
@@ -3068,12 +3070,16 @@ fn decode_and_validate_key_authorization(
     if let Some(expected) = expected_account {
         match auth.account {
             Some(account) if account == expected => {}
-            Some(account) => eyre::bail!(
-                "key authorization is bound to account {account} but {expected} was expected"
-            ),
-            None => eyre::bail!(
-                "expected key authorization bound to account {expected} but it has no account field"
-            ),
+            Some(account) => {
+                eyre::bail!(
+                    "key authorization is bound to account {account} but {expected} was expected"
+                );
+            }
+            None => {
+                eyre::bail!(
+                    "expected key authorization bound to account {expected} but it has no account field"
+                );
+            }
         }
     }
 
@@ -4169,7 +4175,7 @@ fn load_keys_file() -> Result<KeysFile> {
             let path = tempo_keys_path()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "(unknown)".to_string());
-            eyre::bail!("could not read keys file at {path}")
+            eyre::bail!("could not read keys file at {path}");
         }
     }
 }

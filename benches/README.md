@@ -301,6 +301,8 @@ The artifact bundle exposes:
 - `--output-dir <DIR>` - Directory for output files (default: current working directory)
 - `--output-file <FILE_NAME.md>` - Name of the Markdown output file. Defaults to `LATEST.md`
   unless `--json-output` is set, in which case Markdown is omitted unless explicitly requested
+- `--common-json-output <FILE.json>` - Write results using the common benchmark schema in
+  `benches/schema/benchmark-result-v1.schema.json`
 - `--symbolic-sidecar-output <FILE.json>` - Write the opt-in v1 symbolic samples sidecar (requires exactly one version)
 
 ## Benchmark Structure
@@ -333,6 +335,21 @@ Markdown output is suppressed by `--json-output`. The report includes:
   - Relative performance comparison between versions
 - System information (OS, CPU cores)
 - Detailed hyperfine benchmark results in JSON format
+
+## ClickHouse Ingestion
+
+Successful `master` versus branch runs from the Foundry Benchmarks workflow are ingested by
+`.github/workflows/benchmarks-clickhouse.yml`. The ClickHouse schema and migrations are managed by
+the benchmark infrastructure. Configure the `bench` GitHub environment with `CLICKHOUSE_HOST`,
+`CLICKHOUSE_USER`, and `CLICKHOUSE_PASSWORD` secrets. The optional `CLICKHOUSE_DATABASE` and
+`CLICKHOUSE_TABLE` variables default to `default` and `benchmark_results`. `CLICKHOUSE_HOST` may be
+a bare host (using HTTPS on port 8443) or a full HTTPS endpoint. The ClickHouse user only needs
+`INSERT` access to the destination table.
+
+The ingester sends one `JSONEachRow` record per workflow attempt, comparison side, benchmark case,
+and immutable workload commit. The versioned record includes raw timings, extensible counters,
+source and workload provenance, runner metadata, and a deterministic `result_id`; infrastructure
+owners use that contract to provision storage and release/trend views.
 
 ## Troubleshooting
 
