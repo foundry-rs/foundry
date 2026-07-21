@@ -26,7 +26,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         match kind {
-            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false, 0),
+            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
                 self.word(" := ");
@@ -57,22 +57,22 @@ impl<'ast> State<'_, 'ast> {
                 self.print_word("if "); // 3 chars
                 self.print_yul_expr(expr);
                 self.nbsp(); // 1 char
-                self.print_yul_block(stmts, span, false, 4 + self.estimate_size(expr.span));
+                self.print_yul_block(stmts, span, false);
             }
             yul::StmtKind::For(yul::StmtFor { init, cond, step, body }) => {
                 self.ibox(0);
 
                 self.print_word("for "); // 4 chars
-                self.print_yul_block(init, init.span, false, 4);
+                self.print_yul_block(init, init.span, false);
 
                 self.space();
                 self.print_yul_expr(cond);
 
                 self.space();
-                self.print_yul_block(step, step.span, false, 0);
+                self.print_yul_block(step, step.span, false);
 
                 self.space();
-                self.print_yul_block(body, body.span, false, 0);
+                self.print_yul_block(body, body.span, false);
 
                 self.end();
             }
@@ -99,7 +99,7 @@ impl<'ast> State<'_, 'ast> {
                         );
                         self.print_word("default ");
                     }
-                    self.print_yul_block(body, *span, false, 0);
+                    self.print_yul_block(body, *span, false);
 
                     self.print_trailing_comment(selector.span.hi(), None);
                 }
@@ -117,6 +117,7 @@ impl<'ast> State<'_, 'ast> {
 
                 self.cbox(0);
                 self.s.ibox(0);
+                let params = self.s.ibox_with_id(0);
                 self.print_word("function ");
                 self.print_ident(name);
                 self.print_tuple(
@@ -127,12 +128,11 @@ impl<'ast> State<'_, 'ast> {
                     get_span!(),
                     ListFormat::consistent(),
                 );
+                self.end();
                 self.nbsp();
                 let has_returns = !returns.is_empty();
                 let skip_opening_brace = has_returns;
-                if self.can_yul_header_params_be_inlined(func) {
-                    self.neverbreak();
-                }
+                self.s.if_break(params, |_| {}, |p| p.neverbreak());
                 if has_returns {
                     self.commasep(
                         returns,
@@ -144,7 +144,7 @@ impl<'ast> State<'_, 'ast> {
                     );
                 }
                 self.end();
-                self.print_yul_block(body, span, skip_opening_brace, 0);
+                self.print_yul_block(body, span, skip_opening_brace);
                 self.end();
             }
             yul::StmtKind::VarDecl(idents, expr) => {
@@ -202,7 +202,6 @@ impl<'ast> State<'_, 'ast> {
         block: &'ast yul::Block<'ast>,
         span: Span,
         skip_opening_brace: bool,
-        prefix_len: usize,
     ) {
         if self.handle_span(span, false) {
             return;
@@ -212,39 +211,29 @@ impl<'ast> State<'_, 'ast> {
             self.print_word("{");
         }
 
-        let can_inline_block = if block.len() <= 1 && !self.is_multiline_yul_block(block) {
-            if self.max_space_left(prefix_len) == 0 {
-                self.estimate_size(block.span) + self.config.tab_width < self.space_left()
-            } else {
-                self.estimate_size(block.span) + prefix_len < self.space_left()
+        let attempt_inline = block.len() <= 1 && !self.is_multiline_yul_block(block);
+        if attempt_inline {
+            if let Some(stmt) = block.first() {
+                self.s.cbox(self.ind);
+                self.space();
+                self.print_yul_stmt(stmt);
+                if self.peek_comment_before(stmt.span.hi()).is_none()
+                    && self.peek_trailing_comment(stmt.span.hi(), None).is_none()
+                {
+                    self.space();
+                }
+                self.print_comments(
+                    stmt.span.hi(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
+                );
+                if !self.last_token_is_space() {
+                    self.space();
+                }
+                self.s.offset(-self.ind);
+                self.end();
+            } else if self.config.bracket_spacing {
+                self.nbsp();
             }
-        } else {
-            false
-        };
-        if can_inline_block {
-            self.neverbreak();
-            self.print_block_inner(
-                block,
-                BlockFormat::NoBraces(None),
-                |s, stmt| {
-                    s.nbsp();
-                    s.print_yul_stmt(stmt);
-                    if s.peek_comment_before(stmt.span.hi()).is_none()
-                        && s.peek_trailing_comment(stmt.span.hi(), None).is_none()
-                    {
-                        s.nbsp();
-                    }
-                    s.print_comments(
-                        stmt.span.hi(),
-                        CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
-                    );
-                    if !s.last_token_is_space() {
-                        s.nbsp();
-                    }
-                },
-                |b| b.span,
-                span.hi(),
-            );
         } else {
             let (mut i, n_args) = (0, block.len().saturating_sub(1));
             self.print_block_inner(
@@ -298,20 +287,5 @@ impl<'ast> State<'_, 'ast> {
             return code_lines.count() > 1;
         }
         false
-    }
-
-    fn estimate_yul_header_params_size(&mut self, func: &yul::Function<'_>) -> usize {
-        // '(' + param + (', ' + param) + ')'
-        let params = func
-            .parameters
-            .iter()
-            .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
-
-        // 'function ' + name + ' ' + params + ' ->'
-        9 + self.estimate_size(func.name.span) + 1 + params + 3
-    }
-
-    fn can_yul_header_params_be_inlined(&mut self, func: &yul::Function<'_>) -> bool {
-        self.estimate_yul_header_params_size(func) <= self.space_left()
     }
 }
