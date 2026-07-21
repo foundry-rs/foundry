@@ -105,15 +105,37 @@ impl Serialize for SparsedTraceArena {
             ignored: &'a HashMap<(usize, usize), (usize, usize)>,
         }
 
-        ResolvedArena { arena: &self.resolve_arena(), ignored: &self.ignored }.serialize(serializer)
+        ResolvedArena { arena: &self.resolve_diagnostics(), ignored: &self.ignored }
+            .serialize(serializer)
     }
 }
 
 impl SparsedTraceArena {
+    /// Applies presentation-only diagnostics to the provided arena.
+    fn apply_diagnostics(&self, arena: &mut CallTraceArena) {
+        for (&node_idx, diagnostic) in &self.diagnostics {
+            if let Some(node) = arena.nodes_mut().get_mut(node_idx) {
+                node.trace.decoded.get_or_insert_default().return_data =
+                    Some(diagnostic.to_string());
+            }
+        }
+    }
+
+    /// Applies presentation-only diagnostics without consuming ignored trace ranges.
+    fn resolve_diagnostics(&self) -> Cow<'_, CallTraceArena> {
+        if self.diagnostics.is_empty() {
+            Cow::Borrowed(&self.arena)
+        } else {
+            let mut arena = self.arena.clone();
+            self.apply_diagnostics(&mut arena);
+            Cow::Owned(arena)
+        }
+    }
+
     /// Goes over entire trace arena and removes ignored trace items.
     fn resolve_arena(&self) -> Cow<'_, CallTraceArena> {
-        if self.ignored.is_empty() && self.diagnostics.is_empty() {
-            Cow::Borrowed(&self.arena)
+        if self.ignored.is_empty() {
+            self.resolve_diagnostics()
         } else {
             let mut arena = self.arena.clone();
 
@@ -194,16 +216,9 @@ impl SparsedTraceArena {
                 }
             }
 
-            if !self.ignored.is_empty() {
-                clear_node(arena.nodes_mut(), 0, &self.ignored, &mut None);
-            }
+            clear_node(arena.nodes_mut(), 0, &self.ignored, &mut None);
 
-            for (&node_idx, diagnostic) in &self.diagnostics {
-                if let Some(node) = arena.nodes_mut().get_mut(node_idx) {
-                    node.trace.decoded.get_or_insert_default().return_data =
-                        Some(diagnostic.to_string());
-                }
-            }
+            self.apply_diagnostics(&mut arena);
 
             Cow::Owned(arena)
         }
@@ -679,6 +694,46 @@ mod tests {
         assert!(resolved.nodes()[0].trace.output.is_empty());
         assert!(traces.arena.nodes()[0].trace.decoded.is_none());
         assert!(traces.arena.nodes()[0].trace.output.is_empty());
+    }
+
+    #[test]
+    fn serialization_resolves_diagnostics_without_consuming_ignored_ranges() {
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.logs = vec![CallLog::default(), CallLog::default(), CallLog::default()];
+        root.ordering =
+            vec![TraceMemberOrder::Log(0), TraceMemberOrder::Log(1), TraceMemberOrder::Log(2)];
+
+        let traces = SparsedTraceArena {
+            arena,
+            ignored: HashMap::from_iter([((0, 1), (0, 2))]),
+            diagnostics: HashMap::from_iter([(
+                0,
+                RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
+            )]),
+        };
+
+        let serialized = ron::to_string(&traces).unwrap();
+        let deserialized: SparsedTraceArena = ron::from_str(&serialized).unwrap();
+        assert_eq!(
+            deserialized.arena.nodes()[0].ordering,
+            [TraceMemberOrder::Log(0), TraceMemberOrder::Log(1), TraceMemberOrder::Log(2)]
+        );
+        assert_eq!(deserialized.ignored, traces.ignored);
+        assert!(deserialized.diagnostics.is_empty());
+        assert_eq!(
+            deserialized.arena.nodes()[0].trace.decoded.as_ref().unwrap().return_data.as_deref(),
+            Some("call to non-contract address 0x0000000000000000000000000000000000000000")
+        );
+        assert!(deserialized.arena.nodes()[0].trace.output.is_empty());
+
+        let resolved = deserialized.resolve_arena();
+        assert_eq!(resolved.nodes()[0].ordering, [TraceMemberOrder::Log(2)]);
+        assert_eq!(
+            resolved.nodes()[0].trace.decoded.as_ref().unwrap().return_data.as_deref(),
+            Some("call to non-contract address 0x0000000000000000000000000000000000000000")
+        );
+        assert!(render_trace_arena(&deserialized).contains("call to non-contract address"));
     }
 
     #[test]
