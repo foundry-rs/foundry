@@ -48,12 +48,6 @@ const MONAD_RESERVE_PROBE_ADDRESS: Address = address!("0x00000000000000000000000
 #[cfg(feature = "monad")]
 const MONAD_RESERVE_RETURN_PROBE_CODE: [u8; 25] =
     hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
-#[cfg(feature = "monad")]
-const MONAD_FALSE_RETURN: &str =
-    "0x0000000000000000000000000000000000000000000000000000000000000000";
-#[cfg(feature = "monad")]
-const MONAD_TRUE_RETURN: &str =
-    "0x0000000000000000000000000000000000000000000000000000000000000001";
 
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
@@ -5331,8 +5325,8 @@ casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
         .stdout_lossy();
 
     assert!(output.contains("Traces:"), "{output}");
-    assert!(output.contains("::dippedIntoReserve()"), "{output}");
-    assert!(output.contains(MONAD_FALSE_RETURN), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
 });
 
 #[cfg(feature = "monad")]
@@ -5385,8 +5379,8 @@ casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    assert!(output.contains("::dippedIntoReserve()"), "{output}");
-    assert!(output.contains(MONAD_TRUE_RETURN), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] true"), "{output}");
 });
 
 #[cfg(feature = "monad")]
@@ -5412,8 +5406,8 @@ casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
         .stdout_lossy();
 
     assert!(output.contains("Transaction successfully executed."), "{output}");
-    assert!(output.contains("::dippedIntoReserve()"), "{output}");
-    assert!(output.contains(MONAD_FALSE_RETURN), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
 });
 
 #[cfg(feature = "monad")]
@@ -5464,8 +5458,8 @@ casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    assert!(output.contains("::dippedIntoReserve()"), "{output}");
-    assert!(output.contains(MONAD_TRUE_RETURN), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] true"), "{output}");
 });
 
 #[cfg(feature = "monad")]

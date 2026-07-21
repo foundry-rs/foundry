@@ -55,6 +55,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
+use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::WalletOpts;
 use revm::context::Block;
 use std::str::FromStr;
@@ -215,12 +216,12 @@ impl CallArgs {
             return self.run_curl().await;
         }
 
-        if self.tx.tempo.is_tempo() {
-            return self.run_with_network::<TempoEvmNetwork>().await;
-        }
-
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
+        if self.tx.tempo.is_tempo() {
+            evm_opts.networks = NetworkConfigs::with_tempo();
+            return self.run_with_network_and_opts::<TempoEvmNetwork>(evm_opts).await;
+        }
         if let Some(chain) = self.chain {
             evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
         }
@@ -230,20 +231,20 @@ impl CallArgs {
         }
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_network::<TempoEvmNetwork>().await;
+            return self.run_with_network_and_opts::<TempoEvmNetwork>(evm_opts).await;
         }
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_network::<MonadEvmNetwork>().await;
+            return self.run_with_network_and_opts::<MonadEvmNetwork>(evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_network::<OpEvmNetwork>().await;
+            return self.run_with_network_and_opts::<OpEvmNetwork>(evm_opts).await;
         }
 
-        self.run_with_network::<EthEvmNetwork>().await
+        self.run_with_network_and_opts::<EthEvmNetwork>(evm_opts).await
     }
 
     pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>
@@ -252,7 +253,20 @@ impl CallArgs {
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
+        // Keep the public generic wrapper independent of the network-specific future layout.
+        Box::pin(self.run_with_network_and_opts::<FEN>(evm_opts)).await
+    }
+
+    async fn run_with_network_and_opts<FEN: FoundryEvmNetwork>(
+        self,
+        evm_opts: EvmOpts,
+    ) -> Result<()>
+    where
+        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
+    {
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let mut config = Config::from_provider(figment)?.sanitized();
+        config.networks = evm_opts.networks;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
 

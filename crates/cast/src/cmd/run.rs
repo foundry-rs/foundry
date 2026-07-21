@@ -162,26 +162,26 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_evm::<TempoEvmNetwork>().await;
+            return self.run_with_evm::<TempoEvmNetwork>(evm_opts).await;
         }
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_evm::<MonadEvmNetwork>().await;
+            return self.run_with_evm::<MonadEvmNetwork>(evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_evm::<OpEvmNetwork>().await;
+            return self.run_with_evm::<OpEvmNetwork>(evm_opts).await;
         }
 
-        self.run_with_evm::<EthEvmNetwork>().await
+        self.run_with_evm::<EthEvmNetwork>(evm_opts).await
     }
 
-    async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+    async fn run_with_evm<FEN: FoundryEvmNetwork>(self, evm_opts: EvmOpts) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
+        config.networks = evm_opts.networks;
 
         let label = self.label;
         let with_local_artifacts = self.with_local_artifacts;
