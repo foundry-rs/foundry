@@ -199,7 +199,10 @@ fn render_contract<'ast, 'gcx>(
 
     // Index the members rendered as headings on this page so `{member}` and
     // `{Contract-member}` self-references resolve to anchor-only links.
-    let mut local = hir_ext::LocalMembers::new(name);
+    let mut local = hir_id.map_or_else(
+        || hir_ext::LocalMembers::new(name),
+        |id| hir_ext::LocalMembers::for_contract(gcx, id, name_to_page),
+    );
     for member in c.body.iter() {
         match &member.kind {
             ItemKind::Variable(v) => {
@@ -207,7 +210,12 @@ fn render_contract<'ast, 'gcx>(
                     local.insert(n.as_str());
                 }
             }
-            ItemKind::Function(f) => local.insert(&function_heading(f)),
+            ItemKind::Function(f) => {
+                local.insert(&function_heading(f));
+                if let Some(anchor) = function_signature_anchor(f, ctx) {
+                    local.insert_anchor(anchor);
+                }
+            }
             ItemKind::Event(e) => local.insert(e.name.as_str()),
             ItemKind::Error(e) => local.insert(e.name.as_str()),
             ItemKind::Struct(s) => local.insert(s.name.as_str()),
