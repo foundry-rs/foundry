@@ -12,8 +12,9 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, NodeHandle, spawn};
 use foundry_evm::hardfork::MonadHardfork;
+use monad_revm::MONAD_TESTNET_CHAIN_ID;
 
 const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");
@@ -514,6 +515,55 @@ async fn monad_fork_reset_without_url_preserves_monad_execution() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_resets_refresh_only_inferred_hardfork() {
+    let (_origin, endpoint) = monad_boundary_origin().await;
+
+    {
+        let config = NodeConfig::test_monad()
+            .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+            .with_eth_rpc_url(Some(endpoint.clone()))
+            .with_fork_block_number(Some(1u64));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+
+        assert!(handle.config().hardfork.is_none());
+        assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
+        assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(2) })).await.unwrap();
+
+        assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+        assert_eq!(provider.call(reserve_balance_call()).await.unwrap(), Bytes::from(vec![0; 32]));
+
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) })).await.unwrap();
+
+        assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
+        assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+    }
+
+    let config = NodeConfig::test_monad()
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+        .with_eth_rpc_url(Some(endpoint))
+        .with_fork_block_number(Some(1u64));
+    let (api, handle) = spawn(config).await;
+
+    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+    assert_eq!(
+        handle.http_provider().call(reserve_balance_call()).await.unwrap(),
+        Bytes::from(vec![0; 32])
+    );
+
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(2) })).await.unwrap();
+
+    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+    assert_eq!(
+        handle.http_provider().call(reserve_balance_call()).await.unwrap(),
+        Bytes::from(vec![0; 32])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_reset_can_start_forking_with_monad_execution() {
     let (origin_api, origin_handle) = spawn(monad_nine_config()).await;
     origin_api.mine_one().await;
@@ -625,6 +675,29 @@ fn monad_eight_config() -> NodeConfig {
 
 fn mon(value: u64) -> U256 {
     U256::from(value) * U256::from(1_000_000_000_000_000_000u128)
+}
+
+async fn monad_boundary_origin() -> (NodeHandle, String) {
+    let activation = MonadHardfork::MonadNine.testnet_activation_timestamp().unwrap();
+    let config = monad_nine_config()
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_genesis_timestamp(Some(activation - 2));
+    let (api, handle) = spawn(config).await;
+
+    api.evm_set_next_block_timestamp(activation - 1).unwrap();
+    api.mine_one().await;
+    api.evm_set_next_block_timestamp(activation).unwrap();
+    api.mine_one().await;
+
+    let endpoint = handle.http_endpoint();
+    (handle, endpoint)
+}
+
+fn reserve_balance_call() -> WithOtherFields<TransactionRequest> {
+    TransactionRequest::default()
+        .with_to(RESERVE_BALANCE_ADDRESS)
+        .with_input(DIPPED_INTO_RESERVE_SELECTOR)
+        .into()
 }
 
 fn reserve_probe_tx(from: Address, nonce: u64, slot: u64, value: U256) -> TransactionRequest {

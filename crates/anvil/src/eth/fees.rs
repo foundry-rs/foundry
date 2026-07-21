@@ -62,7 +62,7 @@ pub struct FeeManager {
     /// The active Tempo hardfork, set only when running a Tempo chain.
     ///
     /// Tempo replaces EIP-1559: pre-T7 the base fee is fixed, and T7+ uses the TIP-1067 dynamic
-    /// controller. It is updated once after a fork's hardfork is auto-detected.
+    /// controller. It is refreshed whenever a fork block's hardfork is resolved.
     tempo_hardfork: Arc<RwLock<Option<TempoHardfork>>>,
 }
 
@@ -97,7 +97,7 @@ impl FeeManager {
         *self.tempo_hardfork.read()
     }
 
-    /// Sets the active Tempo hardfork, used after a fork's hardfork is auto-detected.
+    /// Sets the active Tempo hardfork after resolving a fork block.
     pub fn set_tempo_hardfork(&self, hardfork: Option<TempoHardfork>) {
         *self.tempo_hardfork.write() = hardfork;
     }

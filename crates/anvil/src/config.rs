@@ -122,7 +122,7 @@ pub struct NodeConfig {
     pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
-    /// The hardfork to use
+    /// The hardfork to force, or `None` to infer it from chain activation data.
     pub hardfork: Option<FoundryHardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<PrivateKeySigner>,
@@ -1290,13 +1290,17 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
+        let active_hardfork = fork
+            .as_ref()
+            .and_then(|fork| fork.config.read().hardfork)
+            .unwrap_or_else(|| self.get_hardfork());
         let mut decoder_builder = CallTraceDecoderBuilder::new().with_tempo_hardfork(
-            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork())),
+            self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
         );
         #[cfg(feature = "monad")]
         {
             decoder_builder = decoder_builder.with_monad_hardfork(
-                self.networks.is_monad().then(|| MonadHardfork::from(self.get_hardfork())),
+                self.networks.is_monad().then(|| MonadHardfork::from(active_hardfork)),
             );
         }
         if self.print_traces {
@@ -1495,19 +1499,22 @@ latest block number: {latest_block}"
             chain_id
         };
 
-        // Auto-detect hardfork from chain activation data if not explicitly set.
-        if self.hardfork.is_none()
-            && let Some(hardfork) =
-                FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
-        {
-            evm_env.cfg_env.spec = SpecId::from(hardfork);
-            self.hardfork = Some(hardfork);
+        // Resolve the fork block's hardfork without materializing it into `self.hardfork`.
+        // That field represents the user's explicit override; keeping inference on the fork
+        // config lets a later reset re-resolve timestamp-based activations.
+        let fork_hardfork = self.hardfork.or_else(|| {
+            FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
+        });
+        if let Some(hardfork) = fork_hardfork {
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(SpecId::from(hardfork));
         }
 
         // The fee manager was built before the fork hardfork was known, so refresh the Tempo
         // hardfork it uses for base fee calculations.
         if self.networks.is_tempo() {
-            fees.set_tempo_hardfork(Some(TempoHardfork::from(self.get_hardfork())));
+            fees.set_tempo_hardfork(Some(TempoHardfork::from(
+                fork_hardfork.unwrap_or_else(|| self.get_hardfork()),
+            )));
         }
 
         // if not set explicitly we use the base fee of the latest block
@@ -1610,7 +1617,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            hardfork: self.hardfork,
+            hardfork: fork_hardfork,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
