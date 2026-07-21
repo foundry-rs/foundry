@@ -840,23 +840,12 @@ impl<'ast> State<'_, 'ast> {
             || has_complex_successor(&rhs.kind, true);
 
         if binary && !inline_disabled {
-            let (suffix_group, suffix_fit) = self.s.ibox_with_fit(0);
+            self.s.ibox(self.ind);
             if !self.is_bol_or_only_ind() {
-                self.print_sep_unhandled(Separator::SpaceOffset(self.ind));
-            }
-            let (rhs_group, rhs_fit) = self.s.ibox_with_line_fit(0, self.ind);
-            let binary_call = matches!(&rhs.kind, ast::ExprKind::Binary(lhs, ..) if matches!(lhs.kind, ast::ExprKind::Call(..)));
-            if binary_call {
-                self.s.ibox(-self.ind);
+                self.print_sep_unhandled(Separator::Space);
             }
             self.print_expr(rhs);
-            if binary_call {
-                self.end();
-            }
             self.end();
-            self.s.if_fits(rhs_fit, |p| p.flatten_children(rhs_group), |_| {});
-            self.end();
-            self.s.if_fits(suffix_fit, |p| p.flatten_children(suffix_group), |_| {});
         } else if delegates_layout {
             if !self.is_bol_or_only_ind() {
                 self.print_sep(Separator::Nbsp);
@@ -1393,8 +1382,13 @@ impl<'ast> State<'_, 'ast> {
         if !is_chain {
             self.binary_expr = Some(bin_op.kind.group());
 
-            let indent =
-                if is_assign && has_complex_successor(&rhs.kind, true) { 0 } else { self.ind };
+            let indent = if (is_assign && has_complex_successor(&rhs.kind, true))
+                || self.var_init && is_call_chain(&lhs.kind, false)
+            {
+                0
+            } else {
+                self.ind
+            };
             self.s.ibox(indent);
         }
 
@@ -2417,17 +2411,13 @@ impl<'ast> State<'_, 'ast> {
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
             config::SingleLineBlockStyle::Preserve => {
-                if self.is_stmt_in_new_line(cond, then)
-                    || matches!(&then.kind, ast::StmtKind::Block(_))
-                        && self.is_multiline_block_stmt(then, true)
+                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
                 {
                     return Decision { outcome: false, is_cached: false };
                 }
             }
             config::SingleLineBlockStyle::Single => {
-                if matches!(&then.kind, ast::StmtKind::Block(_))
-                    && self.is_multiline_block_stmt(then, true)
-                {
+                if self.is_multiline_block_stmt(then, true) {
                     return Decision { outcome: false, is_cached: false };
                 }
             }
@@ -2472,6 +2462,21 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>) -> bool {
+        fn has_breakable_call(stmt: &ast::Stmt<'_>) -> bool {
+            match &stmt.kind {
+                ast::StmtKind::Block(block) if let [stmt] = block.stmts.as_ref() => {
+                    has_breakable_call(stmt)
+                }
+                ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call(_, args), .. }) => {
+                    !args.is_empty()
+                }
+                _ => false,
+            }
+        }
+
+        if has_breakable_call(stmt) {
+            return false;
+        }
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
             let if_span = cond.span.to(then.span);
             if self.sm.is_multiline(if_span)
@@ -2487,14 +2492,12 @@ impl<'ast> State<'_, 'ast> {
             {
                 return false;
             }
-        } else {
-            if matches!(
-                self.config.single_line_statement_blocks,
-                config::SingleLineBlockStyle::Preserve
-            ) && self.sm.is_multiline(stmt.span)
-            {
-                return false;
-            }
+        } else if matches!(
+            self.config.single_line_statement_blocks,
+            config::SingleLineBlockStyle::Preserve
+        ) && self.sm.is_multiline(stmt.span)
+        {
+            return false;
         }
         true
     }

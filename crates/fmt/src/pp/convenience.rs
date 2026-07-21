@@ -13,7 +13,6 @@ impl Printer {
             group: None,
             probe: None,
             probe_size: None,
-            probe_line_offset: None,
             force_break: false,
         });
     }
@@ -28,7 +27,6 @@ impl Printer {
             group: Some(group),
             probe: None,
             probe_size: None,
-            probe_line_offset: None,
             force_break: false,
         });
         group
@@ -45,29 +43,6 @@ impl Printer {
             group: Some(group),
             probe: Some(fit),
             probe_size: None,
-            probe_line_offset: None,
-            force_break: false,
-        });
-        (group, fit)
-    }
-
-    fn line_fit_box(
-        &mut self,
-        indent: isize,
-        line_offset: isize,
-        breaks: Breaks,
-    ) -> (GroupId, FitId) {
-        let group = GroupId(self.next_group);
-        self.next_group += 1;
-        let fit = FitId(self.next_choice);
-        self.next_choice += 1;
-        self.scan_begin(BeginToken {
-            indent: IndentStyle::Block { offset: indent },
-            breaks,
-            group: Some(group),
-            probe: Some(fit),
-            probe_size: None,
-            probe_line_offset: Some(line_offset),
             force_break: false,
         });
         (group, fit)
@@ -100,11 +75,6 @@ impl Printer {
         self.fit_box(indent, Breaks::Inconsistent)
     }
 
-    /// Begins an inconsistent box and probes whether it fits on a continuation line.
-    pub fn ibox_with_line_fit(&mut self, indent: isize, line_offset: isize) -> (GroupId, FitId) {
-        self.line_fit_box(indent, line_offset, Breaks::Inconsistent)
-    }
-
     pub fn visual_align(&mut self) {
         self.scan_begin(BeginToken {
             indent: IndentStyle::Visual,
@@ -112,7 +82,6 @@ impl Printer {
             group: None,
             probe: None,
             probe_size: None,
-            probe_line_offset: None,
             force_break: false,
         });
     }
@@ -240,11 +209,6 @@ impl Printer {
         self.scan_string(w.into());
     }
 
-    /// Emits text without applying the surrounding document's indentation.
-    pub fn verbatim(&mut self, w: impl Into<Cow<'static, str>>) {
-        self.scan_verbatim(w.into());
-    }
-
     fn spaces(&mut self, n: usize) {
         self.break_offset(n, 0);
     }
@@ -317,7 +281,7 @@ impl Printer {
 
     fn token_has_non_whitespace_content(token: &Token) -> bool {
         match token {
-            Token::String(s) | Token::Verbatim(s) => !s.trim().is_empty(),
+            Token::String(s) => !s.trim().is_empty(),
             Token::Break(BreakToken { pre_break: Some(s), .. }) => !s.trim().is_empty(),
             _ => false,
         }

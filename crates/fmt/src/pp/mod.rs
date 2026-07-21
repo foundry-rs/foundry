@@ -75,7 +75,6 @@ pub(crate) struct BeginToken {
     group: Option<GroupId>,
     probe: Option<FitId>,
     probe_size: Option<isize>,
-    probe_line_offset: Option<isize>,
     force_break: bool,
 }
 
@@ -85,7 +84,6 @@ pub(crate) enum Token {
     // `String`. `Cow` is overkill for this because we never modify the data,
     // but it's more convenient than rolling our own more specialized type.
     String(Cow<'static, str>),
-    Verbatim(Cow<'static, str>),
     Break(BreakToken),
     Begin(BeginToken),
     End,
@@ -263,7 +261,6 @@ impl Printer {
     fn scan_token(&mut self, token: Token) {
         match token {
             Token::String(string) => self.scan_string(string),
-            Token::Verbatim(string) => self.scan_verbatim(string),
             Token::Break(token) => self.scan_break(token),
             Token::Begin(token) => self.scan_begin(token),
             Token::End => self.scan_end(),
@@ -417,22 +414,6 @@ impl Printer {
         }
     }
 
-    fn scan_verbatim(&mut self, string: Cow<'static, str>) {
-        let document_index = self.record(&Token::Verbatim(string.clone()));
-        if self.scan_stack.is_empty() {
-            self.print_verbatim(&string);
-        } else {
-            let size = if string.contains('\n') {
-                SIZE_INFINITY
-            } else {
-                display_width(&string, self.tab_width)
-            };
-            self.buf.push(BufEntry { token: Token::Verbatim(string), size, document_index });
-            self.right_total = self.right_total.saturating_add(size).min(SIZE_INFINITY);
-            self.check_stream();
-        }
-    }
-
     fn scan_line_suffix(&mut self, tokens: Vec<Token>) {
         let size = flat_size(&tokens, self.tab_width);
         if self.scan_stack.is_empty() {
@@ -455,7 +436,6 @@ impl Printer {
             Token::Break(token) => token.offset += offset,
             Token::Begin(_) => {}
             Token::String(_)
-            | Token::Verbatim(_)
             | Token::End
             | Token::LineSuffix(_)
             | Token::BreakChildren(_)
@@ -471,7 +451,7 @@ impl Printer {
 
     pub(crate) fn ends_with(&self, ch: char) -> bool {
         for i in self.buf.index_range().rev() {
-            if let Token::String(token) | Token::Verbatim(token) = &self.buf[i].token {
+            if let Token::String(token) = &self.buf[i].token {
                 return token.ends_with(ch);
             }
         }
@@ -501,10 +481,6 @@ impl Printer {
                 Token::String(string) => {
                     self.left_total += left.size;
                     self.print_string(string);
-                }
-                Token::Verbatim(string) => {
-                    self.left_total = self.left_total.saturating_add(left.size).min(SIZE_INFINITY);
-                    self.print_verbatim(string);
                 }
                 Token::Break(token) => {
                     self.left_total += token.blank_space as isize;
@@ -584,12 +560,8 @@ impl Printer {
         }
         self.group_stack.push(token.group);
         if let Some(choice) = token.probe {
-            let space = if let Some(offset) = token.probe_line_offset {
-                cmp::max(self.margin - (self.indent as isize + offset), MIN_SPACE)
-            } else {
-                self.space
-            };
-            self.choice_states.insert(choice, token.probe_size.is_some_and(|size| size > space));
+            self.choice_states
+                .insert(choice, token.probe_size.is_some_and(|size| size > self.space));
         }
         if broken {
             self.print_stack.push(PrintFrame::Broken(self.indent, token.breaks));
@@ -662,16 +634,6 @@ impl Printer {
         self.print_indent();
         self.out.push_str(string);
         self.space -= display_width(string, self.tab_width);
-    }
-
-    fn print_verbatim(&mut self, string: &str) {
-        self.pending_indentation = 0;
-        self.out.push_str(string);
-        if let Some((_, last_line)) = string.rsplit_once('\n') {
-            self.space = self.margin - display_width(last_line, self.tab_width);
-        } else {
-            self.space -= display_width(string, self.tab_width);
-        }
     }
 
     fn flush_line_suffixes(&mut self) {
@@ -762,7 +724,6 @@ impl Document {
                             group: None,
                             probe: Some(*id),
                             probe_size: None,
-                            probe_line_offset: None,
                             force_break: false,
                         };
                         groups.push(tokens.len());
@@ -813,13 +774,6 @@ fn flat_size(tokens: &[Token], tab_width: usize) -> isize {
     tokens.iter().fold(0, |size, token| {
         let token_size = match token {
             Token::String(string) => display_width(string, tab_width),
-            Token::Verbatim(string) => {
-                if string.contains('\n') {
-                    SIZE_INFINITY
-                } else {
-                    display_width(string, tab_width)
-                }
-            }
             Token::Break(token) => token.blank_space as isize,
             Token::Begin(_) | Token::End => 0,
             Token::LineSuffix(tokens) => flat_size(tokens, tab_width),
@@ -854,13 +808,6 @@ fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
             Token::String(string) => {
                 total = total.saturating_add(display_width(string, tab_width) as usize)
             }
-            Token::Verbatim(string) => {
-                total = total.saturating_add(if string.contains('\n') {
-                    SIZE_INFINITY as usize
-                } else {
-                    display_width(string, tab_width) as usize
-                })
-            }
             Token::Break(token) => total = total.saturating_add(token.blank_space),
             Token::LineSuffix(tokens) => {
                 total = total.saturating_add(flat_size(tokens, tab_width) as usize)
@@ -892,28 +839,23 @@ fn force_break_children(tokens: &mut Vec<Token>) {
     }
 
     let mut stack = Vec::new();
-    let mut ranges = HashMap::new();
-    for (index, token) in tokens.iter().enumerate() {
+    let mut active = 0usize;
+    for token in tokens.iter_mut() {
         match token {
-            Token::Begin(begin) => stack.push((index, begin.group)),
+            Token::Begin(begin) => {
+                if active > 0 {
+                    begin.force_break = true;
+                }
+                let targeted = begin.group.is_some_and(|group| targets.contains(&group));
+                stack.push(targeted);
+                active += usize::from(targeted);
+            }
             Token::End => {
-                let (start, group) = stack.pop().expect("unmatched end token");
-                if let Some(group) = group
-                    && targets.contains(&group)
-                {
-                    ranges.insert(group, (start, index));
+                if stack.pop().expect("unmatched end token") {
+                    active -= 1;
                 }
             }
             _ => {}
-        }
-    }
-
-    for (group, (start, end)) in ranges {
-        debug_assert!(targets.contains(&group));
-        for token in &mut tokens[start + 1..end] {
-            if let Token::Begin(begin) = token {
-                begin.force_break = true;
-            }
         }
     }
     tokens.retain(|token| !matches!(token, Token::BreakChildren(_)));
@@ -937,30 +879,23 @@ fn flatten_children(tokens: &mut Vec<Token>) {
     }
 
     let mut stack = Vec::new();
-    let mut ranges = HashMap::new();
-    for (index, token) in tokens.iter().enumerate() {
+    let mut active = 0usize;
+    for token in tokens.iter_mut() {
         match token {
-            Token::Begin(begin) => stack.push((index, begin.group)),
+            Token::Begin(begin) => {
+                let targeted = begin.group.is_some_and(|group| targets.contains(&group));
+                stack.push(targeted);
+                active += usize::from(targeted);
+            }
             Token::End => {
-                let (start, group) = stack.pop().expect("unmatched end token");
-                if let Some(group) = group
-                    && targets.contains(&group)
-                {
-                    ranges.insert(group, (start, index));
+                if stack.pop().expect("unmatched end token") {
+                    active -= 1;
                 }
             }
-            _ => {}
-        }
-    }
-
-    for (group, (start, end)) in ranges {
-        debug_assert!(targets.contains(&group));
-        for token in &mut tokens[start + 1..end] {
-            if let Token::Break(token) = token
-                && token.blank_space < SIZE_INFINITY as usize
-            {
+            Token::Break(token) if active > 0 && token.blank_space < SIZE_INFINITY as usize => {
                 token.never_break = true;
             }
+            _ => {}
         }
     }
     tokens.retain(|token| !matches!(token, Token::FlattenChildren(_)));
@@ -1135,26 +1070,6 @@ mod tests {
     }
 
     #[test]
-    fn line_fit_probes_continuation_space() {
-        let mut p = Printer::new(50, None, 4);
-        p.cbox(0);
-        p.word("a_prefix_that_uses_some_space");
-        p.space();
-        let (rhs, fit) = p.ibox_with_line_fit(0, 4);
-        p.word("a_rhs_that_fits");
-        p.space();
-        p.word("on_its_continuation_line");
-        p.end();
-        p.if_fits(fit, |p| p.flatten_children(rhs), |_| {});
-        p.end();
-
-        assert_eq!(
-            p.eof(),
-            "a_prefix_that_uses_some_space\na_rhs_that_fits on_its_continuation_line"
-        );
-    }
-
-    #[test]
     fn choice_uses_first_fitting_document() {
         let mut preferred = printer();
         preferred.word("prefix ");
@@ -1270,19 +1185,5 @@ mod tests {
     #[test]
     fn display_width_uses_terminal_columns() {
         assert_eq!(display_width("a界e\u{301}", 4), 4);
-    }
-
-    #[test]
-    fn verbatim_text_ignores_group_indentation() {
-        let mut p = printer();
-        p.cbox(4);
-        p.word("call(");
-        p.hardbreak();
-        p.verbatim("  source\n    text");
-        p.hardbreak();
-        p.word(")");
-        p.end();
-
-        assert_eq!(p.eof(), "call(\n  source\n    text\n    )");
     }
 }
