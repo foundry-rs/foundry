@@ -1,5 +1,5 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, State},
+    backend::mem::{BlockRequest, DatabaseRef, MonadReplayContext, State},
     sign::build_impersonated,
 };
 use crate::{
@@ -1559,6 +1559,7 @@ impl EthApi<FoundryNetwork> {
         mut request: WithOtherFields<TransactionRequest>,
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
+        monad_context: Option<MonadReplayContext>,
     ) -> Result<u128> {
         let fees = FeeDetails::new(
             request.gas_price,
@@ -1627,8 +1628,13 @@ impl EthApi<FoundryNetwork> {
         call_to_estimate.gas = Some(highest_gas_limit as u64);
 
         // execute the call without writing to db
-        let ethres =
-            self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
+        let ethres = self.backend.call_with_state_and_context(
+            &state,
+            call_to_estimate,
+            fees.clone(),
+            block_env.clone(),
+            monad_context.clone(),
+        );
 
         let gas_used = match ethres.try_into()? {
             GasEstimationCallResult::Success(gas) => Ok(gas),
@@ -1659,11 +1665,12 @@ impl EthApi<FoundryNetwork> {
         // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > 1 {
             request.gas = Some(mid_gas_limit as u64);
-            let ethres = self.backend.call_with_state(
+            let ethres = self.backend.call_with_state_and_context(
                 &state,
                 request.clone(),
                 fees.clone(),
                 block_env.clone(),
+                monad_context.clone(),
             );
 
             match ethres.try_into()? {
@@ -3006,29 +3013,32 @@ impl EthApi<FoundryNetwork> {
         }
 
         self.backend
-            .with_database_at(Some(block_request), |state, block_env| {
+            .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
                 let mut cache_db = CacheDB::new(state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
                 }
 
-                let (_, _, _, access_list) = self.backend.build_access_list_with_state(
-                    &cache_db,
-                    request.clone(),
-                    FeeDetails::zero(),
-                    block_env.clone(),
-                )?;
+                let (_, _, _, access_list) =
+                    self.backend.build_access_list_with_state_and_context(
+                        &cache_db,
+                        request.clone(),
+                        FeeDetails::zero(),
+                        block_env.clone(),
+                        monad_context.clone(),
+                    )?;
 
                 // Re-execute with the access list applied to get the post-AL gas usage.
                 // EVM failures (including reverts) are surfaced in the result's `error`
                 // field per the execution-apis `eth_createAccessList` spec, so callers
                 // can still inspect the traced slots when execution fails.
                 request.access_list = Some(access_list.clone());
-                let (exit, _, gas_used, _) = self.backend.call_with_state(
+                let (exit, _, gas_used, _) = self.backend.call_with_state_and_context(
                     &cache_db,
                     request,
                     FeeDetails::zero(),
                     block_env,
+                    monad_context,
                 )?;
 
                 Ok(AccessListResult {
@@ -3037,7 +3047,7 @@ impl EthApi<FoundryNetwork> {
                     error: execution_error(exit),
                 })
             })
-            .await?
+            .await
     }
 
     /// Estimate gas needed for execution of given contract.
@@ -4131,20 +4141,23 @@ impl EthApi<FoundryNetwork> {
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
             this.backend
-                .with_database_at(Some(block_request), |state, mut block| {
-                    let mut cache_db = CacheDB::new(state);
-                    if let Some(state_overrides) = overrides.state {
-                        apply_state_overrides(
-                            state_overrides.into_iter().collect(),
-                            &mut cache_db,
-                        )?;
-                    }
-                    if let Some(block_overrides) = overrides.block {
-                        cache_db.apply_block_overrides(*block_overrides, &mut block);
-                    }
-                    this.do_estimate_gas_with_state(request, &cache_db, block)
-                })
-                .await?
+                .with_database_at_and_context(
+                    Some(block_request),
+                    |state, mut block, monad_context| {
+                        let mut cache_db = CacheDB::new(state);
+                        if let Some(state_overrides) = overrides.state {
+                            apply_state_overrides(
+                                state_overrides.into_iter().collect(),
+                                &mut cache_db,
+                            )?;
+                        }
+                        if let Some(block_overrides) = overrides.block {
+                            cache_db.apply_block_overrides(*block_overrides, &mut block);
+                        }
+                        this.do_estimate_gas_with_state(request, &cache_db, block, monad_context)
+                    },
+                )
+                .await
         })
         .await
     }

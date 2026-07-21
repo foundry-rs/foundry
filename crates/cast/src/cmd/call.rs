@@ -1,5 +1,6 @@
 use super::{
     call_overrides::CallOverrideOpts,
+    evm_context::context_for_child_transaction,
     run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc},
 };
 use crate::{
@@ -55,6 +56,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
 use foundry_wallets::WalletOpts;
+use revm::context::Block;
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -417,6 +419,7 @@ impl CallArgs {
             let create2_deployer = evm_opts.create2_deployer;
             let (mut evm_env, tx_env, fork, chain, networks) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
+            let context_block_number = evm_env.block_env.number().saturating_to();
 
             // modify settings that usually set in eth_call
             evm_env.cfg_env.disable_block_gas_limit = true;
@@ -497,13 +500,26 @@ impl CallArgs {
                 env_tx.set_signed_authorization(auth);
             }
 
+            let mut context_tx = executor.tx_env().clone();
+            context_tx.set_caller(from);
+            context_tx.set_kind(tx_kind);
+            context_tx.set_data(input.clone());
+            context_tx.set_value(value);
+            let context_aux = context_for_child_transaction::<FEN, _>(
+                &provider,
+                context_block_number,
+                &context_tx,
+            )
+            .await?;
+
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result = executor.deploy(from, input, value, None);
+                    let deploy_result =
+                        executor.deploy_with_context(from, input, value, context_aux, None);
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw(from, to, input, value)?,
+                    executor.transact_raw_with_context(from, to, input, value, context_aux)?,
                     TraceKind::Execution,
                 ),
             };

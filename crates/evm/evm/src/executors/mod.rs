@@ -35,8 +35,8 @@ use foundry_evm_core::{
         history_window_start,
     },
     evm::{
-        EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor,
-        IntoInstructionResult, SpecFor, TxEnvFor,
+        ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
+        HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -445,6 +445,19 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.deploy_with_env(evm_env, tx_env, rd)
     }
 
+    /// Deploys a contract with explicit network-specific context.
+    pub fn deploy_with_context(
+        &mut self,
+        from: Address,
+        code: Bytes,
+        value: U256,
+        context_aux: ContextAuxFor<FEN>,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
+        self.deploy_with_env_and_context(evm_env, tx_env, context_aux, rd)
+    }
+
     /// Deploys a contract using the given `env` and commits the new state to the underlying
     /// database.
     ///
@@ -458,6 +471,23 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env: TxEnvFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
+        let context_aux = FEN::EvmFactory::default().context_for_transaction(&tx_env);
+        self.deploy_with_env_and_context(evm_env, tx_env, context_aux, rd)
+    }
+
+    /// Deploys a contract with explicit network-specific context and commits its state changes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tx_env.kind` is not `TxKind::Create(_)`.
+    #[instrument(name = "deploy", level = "debug", skip_all)]
+    pub fn deploy_with_env_and_context(
+        &mut self,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
         assert!(
             matches!(tx_env.kind(), TxKind::Create),
             "Expected create transaction, got {:?}",
@@ -465,7 +495,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         );
         trace!(sender=%tx_env.caller(), "deploying contract");
 
-        let mut result = self.transact_with_env(evm_env, tx_env)?;
+        let mut result = self.transact_with_env_and_context(evm_env, tx_env, context_aux)?;
         result = result.into_result(rd)?;
         let Some(Output::Create(_, Some(address))) = result.out else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
@@ -600,6 +630,19 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.transact_with_env(evm_env, tx_env)
     }
 
+    /// Performs a raw call with explicit network-specific context.
+    pub fn transact_raw_with_context(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        context_aux: ContextAuxFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.transact_with_env_and_context(evm_env, tx_env, context_aux)
+    }
+
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
     /// authorization last.
     pub fn transact_raw_with_authorization(
@@ -652,8 +695,20 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env(
         &self,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let context_aux = FEN::EvmFactory::default().context_for_transaction(&tx_env);
+        self.call_with_env_and_context(evm_env, tx_env, context_aux)
+    }
+
+    /// Executes the transaction with explicit network-specific context without committing state.
+    #[instrument(name = "call", level = "debug", skip_all)]
+    pub fn call_with_env_and_context(
+        &self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
@@ -662,7 +717,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, context_aux, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
         let mut result = convert_executed_result(
@@ -686,8 +741,20 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(
         &mut self,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let context_aux = FEN::EvmFactory::default().context_for_transaction(&tx_env);
+        self.transact_with_env_and_context(evm_env, tx_env, context_aux)
+    }
+
+    /// Executes and commits the transaction with explicit network-specific context.
+    #[instrument(name = "transact", level = "debug", skip_all)]
+    pub fn transact_with_env_and_context(
+        &mut self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
@@ -696,7 +763,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let backend = self.backend_mut();
         let result = {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, context_aux, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
         let mut result = convert_executed_result(

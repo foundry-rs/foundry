@@ -7,6 +7,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{
     Authorization, BlockId, BlockNumberOrTag, TransactionRequest,
     anvil::Forking,
+    simulate::{SimBlock, SimulatePayload},
     trace::parity::{TraceResults, TraceType},
 };
 use alloy_serde::WithOtherFields;
@@ -18,6 +19,8 @@ const STAKING_ADDRESS: Address = address!("0x00000000000000000000000000000000000
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");
 const RESERVE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002000");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
+const RESERVE_RETURN_PROBE_CODE: [u8; 25] =
+    hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
 const EIP170_CODE_SIZE_LIMIT: usize = 0x6000;
 const EIP3860_INITCODE_SIZE_LIMIT: usize = 0xc000;
 const EIP7825_TX_GAS_LIMIT_CAP: u64 = 0x1000000;
@@ -35,6 +38,78 @@ async fn monad_nine_exposes_reserve_balance_precompile_for_calls() {
     let result = provider.call(tx.into()).await.unwrap();
 
     assert_eq!(result, Bytes::from(vec![0; 32]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_call_uses_parent_sender_context() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let sender = provider.get_accounts().await.unwrap()[0];
+
+    api.anvil_set_code(RESERVE_PROBE_ADDRESS, RESERVE_RETURN_PROBE_CODE.into()).await.unwrap();
+    api.anvil_set_balance(sender, mon(13)).await.unwrap();
+
+    provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(RESERVE_PROBE_ADDRESS)
+                .with_value(mon(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let result = provider
+        .call(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(RESERVE_PROBE_ADDRESS)
+                .with_value(mon(3))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result, Bytes::from(U256::ONE.to_be_bytes::<32>()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_simulate_tracks_current_block_senders() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let sender = handle.http_provider().get_accounts().await.unwrap()[0];
+
+    api.anvil_set_code(RESERVE_PROBE_ADDRESS, RESERVE_RETURN_PROBE_CODE.into()).await.unwrap();
+    api.anvil_set_balance(sender, mon(12)).await.unwrap();
+
+    let calls = [mon(2), mon(1)]
+        .into_iter()
+        .map(|value| {
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(RESERVE_PROBE_ADDRESS)
+                .with_value(value)
+                .with_gas_limit(100_000)
+        })
+        .collect();
+    let blocks = api
+        .simulate_v1(
+            SimulatePayload {
+                block_state_calls: vec![SimBlock { calls, ..Default::default() }],
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(blocks[0].calls[0].return_data, Bytes::from(U256::ZERO.to_be_bytes::<32>()));
+    assert_eq!(blocks[0].calls[1].return_data, Bytes::from(U256::ONE.to_be_bytes::<32>()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -546,6 +621,10 @@ fn monad_nine_config() -> NodeConfig {
 
 fn monad_eight_config() -> NodeConfig {
     NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadEight.into()))
+}
+
+fn mon(value: u64) -> U256 {
+    U256::from(value) * U256::from(1_000_000_000_000_000_000u128)
 }
 
 fn reserve_probe_tx(from: Address, nonce: u64, slot: u64, value: U256) -> TransactionRequest {

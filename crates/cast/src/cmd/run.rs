@@ -1,3 +1,4 @@
+use super::evm_context::BlockContext;
 use crate::{
     debug::handle_traces,
     rpc_trace::{
@@ -43,7 +44,9 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        evm::{
+            EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+        },
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::{ExecutionSpec, FoundryHardfork},
@@ -378,6 +381,17 @@ impl RunArgs {
             );
         }
 
+        let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+            let block = block.as_ref().ok_or_else(|| {
+                eyre::eyre!(
+                    "block {tx_block_number} is required to reconstruct transaction context"
+                )
+            })?;
+            Some(BlockContext::<FEN>::fetch(&provider, block).await?)
+        } else {
+            None
+        };
+
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)
             .with_debug(self.debug)
@@ -443,7 +457,7 @@ impl RunArgs {
         if !self.quick && !prestate_applied {
             sh_status!("Executing previous transactions from the block.")?;
 
-            if let Some(block) = block {
+            if let Some(block) = &block {
                 let pb = init_progress(block.transactions().len() as u64, "tx");
                 pb.set_position(0);
 
@@ -467,25 +481,36 @@ impl RunArgs {
                     }
 
                     let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let context_aux = block_context.as_ref().map_or_else(
+                        || FEN::EvmFactory::default().context_for_transaction(&tx_env),
+                        |context| context.transaction(index),
+                    );
 
                     evm_env.cfg_env.disable_balance_check = true;
 
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor.transact_with_env(evm_env.clone(), tx_env.clone()).wrap_err_with(
-                            || {
+                        executor
+                            .transact_with_env_and_context(
+                                evm_env.clone(),
+                                tx_env.clone(),
+                                context_aux,
+                            )
+                            .wrap_err_with(|| {
                                 format!(
                                     "Failed to execute transaction: {:?} in block {}",
                                     tx.tx_hash(),
                                     evm_env.block_env.number()
                                 )
-                            },
-                        )?;
+                            })?;
                     } else {
                         trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) =
-                            executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
-                        {
+                        if let Err(error) = executor.deploy_with_env_and_context(
+                            evm_env.clone(),
+                            tx_env.clone(),
+                            context_aux,
+                            None,
+                        ) {
                             match error {
                                 // Reverted transactions should be skipped
                                 EvmError::Execution(_) => (),
@@ -512,6 +537,23 @@ impl RunArgs {
             executor.set_trace_printer(self.trace_printer);
 
             let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+            let target_index = if let Some(block) = &block {
+                let BlockTransactions::Full(transactions) = block.transactions() else {
+                    return Err(eyre::eyre!("Could not get block txs"));
+                };
+                transactions
+                    .iter()
+                    .position(|candidate| candidate.tx_hash() == tx_hash)
+                    .ok_or_else(|| {
+                        eyre::eyre!("transaction {tx_hash:?} is missing from its block")
+                    })?
+            } else {
+                0
+            };
+            let context_aux = block_context.as_ref().map_or_else(
+                || FEN::EvmFactory::default().context_for_transaction(&tx_env),
+                |context| context.transaction(target_index),
+            );
 
             if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
                 evm_env.cfg_env.disable_balance_check = true;
@@ -519,10 +561,19 @@ impl RunArgs {
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
+                TraceResult::from(executor.transact_with_env_and_context(
+                    evm_env,
+                    tx_env,
+                    context_aux,
+                )?)
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
-                TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
+                TraceResult::try_from(executor.deploy_with_env_and_context(
+                    evm_env,
+                    tx_env,
+                    context_aux,
+                    None,
+                ))?
             }
         };
 

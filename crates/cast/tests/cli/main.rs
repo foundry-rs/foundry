@@ -43,6 +43,17 @@ const MONAD_RESERVE_BALANCE_ADDRESS: Address =
     address!("0x0000000000000000000000000000000000001001");
 #[cfg(feature = "monad")]
 const MONAD_DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
+#[cfg(feature = "monad")]
+const MONAD_RESERVE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002000");
+#[cfg(feature = "monad")]
+const MONAD_RESERVE_RETURN_PROBE_CODE: [u8; 25] =
+    hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
+#[cfg(feature = "monad")]
+const MONAD_FALSE_RETURN: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000000";
+#[cfg(feature = "monad")]
+const MONAD_TRUE_RETURN: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000001";
 
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
@@ -5320,8 +5331,62 @@ casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
         .stdout_lossy();
 
     assert!(output.contains("Traces:"), "{output}");
-    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
-    assert!(output.contains("[Return] false"), "{output}");
+    assert!(output.contains("::dippedIntoReserve()"), "{output}");
+    assert!(output.contains(MONAD_FALSE_RETURN), "{output}");
+});
+
+#[cfg(feature = "monad")]
+casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
+    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let sender = provider.get_accounts().await.unwrap()[0];
+    api.anvil_set_code(MONAD_RESERVE_PROBE_ADDRESS, MONAD_RESERVE_RETURN_PROBE_CODE.into())
+        .await
+        .unwrap();
+    api.anvil_set_balance(sender, mon(13)).await.unwrap();
+
+    let _ = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(MONAD_RESERVE_PROBE_ADDRESS)
+                .with_value(mon(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let endpoint = handle.http_endpoint();
+    let probe = MONAD_RESERVE_PROBE_ADDRESS.to_string();
+    let sender = sender.to_string();
+    let value = mon(3).to_string();
+    let output = cmd
+        .args([
+            "call",
+            &probe,
+            "--data",
+            "0x",
+            "--from",
+            &sender,
+            "--value",
+            &value,
+            "--gas-limit",
+            "100000",
+            "--rpc-url",
+            &endpoint,
+            "--trace",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("::dippedIntoReserve()"), "{output}");
+    assert!(output.contains(MONAD_TRUE_RETURN), "{output}");
 });
 
 #[cfg(feature = "monad")]
@@ -5347,9 +5412,66 @@ casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
         .stdout_lossy();
 
     assert!(output.contains("Transaction successfully executed."), "{output}");
-    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
-    assert!(output.contains("[Return] false"), "{output}");
+    assert!(output.contains("::dippedIntoReserve()"), "{output}");
+    assert!(output.contains(MONAD_FALSE_RETURN), "{output}");
 });
+
+#[cfg(feature = "monad")]
+casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
+    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let sender = provider.get_accounts().await.unwrap()[0];
+    api.anvil_set_code(MONAD_RESERVE_PROBE_ADDRESS, MONAD_RESERVE_RETURN_PROBE_CODE.into())
+        .await
+        .unwrap();
+    api.anvil_set_balance(sender, mon(12)).await.unwrap();
+    api.mine_one().await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let _ = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(MONAD_RESERVE_PROBE_ADDRESS)
+                .with_nonce(0)
+                .with_value(mon(2))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let second = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(MONAD_RESERVE_PROBE_ADDRESS)
+                .with_nonce(1)
+                .with_value(mon(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await;
+    let receipt = second.get_receipt().await.unwrap();
+
+    let endpoint = handle.http_endpoint();
+    let tx_hash = receipt.transaction_hash.to_string();
+    let output = cmd
+        .args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("::dippedIntoReserve()"), "{output}");
+    assert!(output.contains(MONAD_TRUE_RETURN), "{output}");
+});
+
+#[cfg(feature = "monad")]
+fn mon(value: u64) -> U256 {
+    U256::from(value) * U256::from(1_000_000_000_000_000_000u128)
+}
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>

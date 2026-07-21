@@ -87,12 +87,25 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
+        let factory = FEN::EvmFactory::default();
+        let context_aux = factory.context_for_transaction(tx_env);
+        self.inspect_with_context(evm_env, tx_env, context_aux, inspector)
+    }
+
+    /// Executes the configured transaction with explicit network-specific context.
+    #[instrument(name = "inspect", level = "debug", skip_all)]
+    pub fn inspect_with_context<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &mut TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let context_aux = factory.context_for_transaction(tx_env);
         let mut evm = factory.create_foundry_evm_with_inspector(
             self,
             evm_env.clone(),
