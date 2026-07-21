@@ -171,7 +171,7 @@ pub(crate) struct MonadReplayContext;
 
 #[cfg(feature = "monad")]
 enum MonadExecutionContext<'a> {
-    Exact(MonadReplayContext),
+    Exact(Box<MonadReplayContext>),
     Next(&'a mut MonadReplayContext),
 }
 
@@ -181,8 +181,8 @@ struct MonadExecutionContext<'a> {
 }
 
 #[cfg(feature = "monad")]
-const fn exact_monad_context(context: MonadReplayContext) -> MonadExecutionContext<'static> {
-    MonadExecutionContext::Exact(context)
+fn exact_monad_context(context: MonadReplayContext) -> MonadExecutionContext<'static> {
+    MonadExecutionContext::Exact(Box::new(context))
 }
 
 #[cfg(not(feature = "monad"))]
@@ -191,7 +191,7 @@ const fn exact_monad_context(_context: MonadReplayContext) -> MonadExecutionCont
 }
 
 #[cfg(feature = "monad")]
-fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
+const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext::Next(context)
 }
 
@@ -241,7 +241,7 @@ fn resolve_monad_execution_context(
     tx: &TxEnv,
 ) -> Option<MonadContextAux> {
     match context {
-        Some(MonadExecutionContext::Exact(context)) => Some(context),
+        Some(MonadExecutionContext::Exact(context)) => Some(*context),
         Some(MonadExecutionContext::Next(context)) => {
             append_monad_transaction(&mut context.chain, tx);
             Some(context.clone())
