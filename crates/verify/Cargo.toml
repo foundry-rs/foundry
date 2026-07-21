@@ -54,6 +54,7 @@ tempfile.workspace = true
 default = ["optimism"]
 monad = [
     "foundry-common/monad",
+    "foundry-config/monad",
     "foundry-evm/monad",
     "foundry-evm-networks/monad",
     "foundry-cli/monad",

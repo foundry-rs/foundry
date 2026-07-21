@@ -83,6 +83,7 @@ tempo-precompiles = { workspace = true, features = ["test-utils"] }
 default = ["optimism"]
 monad = [
     "dep:monad-revm",
+    "foundry-config/monad",
     "foundry-evm-core/monad",
     "foundry-evm-fuzz/monad",
     "foundry-evm-traces/monad",

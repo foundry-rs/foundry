@@ -132,6 +132,7 @@ default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
 monad = [
     "dep:alloy-monad-evm",
     "dep:monad-revm",
+    "foundry-config/monad",
     "foundry-evm/monad",
     "foundry-evm-networks/monad",
     "foundry-cli?/monad",

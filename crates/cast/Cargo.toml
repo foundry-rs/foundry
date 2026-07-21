@@ -127,7 +127,9 @@ aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 monad = [
+    "anvil/monad",
     "foundry-common/monad",
+    "foundry-config/monad",
     "foundry-evm-networks/monad",
     "foundry-evm/monad",
     "foundry-cli/monad",
