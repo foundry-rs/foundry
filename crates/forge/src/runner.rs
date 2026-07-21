@@ -759,8 +759,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             }
             LibraryDeployment::Create2 { deployer, salt } => {
                 // Foundry only knows how to install the canonical factory locally. A custom
-                // factory is usable only when it already exists in fork state.
-                if deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER {
+                // factory is usable only when it already exists in fork state. Tempo also
+                // provides the factory as a predeploy, which must not be deployed again.
+                if deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
+                    && !self.evm_opts.networks.is_tempo()
+                {
                     self.executor.deploy_create2_deployer()?;
                 }
                 for code in &self.mcr.libs_to_deploy {
@@ -795,6 +798,13 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                     }
                     self.executor.backend_mut().add_persistent_account(address);
                     result.deployed_libs.push(address);
+                }
+
+                // Factory calls are test harness setup and must not be observable through the
+                // last-call gas cheatcodes.
+                if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
+                    cheats.gas_metering.last_call_gas = None;
+                    cheats.gas_metering.last_frame_gas = None;
                 }
             }
         }
@@ -841,7 +851,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(CALLER, self.initial_balance())?;
         self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance())?;
 
-        if matches!(self.mcr.library_deployment, LibraryDeployment::Nonce) {
+        if matches!(self.mcr.library_deployment, LibraryDeployment::Nonce)
+            && !self.evm_opts.networks.is_tempo()
+        {
             self.executor.deploy_create2_deployer()?;
         }
 
