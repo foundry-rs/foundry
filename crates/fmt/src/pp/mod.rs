@@ -9,6 +9,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     iter,
 };
+use unicode_width::UnicodeWidthChar;
 
 mod convenience;
 mod helpers;
@@ -646,6 +647,7 @@ impl Printer {
                 Self::new_inner(self.margin as usize, self.indent_config, self.tab_width, false);
             renderer.space = self.space;
             renderer.indent = self.indent;
+            renderer.pending_indentation = self.pending_indentation;
             for token in tokens {
                 renderer.scan_token(token);
             }
@@ -761,13 +763,9 @@ impl Document {
                     }
                     let end = index - 1;
                     let document = Self { nodes: self.nodes[start..end].to_vec() };
-                    let mut suffix_tokens = Vec::new();
-                    document.resolve_into(
-                        broken_groups,
-                        fallback_choices,
-                        &mut Vec::new(),
-                        &mut suffix_tokens,
-                    );
+                    let suffix_start = tokens.len();
+                    document.resolve_into(broken_groups, fallback_choices, groups, tokens);
+                    let suffix_tokens = tokens.drain(suffix_start..).collect();
                     tokens.push(Token::LineSuffix(suffix_tokens));
                     continue;
                 }
@@ -794,30 +792,47 @@ fn flat_size(tokens: &[Token], tab_width: usize) -> isize {
 fn display_width(string: &str, tab_width: usize) -> isize {
     string
         .chars()
-        .map(|ch| if ch == '\t' { tab_width } else { 1 })
+        .map(|ch| if ch == '\t' { tab_width } else { ch.width().unwrap_or(0) })
         .sum::<usize>()
         .min(SIZE_INFINITY as usize) as isize
 }
 
 fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
     let mut stack = Vec::new();
+    let mut probes = Vec::new();
+    let mut total = 0usize;
     for index in 0..tokens.len() {
-        match tokens[index] {
-            Token::Begin(_) => stack.push(index),
+        match &tokens[index] {
+            Token::Begin(begin) => stack.push((index, begin.probe.is_some().then_some(total))),
             Token::End => {
-                let start = stack.pop().expect("unmatched end token");
-                let size = flat_size(&tokens[start + 1..index], tab_width);
-                let Token::Begin(begin) = &mut tokens[start] else { unreachable!() };
-                if begin.probe.is_some() {
-                    begin.probe_size = Some(size);
+                let (start, probe_start) = stack.pop().expect("unmatched end token");
+                if let Some(probe_start) = probe_start {
+                    let size = total.saturating_sub(probe_start).min(SIZE_INFINITY as usize);
+                    probes.push((start, size as isize));
                 }
             }
-            _ => {}
+            Token::String(string) => {
+                total = total.saturating_add(display_width(string, tab_width) as usize)
+            }
+            Token::Break(token) => total = total.saturating_add(token.blank_space),
+            Token::LineSuffix(tokens) => {
+                total = total.saturating_add(flat_size(tokens, tab_width) as usize)
+            }
+            Token::BreakChildren(_) | Token::FlattenChildren(_) | Token::SetIndent(..) => {}
         }
+    }
+    for (index, size) in probes {
+        let Token::Begin(begin) = &mut tokens[index] else { unreachable!() };
+        begin.probe_size = Some(size);
     }
 }
 
 fn force_break_children(tokens: &mut Vec<Token>) {
+    for token in tokens.iter_mut() {
+        if let Token::LineSuffix(tokens) = token {
+            force_break_children(tokens);
+        }
+    }
     let targets = tokens
         .iter()
         .filter_map(|token| match token {
@@ -855,14 +870,14 @@ fn force_break_children(tokens: &mut Vec<Token>) {
         }
     }
     tokens.retain(|token| !matches!(token, Token::BreakChildren(_)));
-    for token in tokens {
-        if let Token::LineSuffix(tokens) = token {
-            force_break_children(tokens);
-        }
-    }
 }
 
 fn flatten_children(tokens: &mut Vec<Token>) {
+    for token in tokens.iter_mut() {
+        if let Token::LineSuffix(tokens) = token {
+            flatten_children(tokens);
+        }
+    }
     let targets = tokens
         .iter()
         .filter_map(|token| match token {
@@ -902,14 +917,14 @@ fn flatten_children(tokens: &mut Vec<Token>) {
         }
     }
     tokens.retain(|token| !matches!(token, Token::FlattenChildren(_)));
-    for token in tokens {
-        if let Token::LineSuffix(tokens) = token {
-            flatten_children(tokens);
-        }
-    }
 }
 
 fn set_group_indents(tokens: &mut Vec<Token>) {
+    for token in tokens.iter_mut() {
+        if let Token::LineSuffix(tokens) = token {
+            set_group_indents(tokens);
+        }
+    }
     let indents = tokens
         .iter()
         .filter_map(|token| match token {
@@ -930,11 +945,6 @@ fn set_group_indents(tokens: &mut Vec<Token>) {
         }
     }
     tokens.retain(|token| !matches!(token, Token::SetIndent(..)));
-    for token in tokens {
-        if let Token::LineSuffix(tokens) = token {
-            set_group_indents(tokens);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1125,6 +1135,33 @@ mod tests {
     }
 
     #[test]
+    fn line_suffix_preserves_pending_space() {
+        let mut p = printer();
+        p.word("value");
+        p.space();
+        let suffix = p.begin_line_suffix();
+        p.word("// comment");
+        p.end_line_suffix(suffix);
+
+        assert_eq!(p.eof(), "value // comment");
+    }
+
+    #[test]
+    fn line_suffix_can_break_its_parent() {
+        let mut p = printer();
+        p.cbox(4);
+        p.word("value");
+        p.space();
+        p.word("next");
+        let suffix = p.begin_line_suffix();
+        p.break_parent();
+        p.end_line_suffix(suffix);
+        p.end();
+
+        assert_eq!(p.eof(), "value\n    next");
+    }
+
+    #[test]
     fn line_suffix_is_flushed_at_eof() {
         let mut p = printer();
         p.word("value");
@@ -1181,5 +1218,10 @@ mod tests {
         p.end();
 
         assert_eq!(p.eof(), "value{ // a_trailing_comment_that_must\n    wrap\nnext");
+    }
+
+    #[test]
+    fn display_width_uses_terminal_columns() {
+        assert_eq!(display_width("a界e\u{301}", 4), 4);
     }
 }
