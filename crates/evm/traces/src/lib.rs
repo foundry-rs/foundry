@@ -78,7 +78,7 @@ impl fmt::Display for RevertDiagnostic {
 }
 
 /// Trace arena keeping track of ignored trace items.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SparsedTraceArena {
     /// Full trace arena.
     #[serde(flatten)]
@@ -90,6 +90,23 @@ pub struct SparsedTraceArena {
     /// Presentation-only revert diagnostics, keyed by trace node index.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub diagnostics: HashMap<usize, RevertDiagnostic>,
+}
+
+impl Serialize for SparsedTraceArena {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct ResolvedArena<'a> {
+            #[serde(flatten)]
+            arena: &'a CallTraceArena,
+            #[serde(skip_serializing_if = "HashMap::is_empty")]
+            ignored: &'a HashMap<(usize, usize), (usize, usize)>,
+        }
+
+        ResolvedArena { arena: &self.resolve_arena(), ignored: &self.ignored }.serialize(serializer)
+    }
 }
 
 impl SparsedTraceArena {

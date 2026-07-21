@@ -5298,6 +5298,35 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "NonContractCallRevertTest",
+            "--mt",
+            "test_revert_data_exact_diagnostic",
+            "-vvvv",
+            "--json",
+            "--no-dynamic-test-linking",
+        ])
+        .assert_failure();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let result = &json.as_object().unwrap().values().next().unwrap()["test_results"]["test_revert_data_exact_diagnostic()"];
+    let traces = result["traces"].as_array().unwrap();
+    assert!(traces.iter().all(|trace| trace[1].get("diagnostics").is_none()));
+
+    let diagnostic_nodes = traces
+        .iter()
+        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+        .filter(|node| {
+            node["trace"]["decoded"]["return_data"]
+                == "call to non-contract address 0xdEADBEeF00000000000000000000000000000000"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(diagnostic_nodes.len(), 1);
+    assert_eq!(diagnostic_nodes[0]["trace"]["output"], "0x");
 });
 
 forgetest_init!(detailed_revert_when_delegatecalling_unlinked_library, |prj, cmd| {
