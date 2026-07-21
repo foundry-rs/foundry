@@ -5356,7 +5356,7 @@ impl Backend<FoundryNetwork> {
                     gas_used,
                     timestamp: block_env.timestamp.saturating_to(),
                     extra_data: Default::default(),
-                    mix_hash: Default::default(),
+                    mix_hash: block_env.prevrandao.unwrap_or_default(),
                     nonce: Default::default(),
                     base_fee_per_gas: Some(block_env.basefee),
                     withdrawals_root: None,

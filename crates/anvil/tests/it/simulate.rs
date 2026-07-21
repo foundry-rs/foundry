@@ -230,6 +230,45 @@ async fn test_simulate_chains_block_hashes_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_includes_prevrandao_in_chained_hash_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let contract = "0xc000000000000000000000000000000000000000";
+    let mut hashes = Vec::new();
+
+    for random in [42, 43] {
+        let random = format!("0x{random:064x}");
+        let response = rpc_request(
+            &endpoint,
+            "eth_simulateV1",
+            json!([{
+                "blockStateCalls": [
+                    {
+                        "blockOverrides": {"prevRandao": random}
+                    },
+                    {
+                        "stateOverrides": {
+                            (contract): {"code": "0x6001405f5260205ff3"}
+                        },
+                        "calls": [{"to": contract}]
+                    }
+                ]
+            }, "latest"]),
+        )
+        .await;
+        assert!(response.get("error").is_none(), "{response}");
+        let blocks = response["result"].as_array().unwrap();
+
+        assert_eq!(blocks[0]["mixHash"], random);
+        assert_eq!(blocks[1]["parentHash"], blocks[0]["hash"]);
+        assert_eq!(blocks[1]["calls"][0]["returnData"], blocks[0]["hash"]);
+        hashes.push(blocks[0]["hash"].clone());
+    }
+
+    assert_ne!(hashes[0], hashes[1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_scopes_block_hash_overrides_rpc() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
