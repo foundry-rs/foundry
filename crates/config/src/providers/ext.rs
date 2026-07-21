@@ -182,11 +182,13 @@ impl TomlFileProvider {
             // Normalize the standalone symbolic section before merging so equivalent
             // profile-qualified values have the same shape across inherited files.
             let base_provider = NormalizeSymbolicProvider::new(
-                Toml::file(base_path).nested(),
+                Toml::file(base_path).nested().legacy_labels(),
                 selected_profile.clone(),
             );
-            let local_provider =
-                NormalizeSymbolicProvider::new(local_provider, selected_profile.clone());
+            let local_provider = NormalizeSymbolicProvider::new(
+                local_provider.legacy_labels(),
+                selected_profile.clone(),
+            );
 
             // Apply the selected merge strategy
             match extends_strategy {

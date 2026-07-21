@@ -23,14 +23,14 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts, TracingArgs},
-    utils::{TraceResult, init_progress},
+    utils::{TraceResult, init_progress, load_config_from_provider},
 };
 use foundry_common::{
     SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder, shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Config,
+    Config, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -133,6 +133,14 @@ pub struct RunArgs {
 }
 
 impl RunArgs {
+    fn resolve_tracing(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
+        if self.debug_trace_transaction {
+            self.tracing.resolve_call_tracer(config, verbosity)
+        } else {
+            self.tracing.resolve(config, verbosity)
+        }
+    }
+
     /// Executes the transaction by replaying it
     ///
     /// This replays the entire block the transaction was mined in unless `quick` is set to true
@@ -160,9 +168,9 @@ impl RunArgs {
     async fn run_with_evm<FEN: FoundryEvmNetwork>(mut self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::from_provider(figment)?.sanitized();
+        let mut config = load_config_from_provider(figment)?;
         self.tracing.labels.append(&mut self.legacy_labels);
-        let tracing = self.tracing.resolve(&config.tracing, shell::verbosity());
+        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
 
         let with_local_artifacts = self.with_local_artifacts;
         let debug = self.debug;
@@ -743,5 +751,13 @@ mod tests {
         );
         assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
         assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
+    }
+
+    #[test]
+    fn debug_trace_transaction_ignores_configured_internal_decoding() {
+        let args = RunArgs::parse_from(["cast run", "0x00", "--debug-trace-transaction"]);
+        let config = TracingConfig { decode_internal: true, ..Default::default() };
+
+        assert!(!args.resolve_tracing(&config, 0).decode_internal);
     }
 }

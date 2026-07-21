@@ -25,7 +25,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
-    utils::{LoadConfig, TraceResult, parse_ether_value},
+    utils::{LoadConfig, TraceResult, load_config_from_provider, parse_ether_value},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -35,7 +35,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -189,6 +189,14 @@ pub enum CallSubcommands {
 }
 
 impl CallArgs {
+    fn resolve_tracing(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
+        if self.debug_trace_call {
+            self.tracing.resolve_call_tracer(config, verbosity)
+        } else {
+            self.tracing.resolve(config, verbosity)
+        }
+    }
+
     pub async fn run(mut self) -> Result<()> {
         self.validate_trace_args()?;
 
@@ -247,9 +255,10 @@ impl CallArgs {
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::from_provider(figment)?.sanitized();
+        let mut config = load_config_from_provider(figment)?;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
+        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
 
         let Self {
             to,
@@ -263,11 +272,9 @@ impl CallArgs {
             debug,
             data,
             with_local_artifacts,
-            tracing,
             wallet,
             ..
         } = self;
-        let tracing = tracing.resolve(&config.tracing, shell::verbosity());
 
         if let Some(data) = data {
             sig = Some(data);
@@ -815,5 +822,13 @@ mod tests {
             "shanghai",
         ]);
         assert!(result.is_err(), "--debug-trace-call must reject --evm-version");
+    }
+
+    #[test]
+    fn debug_trace_call_ignores_configured_internal_decoding() {
+        let args = CallArgs::parse_from(["foundry-cli", "--debug-trace-call"]);
+        let config = TracingConfig { decode_internal: true, ..Default::default() };
+
+        assert!(!args.resolve_tracing(&config, 0).decode_internal);
     }
 }

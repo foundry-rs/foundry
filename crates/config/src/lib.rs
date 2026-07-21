@@ -6412,6 +6412,90 @@ mod tests {
     }
 
     #[test]
+    fn inherited_label_aliases_preserve_source_precedence() {
+        figment::Jail::expect_with(|jail| {
+            let address = address!("0x0000000000000000000000000000000000000001");
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_label_aliases_detect_effective_collisions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+
+                    [profile.default.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert_eq!(
+                err,
+                "Key collision detected in profile 'default' when extending 'base.toml'. \
+                 Conflicting keys: [\"tracing\"]. Use 'extends.strategy' or 'extends_strategy' to \
+                 specify how to handle conflicts."
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn inherited_fuzz_section_remains_invariant_fallback() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

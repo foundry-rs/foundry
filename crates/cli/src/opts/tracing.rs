@@ -63,6 +63,13 @@ impl TracingArgs {
         tracing
     }
 
+    /// Resolves trace rendering settings for an RPC call-tracer response.
+    pub fn resolve_call_tracer(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
+        let mut tracing = self.resolve(config, verbosity);
+        tracing.decode_internal = false;
+        tracing
+    }
+
     fn parsed_labels(&self) -> AddressHashMap<String> {
         self.labels
             .iter()
@@ -115,5 +122,13 @@ mod tests {
         assert_eq!(TracingArgs::default().resolve(&config, 1).verbosity, 5);
         assert_eq!(TracingArgs::default().resolve(&config, 0).verbosity, 5);
         assert_eq!(TracingArgs::default().resolve(&config, 6).verbosity, 6);
+    }
+
+    #[test]
+    fn call_tracer_does_not_decode_internal_functions() {
+        let config = TracingConfig { decode_internal: true, ..Default::default() };
+        let args = TracingArgs { decode_internal: true, ..Default::default() };
+
+        assert!(!args.resolve_call_tracer(&config, 0).decode_internal);
     }
 }

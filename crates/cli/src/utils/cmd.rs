@@ -4,7 +4,11 @@ use foundry_common::{TestFunctionExt, fs, fs::json_files, selectors::SelectorKin
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput, artifacts::CompactBytecode, utils::read_json_file,
 };
-use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
+use foundry_config::{
+    Chain, Config, NamedChain,
+    error::ExtractConfigError,
+    figment::{Figment, Provider},
+};
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     executors::{DeployResult, EvmError, RawCallResult},
@@ -168,7 +172,7 @@ pub trait LoadConfig {
 
     /// Load and sanitize the [`Config`] based on the options provided in self.
     fn load_config(&self) -> Result<Config, ExtractConfigError> {
-        self.load_config_no_warnings().inspect(emit_warnings)
+        load_config_from_provider(self.figment())
     }
 
     /// Same as [`LoadConfig::load_config`] but does not emit warnings.
@@ -210,6 +214,11 @@ pub trait LoadConfig {
 
         Ok((config, evm_opts))
     }
+}
+
+/// Loads and sanitizes [`Config`] from a provider and emits generated warnings.
+pub fn load_config_from_provider<T: Provider>(provider: T) -> Result<Config, ExtractConfigError> {
+    Config::from_provider(provider).map(Config::sanitized).inspect(emit_warnings)
 }
 
 impl<T> LoadConfig for T
