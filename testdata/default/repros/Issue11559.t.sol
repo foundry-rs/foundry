@@ -19,8 +19,7 @@ contract Issue11559Test is Test {
     }
 
     function testCallerObservesEmptyRevertData() public {
-        (bool success, bytes memory data) =
-            address(this).call(abi.encodeCall(this.callNonContract, (address(0))));
+        (bool success, bytes memory data) = address(this).call(abi.encodeCall(this.callNonContract, (address(0))));
         assertEq(success, false);
         assertEq(data.length, 0);
     }

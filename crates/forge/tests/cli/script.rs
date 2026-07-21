@@ -3628,7 +3628,8 @@ Traces:
 
 "#]])
     .stderr_eq(str![[r#"
-Error: script failed: call to non-contract address [..]
+Error: script failed: EvmError: Revert
+
 "#]]);
 });
 
