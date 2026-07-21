@@ -687,9 +687,10 @@ fn ensure_source_entrypoint(root: &Path) -> Result<()> {
 
     let imports = sources
         .into_iter()
-        .map(|path| {
+        .enumerate()
+        .map(|(index, path)| {
             let path = path.strip_prefix(root)?;
-            Ok(format!("import \"../{}\";", path.to_slash_lossy()))
+            Ok(format!("import * as CloneSource{index} from \"../{}\";", path.to_slash_lossy()))
         })
         .collect::<Result<Vec<_>>>()?
         .join("\n");
@@ -1220,19 +1221,31 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let src = temp.path().join("src");
         let library = temp.path().join("lib/dependency/src");
+        let other_library = temp.path().join("lib/other/src");
         let forge_std = temp.path().join("lib/forge-std/src");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::create_dir_all(&library).unwrap();
+        std::fs::create_dir_all(&other_library).unwrap();
         std::fs::create_dir_all(&forge_std).unwrap();
         std::fs::write(library.join("AToken.sol"), "contract AToken {}").unwrap();
+        std::fs::write(library.join("Helper.sol"), "contract Helper {}").unwrap();
+        std::fs::write(other_library.join("Helper.sol"), "contract Helper {}").unwrap();
         std::fs::write(forge_std.join("Test.sol"), "contract Test {}").unwrap();
+        std::fs::write(
+            temp.path().join("foundry.toml"),
+            "[profile.default]\nsrc = \"src\"\nlibs = [\"lib\"]\n",
+        )
+        .unwrap();
 
         ensure_source_entrypoint(temp.path()).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(src.join("Clone.sol")).unwrap(),
-            "import \"../lib/dependency/src/AToken.sol\";\n"
+            "import * as CloneSource0 from \"../lib/dependency/src/AToken.sol\";\n\
+             import * as CloneSource1 from \"../lib/dependency/src/Helper.sol\";\n\
+             import * as CloneSource2 from \"../lib/other/src/Helper.sol\";\n"
         );
+        compile_project(temp.path()).unwrap();
     }
 
     /// Fetch the metadata and creation data from Etherscan and dump them to the testdata folder.
