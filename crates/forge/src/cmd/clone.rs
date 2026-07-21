@@ -29,7 +29,7 @@ use path_slash::PathExt;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fs::read_dir,
     path::{Path, PathBuf},
     time::Duration,
@@ -119,8 +119,6 @@ pub struct CloneArgs {
     pub sourcify_url: Option<String>,
 
     /// Clone the implementation contract if the address is a proxy.
-    ///
-    /// If the implementation is also a proxy, its implementation is resolved recursively.
     #[arg(long)]
     pub implementation: bool,
 
@@ -236,35 +234,32 @@ impl CloneArgs {
     /// * `address` - the address of the contract to be cloned.
     /// * `client` - the client of the block explorer.
     pub(crate) async fn collect_metadata_from_client<C: ExplorerClient>(
-        mut address: Address,
+        address: Address,
         client: &C,
         implementation: bool,
     ) -> Result<(Address, Metadata)> {
-        let mut visited = HashSet::new();
-        loop {
-            eyre::ensure!(
-                visited.insert(address),
-                "proxy implementation cycle detected at {address}"
-            );
+        let mut meta = client.contract_source_code(address).await?;
+        eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
+        let meta = meta.items.remove(0);
+        eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
 
-            let mut meta = client.contract_source_code(address).await?;
-            eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
-            let meta = meta.items.remove(0);
-            eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
-
-            if !implementation || meta.proxy == 0 {
-                return Ok((address, meta));
-            }
-
-            let implementation_address = meta
-                .implementation
-                .ok_or_else(|| eyre::eyre!("proxy at {address} has no implementation address"))?;
-            sh_status!(
-                "Contract at {address} is a proxy, cloning implementation at \
-                 {implementation_address}..."
-            )?;
-            address = implementation_address;
+        if !implementation || meta.proxy == 0 {
+            return Ok((address, meta));
         }
+
+        let implementation_address = meta
+            .implementation
+            .ok_or_else(|| eyre::eyre!("proxy at {address} has no implementation address"))?;
+        sh_status!(
+            "Contract at {address} is a proxy, cloning implementation at \
+             {implementation_address}..."
+        )?;
+
+        let mut meta = client.contract_source_code(implementation_address).await?;
+        eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
+        let meta = meta.items.remove(0);
+        eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
+        Ok((implementation_address, meta))
     }
 
     /// Initialize an empty project at the root directory.
@@ -1201,19 +1196,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rejects_proxy_implementation_cycle() {
+    async fn test_stops_at_direct_proxy_implementation() {
         let first = "0x0000000000000000000000000000000000000001".parse().unwrap();
         let second = "0x0000000000000000000000000000000000000002".parse().unwrap();
+        let third = "0x0000000000000000000000000000000000000003".parse().unwrap();
         let first_meta = contract_metadata("FirstProxy", true, Some(second));
-        let second_meta = contract_metadata("SecondProxy", true, Some(first));
+        let second_meta = contract_metadata("SecondProxy", true, Some(third));
         let mut client = super::MockExplorerClient::new();
         client.expect_contract_source_code().times(2).returning(move |address| {
-            if address == first { Ok(first_meta.clone()) } else { Ok(second_meta.clone()) }
+            if address == first {
+                Ok(first_meta.clone())
+            } else if address == second {
+                Ok(second_meta.clone())
+            } else {
+                unreachable!("unexpected address: {address}")
+            }
         });
 
-        let err = CloneArgs::collect_metadata_from_client(first, &client, true).await.unwrap_err();
+        let (resolved, meta) =
+            CloneArgs::collect_metadata_from_client(first, &client, true).await.unwrap();
 
-        assert_eq!(err.to_string(), format!("proxy implementation cycle detected at {first}"));
+        assert_eq!(resolved, second);
+        assert_eq!(meta.contract_name, "SecondProxy");
     }
 
     #[test]
