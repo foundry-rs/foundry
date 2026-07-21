@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     erc4337::TransactionConditional,
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
-    simulate::{SimulatePayload, SimulatedBlock},
+    simulate::{MAX_SIMULATE_BLOCKS, SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
@@ -81,7 +81,10 @@ use anvil_core::{
     },
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use foundry_common::{
     provider::ProviderBuilder,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
@@ -109,6 +112,7 @@ use revm::{
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
+use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -2921,8 +2925,30 @@ impl EthApi<FoundryNetwork> {
         request: SimulatePayload,
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
+        const DEFAULT_BLOCK_INTERVAL_SECS: u64 = 12;
+
         node_info!("eth_simulateV1");
-        let block_request = self.block_request(block_number).await?;
+        if request.block_state_calls.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params("empty input")));
+        }
+        if request.block_state_calls.len() > MAX_SIMULATE_BLOCKS as usize {
+            return Err(BlockchainError::RpcError(RpcError {
+                code: ErrorCode::ServerError(-38026),
+                message: "too many blocks".into(),
+                data: None,
+            }));
+        }
+        let block_request =
+            self.block_request(block_number).await.map_err(|error| match error {
+                BlockchainError::BlockOutOfRange(_, _) | BlockchainError::BlockNotFound => {
+                    BlockchainError::RpcError(RpcError {
+                        code: ErrorCode::ServerError(-32000),
+                        message: "header not found".into(),
+                        data: None,
+                    })
+                }
+                error => error,
+            })?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
@@ -2933,8 +2959,20 @@ impl EthApi<FoundryNetwork> {
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
+        let block_interval = self.backend.time().block_timestamp_interval().unwrap_or_else(|| {
+            self.miner
+                .block_interval()
+                .map(|duration| {
+                    duration
+                        .as_secs()
+                        .saturating_add(u64::from(duration.subsec_nanos() != 0))
+                        .max(1)
+                })
+                .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS)
+        });
         self.on_blocking_task(|this| async move {
-            let simulated_blocks = this.backend.simulate(request, Some(block_request)).await?;
+            let simulated_blocks =
+                this.backend.simulate(request, Some(block_request), block_interval).await?;
             trace!(target : "node", "Simulate status {:?}", simulated_blocks);
 
             Ok(simulated_blocks)
@@ -4278,7 +4316,15 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
         nonce: u64,
     ) -> Result<FoundryTypedTx> {
-        let mut request = Into::<FoundryTransactionRequest>::into(request);
+        let transaction_type = request.transaction_type;
+        let mut request: FoundryTransactionRequest =
+            request.try_into().map_err(|_| BlockchainError::FailedToDecodeTransaction)?;
+        if matches!(&request, FoundryTransactionRequest::Tempo(_))
+            && self.backend.is_tempo()
+            && transaction_type.is_some_and(|ty| ty != TEMPO_TX_TYPE_ID)
+        {
+            return Err(BlockchainError::FailedToDecodeTransaction);
+        }
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
             request.set_from(from);
@@ -4287,7 +4333,11 @@ impl EthApi<FoundryNetwork> {
         // Fill common fields for all tx types
         request.chain_id().is_none().then(|| request.set_chain_id(self.chain_id()));
         request.nonce().is_none().then(|| request.set_nonce(nonce));
-        request.kind().is_none().then(|| request.set_kind(TxKind::default()));
+        let is_tempo_batch =
+            matches!(&request, FoundryTransactionRequest::Tempo(tx) if !tx.calls.is_empty());
+        if request.kind().is_none() && !is_tempo_batch {
+            request.set_kind(TxKind::default());
+        }
         if request.gas_limit().is_none() {
             let fallback_gas_limit = {
                 let evm_env = self.backend.evm_env().read();
@@ -4298,17 +4348,20 @@ impl EthApi<FoundryNetwork> {
                     block_gas_limit
                 }
             };
-            let estimated_gas = self
-                .do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
-                .await
-                .map(|v| v as u64)
-                .unwrap_or_else(|_| {
-                    if is_simple_transfer_request(request.as_ref()) {
-                        MIN_TRANSACTION_GAS as u64
-                    } else {
-                        fallback_gas_limit
-                    }
-                });
+            let estimated_gas = if matches!(&request, FoundryTransactionRequest::Tempo(_)) {
+                fallback_gas_limit
+            } else {
+                self.do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
+                    .await
+                    .map(|v| v as u64)
+                    .unwrap_or_else(|_| {
+                        if is_simple_transfer_request(request.as_ref()) {
+                            MIN_TRANSACTION_GAS as u64
+                        } else {
+                            fallback_gas_limit
+                        }
+                    })
+            };
             request.set_gas_limit(estimated_gas);
         }
 
