@@ -2801,12 +2801,9 @@ async fn run_authorize(
 
     // T6 admin keys are key-management only and use a dedicated precompile entrypoint.
     if admin {
-        ensure_tempo_hardfork(
-            &provider,
-            TempoHardfork::T6,
-            "--admin requires a Tempo T6-capable AccountKeychain RPC",
-        )
-        .await?;
+        if !is_tempo_hardfork_active(&provider, TempoHardfork::T6).await? {
+            eyre::bail!("--admin requires a Tempo T6-capable AccountKeychain RPC");
+        }
         // u64::MAX is the no-expiry default; anything else is an explicit expiry admin keys reject.
         eyre::ensure!(expiry == u64::MAX, "--admin cannot be combined with an explicit --expiry");
         eyre::ensure!(
@@ -2830,13 +2827,8 @@ async fn run_authorize(
     }
 
     let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await?;
-    if witness.is_some() {
-        ensure_tempo_hardfork(
-            &provider,
-            TempoHardfork::T5,
-            "--witness requires a Tempo T5-capable AccountKeychain RPC",
-        )
-        .await?;
+    if witness.is_some() && !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("--witness requires a Tempo T5-capable AccountKeychain RPC");
     }
 
     let calldata = if is_t3 {
@@ -3241,12 +3233,9 @@ async fn run_burn_witness(
 ) -> Result<()> {
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_tempo_hardfork(
-        &provider,
-        TempoHardfork::T5,
-        "burn-witness requires a Tempo T5-capable AccountKeychain RPC",
-    )
-    .await?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("burn-witness requires a Tempo T5-capable AccountKeychain RPC");
+    }
 
     let calldata = IAccountKeychain::burnKeyAuthorizationWitnessCall { witness }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
@@ -3257,12 +3246,9 @@ async fn run_burn_witness(
 async fn run_is_witness_burned(account: Address, witness: B256, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_tempo_hardfork(
-        &provider,
-        TempoHardfork::T5,
-        "is-witness-burned requires a Tempo T5-capable AccountKeychain RPC",
-    )
-    .await?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("is-witness-burned requires a Tempo T5-capable AccountKeychain RPC");
+    }
 
     let burned = provider
         .account_keychain()
@@ -3288,12 +3274,9 @@ async fn run_is_witness_burned(account: Address, witness: B256, rpc: RpcOpts) ->
 async fn run_is_admin(account: Address, key_address: Address, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_tempo_hardfork(
-        &provider,
-        TempoHardfork::T6,
-        "is-admin requires a Tempo T6-capable AccountKeychain RPC",
-    )
-    .await?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T6).await? {
+        eyre::bail!("is-admin requires a Tempo T6-capable AccountKeychain RPC");
+    }
 
     let is_admin = provider.account_keychain().isAdminKey(account, key_address).call().await?;
 
@@ -3322,12 +3305,9 @@ async fn run_verify_keychain(
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let command = if admin { "verify-admin" } else { "verify" };
-    ensure_tempo_hardfork(
-        &provider,
-        TempoHardfork::T6,
-        &format!("{command} requires a Tempo T6-capable SignatureVerifier RPC"),
-    )
-    .await?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T6).await? {
+        eyre::bail!("{command} requires a Tempo T6-capable SignatureVerifier RPC");
+    }
 
     let verifier = ISignatureVerifier::new(SIGNATURE_VERIFIER_ADDRESS, &provider);
     let valid = if admin {
@@ -3440,12 +3420,9 @@ async fn run_policy_add_call(
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
-    ensure_tempo_hardfork(
-        &provider,
-        TempoHardfork::T3,
-        "allowed-call policy editing requires the Tempo T3 hardfork",
-    )
-    .await?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T3).await? {
+        eyre::bail!("allowed-call policy editing requires the Tempo T3 hardfork");
+    }
 
     let allowed = provider
         .account_keychain()
@@ -3779,21 +3756,6 @@ where
         }
         Err(err) => Err(err.into()),
     }
-}
-
-/// Fails early with `requirement` when `hardfork` is not active on the target network.
-pub(crate) async fn ensure_tempo_hardfork<P>(
-    provider: &P,
-    hardfork: TempoHardfork,
-    requirement: &str,
-) -> Result<()>
-where
-    P: Provider<TempoNetwork>,
-{
-    if !is_tempo_hardfork_active(provider, hardfork).await? {
-        eyre::bail!("{requirement}");
-    }
-    Ok(())
 }
 
 /// Fails early with `requirement` when a Tempo precompile is not active yet: a pre-fork call
