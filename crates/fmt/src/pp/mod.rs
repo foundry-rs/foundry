@@ -28,6 +28,13 @@ pub enum Breaks {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GroupId(usize);
 
+/// Identifies a line-suffix capture in progress.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // Used by formatter migrations to the retained document API.
+pub struct LineSuffixHandle {
+    depth: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ChoiceId(usize);
 
@@ -77,6 +84,8 @@ pub(crate) enum Token {
     Break(BreakToken),
     Begin(BeginToken),
     End,
+    LineSuffix(Vec<Self>),
+    BreakChildren(GroupId),
 }
 
 /// Retained input to the pretty printer.
@@ -92,6 +101,9 @@ enum Doc {
     IfBreak { group: GroupId, broken: Document, flat: Document },
     Choice { id: ChoiceId, preferred: Document, fallback: Document },
     BreakParent,
+    BreakChildren(GroupId),
+    LineSuffixStart,
+    LineSuffixEnd,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -112,6 +124,7 @@ pub struct Printer {
     next_group: usize,
     #[allow(dead_code)] // Used by formatter migrations to the retained document API.
     next_choice: usize,
+    line_suffix_depth: usize,
     out: String,
     /// Number of spaces left on line.
     space: isize,
@@ -139,6 +152,7 @@ pub struct Printer {
     /// The token most recently popped from the left boundary of the
     /// ring-buffer for printing.
     last_printed: Option<Token>,
+    pending_line_suffixes: Vec<Vec<Token>>,
 
     /// Target line width.
     margin: isize,
@@ -165,6 +179,7 @@ impl Printer {
             record_document,
             next_group: 0,
             next_choice: 0,
+            line_suffix_depth: 0,
             out: String::new(),
             space: margin,
             buf: RingBuffer::new(),
@@ -177,6 +192,7 @@ impl Printer {
             indent: 0,
             pending_indentation: 0,
             last_printed: None,
+            pending_line_suffixes: Vec::new(),
 
             margin,
             indent_config: use_tab_with_size,
@@ -227,6 +243,8 @@ impl Printer {
             Token::Break(token) => self.scan_break(token),
             Token::Begin(token) => self.scan_begin(token),
             Token::End => self.scan_end(),
+            Token::LineSuffix(tokens) => self.scan_line_suffix(tokens),
+            Token::BreakChildren(_) => unreachable!("unresolved break-children marker"),
         }
     }
 
@@ -338,6 +356,7 @@ impl Printer {
             self.check_stack(0);
             self.advance_left();
         }
+        self.flush_line_suffixes();
     }
 
     fn scan_begin(&mut self, token: BeginToken) {
@@ -414,13 +433,30 @@ impl Printer {
         }
     }
 
+    fn scan_line_suffix(&mut self, tokens: Vec<Token>) {
+        let size = flat_size(&tokens);
+        if self.scan_stack.is_empty() {
+            self.pending_line_suffixes.push(tokens);
+        } else {
+            self.buf.push(BufEntry {
+                token: Token::LineSuffix(tokens),
+                size,
+                document_index: None,
+            });
+            self.right_total = self.right_total.saturating_add(size).min(SIZE_INFINITY);
+            self.check_stream();
+        }
+    }
+
     #[track_caller]
     pub(crate) fn offset(&mut self, offset: isize) {
         let entry = self.buf.last_mut();
         match &mut entry.token {
             Token::Break(token) => token.offset += offset,
             Token::Begin(_) => {}
-            Token::String(_) | Token::End => unreachable!(),
+            Token::String(_) | Token::End | Token::LineSuffix(_) | Token::BreakChildren(_) => {
+                unreachable!()
+            }
         }
         if let Some(index) = entry.document_index {
             self.document.nodes[index] = Doc::Token(entry.token.clone());
@@ -466,6 +502,11 @@ impl Printer {
                 }
                 Token::Begin(token) => self.print_begin(*token, left.size),
                 Token::End => self.print_end(),
+                Token::LineSuffix(tokens) => {
+                    self.left_total = self.left_total.saturating_add(left.size).min(SIZE_INFINITY);
+                    self.pending_line_suffixes.push(tokens.clone());
+                }
+                Token::BreakChildren(_) => unreachable!("unresolved break-children marker"),
             }
 
             self.last_printed = Some(left.token);
@@ -579,6 +620,7 @@ impl Printer {
                 self.print_indent();
                 self.out.push_str(pre_break);
             }
+            self.flush_line_suffixes();
             if DEBUG {
                 self.out.push('·');
             }
@@ -598,6 +640,24 @@ impl Printer {
         self.print_indent();
         self.out.push_str(string);
         self.space -= string.len() as isize;
+    }
+
+    fn flush_line_suffixes(&mut self) {
+        for tokens in std::mem::take(&mut self.pending_line_suffixes) {
+            let mut renderer = Self::new_inner(self.margin as usize, self.indent_config, false);
+            renderer.space = self.space;
+            renderer.indent = self.indent;
+            for token in tokens {
+                renderer.scan_token(token);
+            }
+            renderer.scan_eof();
+
+            self.out.push_str(&renderer.out);
+            self.space = renderer.space;
+            self.pending_indentation = renderer.pending_indentation;
+            self.group_states.extend(renderer.group_states);
+            self.choice_states.extend(renderer.choice_states);
+        }
     }
 
     fn print_indent(&mut self) {
@@ -624,6 +684,7 @@ impl Document {
         let mut tokens = Vec::new();
         let mut groups = Vec::new();
         self.resolve_into(broken_groups, fallback_choices, &mut groups, &mut tokens);
+        force_break_children(&mut tokens);
         tokens
     }
 
@@ -634,7 +695,9 @@ impl Document {
         groups: &mut Vec<usize>,
         tokens: &mut Vec<Token>,
     ) {
-        for node in &self.nodes {
+        let mut index = 0;
+        while index < self.nodes.len() {
+            let node = &self.nodes[index];
             match node {
                 Doc::Token(Token::Begin(token)) => {
                     groups.push(tokens.len());
@@ -673,7 +736,93 @@ impl Document {
                         begin.force_break = true;
                     }
                 }
+                Doc::BreakChildren(group) => tokens.push(Token::BreakChildren(*group)),
+                Doc::LineSuffixStart => {
+                    let start = index + 1;
+                    let mut depth = 1;
+                    index = start;
+                    while depth > 0 {
+                        match self.nodes.get(index) {
+                            Some(Doc::LineSuffixStart) => depth += 1,
+                            Some(Doc::LineSuffixEnd) => depth -= 1,
+                            Some(_) => {}
+                            None => panic!("unclosed line suffix"),
+                        }
+                        index += 1;
+                    }
+                    let end = index - 1;
+                    let document = Self { nodes: self.nodes[start..end].to_vec() };
+                    let mut suffix_tokens = Vec::new();
+                    document.resolve_into(
+                        broken_groups,
+                        fallback_choices,
+                        &mut Vec::new(),
+                        &mut suffix_tokens,
+                    );
+                    tokens.push(Token::LineSuffix(suffix_tokens));
+                    continue;
+                }
+                Doc::LineSuffixEnd => panic!("line suffix ended without a matching start"),
             }
+            index += 1;
+        }
+    }
+}
+
+fn flat_size(tokens: &[Token]) -> isize {
+    tokens.iter().fold(0, |size, token| {
+        let token_size = match token {
+            Token::String(string) => string.len() as isize,
+            Token::Break(token) => token.blank_space as isize,
+            Token::Begin(_) | Token::End => 0,
+            Token::LineSuffix(tokens) => flat_size(tokens),
+            Token::BreakChildren(_) => 0,
+        };
+        size.saturating_add(token_size).min(SIZE_INFINITY)
+    })
+}
+
+fn force_break_children(tokens: &mut Vec<Token>) {
+    let targets = tokens
+        .iter()
+        .filter_map(|token| match token {
+            Token::BreakChildren(group) => Some(*group),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    if targets.is_empty() {
+        return;
+    }
+
+    let mut stack = Vec::new();
+    let mut ranges = HashMap::new();
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Token::Begin(begin) => stack.push((index, begin.group)),
+            Token::End => {
+                let (start, group) = stack.pop().expect("unmatched end token");
+                if let Some(group) = group
+                    && targets.contains(&group)
+                {
+                    ranges.insert(group, (start, index));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (group, (start, end)) in ranges {
+        debug_assert!(targets.contains(&group));
+        for token in &mut tokens[start + 1..end] {
+            if let Token::Begin(begin) = token {
+                begin.force_break = true;
+            }
+        }
+    }
+    tokens.retain(|token| !matches!(token, Token::BreakChildren(_)));
+    for token in tokens {
+        if let Token::LineSuffix(tokens) = token {
+            force_break_children(tokens);
         }
     }
 }
@@ -737,6 +886,25 @@ mod tests {
     }
 
     #[test]
+    fn break_children_composes_with_if_break() {
+        let mut p = printer();
+        let outer = p.cbox_with_id(0);
+        let target = p.cbox_with_id(0);
+        p.cbox(4);
+        p.word("left");
+        p.space();
+        p.word("right");
+        p.end();
+        p.end();
+        p.space();
+        p.word("a_suffix_that_makes_the_outer_group_break");
+        p.if_break(outer, |p| p.break_children(target), |_| {});
+        p.end();
+
+        assert_eq!(p.eof(), "left\n    right\na_suffix_that_makes_the_outer_group_break");
+    }
+
+    #[test]
     fn choice_uses_first_fitting_document() {
         let mut preferred = printer();
         preferred.word("prefix ");
@@ -747,5 +915,78 @@ mod tests {
         fallback.word("a_very_long_prefix_that_uses_the_line ");
         fallback.choice(|p| p.word("preferred"), |p| p.word("fallback"));
         assert_eq!(fallback.eof(), "a_very_long_prefix_that_uses_the_line fallback");
+    }
+
+    #[test]
+    fn line_suffix_is_emitted_at_the_end_of_the_line() {
+        let mut p = printer();
+        p.word("value");
+        let suffix = p.begin_line_suffix();
+        p.word(" // comment");
+        p.end_line_suffix(suffix);
+        p.word(";");
+        p.hardbreak();
+        p.word("next");
+
+        assert_eq!(p.eof(), "value; // comment\nnext");
+    }
+
+    #[test]
+    fn line_suffix_is_flushed_at_eof() {
+        let mut p = printer();
+        p.word("value");
+        let suffix = p.begin_line_suffix();
+        p.word(" // comment");
+        p.end_line_suffix(suffix);
+        p.word(";");
+
+        assert_eq!(p.eof(), "value; // comment");
+    }
+
+    #[test]
+    fn line_suffix_participates_in_choice_fit() {
+        let mut p = printer();
+        p.choice(
+            |p| {
+                p.word("a_preferred_document_of_thirty_chars");
+                let suffix = p.begin_line_suffix();
+                p.word(" // trailing comment");
+                p.end_line_suffix(suffix);
+            },
+            |p| p.word("fallback"),
+        );
+
+        assert_eq!(p.eof(), "fallback");
+    }
+
+    #[test]
+    fn line_suffix_preserves_live_preview() {
+        let mut p = printer();
+        p.word("value");
+        let suffix = p.begin_line_suffix();
+        p.word(" // comment");
+        p.end_line_suffix(suffix);
+
+        assert!(p.ends_with('t'));
+    }
+
+    #[test]
+    fn line_suffix_uses_layout_engine_after_pre_break() {
+        let mut p = printer();
+        p.cbox(0);
+        p.word("value");
+        let suffix = p.begin_line_suffix();
+        p.cbox(4);
+        p.word(" // a_trailing_comment_that_must");
+        p.space();
+        p.word("wrap");
+        p.end();
+        p.end_line_suffix(suffix);
+        p.break_parent();
+        p.scan_break(BreakToken { pre_break: Some("{"), ..BreakToken::default() });
+        p.word("next");
+        p.end();
+
+        assert_eq!(p.eof(), "value{ // a_trailing_comment_that_must\n    wrap\nnext");
     }
 }

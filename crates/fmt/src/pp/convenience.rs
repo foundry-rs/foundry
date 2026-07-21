@@ -1,6 +1,6 @@
 use super::{
-    BeginToken, BreakToken, Breaks, ChoiceId, Doc, Document, GroupId, IndentStyle, Printer,
-    SIZE_INFINITY, Token,
+    BeginToken, BreakToken, Breaks, ChoiceId, Doc, Document, GroupId, IndentStyle,
+    LineSuffixHandle, Printer, SIZE_INFINITY, Token,
 };
 use std::borrow::Cow;
 
@@ -71,7 +71,30 @@ impl Printer {
     }
 
     pub fn eof(self) -> String {
+        assert_eq!(self.line_suffix_depth, 0, "unclosed line suffix");
         self.render_document()
+    }
+
+    /// Begins capturing content that will be emitted immediately before the current line ends.
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn begin_line_suffix(&mut self) -> LineSuffixHandle {
+        let handle = LineSuffixHandle { depth: self.line_suffix_depth };
+        self.line_suffix_depth += 1;
+        self.document.nodes.push(Doc::LineSuffixStart);
+        handle
+    }
+
+    /// Ends a line-suffix capture.
+    #[track_caller]
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn end_line_suffix(&mut self, handle: LineSuffixHandle) {
+        assert_eq!(
+            handle.depth + 1,
+            self.line_suffix_depth,
+            "line suffixes must end in LIFO order"
+        );
+        self.line_suffix_depth -= 1;
+        self.document.nodes.push(Doc::LineSuffixEnd);
     }
 
     /// Emits one of two documents according to the final layout of `group`.
@@ -94,6 +117,12 @@ impl Printer {
         self.document.nodes.push(Doc::BreakParent);
     }
 
+    /// Forces every box nested inside `group` to use its broken layout.
+    #[allow(dead_code)] // Used by formatter migrations to the retained document API.
+    pub fn break_children(&mut self, group: GroupId) {
+        self.document.nodes.push(Doc::BreakChildren(group));
+    }
+
     /// Emits `preferred` when it fits, otherwise emits `fallback`.
     #[allow(dead_code)] // Used by formatter migrations to the retained document API.
     pub fn choice(&mut self, preferred: impl FnOnce(&mut Self), fallback: impl FnOnce(&mut Self)) {
@@ -110,7 +139,9 @@ impl Printer {
         let mut child = Self::new(self.margin as usize, self.indent_config);
         child.next_group = self.next_group;
         child.next_choice = self.next_choice;
+        child.line_suffix_depth = self.line_suffix_depth;
         f(&mut child);
+        assert_eq!(child.line_suffix_depth, self.line_suffix_depth, "unclosed line suffix");
         self.next_group = child.next_group;
         self.next_choice = child.next_choice;
         child.document
