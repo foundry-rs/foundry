@@ -2979,7 +2979,7 @@ impl EthApi<FoundryNetwork> {
                 base_block.header.timestamp(),
                 block_interval,
             )?;
-            return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
+            return Ok(fork.simulate_v1(&request, Some(base_block.header.hash.into())).await?);
         }
 
         // this can be blocking for a bit, especially in forking mode

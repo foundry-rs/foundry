@@ -519,11 +519,11 @@ impl<N: Network> ClientFork<N> {
     pub async fn simulate_v1(
         &self,
         request: &SimulatePayload,
-        block: Option<BlockNumber>,
+        block: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
         let mut simulate_call = self.provider().simulate(request);
-        if let Some(n) = block {
-            simulate_call = simulate_call.number(n.as_number().unwrap());
+        if let Some(block) = block {
+            simulate_call = simulate_call.block_id(block);
         }
 
         let res = simulate_call.await?;

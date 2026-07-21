@@ -9,6 +9,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, StateOverridesBuilder},
 };
 use anvil::{EthereumHardfork, NodeConfig, spawn};
+use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -109,6 +110,51 @@ async fn test_fork_simulate_normalizes_delegated_block_sequence_rpc() {
         let response = rpc_request(&endpoint, "eth_simulateV1", params).await;
         assert_eq!(response["error"]["code"], code, "{response}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_pins_delegated_hash_selector_rpc() {
+    let (hash_api, hash_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
+    hash_api.evm_set_block_timestamp_interval(1).unwrap();
+    hash_api.mine_one().await;
+    hash_api.mine_one().await;
+    let hash_endpoint = hash_handle.http_endpoint();
+    let hash_base =
+        rpc_request(&hash_endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
+    let hash_selector = hash_base["result"]["hash"].clone();
+
+    let (canonical_api, canonical_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(2_000u64))).await;
+    canonical_api.evm_set_block_timestamp_interval(1).unwrap();
+    canonical_api.mine_one().await;
+    canonical_api.mine_one().await;
+
+    let proxy_endpoint = spawn_hash_aware_rpc_proxy(
+        hash_endpoint,
+        canonical_handle.http_endpoint(),
+        hash_selector.clone(),
+    )
+    .await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(proxy_endpoint))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    api.evm_set_block_timestamp_interval(7).unwrap();
+
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{}]}, {"blockHash": hash_selector}]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(
+        quantity(&response["result"][0]["timestamp"]),
+        quantity(&hash_base["result"]["timestamp"]) + 7
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -958,6 +1004,46 @@ async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     response.json().await.unwrap()
+}
+
+async fn spawn_hash_aware_rpc_proxy(
+    hash_endpoint: String,
+    canonical_endpoint: String,
+    hash_selector: Value,
+) -> String {
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let hash_endpoint = hash_endpoint.clone();
+            let canonical_endpoint = canonical_endpoint.clone();
+            let hash_selector = hash_selector.clone();
+            async move {
+                let method = request["method"].as_str().unwrap();
+                let endpoint = if method == "eth_getBlockByHash"
+                    || method == "eth_simulateV1"
+                        && request["params"].get(1) == Some(&hash_selector)
+                {
+                    hash_endpoint
+                } else {
+                    canonical_endpoint
+                };
+                let response = reqwest::Client::new()
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
 }
 
 fn quantity(value: &Value) -> u64 {
