@@ -247,6 +247,7 @@ impl RunArgs {
             let arena = SparsedTraceArena {
                 arena: call_frame_to_arena_with_root_address(&frame, root_create_address),
                 ignored: Default::default(),
+                diagnostics: Default::default(),
             };
             let result = TraceResult {
                 success,

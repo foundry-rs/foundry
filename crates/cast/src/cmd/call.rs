@@ -360,6 +360,7 @@ impl CallArgs {
             let arena = SparsedTraceArena {
                 arena: call_frame_to_arena(&frame),
                 ignored: Default::default(),
+                diagnostics: Default::default(),
             };
             let result = TraceResult {
                 success,

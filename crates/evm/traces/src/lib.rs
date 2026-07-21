@@ -21,10 +21,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
+    fmt,
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::{U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 pub use revm_inspectors::tracing::{
@@ -55,6 +56,27 @@ pub mod speedscope;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
+/// Presentation-only detail for an otherwise empty EVM revert.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum RevertDiagnostic {
+    /// A call targeted an address without code.
+    CallToNonContract(Address),
+    /// A delegate call targeted an address without code.
+    DelegateCallToNonContract(Address),
+}
+
+impl fmt::Display for RevertDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CallToNonContract(addr) => write!(f, "call to non-contract address {addr}"),
+            Self::DelegateCallToNonContract(addr) => write!(
+                f,
+                "delegatecall to non-contract address {addr} (usually an unliked library)"
+            ),
+        }
+    }
+}
+
 /// Trace arena keeping track of ignored trace items.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparsedTraceArena {
@@ -65,12 +87,15 @@ pub struct SparsedTraceArena {
     /// See `foundry_cheatcodes::utils::IgnoredTraces` for more information.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub ignored: HashMap<(usize, usize), (usize, usize)>,
+    /// Presentation-only revert diagnostics, keyed by trace node index.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub diagnostics: HashMap<usize, RevertDiagnostic>,
 }
 
 impl SparsedTraceArena {
     /// Goes over entire trace arena and removes ignored trace items.
     fn resolve_arena(&self) -> Cow<'_, CallTraceArena> {
-        if self.ignored.is_empty() {
+        if self.ignored.is_empty() && self.diagnostics.is_empty() {
             Cow::Borrowed(&self.arena)
         } else {
             let mut arena = self.arena.clone();
@@ -152,7 +177,16 @@ impl SparsedTraceArena {
                 }
             }
 
-            clear_node(arena.nodes_mut(), 0, &self.ignored, &mut None);
+            if !self.ignored.is_empty() {
+                clear_node(arena.nodes_mut(), 0, &self.ignored, &mut None);
+            }
+
+            for (&node_idx, diagnostic) in &self.diagnostics {
+                if let Some(node) = arena.nodes_mut().get_mut(node_idx) {
+                    node.trace.decoded.get_or_insert_default().return_data =
+                        Some(diagnostic.to_string());
+                }
+            }
 
             Cow::Owned(arena)
         }
@@ -596,13 +630,38 @@ mod tests {
         };
 
         let rendered = render_trace_arena_inner(
-            &SparsedTraceArena { arena, ignored: Default::default() },
+            &SparsedTraceArena {
+                arena,
+                ignored: Default::default(),
+                diagnostics: Default::default(),
+            },
             false,
             true,
         );
 
         assert!(rendered.contains("\nDecoded TIP20ChannelReserve storage:\n"));
         assert!(!rendered.contains("\n\nDecoded TIP20ChannelReserve storage:\n"));
+    }
+
+    #[test]
+    fn revert_diagnostic_only_changes_resolved_trace() {
+        let traces = SparsedTraceArena {
+            arena: CallTraceArena::default(),
+            ignored: Default::default(),
+            diagnostics: HashMap::from_iter([(
+                0,
+                RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
+            )]),
+        };
+
+        let resolved = traces.resolve_arena();
+        assert_eq!(
+            resolved.nodes()[0].trace.decoded.as_ref().unwrap().return_data.as_deref(),
+            Some("call to non-contract address 0x0000000000000000000000000000000000000000")
+        );
+        assert!(resolved.nodes()[0].trace.output.is_empty());
+        assert!(traces.arena.nodes()[0].trace.decoded.is_none());
+        assert!(traces.arena.nodes()[0].trace.output.is_empty());
     }
 
     #[test]

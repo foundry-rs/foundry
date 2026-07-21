@@ -18,11 +18,14 @@ contract Issue11559Test is Test {
         IERC20(address(0)).totalSupply();
     }
 
-    // Same test but with a specific revert message check
-    /// forge-config: default.allow_internal_expect_revert = true
-    function testExpectRevertCallToNonContractAddressWithMessage() public {
-        // The revert message is injected by the RevertDiagnostic inspector
-        vm.expectRevert("call to non-contract address 0x0000000000000000000000000000000000000000");
-        IERC20(address(0)).totalSupply();
+    function testCallerObservesEmptyRevertData() public {
+        (bool success, bytes memory data) =
+            address(this).call(abi.encodeCall(this.callNonContract, (address(0))));
+        assertEq(success, false);
+        assertEq(data.length, 0);
+    }
+
+    function callNonContract(address target) external view returns (uint256) {
+        return IERC20(target).totalSupply();
     }
 }
