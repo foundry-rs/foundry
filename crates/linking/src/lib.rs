@@ -24,6 +24,8 @@ use std::{
 pub enum LinkerError {
     #[error("wasn't able to find artifact for library {name} at {file}")]
     MissingLibraryArtifact { file: String, name: String },
+    #[error("multiple library artifacts resolve to the same key {file}:{name}")]
+    ConflictingLibraryArtifacts { file: String, name: String },
     #[error("target artifact is not present in provided artifacts set")]
     MissingTargetArtifact,
     #[error(transparent)]
@@ -46,6 +48,8 @@ pub struct LinkOutput {
     /// Resolved library addresses. Contains both user-provided and newly deployed libraries.
     /// It will always contain library paths with stripped path prefixes.
     pub libraries: Libraries,
+    /// Addresses of libraries required by the linked targets.
+    pub library_addresses: Vec<Address>,
     /// Vector of libraries that need to be deployed from sender address.
     /// The order in which they appear in the vector is the order in which they should be deployed.
     pub libs_to_deploy: Vec<Bytes>,
@@ -183,6 +187,26 @@ impl<'a> Linker<'a> {
         Ok(())
     }
 
+    fn library_addresses(
+        &self,
+        library_keys: &BTreeSet<(PathBuf, String)>,
+        libraries: &Libraries,
+    ) -> Result<Vec<Address>, LinkerError> {
+        let addresses = library_keys
+            .iter()
+            .map(|(file, name)| {
+                let address =
+                    libraries.libs.get(file).and_then(|libraries| libraries.get(name)).ok_or_else(
+                        || LinkerError::LinkingFailed {
+                            artifact: format!("{}:{name}", file.display()),
+                        },
+                    )?;
+                Address::from_str(address).map_err(LinkerError::InvalidAddress)
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        Ok(addresses.into_iter().collect())
+    }
+
     /// Links given artifact with either given library addresses or address computed from sender and
     /// nonce.
     ///
@@ -207,6 +231,8 @@ impl<'a> Linker<'a> {
         for target in targets {
             self.collect_dependencies(target, &mut needed_libraries)?;
         }
+        let library_keys =
+            needed_libraries.iter().map(|id| self.convert_artifact_id_to_lib_path(id)).collect();
 
         let mut libs_to_deploy = Vec::new();
 
@@ -232,7 +258,8 @@ impl<'a> Linker<'a> {
             })
             .collect::<Result<Vec<_>, LinkerError>>()?;
 
-        Ok(LinkOutput { libraries, libs_to_deploy })
+        let library_addresses = self.library_addresses(&library_keys, &libraries)?;
+        Ok(LinkOutput { libraries, library_addresses, libs_to_deploy })
     }
 
     pub fn link_with_create2(
@@ -249,6 +276,17 @@ impl<'a> Linker<'a> {
         let mut needed_libraries = BTreeSet::new();
         for target in targets {
             self.collect_dependencies(target, &mut needed_libraries)?;
+        }
+
+        let mut library_keys = BTreeSet::new();
+        for id in &needed_libraries {
+            let (file, name) = self.convert_artifact_id_to_lib_path(id);
+            if !library_keys.insert((file.clone(), name.clone())) {
+                return Err(LinkerError::ConflictingLibraryArtifacts {
+                    file: file.display().to_string(),
+                    name,
+                });
+            }
         }
 
         let mut needed_libraries = needed_libraries
@@ -298,7 +336,8 @@ impl<'a> Linker<'a> {
             libraries.libs.entry(file).or_default().insert(name, address.to_checksum(None));
         }
 
-        Ok(LinkOutput { libraries, libs_to_deploy })
+        let library_addresses = self.library_addresses(&library_keys, &libraries)?;
+        Ok(LinkOutput { libraries, library_addresses, libs_to_deploy })
     }
 
     /// Links given artifact with given libraries.
@@ -481,7 +520,7 @@ mod tests {
         }
 
         fn validate_assertions(&self, identifier: String, output: LinkOutput) {
-            let LinkOutput { libs_to_deploy, libraries } = output;
+            let LinkOutput { libs_to_deploy, libraries, .. } = output;
 
             let assertions = self
                 .dependency_assertions
@@ -868,6 +907,66 @@ mod tests {
                 target.name
             );
         }
+    }
+
+    #[test]
+    fn link_create2_rejects_library_key_collisions_across_versions() {
+        let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
+        let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
+        let (library_id, library) = linker
+            .contracts
+            .iter()
+            .find(|(id, _)| id.name == "Lib")
+            .map(|(id, contract)| (id.clone(), contract.clone()))
+            .unwrap();
+        let (consumer_id, consumer) = linker
+            .contracts
+            .iter()
+            .find(|(id, _)| id.name == "LibraryConsumer")
+            .map(|(id, contract)| (id.clone(), contract.clone()))
+            .unwrap();
+
+        let mut contracts = linker.contracts.clone();
+        let mut other_library_id = library_id;
+        other_library_id.version = Version::new(0, 8, 19);
+        other_library_id.build_id = "other".to_string();
+        contracts.insert(other_library_id, library);
+        let mut other_consumer_id = consumer_id.clone();
+        other_consumer_id.version = Version::new(0, 8, 19);
+        other_consumer_id.build_id = "other".to_string();
+        contracts.insert(other_consumer_id.clone(), consumer);
+
+        let linker = Linker::new(test.project.root(), contracts);
+        let Err(err) = linker.link_with_create2(
+            Libraries::default(),
+            Address::ZERO,
+            B256::ZERO,
+            [&consumer_id, &other_consumer_id],
+        ) else {
+            panic!("expected conflicting library artifacts");
+        };
+
+        assert!(matches!(err, LinkerError::ConflictingLibraryArtifacts { .. }));
+    }
+
+    #[test]
+    fn link_output_excludes_unreferenced_configured_libraries() {
+        let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
+        let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
+        let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
+        let unrelated = address!("0000000000000000000000000000000000000001");
+        let mut libraries = Libraries::default();
+        libraries
+            .libs
+            .entry("src/Unrelated.sol".into())
+            .or_default()
+            .insert("Unrelated".to_string(), unrelated.to_checksum(None));
+
+        let output =
+            linker.link_with_create2(libraries, Address::ZERO, B256::ZERO, [consumer]).unwrap();
+
+        assert_eq!(output.library_addresses.len(), 1);
+        assert!(!output.library_addresses.contains(&unrelated));
     }
 
     #[test]

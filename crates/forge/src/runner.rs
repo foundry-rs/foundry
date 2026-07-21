@@ -800,8 +800,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         }
 
         // Configured libraries may already exist and are not present in `libs_to_deploy`.
-        for address in self.mcr.libraries.libs.values().flat_map(|libs| libs.values()) {
-            let address = address.parse::<Address>()?;
+        for &address in &self.mcr.library_addresses {
             if !self.executor.is_empty_code(address)? {
                 result.deployed_libs.push(address);
             }

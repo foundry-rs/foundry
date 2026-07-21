@@ -71,6 +71,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub revert_decoder: RevertDecoder,
     /// Libraries to deploy.
     pub libs_to_deploy: Vec<Bytes>,
+    /// Addresses of libraries required by linked test artifacts.
+    pub library_addresses: Vec<Address>,
     /// How libraries should be deployed.
     pub library_deployment: LibraryDeployment,
     /// Library addresses used to link contracts.
@@ -795,7 +797,7 @@ impl MultiContractRunnerBuilder {
                 linker.contracts.keys(),
             )
         });
-        let (LinkOutput { libraries, libs_to_deploy }, library_deployment) =
+        let (LinkOutput { libraries, library_addresses, libs_to_deploy }, library_deployment) =
             if let Some(Ok(output)) = create2 {
                 (
                     output,
@@ -904,6 +906,7 @@ impl MultiContractRunnerBuilder {
             revert_decoder,
             known_contracts,
             libs_to_deploy,
+            library_addresses,
             library_deployment,
             libraries,
             analysis,
