@@ -308,6 +308,61 @@ async fn monad_omitted_gas_fallback_uses_resolved_tx_gas_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_pool_accepts_balance_covering_effective_fee() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let gas_limit = 21_000u64;
+    let base_fee = 1_000_000_000u128;
+    let priority_fee = 1_000_000_000u128;
+    let max_fee = 100_000_000_000u128;
+    let effective_fee = U256::from(gas_limit) * U256::from(base_fee + priority_fee);
+    let max_fee_cost = U256::from(gas_limit) * U256::from(max_fee);
+    assert!(effective_fee < max_fee_cost);
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
+    api.anvil_set_balance(accounts[0], effective_fee).await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .with_from(accounts[0])
+        .with_to(accounts[1])
+        .with_gas_limit(gas_limit)
+        .with_max_fee_per_gas(max_fee)
+        .with_max_priority_fee_per_gas(priority_fee);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_pool_admits_unaffordable_value_for_failed_receipt() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let gas_limit = 21_000u64;
+    let base_fee = 1_000_000_000u128;
+    let priority_fee = 1_000_000_000u128;
+    let max_fee = 100_000_000_000u128;
+    let effective_fee = U256::from(gas_limit) * U256::from(base_fee + priority_fee);
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
+    api.anvil_set_balance(accounts[0], effective_fee).await.unwrap();
+    let recipient_balance = provider.get_balance(accounts[1]).await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .with_from(accounts[0])
+        .with_to(accounts[1])
+        .with_value(U256::ONE)
+        .with_gas_limit(gas_limit)
+        .with_max_fee_per_gas(max_fee)
+        .with_max_priority_fee_per_gas(priority_fee);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(!receipt.status());
+    assert_eq!(provider.get_balance(accounts[1]).await.unwrap(), recipient_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_rejects_eip4844_blob_transactions() {
     let config = monad_nine_config();
     let (_api, handle) = spawn(config).await;

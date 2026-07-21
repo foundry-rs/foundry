@@ -6200,13 +6200,6 @@ where
                 ));
             }
 
-            let max_cost =
-                (tx.gas_limit() as u128).saturating_mul(tx.max_fee_per_gas()).saturating_add(
-                    tx.blob_gas_used()
-                        .map(|g| g as u128)
-                        .unwrap_or(0)
-                        .mul(tx.max_fee_per_blob_gas().unwrap_or(0)),
-                );
             let value = tx.value();
             match tx.as_ref() {
                 #[cfg(feature = "optimism")]
@@ -6225,7 +6218,24 @@ where
                     // Tempo AA transactions pay gas with fee tokens, not ETH.
                     // Fee token balance is validated in validate_pool_transaction (async).
                 }
+                _ if self.is_monad() => {
+                    let effective_gas_price =
+                        tx.effective_gas_price(Some(evm_env.block_env.basefee));
+                    let required = U256::from(tx.gas_limit()) * U256::from(effective_gas_price);
+                    if account.balance < required {
+                        debug!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, required, *pending.sender());
+                        return Err(InvalidTransactionError::InsufficientFunds);
+                    }
+                }
                 _ => {
+                    let max_cost = (tx.gas_limit() as u128)
+                        .saturating_mul(tx.max_fee_per_gas())
+                        .saturating_add(
+                            tx.blob_gas_used()
+                                .map(|g| g as u128)
+                                .unwrap_or(0)
+                                .mul(tx.max_fee_per_blob_gas().unwrap_or(0)),
+                        );
                     // check sufficient funds: `gas * price + value`
                     let req_funds =
                         max_cost.checked_add(value.saturating_to()).ok_or_else(|| {
