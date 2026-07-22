@@ -17,12 +17,12 @@ function f() {
     // transient = 0;
 
     S memory x = S({
-            // format
-            error: 0,
-            layout: 0,
-            at: 0
-            // transient: 0
-        });
+        // format
+        error: 0,
+        layout: 0,
+        at: 0
+        // transient: 0
+    });
 
     x.error = 0;
     x.layout = 0;

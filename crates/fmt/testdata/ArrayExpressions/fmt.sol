@@ -28,10 +28,10 @@ contract ArrayExpressions {
 
         uint256
             someVeryVeryVeryLongVariableNameThatDenotesTheStartOfTheMessageDataSlice =
-            4;
+                4;
         uint256
-            someVeryVeryVeryLongVariableNameThatDenotesTheEndOfTheMessageDataSlice = msg.data
-        .length;
+            someVeryVeryVeryLongVariableNameThatDenotesTheEndOfTheMessageDataSlice =
+                msg.data.length;
         msg.data[
             someVeryVeryVeryLongVariableNameThatDenotesTheStartOfTheMessageDataSlice:
         ];

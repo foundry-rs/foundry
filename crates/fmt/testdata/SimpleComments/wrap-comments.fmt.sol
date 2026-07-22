@@ -6,12 +6,11 @@ contract SimpleComments {
     uint40 constant WARP_PERIOD = FEB_1_2025 + PERIOD;
 
     //´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:
-    //                         VARIABLES
+    // VARIABLES
     //.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•
 
-    mapping(
-        address /* asset */ => address /* router */
-    ) public router;
+    mapping(address /* asset */ => address /* router */)
+        public router;
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                         FUNCTIONS
@@ -88,10 +87,9 @@ contract SimpleComments {
             uint256 buyTokenBalanceBefore1,
             /* hashMul */,
             /* hashMod */
-        ) =
-            _swapPre(
-                2, TOTAL_SUPPLY / 1_000, false, zeroForOne1
-            );
+        ) = _swapPre(
+            2, TOTAL_SUPPLY / 1_000, false, zeroForOne1
+        );
     }
 
     // https://github.com/foundry-rs/foundry/issues/12045

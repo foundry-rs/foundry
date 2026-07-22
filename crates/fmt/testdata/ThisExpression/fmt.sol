@@ -11,8 +11,8 @@ contract ThisExpression {
         address(this).balance;
 
         address thisAddress = address(
-                // comment2
-                /* comment3 */ this // comment 4
-            );
+            // comment2
+            /* comment3 */ this // comment 4
+        );
     }
 }
