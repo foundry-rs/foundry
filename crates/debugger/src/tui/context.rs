@@ -945,15 +945,12 @@ impl TUIContext<'_> {
             return;
         };
 
-        // Find the location of the called breakpoint in the whole debug arena (at this address with
-        // this pc)
-        let Some((inner_call_index, step_index)) =
-            self.debug_arena().iter().enumerate().find_map(|(i, node)| {
-                (node.address == caller)
-                    .then(|| node.steps.iter().position(|step| step.pc == pc).map(|step| (i, step)))
-                    .flatten()
-            })
-        else {
+        let Some((inner_call_index, step_index)) = find_next_step_target(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            |node, step| node.address == caller && step.pc == pc,
+        ) else {
             self.set_error(format!("Breakpoint '{c}' target not found in trace"));
             return;
         };
@@ -1485,6 +1482,44 @@ fn find_pc_target(
     find_step_target(arena, current_node_index, current_step, |_, step| step.pc == pc)
 }
 
+fn find_next_step_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    mut matches: impl FnMut(&DebugNode, &CallTraceStep) -> bool,
+) -> Option<(usize, usize)> {
+    let current_node = arena.get(current_node_index)?;
+
+    if let Some(step_index) = current_node
+        .steps
+        .iter()
+        .enumerate()
+        .skip(current_step.saturating_add(1))
+        .find_map(|(i, step)| matches(current_node, step).then_some(i))
+    {
+        return Some((current_node_index, step_index));
+    }
+
+    for (node_index, node) in arena.iter().enumerate().skip(current_node_index + 1) {
+        if let Some(step_index) = node.steps.iter().position(|step| matches(node, step)) {
+            return Some((node_index, step_index));
+        }
+    }
+
+    for (node_index, node) in arena.iter().enumerate().take(current_node_index) {
+        if let Some(step_index) = node.steps.iter().position(|step| matches(node, step)) {
+            return Some((node_index, step_index));
+        }
+    }
+
+    current_node
+        .steps
+        .iter()
+        .enumerate()
+        .take(current_step.saturating_add(1))
+        .find_map(|(i, step)| matches(current_node, step).then_some((current_node_index, i)))
+}
+
 fn find_step_target(
     arena: &[DebugNode],
     current_node_index: usize,
@@ -1816,12 +1851,13 @@ mod tests {
     }
 
     #[test]
-    fn breakpoint_shortcut_jumps_and_reports_status() {
+    fn breakpoint_shortcut_cycles_trace_hits() {
         let address = Address::repeat_byte(1);
         let other = Address::repeat_byte(2);
         let mut context = context_with_arena(vec![
             node(other, CallKind::Call, &[1]),
-            node(address, CallKind::Call, &[7, 42]),
+            node(address, CallKind::Call, &[42, 7, 42]),
+            node(address, CallKind::Call, &[8, 42]),
         ]);
         context.breakpoints.insert('a', (address, 42));
         let mut tui = TUIContext::new(&mut context);
@@ -1831,10 +1867,22 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('a')));
 
         assert_eq!(tui.draw_memory.inner_call_index, 1);
-        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.current_step, 0);
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Info);
         assert_eq!(status.text, "Jumped to breakpoint 'a' at PC 0x2a (42)");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (1, 2));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (2, 1));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (1, 0));
     }
 
     #[test]

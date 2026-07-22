@@ -1051,7 +1051,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
 impl Cheatcode for startStateDiffRecordingCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
-        state.recorded_account_diffs_stack = Some(Default::default());
+        state.start_state_diff_recording();
         // Enable mapping recording to track mapping slot accesses
         state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
@@ -1171,10 +1171,8 @@ impl Cheatcode for getStorageAccessesCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let mut storage_accesses = Vec::new();
 
-        if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
-            for account_accesses in recorded_diffs.iter().flatten() {
-                storage_accesses.extend(account_accesses.storageAccesses.clone());
-            }
+        for account_access in state.recorded_account_diffs() {
+            storage_accesses.extend(account_access.storageAccesses.clone());
         }
 
         Ok(storage_accesses.abi_encode())
@@ -1952,13 +1950,15 @@ const fn string_chunks(byte_length: usize) -> usize {
 /// depth than `startStateDiffRecording`, multiple `Vec<RecordedAccountAccesses>`
 /// will be flattened, preserving the order of the accesses.
 fn get_state_diff<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>) -> Result {
-    let res = state
-        .recorded_account_diffs_stack
-        .replace(Default::default())
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    let mut res = state.take_recorded_account_diffs_prefix();
+    res.extend(
+        state
+            .recorded_account_diffs_stack
+            .replace(Default::default())
+            .unwrap_or_default()
+            .into_iter()
+            .flatten(),
+    );
     Ok(res.abi_encode())
 }
 
@@ -1987,16 +1987,14 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
 
     // First, collect all unique addresses we need to look up
     let mut addresses_to_lookup = HashSet::new();
-    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
-        for account_access in records.iter().flatten() {
-            if !account_access.storageAccesses.is_empty()
-                || account_access.oldBalance != account_access.newBalance
-            {
-                addresses_to_lookup.insert(account_access.account);
-                for storage_access in &account_access.storageAccesses {
-                    if storage_access.isWrite && !storage_access.reverted {
-                        addresses_to_lookup.insert(storage_access.account);
-                    }
+    for account_access in ccx.state.recorded_account_diffs() {
+        if !account_access.storageAccesses.is_empty()
+            || account_access.oldBalance != account_access.newBalance
+        {
+            addresses_to_lookup.insert(account_access.account);
+            for storage_access in &account_access.storageAccesses {
+                if storage_access.isWrite && !storage_access.reverted {
+                    addresses_to_lookup.insert(storage_access.account);
                 }
             }
         }
@@ -2017,138 +2015,133 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     }
 
     // Now process the records
-    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
-        records
-            .iter()
-            .flatten()
-            .filter(|account_access| {
-                !account_access.storageAccesses.is_empty()
-                    || account_access.oldBalance != account_access.newBalance
-                    || (!account_access.reverted
-                        && account_access.oldNonce != account_access.newNonce)
-            })
-            .for_each(|account_access| {
-                // Record account balance diffs.
-                if account_access.oldBalance != account_access.newBalance {
-                    let account_diff =
-                        state_diffs.entry(account_access.account).or_insert_with(|| {
-                            AccountStateDiffs {
-                                label: ccx.state.labels.get(&account_access.account).cloned(),
-                                contract: contract_names.get(&account_access.account).cloned(),
-                                ..Default::default()
-                            }
-                        });
-                    // Update balance diff. Do not overwrite the initial balance if already set.
-                    if let Some(diff) = &mut account_diff.balance_diff {
-                        diff.new_value = account_access.newBalance;
-                    } else {
-                        account_diff.balance_diff = Some(BalanceDiff {
-                            previous_value: account_access.oldBalance,
-                            new_value: account_access.newBalance,
-                        });
+    ccx.state
+        .recorded_account_diffs()
+        .filter(|account_access| {
+            !account_access.storageAccesses.is_empty()
+                || account_access.oldBalance != account_access.newBalance
+                || (!account_access.reverted && account_access.oldNonce != account_access.newNonce)
+        })
+        .for_each(|account_access| {
+            // Record account balance diffs.
+            if account_access.oldBalance != account_access.newBalance {
+                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
+                    AccountStateDiffs {
+                        label: ccx.state.labels.get(&account_access.account).cloned(),
+                        contract: contract_names.get(&account_access.account).cloned(),
+                        ..Default::default()
                     }
+                });
+                // Update balance diff. Do not overwrite the initial balance if already set.
+                if let Some(diff) = &mut account_diff.balance_diff {
+                    diff.new_value = account_access.newBalance;
+                } else {
+                    account_diff.balance_diff = Some(BalanceDiff {
+                        previous_value: account_access.oldBalance,
+                        new_value: account_access.newBalance,
+                    });
                 }
+            }
 
-                // Record account nonce diffs.
-                if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
-                    let account_diff =
-                        state_diffs.entry(account_access.account).or_insert_with(|| {
-                            AccountStateDiffs {
-                                label: ccx.state.labels.get(&account_access.account).cloned(),
-                                contract: contract_names.get(&account_access.account).cloned(),
-                                ..Default::default()
-                            }
-                        });
-                    // Update nonce diff. Do not overwrite the initial nonce if already set.
-                    if let Some(diff) = &mut account_diff.nonce_diff {
-                        diff.new_value = account_access.newNonce;
-                    } else {
-                        account_diff.nonce_diff = Some(NonceDiff {
-                            previous_value: account_access.oldNonce,
-                            new_value: account_access.newNonce,
-                        });
+            // Record account nonce diffs.
+            if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
+                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
+                    AccountStateDiffs {
+                        label: ccx.state.labels.get(&account_access.account).cloned(),
+                        contract: contract_names.get(&account_access.account).cloned(),
+                        ..Default::default()
                     }
+                });
+                // Update nonce diff. Do not overwrite the initial nonce if already set.
+                if let Some(diff) = &mut account_diff.nonce_diff {
+                    diff.new_value = account_access.newNonce;
+                } else {
+                    account_diff.nonce_diff = Some(NonceDiff {
+                        previous_value: account_access.oldNonce,
+                        new_value: account_access.newNonce,
+                    });
                 }
+            }
 
-                // Collect all storage accesses for this account
-                let raw_changes_by_slot = account_access
-                    .storageAccesses
-                    .iter()
-                    .filter_map(|access| {
-                        (access.isWrite && !access.reverted)
-                            .then_some((access.slot, (access.previousValue, access.newValue)))
-                    })
-                    .collect::<BTreeMap<_, _>>();
+            // Collect all storage accesses for this account
+            let raw_changes_by_slot = account_access
+                .storageAccesses
+                .iter()
+                .filter_map(|access| {
+                    (access.isWrite && !access.reverted)
+                        .then_some((access.slot, (access.previousValue, access.newValue)))
+                })
+                .collect::<BTreeMap<_, _>>();
 
-                // Record account state diffs.
-                for storage_access in &account_access.storageAccesses {
-                    if storage_access.isWrite && !storage_access.reverted {
-                        let account_diff = state_diffs
-                            .entry(storage_access.account)
-                            .or_insert_with(|| AccountStateDiffs {
+            // Record account state diffs.
+            for storage_access in &account_access.storageAccesses {
+                if storage_access.isWrite && !storage_access.reverted {
+                    let account_diff =
+                        state_diffs.entry(storage_access.account).or_insert_with(|| {
+                            AccountStateDiffs {
                                 label: ccx.state.labels.get(&storage_access.account).cloned(),
                                 contract: contract_names.get(&storage_access.account).cloned(),
                                 ..Default::default()
+                            }
+                        });
+                    let layout = storage_layouts.get(&storage_access.account);
+                    // Update state diff. Do not overwrite the initial value if already set.
+                    let entry = match account_diff.state_diff.entry(storage_access.slot) {
+                        Entry::Vacant(slot_state_diff) => {
+                            // Get storage layout info for this slot
+                            // Include mapping slots if available for the account
+                            let mapping_slots = ccx
+                                .state
+                                .mapping_slots
+                                .as_ref()
+                                .and_then(|slots| slots.get(&storage_access.account));
+
+                            let slot_info = layout.and_then(|layout| {
+                                let decoder = SlotIdentifier::new(layout.clone());
+                                decoder.identify(&storage_access.slot, mapping_slots).or_else(
+                                    || {
+                                        // Create a map of new values for bytes/string
+                                        // identification. These values are used to determine
+                                        // the length of the data which helps determine how many
+                                        // slots to search
+                                        let current_base_slot_values = raw_changes_by_slot
+                                            .iter()
+                                            .map(|(slot, (_, new_val))| (*slot, *new_val))
+                                            .collect::<B256Map<_>>();
+                                        decoder.identify_bytes_or_string(
+                                            &storage_access.slot,
+                                            &current_base_slot_values,
+                                        )
+                                    },
+                                )
                             });
-                        let layout = storage_layouts.get(&storage_access.account);
-                        // Update state diff. Do not overwrite the initial value if already set.
-                        let entry = match account_diff.state_diff.entry(storage_access.slot) {
-                            Entry::Vacant(slot_state_diff) => {
-                                // Get storage layout info for this slot
-                                // Include mapping slots if available for the account
-                                let mapping_slots = ccx
-                                    .state
-                                    .mapping_slots
-                                    .as_ref()
-                                    .and_then(|slots| slots.get(&storage_access.account));
 
-                                let slot_info = layout.and_then(|layout| {
-                                    let decoder = SlotIdentifier::new(layout.clone());
-                                    decoder.identify(&storage_access.slot, mapping_slots).or_else(
-                                        || {
-                                            // Create a map of new values for bytes/string
-                                            // identification. These values are used to determine
-                                            // the length of the data which helps determine how many
-                                            // slots to search
-                                            let current_base_slot_values = raw_changes_by_slot
-                                                .iter()
-                                                .map(|(slot, (_, new_val))| (*slot, *new_val))
-                                                .collect::<B256Map<_>>();
-                                            decoder.identify_bytes_or_string(
-                                                &storage_access.slot,
-                                                &current_base_slot_values,
-                                            )
-                                        },
-                                    )
-                                });
+                            slot_state_diff.insert(SlotStateDiff {
+                                previous_value: storage_access.previousValue,
+                                new_value: storage_access.newValue,
+                                slot_info,
+                            })
+                        }
+                        Entry::Occupied(slot_state_diff) => {
+                            let entry = slot_state_diff.into_mut();
+                            entry.new_value = storage_access.newValue;
+                            entry
+                        }
+                    };
 
-                                slot_state_diff.insert(SlotStateDiff {
-                                    previous_value: storage_access.previousValue,
-                                    new_value: storage_access.newValue,
-                                    slot_info,
-                                })
-                            }
-                            Entry::Occupied(slot_state_diff) => {
-                                let entry = slot_state_diff.into_mut();
-                                entry.new_value = storage_access.newValue;
-                                entry
-                            }
-                        };
-
-                        // Update decoded values if we have slot info
-                        if let Some(slot_info) = &mut entry.slot_info {
-                            slot_info.decode_values(entry.previous_value, storage_access.newValue);
-                            if slot_info.is_bytes_or_string() {
-                                slot_info.decode_bytes_or_string_values(
-                                    &storage_access.slot,
-                                    &raw_changes_by_slot,
-                                );
-                            }
+                    // Update decoded values if we have slot info
+                    if let Some(slot_info) = &mut entry.slot_info {
+                        slot_info.decode_values(entry.previous_value, storage_access.newValue);
+                        if slot_info.is_bytes_or_string() {
+                            slot_info.decode_bytes_or_string_values(
+                                &storage_access.slot,
+                                &raw_changes_by_slot,
+                            );
                         }
                     }
                 }
-            });
-    }
+            }
+        });
     state_diffs
 }
 

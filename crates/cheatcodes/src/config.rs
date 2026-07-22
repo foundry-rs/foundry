@@ -80,6 +80,8 @@ impl CheatsConfig {
         // If user explicitly disabled safety checks, do not set available_artifacts
         let available_artifacts =
             if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
+        let mut labels = config.labels.clone();
+        labels.extend(config.tracing.labels.clone());
 
         Self {
             ffi: evm_opts.ffi,
@@ -96,7 +98,7 @@ impl CheatsConfig {
             broadcast: config.root.clone().join(&config.broadcast),
             isolate: config.isolate,
             evm_opts,
-            labels: config.labels.clone(),
+            labels,
             available_artifacts,
             running_artifact,
             assertions_revert: config.assertions_revert,
@@ -271,6 +273,7 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::address;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 
@@ -309,6 +312,18 @@ mod tests {
 
         let cloned = on.clone_with(&Config::default(), Default::default());
         assert!(cloned.batch_rewrite_creates);
+    }
+
+    #[test]
+    fn tracing_labels_override_legacy_labels() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let mut config = Config::default();
+        config.labels.insert(address, "legacy".to_string());
+        config.tracing.labels.insert(address, "canonical".to_string());
+
+        let config = CheatsConfig::new(&config, Default::default(), None, None, None, false);
+
+        assert_eq!(config.labels.get(&address).map(String::as_str), Some("canonical"));
     }
 
     #[test]

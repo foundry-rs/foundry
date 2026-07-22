@@ -183,6 +183,30 @@ impl<'a> Linker<'a> {
         Ok(())
     }
 
+    /// Returns the resolved addresses of all libraries required by `target`.
+    pub fn linked_library_addresses(
+        &'a self,
+        target: &'a ArtifactId,
+        libraries: &Libraries,
+    ) -> Result<BTreeSet<Address>, LinkerError> {
+        let mut dependencies = BTreeSet::new();
+        self.collect_dependencies(target, &mut dependencies)?;
+
+        dependencies
+            .into_iter()
+            .map(|id| {
+                let (file, name) = self.convert_artifact_id_to_lib_path(id);
+                libraries
+                    .libs
+                    .get(&file)
+                    .and_then(|libs| libs.get(&name))
+                    .ok_or_else(|| LinkerError::LinkingFailed { artifact: id.identifier() })?
+                    .parse()
+                    .map_err(LinkerError::InvalidAddress)
+            })
+            .collect()
+    }
+
     /// Links given artifact with either given library addresses or address computed from sender and
     /// nonce.
     ///

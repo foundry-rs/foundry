@@ -186,13 +186,73 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
     render_trace_arena_inner(arena, false, false)
 }
 
-/// Prunes trace depth if depth is provided as an argument
+/// Prunes trace depth if depth is provided as an argument.
 pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
     for node in arena.nodes_mut() {
         if node.trace.depth >= depth {
             node.ordering.clear();
         }
     }
+}
+
+/// Returns a serializable trace arena containing only nodes visible at `depth`.
+pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedTraceArena {
+    let mut arena = arena.resolve_arena().into_owned();
+    let nodes = arena.nodes_mut();
+    let mut reachable = vec![false; nodes.len()];
+    let mut pending = vec![0];
+    while let Some(node_idx) = pending.pop() {
+        if reachable[node_idx] {
+            continue;
+        }
+        reachable[node_idx] = true;
+        let node = &nodes[node_idx];
+        if node.trace.depth < depth {
+            pending.extend(node.ordering.iter().filter_map(|item| match item {
+                TraceMemberOrder::Call(child_idx) => Some(node.children[*child_idx]),
+                _ => None,
+            }));
+        }
+    }
+
+    let mut remapped = vec![None; nodes.len()];
+    for (next_idx, node) in nodes.iter_mut().filter(|node| reachable[node.idx]).enumerate() {
+        remapped[node.idx] = Some(next_idx);
+        if node.trace.depth >= depth {
+            node.ordering.clear();
+            node.children.clear();
+        } else {
+            let mut child_positions = vec![None; node.children.len()];
+            let mut children = Vec::with_capacity(node.children.len());
+            for (old_position, child) in node.children.iter().copied().enumerate() {
+                if reachable[child] {
+                    child_positions[old_position] = Some(children.len());
+                    children.push(child);
+                }
+            }
+            node.children = children;
+            node.ordering = std::mem::take(&mut node.ordering)
+                .into_iter()
+                .filter_map(|item| match item {
+                    TraceMemberOrder::Call(child_idx) => {
+                        Some(TraceMemberOrder::Call(child_positions[child_idx]?))
+                    }
+                    item => Some(item),
+                })
+                .collect();
+        }
+    }
+
+    nodes.retain(|node| reachable[node.idx]);
+    for node in nodes {
+        node.idx = remapped[node.idx].expect("retained trace node has a remapped index");
+        node.parent = node.parent.and_then(|parent| remapped[parent]);
+        for child in &mut node.children {
+            *child = remapped[*child].expect("retained trace child has a remapped index");
+        }
+    }
+
+    SparsedTraceArena { arena, ignored: Default::default() }
 }
 
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
@@ -548,6 +608,48 @@ mod tests {
     use alloy_primitives::Bytes;
     use revm::interpreter::InstructionResult;
     use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
+
+    #[test]
+    fn trace_depth_projection_removes_and_reindexes_nodes() {
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut().extend([
+            CallTraceNode {
+                parent: Some(0),
+                children: vec![2],
+                idx: 1,
+                trace: CallTrace { depth: 1, ..Default::default() },
+                ordering: vec![TraceMemberOrder::Call(0)],
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(1),
+                idx: 2,
+                trace: CallTrace { depth: 2, ..Default::default() },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(0),
+                idx: 3,
+                trace: CallTrace { depth: 1, ..Default::default() },
+                ..Default::default()
+            },
+        ]);
+        let root = &mut arena.nodes_mut()[0];
+        root.children = vec![1, 3];
+        root.ordering = vec![TraceMemberOrder::Call(0), TraceMemberOrder::Call(1)];
+        let arena = SparsedTraceArena { arena, ignored: Default::default() };
+
+        let arena = trace_arena_at_depth(&arena, 1);
+
+        assert_eq!(arena.nodes().len(), 3);
+        assert_eq!(arena.nodes()[0].children, [1, 2]);
+        assert_eq!(arena.nodes()[1].idx, 1);
+        assert!(arena.nodes()[1].children.is_empty());
+        assert!(arena.nodes()[1].ordering.is_empty());
+        assert_eq!(arena.nodes()[2].idx, 2);
+        assert_eq!(arena.nodes()[2].parent, Some(0));
+        assert!(arena.ignored.is_empty());
+    }
 
     #[test]
     fn decodes_tip1034_packed_channel_state() {
