@@ -42,6 +42,10 @@ pub(crate) trait ProviderExt: Provider + Sized {
     ) -> FallbackProfileProvider<Self> {
         FallbackProfileProvider::new(self, profile, fallback)
     }
+
+    fn legacy_labels(self) -> LegacyLabelsProvider<Self> {
+        LegacyLabelsProvider(self)
+    }
 }
 
 impl<P: Provider> ProviderExt for P {}
@@ -175,14 +179,22 @@ impl TomlFileProvider {
                 )));
             }
 
-            // Normalize the standalone symbolic section before merging so equivalent
-            // profile-qualified values have the same shape across inherited files.
+            // Normalize standalone sections before merging so equivalent profile-qualified values
+            // have the same shape across inherited files.
             let base_provider = NormalizeSymbolicProvider::new(
-                Toml::file(base_path).nested(),
+                NormalizeTracingProvider::new(
+                    Toml::file(base_path).nested().legacy_labels(),
+                    selected_profile.clone(),
+                ),
                 selected_profile.clone(),
             );
-            let local_provider =
-                NormalizeSymbolicProvider::new(local_provider, selected_profile.clone());
+            let local_provider = NormalizeSymbolicProvider::new(
+                NormalizeTracingProvider::new(
+                    local_provider.legacy_labels(),
+                    selected_profile.clone(),
+                ),
+                selected_profile.clone(),
+            );
 
             // Apply the selected merge strategy
             match extends_strategy {
@@ -251,6 +263,55 @@ struct NormalizeSymbolicProvider<P> {
 impl<P> NormalizeSymbolicProvider<P> {
     const fn new(provider: P, selected_profile: Profile) -> Self {
         Self { provider, selected_profile }
+    }
+}
+
+struct NormalizeTracingProvider<P> {
+    provider: P,
+    selected_profile: Profile,
+}
+
+impl<P> NormalizeTracingProvider<P> {
+    const fn new(provider: P, selected_profile: Profile) -> Self {
+        Self { provider, selected_profile }
+    }
+}
+
+impl<P: Provider> Provider for NormalizeTracingProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut data = self.provider.data()?;
+        normalize_tracing_section(&mut data, &self.selected_profile);
+        Ok(data)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.provider.profile()
+    }
+}
+
+/// Moves the standalone tracing section into the selected profile before inherited configs are
+/// merged. The deprecated standalone labels section remains in place for warning generation and
+/// is normalized again after inheritance is resolved.
+fn normalize_tracing_section(data: &mut Map<Profile, Dict>, selected_profile: &Profile) {
+    let Some(tracing) = data.remove(&Profile::new("tracing")) else { return };
+
+    let profiles = data.entry(Profile::new(Config::PROFILE_SECTION)).or_default();
+    let profile =
+        profiles.entry(selected_profile.to_string()).or_insert_with(|| Value::from(Dict::new()));
+    let Value::Dict(_, profile) = profile else { return };
+
+    match (profile.get_mut("tracing"), tracing) {
+        (Some(Value::Dict(_, profile_tracing)), tracing) => {
+            merge_missing(profile_tracing, tracing);
+        }
+        (None, tracing) => {
+            profile.insert("tracing".to_string(), Value::from(tracing));
+        }
+        _ => {}
     }
 }
 
@@ -412,11 +473,71 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
 
             map.insert(profile, dict);
         }
+        normalize_legacy_labels(&mut map);
         Ok(map)
     }
 
     fn profile(&self) -> Option<Profile> {
         self.0.profile()
+    }
+}
+
+/// Adapts deprecated labels from arbitrary external providers.
+pub(crate) struct LegacyLabelsProvider<P>(pub(crate) P);
+
+impl<P: Provider> Provider for LegacyLabelsProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = self.0.data()?;
+        normalize_legacy_labels(&mut map);
+        Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
+    }
+}
+
+pub(crate) fn normalize_legacy_labels(map: &mut Map<Profile, Dict>) {
+    if let Some(labels) = map.get(&Profile::new("labels")).cloned() {
+        merge_tracing_labels(&labels, map.entry(Profile::new("tracing")).or_default());
+    }
+
+    for (profile, dict) in map {
+        if profile.as_str().as_str() == Config::PROFILE_SECTION {
+            for value in dict.values_mut() {
+                if let Value::Dict(_, profile) = value {
+                    normalize_legacy_labels_in_profile(profile);
+                }
+            }
+        } else if !Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+            normalize_legacy_labels_in_profile(dict);
+        }
+    }
+}
+
+pub(crate) fn normalize_legacy_labels_in_profile(dict: &mut Dict) {
+    let Some(Value::Dict(_, labels)) = dict.get("labels").cloned() else { return };
+    let tracing = dict.entry("tracing".to_string()).or_insert_with(|| Dict::new().into());
+    if let Value::Dict(_, tracing) = tracing {
+        merge_tracing_labels(&labels, tracing);
+    }
+}
+
+fn merge_tracing_labels(legacy: &Dict, tracing: &mut Dict) {
+    match tracing.get("labels") {
+        Some(Value::Dict(_, configured)) => {
+            let mut labels = legacy.clone();
+            labels.extend(configured.clone());
+            tracing.insert("labels".to_string(), labels.into());
+        }
+        Some(_) => {}
+        None => {
+            tracing.insert("labels".to_string(), legacy.clone().into());
+        }
     }
 }
 
