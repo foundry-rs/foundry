@@ -43,7 +43,7 @@ use foundry_linking::{LinkOutput, Linker, LinkerError};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
@@ -54,6 +54,7 @@ use std::{
 pub struct TestContract {
     pub abi: JsonAbi,
     pub bytecode: Bytes,
+    pub library_addresses: BTreeSet<Address>,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
@@ -597,12 +598,12 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .build(self.evm_env.clone(), self.tx_env.clone(), db)
     }
 
-    const fn trace_requirements(&self) -> TraceRequirements {
+    fn trace_requirements(&self) -> TraceRequirements {
         TraceRequirements::none()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_all_steps(self.record_all_steps)
-            .with_verbosity(self.evm_opts.verbosity)
+            .with_verbosity(self.config.tracing.verbosity.max(self.evm_opts.verbosity))
     }
 }
 
@@ -853,8 +854,12 @@ impl MultiContractRunnerBuilder {
                     continue;
                 };
 
-                deployable_contracts
-                    .insert(id.clone(), TestContract { abi: abi.clone().into_owned(), bytecode });
+                let library_addresses = linker.linked_library_addresses(id, &libraries)?;
+
+                deployable_contracts.insert(
+                    id.clone(),
+                    TestContract { abi: abi.clone().into_owned(), bytecode, library_addresses },
+                );
             }
         }
 

@@ -24,8 +24,8 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{LoadConfig, TraceResult, parse_ether_value},
+    opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
+    utils::{LoadConfig, TraceResult, load_config_from_provider, parse_ether_value},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -35,7 +35,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -115,29 +115,13 @@ pub struct CallArgs {
     )]
     debug_trace_call: bool,
 
-    /// Disables the labels in the traces.
-    /// Can only be set with `--trace` or `--debug-trace-call`.
-    #[arg(long, default_value_t = false, requires = "trace")]
-    disable_labels: bool,
-
     /// Opens an interactive debugger.
     /// Can only be used with `--trace`.
     #[arg(long, requires = "trace")]
     debug: bool,
 
-    /// Identify internal functions in traces.
-    ///
-    /// This will trace internal functions and decode stack parameters.
-    ///
-    /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
-    /// single function is matched, similarly to `--debug`, for performance reasons.
-    #[arg(long, requires = "trace")]
-    decode_internal: bool,
-
-    /// Labels to apply to the traces; format: `address:label`.
-    /// Can only be used with `--trace` or `--debug-trace-call`.
-    #[arg(long, requires = "trace")]
-    labels: Vec<String>,
+    #[command(flatten)]
+    tracing: TracingArgs,
 
     /// The EVM Version to use.
     /// Can only be used with `--trace`.
@@ -205,7 +189,17 @@ pub enum CallSubcommands {
 }
 
 impl CallArgs {
+    fn resolve_tracing(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
+        if self.debug_trace_call {
+            self.tracing.resolve_call_tracer(config, verbosity)
+        } else {
+            self.tracing.resolve(config, verbosity)
+        }
+    }
+
     pub async fn run(mut self) -> Result<()> {
+        self.validate_trace_args()?;
+
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
             return self.run_curl().await;
@@ -237,15 +231,34 @@ impl CallArgs {
         self.run_with_network::<EthEvmNetwork>().await
     }
 
+    fn validate_trace_args(&self) -> Result<()> {
+        if !self.trace
+            && !self.debug_trace_call
+            && (self.tracing.disable_labels
+                || self.tracing.compact_labels
+                || !self.tracing.labels.is_empty()
+                || self.tracing.trace_depth.is_some())
+        {
+            eyre::bail!("trace rendering options require `--trace` or `--debug-trace-call`");
+        }
+
+        if self.tracing.decode_internal && !self.trace {
+            eyre::bail!("`--decode-internal` requires `--trace`");
+        }
+
+        Ok(())
+    }
+
     pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>
     where
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::from_provider(figment)?.sanitized();
+        let mut config = load_config_from_provider(figment)?;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
+        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
 
         let Self {
             to,
@@ -257,11 +270,8 @@ impl CallArgs {
             trace,
             evm_version,
             debug,
-            decode_internal,
-            labels,
             data,
             with_local_artifacts,
-            disable_labels,
             wallet,
             ..
         } = self;
@@ -388,12 +398,9 @@ impl CallArgs {
                 &config,
                 chain,
                 &contracts_bytecode,
-                labels,
+                &tracing,
                 with_local_artifacts,
                 false,
-                false,
-                disable_labels,
-                None,
                 None,
             )
             .await?;
@@ -408,6 +415,7 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
+            let verbosity = tracing.verbosity;
             let (mut evm_env, tx_env, fork, chain, networks) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
 
@@ -429,12 +437,12 @@ impl CallArgs {
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
                 .with_debug(debug)
-                .with_decode_internal(if decode_internal {
+                .with_decode_internal(if tracing.decode_internal {
                     InternalTraceMode::Full
                 } else {
                     InternalTraceMode::None
                 })
-                .with_state_changes(shell::verbosity() > 4);
+                .with_state_changes(verbosity > 4);
             let mut executor = TracingExecutor::<FEN>::new(
                 (evm_env, tx_env),
                 fork,
@@ -507,12 +515,9 @@ impl CallArgs {
                 &config,
                 chain,
                 &contracts_bytecode,
-                labels,
+                &tracing,
                 with_local_artifacts,
                 debug,
-                decode_internal,
-                disable_labels,
-                None,
                 None,
             )
             .await?;
@@ -817,5 +822,13 @@ mod tests {
             "shanghai",
         ]);
         assert!(result.is_err(), "--debug-trace-call must reject --evm-version");
+    }
+
+    #[test]
+    fn debug_trace_call_ignores_configured_internal_decoding() {
+        let args = CallArgs::parse_from(["foundry-cli", "--debug-trace-call"]);
+        let config = TracingConfig { decode_internal: true, ..Default::default() };
+
+        assert!(!args.resolve_tracing(&config, 0).decode_internal);
     }
 }

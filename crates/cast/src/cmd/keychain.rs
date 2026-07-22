@@ -3758,6 +3758,28 @@ where
     }
 }
 
+/// Fails early with `requirement` when a Tempo precompile is not active yet: a pre-fork call
+/// would succeed as a silent no-op instead of reverting. Prefers the hardfork query and falls
+/// back to checking the precompile's code when the RPC lacks the method.
+pub(crate) async fn ensure_tempo_precompile_active<P>(
+    provider: &P,
+    hardfork: TempoHardfork,
+    precompile: Address,
+    requirement: &str,
+) -> Result<()>
+where
+    P: Provider<TempoNetwork>,
+{
+    let active = match is_tempo_hardfork_active(provider, hardfork).await {
+        Ok(active) => active,
+        Err(_) => !provider.get_code_at(precompile).await?.is_empty(),
+    };
+    if !active {
+        eyre::bail!("{requirement}");
+    }
+    Ok(())
+}
+
 async fn anvil_tempo_hardfork_active<P>(
     provider: &P,
     hardfork: TempoHardfork,

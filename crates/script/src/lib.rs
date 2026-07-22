@@ -28,7 +28,7 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts},
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -61,7 +61,7 @@ use foundry_evm::{
     },
     opts::EvmOpts,
     revm::interpreter::InstructionResult,
-    traces::{TraceRequirements, Traces},
+    traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
@@ -228,9 +228,8 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub disable_code_size_limit: bool,
 
-    /// Disables the labels in the traces.
-    #[arg(long)]
-    pub disable_labels: bool,
+    #[command(flatten)]
+    pub tracing: TracingArgs,
 
     /// The Etherscan (or equivalent) API key
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
@@ -294,7 +293,7 @@ impl ScriptArgs {
 
     async fn preprocess<FEN: FoundryEvmNetwork>(
         self,
-        config: Config,
+        mut config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
@@ -328,6 +327,7 @@ impl ScriptArgs {
         }
 
         tempo.resolve_expires();
+        config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
 
         let script_config =
             ScriptConfig::new(config, evm_opts, args.batch, tempo, args.sender_nonce).await?;
@@ -898,12 +898,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
-                    .trace_requirements(
-                        TraceRequirements::none()
-                            .with_calls(true)
-                            .with_debug(debug)
-                            .with_verbosity(self.evm_opts.verbosity),
-                    )
+                    .trace_requirements(script_trace_requirements(&self.config, debug))
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
@@ -946,6 +941,18 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 }
 
+const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
+    TraceRequirements::none()
+        .with_calls(true)
+        .with_debug(debug)
+        .with_verbosity(config.tracing.verbosity)
+        .with_decode_internal(if config.tracing.decode_internal {
+            InternalTraceMode::Full
+        } else {
+            InternalTraceMode::None
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,6 +978,15 @@ mod tests {
         "0x1111111111111111111111111111111111111111111111111111111111111111";
     const SESSION_ROOT_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn script_trace_requirements_honor_tracing_verbosity() {
+        let mut config = Config::default();
+        config.tracing.verbosity = 5;
+
+        let tracing = script_trace_requirements(&config, false).into_config().unwrap();
+        assert!(tracing.record_state_diff);
+    }
 
     fn active_session_entry(
         session_id: B256,

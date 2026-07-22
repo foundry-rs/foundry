@@ -113,6 +113,32 @@ Use the `sh_*` macros from `foundry_common::io`:
 Do not use `println!`, `print!`, `eprintln!`, or `eprint!`; workspace clippy
 configuration forbids them.
 
+## Configuration
+
+When adding or changing a `foundry.toml` setting:
+
+1. Define the field and its documentation in `crates/config`, including an
+   explicit default and any required serde behavior. Keep related settings in a
+   dedicated nested config type when they form a coherent section.
+2. Wire the setting through every command that consumes it. If a CLI flag can
+   override the setting, resolve precedence in one shared place and test config,
+   CLI, and combined behavior.
+3. Add focused config parsing and serialization tests. Update the `forge config`
+   and default-config snapshots when the serialized surface changes.
+4. For renamed or moved settings, preserve compatibility when practical and add
+   a targeted deprecation warning that points to the canonical key. Test aliases,
+   profiles, inheritance, environment variables, collisions, and malformed values
+   where those providers are affected.
+5. Document the setting in `foundry-rs/book` under
+   `src/pages/config/reference/`, including its section, type, default, environment
+   variable when supported, behavior, and a valid TOML example. Update the config
+   reference navigation and `default-config.mdx` in the same documentation PR.
+6. Keep CLI option text in the Rust clap definition; the book's CLI reference is
+   generated from command help and should not be edited by hand.
+
+Use the implementation, defaults, and tests as the source of truth. Do not merge
+new user-facing configuration without the corresponding book update.
+
 ## Cheatcodes
 
 When adding a cheatcode:

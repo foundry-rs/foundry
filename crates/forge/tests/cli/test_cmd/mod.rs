@@ -427,6 +427,30 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
         .stdout_eq(file!["../../fixtures/SimpleContractTestVerbose.json": Json]);
 });
 
+forgetest!(test_json_trace_depth_removes_nested_nodes, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
+
+    let output = cmd
+        .args(["test", "-vvvvv", "--json", "--trace-depth", "0"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let traces = output["src/Simple.t.sol:SimpleContractTest"]["test_results"]["test()"]["traces"]
+        .as_array()
+        .unwrap();
+    assert!(!traces.is_empty());
+
+    for trace in traces {
+        let arena = trace[1]["arena"].as_array().unwrap();
+        assert_eq!(arena.len(), 1);
+        assert!(arena[0]["children"].as_array().unwrap().is_empty());
+    }
+});
+
 forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
@@ -4003,6 +4027,47 @@ Traces:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     ├─ [2424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+forgetest_init!(tracing_verbosity_shows_state_changes_independently, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| {
+        config.verbosity = 0;
+        config.tracing.verbosity = 5;
+        config.tracing.labels.insert(
+            Address::from_str("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f").unwrap(),
+            "ConfiguredCounter".to_string(),
+        );
+    });
+
+    cmd.args(["test", "--mt", "test_Increment", "--no-dynamic-test-linking"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [218890] CounterTest::setUp()
+    ├─ [156801] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [23784] ConfiguredCounter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [51847] CounterTest::test_Increment()
+    ├─ [43482] ConfiguredCounter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    ├─ [2424] ConfiguredCounter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
