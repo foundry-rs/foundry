@@ -5,6 +5,7 @@ use crate::{
     utils::Deployment,
 };
 use foundry_common::sh_warn;
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use solar::{
     ast::{
         CommentKind, ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError,
@@ -995,37 +996,78 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
+/// Byte ranges of `text` that Markdown parses as code: fenced code blocks and inline code
+/// spans, including multi-line ones (fenced blocks are trimmed to MDX's close, see
+/// `mdx_fence_end`). MDX does not execute an `import`/`export` inside them, and
+/// an HTML entity would render literally there, so neutralization skips these ranges. Indented
+/// code blocks are deliberately excluded: MDX does not treat indentation as code, so an indented
+/// `import`/`export` is not executed and renders as ordinary text, where neutralizing it is
+/// harmless rather than corrupting.
+fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut regions = Vec::new();
+    let mut fenced_start: Option<usize> = None;
+    for (event, range) in Parser::new_ext(text, Options::empty()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) => {
+                fenced_start = Some(range.start);
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some(start) = fenced_start.take() {
+                    regions.push(start..mdx_fence_end(text, start, range.end));
+                }
+            }
+            Event::Code(_) => regions.push(range),
+            _ => {}
+        }
+    }
+    regions
+}
+
+/// Where MDX ends the fenced block that pulldown-cmark reports as `start..cmark_end`. MDX
+/// (micromark) has no indented code blocks, so it closes a fence at a matching marker at *any*
+/// indentation, while CommonMark requires the closer to be indented at most three spaces. When a
+/// fence is closed by a more-indented marker, pulldown keeps the block open past it and would hide
+/// a following `import`/`export` inside the range; truncating at the first MDX-style closer keeps
+/// that statement neutralizable.
+fn mdx_fence_end(text: &str, start: usize, cmark_end: usize) -> usize {
+    let block = &text[start..cmark_end];
+    let opener = block.lines().next().unwrap_or_default().trim_start();
+    let Some(fence) = opener.chars().next().filter(|&c| c == '`' || c == '~') else {
+        return cmark_end;
+    };
+    let open_len = opener.chars().take_while(|&c| c == fence).count();
+    let mut offset = start;
+    for (index, line) in block.split('\n').enumerate() {
+        let line_end = offset + line.len();
+        offset = line_end + 1;
+        if index == 0 {
+            continue;
+        }
+        let marker = line.trim_start();
+        let run = marker.chars().take_while(|&c| c == fence).count();
+        if run >= open_len && run > 0 && marker[run..].trim().is_empty() {
+            return line_end;
+        }
+    }
+    cmark_end
+}
+
 /// Neutralize any line MDX would parse as an ESM statement (`import`/`export` at the start of
-/// a line): the keyword's first letter becomes an HTML entity, so the line renders the same
-/// but no longer begins with an ESM token. NatSpec text can be inherited from a dependency
-/// via `@inheritdoc`, so this must run wherever displayed prose is assembled. Lines inside a
-/// fenced code block are left untouched, where the entity would render literally and corrupt
-/// the example; a line legitimately starting with `import`/`export` outside a fence would
-/// break the MDX build anyway.
+/// a line): the keyword's first letter becomes an HTML entity, so the line renders the same but
+/// no longer begins with an ESM token. NatSpec text can be inherited from a dependency via
+/// `@inheritdoc`, so this must run wherever displayed prose is assembled. A keyword that falls
+/// inside a Markdown code span or fenced code block is left untouched (see `code_regions`): the
+/// entity would render literally and corrupt the example, and MDX would not execute it there.
 fn neutralize_esm(text: &str) -> String {
-    // The marker that opened the current fence (```` ``` ```` or `~~~`), or `None` outside a
-    // fence. CommonMark closes a fence only with the marker character that opened it, so an
-    // opposite marker inside an open fence is literal content and must not toggle.
-    let mut fence: Option<&str> = None;
+    let regions = code_regions(text);
+    let mut offset = 0;
     text.split('\n')
         .map(|line| {
+            let line_start = offset;
+            offset += line.len() + 1;
             let trimmed = line.trim_start();
-            let marker = if trimmed.starts_with("```") {
-                Some("```")
-            } else if trimmed.starts_with("~~~") {
-                Some("~~~")
-            } else {
-                None
-            };
-            if let Some(marker) = marker {
-                match fence {
-                    None => fence = Some(marker),
-                    Some(open) if open == marker => fence = None,
-                    Some(_) => {}
-                }
-                return line.to_string();
-            }
-            if fence.is_some() {
+            let keyword_pos = line_start + (line.len() - trimmed.len());
+            if regions.iter().any(|region| region.contains(&keyword_pos)) {
                 return line.to_string();
             }
             for keyword in ["import", "export"] {

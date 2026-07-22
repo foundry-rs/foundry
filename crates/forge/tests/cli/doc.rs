@@ -356,6 +356,131 @@ contract FenceMarker {
     assert!(rendered.contains("&#101;xport const afterFence = 1"), "{rendered}");
 });
 
+// A closing fence must be at least as long as the opening one (CommonMark): inside a four-tick
+// fence, a three-tick line is content, not a close. The earlier line scanner closed on it and
+// desynchronized, leaving a following top-level `export` unneutralized. The `export` after the
+// real four-tick close must still be neutralized.
+forgetest_init!(natspec_neutralizes_esm_after_longer_fence, |prj, cmd| {
+    prj.add_source(
+        "LongFence.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract LongFence {
+    /// @notice Ex:
+    /// ````
+    /// ```
+    /// import insideLongFence from "a";
+    /// ```
+    /// ````
+    /// export const afterLongFence = 1
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.LongFence.mdx")).unwrap();
+    // Inside the four-tick fence, including the inner three-tick line: kept verbatim.
+    assert!(rendered.contains("import insideLongFence from \"a\";"), "{rendered}");
+    assert!(!rendered.contains("&#105;mport insideLongFence"), "{rendered}");
+    // After the real four-tick close: still neutralized (must not stay executable).
+    assert!(rendered.contains("&#101;xport const afterLongFence = 1"), "{rendered}");
+});
+
+// A closing fence must be blank after the backticks (CommonMark): a suffixed ```-marker is not a
+// close, so statements after it stay inside the fence, and only a statement after the real blank
+// close is neutralized.
+forgetest_init!(natspec_fence_does_not_close_on_suffixed_marker, |prj, cmd| {
+    prj.add_source(
+        "SuffixFence.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract SuffixFence {
+    /// @notice Ex:
+    /// ```
+    /// import stillInside from "b";
+    /// ```suffix
+    /// export alsoInside from "c"
+    /// ```
+    /// import afterRealClose from "d"
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.SuffixFence.mdx")).unwrap();
+    // The suffixed marker does not close the fence: both statements stay verbatim.
+    assert!(rendered.contains("import stillInside from \"b\";"), "{rendered}");
+    assert!(rendered.contains("export alsoInside from \"c\""), "{rendered}");
+    // After the real close: neutralized.
+    assert!(rendered.contains("&#105;mport afterRealClose from \"d\""), "{rendered}");
+});
+
+// An `import`/`export` inside a multi-line inline code span is inert in MDX, and a character
+// reference would render literally inside code. It must be left verbatim.
+forgetest_init!(natspec_preserves_esm_inside_multiline_inline_code, |prj, cmd| {
+    prj.add_source(
+        "InlineSpan.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract InlineSpan {
+    /// @notice See `example:
+    /// import fromInlineSpan from "e"` for details
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.InlineSpan.mdx")).unwrap();
+    assert!(rendered.contains("import fromInlineSpan from \"e\""), "{rendered}");
+    assert!(!rendered.contains("&#105;mport fromInlineSpan"), "{rendered}");
+});
+
+// A block-comment fence closed by an indented (>=4 space) marker: MDX (no indented code) closes
+// the fence there and would execute the following `export`, while a CommonMark parser keeps the
+// block open past it. The statement after the indented closer must still be neutralized.
+forgetest_init!(natspec_neutralizes_esm_after_indented_fence_close, |prj, cmd| {
+    prj.add_source(
+        "IndentedClose.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @notice Ex:
+ * ```
+ * inside
+ *     ```
+ * export const pwned = 1
+ */
+contract IndentedClose {
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.IndentedClose.mdx"))
+            .unwrap();
+    assert!(rendered.contains("&#101;xport const pwned = 1"), "{rendered}");
+    assert!(
+        !rendered.lines().any(|l| l.trim_start().starts_with("export const pwned")),
+        "{rendered}"
+    );
+});
+
 // Test that {Ident} cross-references resolve to root-relative vocs links.
 // fixes <https://github.com/foundry-rs/foundry/issues/12361>
 forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {

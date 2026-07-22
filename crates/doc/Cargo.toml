@@ -23,6 +23,7 @@ foundry-config.workspace = true
 alloy-primitives.workspace = true
 eyre.workspace = true
 path-slash.workspace = true
+pulldown-cmark.workspace = true
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

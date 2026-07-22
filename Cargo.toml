@@ -468,6 +468,7 @@ memchr = "2.7"
 num-format = "0.4"
 parking_lot = "0.12"
 proptest = "1.9.0"
+pulldown-cmark = { version = "0.13", default-features = false }
 rand = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
 ratatui = { version = "0.30", default-features = false }
