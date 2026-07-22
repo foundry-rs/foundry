@@ -242,6 +242,11 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         inspector: &mut dyn for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
     ) -> eyre::Result<()>;
 
+    /// Returns network-specific context for a synthetic transaction on the active database.
+    fn context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::ContextAux> {
+        Ok(F::default().context_for_transaction(tx))
+    }
+
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
 
@@ -838,8 +843,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
-        let factory = FEN::EvmFactory::default();
-        let context_aux = factory.context_for_transaction(tx_env);
+        let context_aux = self.context_for_synthetic_transaction(tx_env)?;
         self.inspect_with_context(evm_env, tx_env, context_aux, inspector)
     }
 
@@ -1002,6 +1006,29 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(BlockContext::new(grandparent, parent, current))
     }
 
+    /// Returns the context for a synthetic transaction in a child of `block`.
+    fn child_context_for_block(
+        &self,
+        id: LocalForkId,
+        block: &AnyRpcBlock,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ContextAuxFor<FEN>> {
+        let current = Self::full_block_tx_envs(block)?;
+        let fork = self.inner.get_fork_by_id(id)?;
+        let parent_hash = block.header().parent_hash();
+        let parent = if parent_hash.is_zero() {
+            Vec::new()
+        } else {
+            let parent = fork
+                .backend()
+                .get_full_block(parent_hash)
+                .wrap_err_with(|| format!("failed to fetch parent block {parent_hash}"))?;
+            Self::full_block_tx_envs(&parent)?
+        };
+
+        Ok(BlockContext::<FEN>::new(Vec::new(), parent, current).child(tx))
+    }
+
     /// Replays all the transactions at the forks current block that were mined before the `tx`
     ///
     /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
@@ -1104,6 +1131,31 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
+    fn context_for_synthetic_transaction(
+        &self,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ContextAuxFor<FEN>> {
+        let factory = FEN::EvmFactory::default();
+        if !FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+            return Ok(factory.context_for_transaction(tx));
+        }
+        let Some(id) = self.active_fork_id() else {
+            return Ok(factory.context_for_transaction(tx));
+        };
+
+        let block_number = self
+            .active_fork_block_number()
+            .ok_or_else(|| eyre::eyre!("active fork {id} is missing its block number"))?;
+        let block = self
+            .inner
+            .get_fork_by_id(id)?
+            .backend()
+            .get_full_block(block_number)
+            .wrap_err_with(|| format!("failed to fetch active fork block {block_number}"))?;
+
+        self.child_context_for_block(id, &block, tx)
+    }
+
     fn snapshot_state(
         &mut self,
         context_state: &FoundryContextState<ContextAuxFor<FEN>>,
@@ -1543,7 +1595,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             let mut db = self.clone();
             let depth = journaled_state.depth + 1;
             let factory = FEN::EvmFactory::default();
-            let context_aux = factory.context_for_transaction(&tx_env);
+            let context_aux = self.context_for_synthetic_transaction(&tx_env)?;
             let mut evm =
                 factory.create_foundry_nested_evm(&mut db, evm_env, context_aux, inspector);
             evm.journal_inner_mut().depth = depth;

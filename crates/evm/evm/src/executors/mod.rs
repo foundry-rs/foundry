@@ -471,7 +471,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env: TxEnvFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let context_aux = FEN::EvmFactory::default().context_for_transaction(&tx_env);
+        let context_aux = self.backend().context_for_synthetic_transaction(&tx_env)?;
         self.deploy_with_env_and_context(evm_env, tx_env, context_aux, rd)
     }
 
@@ -698,7 +698,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let context_aux = FEN::EvmFactory::default().context_for_transaction(&tx_env);
+        let context_aux = self.backend().context_for_synthetic_transaction(&tx_env)?;
         self.call_with_env_and_context(evm_env, tx_env, context_aux)
     }
 
@@ -744,7 +744,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let context_aux = FEN::EvmFactory::default().context_for_transaction(&tx_env);
+        let context_aux = self.backend().context_for_synthetic_transaction(&tx_env)?;
         self.transact_with_env_and_context(evm_env, tx_env, context_aux)
     }
 

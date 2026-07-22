@@ -87,8 +87,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
-        let factory = FEN::EvmFactory::default();
-        let context_aux = factory.context_for_transaction(tx_env);
+        let context_aux = self.context_for_synthetic_transaction(tx_env)?;
         self.inspect_with_context(evm_env, tx_env, context_aux, inspector)
     }
 
@@ -181,6 +180,13 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN> {
+    fn context_for_synthetic_transaction(
+        &self,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ContextAuxFor<FEN>> {
+        self.backend.context_for_synthetic_transaction(tx)
+    }
+
     fn snapshot_state(
         &mut self,
         context_state: &FoundryContextState<ContextAuxFor<FEN>>,

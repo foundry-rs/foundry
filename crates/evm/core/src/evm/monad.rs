@@ -260,6 +260,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evm::{BlockContext, MonadEvmNetwork};
     use revm::{
         context_interface::{
             either::Either,
@@ -358,5 +359,32 @@ mod tests {
         assert_eq!(context.chain.current_block_authorities.len(), 2);
         assert!(context.chain.current_block_authorities[0].contains(&current_authority));
         assert!(context.chain.current_block_authorities[1].contains(&next_authority));
+    }
+
+    #[test]
+    fn child_context_advances_fork_ancestry() {
+        let parent_sender = Address::from([1; 20]);
+        let parent_authority = Address::from([2; 20]);
+        let current_sender = Address::from([3; 20]);
+        let current_authority = Address::from([4; 20]);
+        let child_sender = Address::from([5; 20]);
+        let child_authority = Address::from([6; 20]);
+
+        let context = BlockContext::<MonadEvmNetwork>::new(
+            Vec::new(),
+            vec![transaction(parent_sender, parent_authority)],
+            vec![transaction(current_sender, current_authority)],
+        )
+        .child(&transaction(child_sender, child_authority));
+
+        assert_eq!(context.chain.current_tx_index, 0);
+        assert_eq!(context.chain.grandparent_senders_and_authorities.len(), 2);
+        assert!(context.chain.grandparent_senders_and_authorities.contains(&parent_sender));
+        assert!(context.chain.grandparent_senders_and_authorities.contains(&parent_authority));
+        assert_eq!(context.chain.parent_senders_and_authorities.len(), 2);
+        assert!(context.chain.parent_senders_and_authorities.contains(&current_sender));
+        assert!(context.chain.parent_senders_and_authorities.contains(&current_authority));
+        assert_eq!(context.chain.current_block_senders, vec![child_sender]);
+        assert!(context.chain.current_block_authorities[0].contains(&child_authority));
     }
 }
