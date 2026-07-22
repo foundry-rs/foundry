@@ -1682,12 +1682,6 @@ impl WorkerCorpus {
             sequence_from_observed(observed, &targets, depth, None)
         };
         let mut added = 0;
-        // Test traces may nominate useful observed-call shapes, but they are not
-        // campaign executions. Keep their coverage accounting isolated so a later
-        // fuzzed execution can still discover and persist the same coverage.
-        let mut test_history_map = self.history_map.clone();
-        let mut test_edge_indices = self.edge_indices.clone();
-        let mut test_sancov_history_map = self.sancov_history_map.clone();
         for call in calls {
             if !self.observed_call_pool.iter().any(|existing| {
                 same_tx_sequence(std::slice::from_ref(existing), std::slice::from_ref(&call))
@@ -1713,6 +1707,12 @@ impl WorkerCorpus {
         }
 
         let mut added = 0;
+        // Test traces may nominate useful observed-call shapes, but they are not campaign
+        // executions. Keep their coverage accounting isolated so a later fuzzed execution can
+        // still discover and persist the same coverage.
+        let mut test_history_map = self.history_map.clone();
+        let mut test_edge_indices = self.edge_indices.clone();
+        let mut test_sancov_history_map = self.sancov_history_map.clone();
 
         for func in invariant_contract.abi.functions() {
             if !func.is_unit_test() {
@@ -3333,7 +3333,6 @@ mod tests {
     fn observed_calls_seed_generation_without_entering_corpus() {
         let target = Address::from([0x42; 20]);
         let other = Address::from([0x43; 20]);
-        let sender = Address::from([0xaa; 20]);
         let observed_caller = Address::from([0xbb; 20]);
         let foo = Function::parse("foo(uint256)").unwrap();
         let bar = Function::parse("bar()").unwrap();
