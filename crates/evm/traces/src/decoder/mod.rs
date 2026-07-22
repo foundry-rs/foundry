@@ -706,9 +706,6 @@ impl CallTraceDecoder {
             self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
         for event in abi.events() {
-            if let Some(address) = address {
-                self.push_address_event(address, event.clone());
-            }
             self.push_event(event.clone());
         }
         for error in abi.errors() {
@@ -1659,6 +1656,24 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[tokio::test]
+    async fn identified_event_does_not_shadow_builtin_metadata() {
+        let address = Address::from([0x12; 20]);
+        let mut decoder = CallTraceDecoder::new().clone();
+        let abi = JsonAbi::parse(["event log_string(string)"]).unwrap();
+        decoder.collect_abi(&abi, Some(address));
+
+        let event = Event::parse("event log_string(string val)").unwrap();
+        let log = LogData::new_unchecked(
+            vec![event.selector()],
+            ("script ran".to_string(),).abi_encode().into(),
+        );
+        let decoded = decoder.decode_event_with_address(address, &log).await;
+
+        assert_eq!(decoded.name.as_deref(), Some("log_string"));
+        assert_eq!(decoded.params.unwrap()[0].0, "val");
     }
 
     #[test]
