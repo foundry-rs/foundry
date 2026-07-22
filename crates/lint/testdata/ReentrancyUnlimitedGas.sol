@@ -341,6 +341,21 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         if (success) counter = 1;
     }
 
+    function passedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        bool success = recipient.send(1 wei);
+        writeOnFailedSend(success);
+    }
+
+    function passedSuccessfulSendBranch(address payable recipient) external {
+        bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        writeOnSuccessfulSend(success);
+    }
+
+    function namedPassedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        bool success = recipient.send(1 wei);
+        writeOnFailedSend({success: success});
+    }
+
     function overriddenHelperResultCanFollowSuccessfulSend(
         address payable recipient,
         bool overrideResult
@@ -589,6 +604,14 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
         if (overrideResult) return false;
         return success;
+    }
+
+    function writeOnFailedSend(bool success) internal {
+        if (!success) counter = 1;
+    }
+
+    function writeOnSuccessfulSend(bool success) internal {
+        if (success) counter = 1;
     }
 
     function consume(uint256, uint256) internal pure {}

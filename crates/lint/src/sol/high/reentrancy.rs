@@ -884,6 +884,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         let mut any_returns = false;
                         for func_id in func_ids {
                             let mut candidate_state = before_call.clone();
+                            self.bind_call_argument_sources(func_id, args, &mut candidate_state);
                             if let Some(return_sources) =
                                 self.analyze_internal_call(func_id, &mut candidate_state)
                             {
@@ -1626,6 +1627,39 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         );
         *state = after;
         may_return.then_some(return_sources)
+    }
+
+    fn bind_call_argument_sources(
+        &self,
+        func_id: FunctionId,
+        args: &CallArgs<'hir>,
+        state: &mut FlowState,
+    ) {
+        let func = self.hir.function(func_id);
+        let bindings = match args.kind {
+            CallArgsKind::Unnamed(args) => func
+                .parameters
+                .iter()
+                .copied()
+                .zip(args)
+                .map(|(parameter, argument)| (parameter, self.send_result_sources(argument, state)))
+                .collect::<Vec<_>>(),
+            CallArgsKind::Named(args) => args
+                .iter()
+                .filter_map(|argument| {
+                    func.parameters
+                        .iter()
+                        .copied()
+                        .find(|&parameter| self.hir.variable(parameter).name == Some(argument.name))
+                        .map(|parameter| {
+                            (parameter, self.send_result_sources(&argument.value, state))
+                        })
+                })
+                .collect(),
+        };
+        for (parameter, sources) in bindings {
+            state.set_stored_send_results(parameter, &sources);
+        }
     }
 
     fn first_recursive_cut(&mut self, func_id: FunctionId) -> Option<FunctionId> {
