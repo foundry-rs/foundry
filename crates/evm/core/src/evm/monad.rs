@@ -1,9 +1,23 @@
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
 use alloy_monad_evm::{MonadEvm, MonadEvmFactory, MonadPrecompilesMap};
+use alloy_sol_types::SolCall;
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadBuilder, MonadCfgEnv, MonadContext, MonadEvm as RevmMonadEvm, MonadHardfork,
-    MonadJournalTr, handler::MonadHandler, instructions::MonadInstructions, monad_context_with_db,
+    MonadJournalTr,
+    api::block::{
+        syscall_on_epoch_change_calldata, syscall_reward_calldata, syscall_snapshot_calldata,
+    },
+    handler::MonadHandler,
+    instructions::MonadInstructions,
+    monad_context_with_db,
+    staking::{
+        STAKING_ADDRESS,
+        constants::SYSTEM_ADDRESS,
+        interface::IMonadStaking::{
+            syscallOnEpochChangeCall, syscallRewardCall, syscallSnapshotCall,
+        },
+    },
 };
 use revm::{
     context::{
@@ -20,7 +34,7 @@ use revm::{
 use crate::{
     FoundryContextExt, FoundryContextState, FoundryInspectorExt, MonadContextAux,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, NestedEvm, ProtocolSystemCall},
 };
 
 type MonadEvmHandler<'db, I> =
@@ -122,6 +136,42 @@ impl FoundryEvmFactory for MonadEvmFactory {
             current,
             current_tx_index,
         )
+    }
+
+    fn protocol_system_call(&self, tx: &Self::Tx) -> Option<ProtocolSystemCall> {
+        if tx.caller() != SYSTEM_ADDRESS
+            || tx.kind() != revm::primitives::TxKind::Call(STAKING_ADDRESS)
+        {
+            return None;
+        }
+
+        let selector: [u8; 4] = tx.input().get(..4)?.try_into().ok()?;
+        let (data, balance_increment) = match selector {
+            syscallRewardCall::SELECTOR => {
+                let call = syscallRewardCall::abi_decode_raw(&tx.input()[4..]).ok()?;
+                (
+                    syscall_reward_calldata(call.blockAuthor, tx.value()),
+                    Some((STAKING_ADDRESS, tx.value())),
+                )
+            }
+            syscallSnapshotCall::SELECTOR => {
+                syscallSnapshotCall::abi_decode_raw(&tx.input()[4..]).ok()?;
+                (syscall_snapshot_calldata(), None)
+            }
+            syscallOnEpochChangeCall::SELECTOR => {
+                let call = syscallOnEpochChangeCall::abi_decode_raw(&tx.input()[4..]).ok()?;
+                (syscall_on_epoch_change_calldata(call.epoch), None)
+            }
+            _ => return None,
+        };
+
+        Some(ProtocolSystemCall {
+            caller: SYSTEM_ADDRESS,
+            contract: STAKING_ADDRESS,
+            data,
+            nonce: tx.nonce(),
+            balance_increment,
+        })
     }
 
     fn create_foundry_nested_evm<'db>(
@@ -230,11 +280,46 @@ mod tests {
         }
     }
 
+    fn system_transaction(data: Vec<u8>, value: U256) -> TxEnv {
+        TxEnv {
+            caller: SYSTEM_ADDRESS,
+            kind: revm::primitives::TxKind::Call(STAKING_ADDRESS),
+            data: data.into(),
+            value,
+            nonce: 3,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn monad_evm_factory_implements_foundry_evm_factory() {
         fn assert_foundry_factory<F: FoundryEvmFactory>() {}
 
         assert_foundry_factory::<MonadEvmFactory>();
+    }
+
+    #[test]
+    fn monad_factory_classifies_canonical_system_envelopes() {
+        let factory = MonadEvmFactory::default();
+        let reward = U256::from(25);
+        let reward_tx = system_transaction(
+            syscallRewardCall { blockAuthor: Address::with_last_byte(1) }.abi_encode(),
+            reward,
+        );
+        let reward_call = factory.protocol_system_call(&reward_tx).unwrap();
+        assert_eq!(reward_call.data.len(), 68);
+        assert_eq!(reward_call.balance_increment, Some((STAKING_ADDRESS, reward)));
+
+        let snapshot_tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
+        assert!(factory.protocol_system_call(&snapshot_tx).is_some());
+
+        let epoch_tx =
+            system_transaction(syscallOnEpochChangeCall { epoch: 9 }.abi_encode(), U256::ZERO);
+        assert!(factory.protocol_system_call(&epoch_tx).is_some());
+
+        let mut unrelated = snapshot_tx;
+        unrelated.caller = Address::with_last_byte(2);
+        assert!(factory.protocol_system_call(&unrelated).is_none());
     }
 
     #[test]

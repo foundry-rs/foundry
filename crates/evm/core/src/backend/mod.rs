@@ -5,8 +5,9 @@ use crate::{
     FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
-        BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
+        BlockContext, BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
+        FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
+        execute_replay_transaction,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
@@ -66,9 +67,6 @@ pub type LocalForkId = U256;
 /// Represents the index of a fork in the created forks vector
 /// This is used for fast lookup
 type ForkLookupIndex = usize;
-
-/// Transaction lists needed to reconstruct grandparent, parent, and current block context.
-type BlockContextInputs<FEN> = (Vec<TxEnvFor<FEN>>, Vec<TxEnvFor<FEN>>, Vec<TxEnvFor<FEN>>);
 
 /// Inputs that define one transaction execution.
 struct TransactionInputs<FEN: FoundryEvmNetwork> {
@@ -969,7 +967,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &self,
         id: LocalForkId,
         block: &AnyRpcBlock,
-    ) -> eyre::Result<BlockContextInputs<FEN>> {
+    ) -> eyre::Result<BlockContext<FEN>> {
         let current = Self::full_block_tx_envs(block)?;
         let fork = self.inner.get_fork_by_id(id)?;
 
@@ -1001,7 +999,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             Vec::new()
         };
 
-        Ok((grandparent, parent, current))
+        Ok(BlockContext::new(grandparent, parent, current))
     }
 
     /// Replays all the transactions at the forks current block that were mined before the `tx`
@@ -1029,14 +1027,18 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             return Ok(None);
         };
         let target_tx = transactions[target_index].clone();
-        let txs_to_replay = transactions[..target_index]
-            .iter()
-            .enumerate()
-            .filter(|(_, tx)| {
-                !is_known_system_sender(tx.from()) && tx.ty() != SYSTEM_TRANSACTION_TYPE
-            })
-            .map(|(index, tx)| (index, tx.clone()))
-            .collect::<Vec<_>>();
+        let factory = FEN::EvmFactory::default();
+        let mut txs_to_replay = Vec::with_capacity(target_index);
+        for (index, tx) in transactions[..target_index].iter().enumerate() {
+            let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+            let is_protocol_system = factory.protocol_system_call(&tx_env).is_some();
+            if !is_protocol_system
+                && (is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE)
+            {
+                continue;
+            }
+            txs_to_replay.push((index, tx.clone(), tx_env));
+        }
 
         let context_inputs = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT && !txs_to_replay.is_empty() {
             Some(self.block_context_inputs(id, &full_block)?)
@@ -1047,7 +1049,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         // Replay all preceding transactions against a cloned ForkDB.
         if !txs_to_replay.is_empty() {
             let now = Instant::now();
-            let factory = FEN::EvmFactory::default();
             let fork = self.inner.get_fork_by_id_mut(id)?;
 
             // Clone the fork's CacheDB once. The underlying SharedBackend is Arc-backed,
@@ -1056,11 +1057,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let timestamp = evm_env.block_env.timestamp().saturating_to();
             let mut replay_db = fork.db.clone();
 
-            if let Some((grandparent, parent, current)) = context_inputs {
-                for (index, tx) in &txs_to_replay {
-                    let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
-                    let context_aux =
-                        factory.context_for_block(&grandparent, &parent, &current, *index);
+            if let Some(context) = context_inputs {
+                for (index, tx, tx_env) in &txs_to_replay {
+                    let context_aux = context.transaction(*index);
                     let mut evm =
                         factory.create_evm_with_context(replay_db, evm_env.clone(), context_aux);
                     NetworkConfigs::default().inject_chain_precompiles(
@@ -1069,8 +1068,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                         timestamp,
                     );
                     trace!(tx=?tx.tx_hash(), "committing transaction");
-                    evm.transact_commit(tx_env)
-                        .wrap_err("backend: failed committing transaction")?;
+                    let result = execute_replay_transaction(&factory, &mut evm, tx_env.clone())
+                        .wrap_err("backend: failed replaying transaction")?;
+                    evm.db_mut().commit(result.state);
                     replay_db = evm.into_db();
                 }
             } else {
@@ -1080,11 +1080,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                     chain_id,
                     timestamp,
                 );
-                for (_, tx) in &txs_to_replay {
-                    let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+                for (_, tx, tx_env) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
-                    evm.transact_commit(tx_env)
-                        .wrap_err("backend: failed committing transaction")?;
+                    let result = execute_replay_transaction(&factory, &mut evm, tx_env.clone())
+                        .wrap_err("backend: failed replaying transaction")?;
+                    evm.db_mut().commit(result.state);
                 }
                 replay_db = evm.into_db();
             }
@@ -1510,8 +1510,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                     block.header().number()
                 )
             })?;
-            let (grandparent, parent, current) = self.block_context_inputs(id, &block)?;
-            factory.context_for_block(&grandparent, &parent, &current, current_tx_index)
+            self.block_context_inputs(id, &block)?.transaction(current_tx_index)
         } else {
             factory.context_for_transaction(&tx_env)
         };

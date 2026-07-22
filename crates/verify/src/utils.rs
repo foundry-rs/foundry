@@ -25,7 +25,10 @@ use foundry_evm::{
     core::{
         FoundryBlock as _,
         decode::RevertDecoder,
-        evm::{BlockEnvFor, BlockResponseFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+        evm::{
+            BlockEnvFor, BlockResponseFor, ContextAuxFor, EvmEnvFor, FoundryEvmFactory,
+            FoundryEvmNetwork, SpecFor, TxEnvFor,
+        },
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -344,12 +347,15 @@ pub fn deploy_contract<FEN>(
     tx_env: &TxEnvFor<FEN>,
     spec_id: SpecFor<FEN>,
     to: TxKind,
+    context_aux: Option<ContextAuxFor<FEN>>,
 ) -> Result<Address, eyre::ErrReport>
 where
     FEN: FoundryEvmNetwork,
 {
     let mut evm_env = evm_env.clone();
     evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
+    let context_aux =
+        context_aux.unwrap_or_else(|| FEN::EvmFactory::default().context_for_transaction(tx_env));
 
     if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
@@ -357,7 +363,8 @@ where
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
             );
         }
-        let result = executor.transact_with_env(evm_env, tx_env.clone())?;
+        let result =
+            executor.transact_with_env_and_context(evm_env, tx_env.clone(), context_aux)?;
 
         trace!(transact_result = ?result.exit_reason);
 
@@ -387,7 +394,8 @@ where
 
         Ok(Address::from_slice(&result.result))
     } else {
-        let deploy_result = executor.deploy_with_env(evm_env, tx_env.clone(), None)?;
+        let deploy_result =
+            executor.deploy_with_env_and_context(evm_env, tx_env.clone(), context_aux, None)?;
         trace!(deploy_result = ?deploy_result.raw.exit_reason);
         Ok(deploy_result.address)
     }

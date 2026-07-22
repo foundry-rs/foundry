@@ -44,12 +44,18 @@ pub mod monad;
 pub mod op;
 pub mod tempo;
 
+mod block_context;
+pub use block_context::*;
+
 pub use eth::*;
 #[cfg(feature = "monad")]
 pub use monad::*;
 #[cfg(feature = "optimism")]
 pub use op::*;
 pub use tempo::*;
+
+mod replay;
+pub use replay::*;
 
 /// Foundry's supertrait associating [Network] with [FoundryEvmFactory]
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
@@ -190,6 +196,11 @@ pub trait FoundryEvmFactory:
         _current_tx_index: usize,
     ) -> Self::ContextAux {
         Self::ContextAux::default()
+    }
+
+    /// Converts a canonical envelope into a family-specific protocol system call.
+    fn protocol_system_call(&self, _tx: &Self::Tx) -> Option<ProtocolSystemCall> {
+        None
     }
 
     /// Creates an uninspected EVM with explicit network-specific auxiliary state.

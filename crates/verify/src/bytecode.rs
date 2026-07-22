@@ -41,7 +41,10 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryBlock as _, FoundryTransaction as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        evm::{
+            BlockContext, ContextAuxFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
+            SpecFor, TempoEvmNetwork, TxEnvFor,
+        },
     },
     executors::EvmError,
 };
@@ -456,6 +459,7 @@ impl VerifyBytecodeArgs {
                 &tx_env,
                 config.evm_spec_id::<SpecFor<FEN>>(),
                 kind,
+                None,
             )?;
 
             // Compare runtime bytecode. The onchain code is read at `deploy_block` to stay
@@ -669,40 +673,86 @@ impl VerifyBytecodeArgs {
             let prev_block_nonce =
                 provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
 
+            let factory = FEN::EvmFactory::default();
+            let mut target_context = None::<ContextAuxFor<FEN>>;
             if let Some(ref block) = block {
                 configure_env_block::<FEN>(&mut evm_env, block, config.networks);
 
                 let BlockTransactions::Full(txs) = block.transactions() else {
                     return Err(eyre::eyre!("Could not get block txs"));
                 };
+                let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                    Some(BlockContext::<FEN>::fetch(&provider, block).await?)
+                } else {
+                    None
+                };
+                let target_index =
+                    txs.iter().position(|tx| tx.tx_hash() == tx_hash).ok_or_else(|| {
+                        eyre::eyre!("transaction {tx_hash:?} is missing from its block")
+                    })?;
+                let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(
+                    txs[target_index].as_ref(),
+                    txs[target_index].from(),
+                );
+                target_context = Some(block_context.as_ref().map_or_else(
+                    || factory.context_for_transaction(&target_tx_env),
+                    |context| context.transaction(target_index),
+                ));
 
                 // Replay txes in block until the contract creation one.
-                for tx in txs {
+                for (index, tx) in txs.iter().enumerate() {
                     trace!("replay tx::: {}", tx.tx_hash());
-                    if is_known_system_sender(tx.from())
-                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
-                    {
-                        continue;
-                    }
                     if tx.tx_hash() == tx_hash {
                         break;
                     }
 
                     let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let is_protocol_system = factory.protocol_system_call(&tx_env).is_some();
+                    if !is_protocol_system
+                        && (is_known_system_sender(tx.from())
+                            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
+                    {
+                        continue;
+                    }
+                    let context_aux = block_context.as_ref().map_or_else(
+                        || factory.context_for_transaction(&tx_env),
+                        |context| context.transaction(index),
+                    );
 
-                    if ConsensusTransaction::to(tx).is_some() {
-                        executor.transact_with_env(evm_env.clone(), tx_env.clone()).wrap_err_with(
-                            || {
+                    if is_protocol_system {
+                        executor
+                            .transact_protocol_system_with_env_and_context(
+                                evm_env.clone(),
+                                tx_env.clone(),
+                                context_aux,
+                            )
+                            .wrap_err_with(|| {
+                                format!(
+                                    "Failed to execute protocol system transaction: {:?} in block {}",
+                                    tx.tx_hash(),
+                                    evm_env.block_env.number()
+                                )
+                            })?;
+                    } else if ConsensusTransaction::to(tx).is_some() {
+                        executor
+                            .transact_with_env_and_context(
+                                evm_env.clone(),
+                                tx_env.clone(),
+                                context_aux,
+                            )
+                            .wrap_err_with(|| {
                                 format!(
                                     "Failed to execute transaction: {:?} in block {}",
                                     tx.tx_hash(),
                                     evm_env.block_env.number()
                                 )
-                            },
-                        )?;
-                    } else if let Err(error) =
-                        executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
-                    {
+                            })?;
+                    } else if let Err(error) = executor.deploy_with_env_and_context(
+                        evm_env.clone(),
+                        tx_env.clone(),
+                        context_aux,
+                        None,
+                    ) {
                         match error {
                             // Reverted transactions should be skipped
                             EvmError::Execution(_) => (),
@@ -718,12 +768,18 @@ impl VerifyBytecodeArgs {
                         }
                     }
                 }
+            } else if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                eyre::bail!(
+                    "block {simulation_block} is required to reconstruct transaction context"
+                )
             }
 
             let kind = ConsensusTransaction::kind(&transaction);
             let mut tx_env =
                 TxEnvFor::<FEN>::from_recovered_tx(transaction.as_ref(), transaction.from());
             tx_env.set_nonce(prev_block_nonce);
+            let target_context =
+                target_context.unwrap_or_else(|| factory.context_for_transaction(&tx_env));
 
             // Replace the `input` with local creation code in the creation tx.
             if let TxKind::Call(to) = kind {
@@ -745,6 +801,7 @@ impl VerifyBytecodeArgs {
                 &tx_env,
                 config.evm_spec_id::<SpecFor<FEN>>(),
                 kind,
+                Some(target_context),
             )?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.

@@ -4,20 +4,28 @@ use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::{Result, WrapErr};
-use foundry_evm::core::evm::{
-    BlockResponseFor, ContextAuxFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor,
-};
+
+use super::{BlockResponseFor, ContextAuxFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor};
 
 /// Transaction metadata for an exact block and its two ancestors.
-pub(super) struct BlockContext<FEN: FoundryEvmNetwork> {
+pub struct BlockContext<FEN: FoundryEvmNetwork> {
     grandparent: Vec<TxEnvFor<FEN>>,
     parent: Vec<TxEnvFor<FEN>>,
     current: Vec<TxEnvFor<FEN>>,
 }
 
 impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
+    /// Creates block context from grandparent, parent, and current block transactions.
+    pub const fn new(
+        grandparent: Vec<TxEnvFor<FEN>>,
+        parent: Vec<TxEnvFor<FEN>>,
+        current: Vec<TxEnvFor<FEN>>,
+    ) -> Self {
+        Self { grandparent, parent, current }
+    }
+
     /// Fetches all transaction bodies needed to replay transactions in `block` exactly.
-    pub(super) async fn fetch<P: Provider<FEN::Network>>(
+    pub async fn fetch<P: Provider<FEN::Network>>(
         provider: &P,
         block: &BlockResponseFor<FEN>,
     ) -> Result<Self> {
@@ -29,19 +37,15 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
             None
         };
 
-        Ok(Self {
-            grandparent: grandparent
-                .as_ref()
-                .map(transaction_envs::<FEN>)
-                .transpose()?
-                .unwrap_or_default(),
-            parent: parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default(),
+        Ok(Self::new(
+            grandparent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default(),
+            parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default(),
             current,
-        })
+        ))
     }
 
     /// Builds context for the transaction at `index` in the current block.
-    pub(super) fn transaction(&self, index: usize) -> ContextAuxFor<FEN> {
+    pub fn transaction(&self, index: usize) -> ContextAuxFor<FEN> {
         FEN::EvmFactory::default().context_for_block(
             &self.grandparent,
             &self.parent,
@@ -49,10 +53,20 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
             index,
         )
     }
+
+    /// Builds context for a synthetic transaction in a child of the current block.
+    pub fn child(&self, tx: &TxEnvFor<FEN>) -> ContextAuxFor<FEN> {
+        FEN::EvmFactory::default().context_for_block(
+            &self.parent,
+            &self.current,
+            std::slice::from_ref(tx),
+            0,
+        )
+    }
 }
 
 /// Builds context for a synthetic transaction executed on top of `block_number`.
-pub(super) async fn context_for_child_transaction<FEN, P>(
+pub async fn context_for_child_transaction<FEN, P>(
     provider: &P,
     block_number: u64,
     tx: &TxEnvFor<FEN>,
@@ -72,16 +86,10 @@ where
         .await?
         .ok_or_else(|| eyre::eyre!("block {block_number} not found while building EVM context"))?;
     let parent = fetch_parent::<FEN, P>(provider, &block).await?;
-    let parent_transactions = transaction_envs::<FEN>(&block)?;
-    let grandparent_transactions =
-        parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default();
+    let current = transaction_envs::<FEN>(&block)?;
+    let parent = parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default();
 
-    Ok(factory.context_for_block(
-        &grandparent_transactions,
-        &parent_transactions,
-        std::slice::from_ref(tx),
-        0,
-    ))
+    Ok(BlockContext::<FEN>::new(Vec::new(), parent, current).child(tx))
 }
 
 async fn fetch_parent<FEN, P>(

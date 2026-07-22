@@ -1,4 +1,3 @@
-use super::evm_context::BlockContext;
 use crate::{
     debug::handle_traces,
     rpc_trace::{
@@ -45,7 +44,8 @@ use foundry_evm::{
     core::{
         FoundryBlock as _,
         evm::{
-            EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+            BlockContext, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
+            TempoEvmNetwork, TxEnvFor,
         },
     },
     executors::{EvmError, Executor, TracingExecutor},
@@ -295,8 +295,14 @@ impl RunArgs {
             return Ok(());
         }
 
-        // check if the tx is a system transaction
-        if !self.replay_system_txes
+        let factory = FEN::EvmFactory::default();
+        let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+        let target_is_protocol_system = factory.protocol_system_call(&target_tx_env).is_some();
+
+        // Generic system transactions remain opt-in. Protocol system envelopes are always
+        // replayed through their network's dedicated execution path.
+        if !target_is_protocol_system
+            && !self.replay_system_txes
             && (is_known_system_sender(tx.from())
                 || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
         {
@@ -460,21 +466,23 @@ impl RunArgs {
                 };
 
                 for (index, tx) in txs.iter().enumerate() {
-                    // Replay system transactions only if running with `sys` option.
-                    // System transactions such as on L2s don't contain any pricing info so it
-                    // could cause reverts.
-                    if !self.replay_system_txes
+                    if tx.tx_hash() == tx_hash {
+                        break;
+                    }
+
+                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let is_protocol_system = factory.protocol_system_call(&tx_env).is_some();
+                    // Generic system transactions remain opt-in because they may omit pricing
+                    // fields. Protocol envelopes must be replayed to reconstruct canonical state.
+                    if !is_protocol_system
+                        && !self.replay_system_txes
                         && (is_known_system_sender(tx.from())
                             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
                     {
                         pb.set_position((index + 1) as u64);
                         continue;
                     }
-                    if tx.tx_hash() == tx_hash {
-                        break;
-                    }
 
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
                     let context_aux = block_context.as_ref().map_or_else(
                         || FEN::EvmFactory::default().context_for_transaction(&tx_env),
                         |context| context.transaction(index),
@@ -482,7 +490,22 @@ impl RunArgs {
 
                     evm_env.cfg_env.disable_balance_check = true;
 
-                    if let Some(to) = Transaction::to(tx) {
+                    if is_protocol_system {
+                        trace!(tx=?tx.tx_hash(), "executing previous protocol system transaction");
+                        executor
+                            .transact_protocol_system_with_env_and_context(
+                                evm_env.clone(),
+                                tx_env.clone(),
+                                context_aux,
+                            )
+                            .wrap_err_with(|| {
+                                format!(
+                                    "Failed to execute protocol system transaction: {:?} in block {}",
+                                    tx.tx_hash(),
+                                    evm_env.block_env.number()
+                                )
+                            })?;
+                    } else if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
                         executor
                             .transact_with_env_and_context(
@@ -530,7 +553,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+            let tx_env = target_tx_env;
             let target_index = if let Some(block) = &block {
                 let BlockTransactions::Full(transactions) = block.transactions() else {
                     return Err(eyre::eyre!("Could not get block txs"));
@@ -553,7 +576,14 @@ impl RunArgs {
                 evm_env.cfg_env.disable_balance_check = true;
             }
 
-            if let Some(to) = Transaction::to(&tx) {
+            if target_is_protocol_system {
+                trace!(tx=?tx.tx_hash(), "executing protocol system transaction");
+                TraceResult::from(executor.transact_protocol_system_with_env_and_context(
+                    evm_env,
+                    tx_env,
+                    context_aux,
+                )?)
+            } else if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
                 TraceResult::from(executor.transact_with_env_and_context(
                     evm_env,

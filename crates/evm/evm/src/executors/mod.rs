@@ -784,6 +784,40 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         Ok(result)
     }
 
+    /// Executes and commits a family-specific protocol system transaction.
+    #[instrument(name = "transact_protocol_system", level = "debug", skip_all)]
+    pub fn transact_protocol_system_with_env_and_context(
+        &mut self,
+        mut evm_env: EvmEnvFor<FEN>,
+        mut tx_env: TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let factory = FEN::EvmFactory::default();
+        if factory.protocol_system_call(&tx_env).is_none() {
+            eyre::bail!("transaction is not a protocol system transaction")
+        }
+
+        let mut stack = self.inspector().clone();
+        let mut backend = CowBackend::new_borrowed(self.backend());
+        let result = backend.inspect_replay_with_context(
+            &mut evm_env,
+            &mut tx_env,
+            context_aux,
+            &mut stack,
+        )?;
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let mut result = convert_executed_result(
+            evm_env,
+            tx_env,
+            stack,
+            result,
+            &backend,
+            has_state_snapshot_failure,
+        )?;
+        self.commit(&mut result);
+        Ok(result)
+    }
+
     /// Commit the changeset to the database and adjust `self.inspector_config` values according to
     /// the executed call result.
     ///

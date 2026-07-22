@@ -1,6 +1,5 @@
 use super::{
     call_overrides::CallOverrideOpts,
-    evm_context::context_for_child_transaction,
     run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc},
 };
 use crate::{
@@ -49,7 +48,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, context_for_child_transaction},
     },
     executors::TracingExecutor,
     opts::EvmOpts,

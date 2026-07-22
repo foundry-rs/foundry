@@ -9,7 +9,7 @@ use crate::{
     },
     evm::{
         ContextAuxFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        HaltReasonFor, SpecFor, TxEnvFor,
+        HaltReasonFor, SpecFor, TxEnvFor, execute_replay_transaction,
     },
     fork::{CreateFork, ForkId},
 };
@@ -119,6 +119,37 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         *evm_env = evm.finish().1;
 
         Ok(res)
+    }
+
+    /// Executes a canonical replay transaction with explicit network-specific context.
+    #[instrument(name = "inspect_replay", level = "debug", skip_all)]
+    pub fn inspect_replay_with_context<
+        I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>,
+    >(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &mut TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
+        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
+
+        let factory = FEN::EvmFactory::default();
+        let is_protocol_system = factory.protocol_system_call(tx_env).is_some();
+        let mut evm = factory.create_foundry_evm_with_inspector(
+            self,
+            evm_env.clone(),
+            context_aux,
+            inspector,
+        );
+        let result = execute_replay_transaction(&factory, &mut evm, tx_env.clone())?;
+
+        if !is_protocol_system {
+            *tx_env = evm.tx().clone();
+        }
+        *evm_env = evm.finish().1;
+
+        Ok(result)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
