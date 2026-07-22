@@ -1,6 +1,7 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
     corpus::{GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget, WorkerCorpus},
+    should_ignore_revert,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -313,15 +314,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
-        let success = if !self.config.fail_on_revert
-            && call
-                .reverter
-                .is_some_and(|reverter| reverter != address && reverter != CHEATCODE_ADDRESS)
-        {
-            true
-        } else {
-            self.executor_f.is_raw_call_mut_success(address, &mut call, false)
-        };
+        let success =
+            should_ignore_revert::<FEN>(self.config.fail_on_revert, address, call.reverter)
+                || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
 
         let mut result = FuzzTestResult {
             success,
@@ -420,17 +415,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
 
-        // Consider call success if test should not fail on reverts and reverter is not the
-        // cheatcode or test address.
-        let success = if !self.config.fail_on_revert
-            && call
-                .reverter
-                .is_some_and(|reverter| reverter != address && reverter != CHEATCODE_ADDRESS)
-        {
-            true
-        } else {
-            executor.is_raw_call_mut_success(address, &mut call, false)
-        };
+        // Consider call success if test should not fail on reverts and reverter is not the test
+        // address or one of the network's cheatcode contracts.
+        let success =
+            should_ignore_revert::<FEN>(self.config.fail_on_revert, address, call.reverter)
+                || executor.is_raw_call_mut_success(address, &mut call, false);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
