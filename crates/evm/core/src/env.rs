@@ -518,7 +518,7 @@ impl FromAnyRpcTransaction for TxEnv {
         if let Some(envelope) = tx.as_envelope() {
             Ok(Self::from_recovered_tx(envelope, tx.from()))
         } else {
-            eyre::bail!("cannot convert unknown transaction type to TxEnv")
+            eyre::bail!("cannot convert unknown transaction type to TxEnv");
         }
     }
 }
@@ -553,7 +553,7 @@ impl FromAnyRpcTransaction for TempoTxEnv {
             return Ok(Self { inner: base, fee_token, ..Default::default() });
         }
 
-        eyre::bail!("cannot convert unknown transaction type to TempoTxEnv")
+        eyre::bail!("cannot convert unknown transaction type to TempoTxEnv");
     }
 }
 
@@ -768,7 +768,7 @@ mod optimism {
                 return Ok(Self::from_recovered_tx(&deposit_tx, deposit_tx.from));
             }
 
-            eyre::bail!("cannot convert unknown transaction type to OpTransaction")
+            eyre::bail!("cannot convert unknown transaction type to OpTransaction");
         }
     }
 }

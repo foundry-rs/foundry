@@ -8,6 +8,7 @@ use foundry_bench::{
 };
 use foundry_common::sh_println;
 use rayon::prelude::*;
+use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -61,6 +62,14 @@ struct Cli {
     #[clap(long)]
     common_json_output: Option<PathBuf>,
 
+    /// Filename for a machine-readable manifest describing the benchmark cases.
+    #[clap(long, requires = "suite")]
+    manifest_output: Option<PathBuf>,
+
+    /// Stable suite identifier included in --manifest-output.
+    #[clap(long, requires = "manifest_output")]
+    suite: Option<String>,
+
     /// Filename for the opt-in versioned symbolic benchmark sidecar.
     #[clap(long)]
     symbolic_sidecar_output: Option<PathBuf>,
@@ -87,6 +96,25 @@ struct Cli {
 
 /// Mutex to prevent concurrent foundryup calls
 static FOUNDRY_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Serialize)]
+struct BenchmarkCaseManifest {
+    id: String,
+    benchmark: String,
+    workload_name: String,
+    workload_repository: String,
+    workload_requested_ref: String,
+    workload_commit: String,
+    arguments: Option<String>,
+    versions: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BenchmarkSuiteManifest {
+    schema: &'static str,
+    suite: String,
+    cases: Vec<BenchmarkCaseManifest>,
+}
 
 /// Activate a version: build from `source` when the spec was `name=path`,
 /// otherwise switch via foundryup (or build the default workspace for `local`).
@@ -356,6 +384,48 @@ fn main() -> Result<()> {
             fs::write(&path, serde_json::to_string_pretty(&common)?)?;
             sh_println!("✅ Common JSON result written to: {}", path.display());
         }
+    }
+
+    if let Some(filename) = cli.manifest_output {
+        let mut cases = Vec::new();
+        for (repo_config, project) in &projects {
+            for benchmark in &benchmarks {
+                let present_versions = versions
+                    .iter()
+                    .filter(|version| {
+                        results
+                            .data
+                            .get(benchmark)
+                            .and_then(|version_data| version_data.get(*version))
+                            .is_some_and(|repo_data| repo_data.contains_key(&repo_config.name))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if present_versions.is_empty() {
+                    continue;
+                }
+                cases.push(BenchmarkCaseManifest {
+                    id: format!("{benchmark}/{}", repo_config.name),
+                    benchmark: benchmark.clone(),
+                    workload_name: repo_config.name.clone(),
+                    workload_repository: format!("{}/{}", project.org, project.repo),
+                    workload_requested_ref: repo_config.rev.clone(),
+                    workload_commit: project.revision.clone(),
+                    arguments: repo_config.extra_args.clone(),
+                    versions: present_versions,
+                });
+            }
+        }
+        cases.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+        let manifest = BenchmarkSuiteManifest {
+            schema: "foundry-benchmark-suite/v1",
+            suite: cli.suite.expect("clap requires --suite with --manifest-output"),
+            cases,
+        };
+        let path = cli.output_dir.join(filename);
+        fs::create_dir_all(path.parent().unwrap_or(&cli.output_dir))?;
+        fs::write(&path, serde_json::to_string_pretty(&manifest)? + "\n")?;
+        sh_println!("✅ Benchmark manifest written to: {}", path.display());
     }
 
     if let Some(filename) = cli.symbolic_sidecar_output {

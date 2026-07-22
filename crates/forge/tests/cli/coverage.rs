@@ -1,3 +1,5 @@
+use clap::CommandFactory;
+use forge::cmd::coverage::CoverageArgs;
 use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
     TestCommand, TestProject,
@@ -1611,6 +1613,138 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/10792
+forgetest!(branch_with_storage_bytes_reads, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    bytes public optA = bytes("optA");
+    bytes public optB = bytes("optB");
+
+    function execute(uint16 value) external view {
+        bytes memory element;
+        if (value == 4) {
+            element = optA;
+        } else {
+            element = optB;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testTrueCoverage() external view {
+        a.execute(4);
+    }
+
+    function testFalseCoverage() external view {
+        a.execute(5);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+--------------+--------------+---------------╮
+| File              | % Lines      | % Statements | % Branches   | % Funcs       |
++================================================================================+
+| src/AContract.sol | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+|-------------------+--------------+--------------+--------------+---------------|
+| Total             | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+╰-------------------+--------------+--------------+--------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt", "testFalseCoverage"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+--------------+--------------+--------------+---------------╮
+| File              | % Lines      | % Statements | % Branches   | % Funcs       |
++================================================================================+
+| src/AContract.sol | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+|-------------------+--------------+--------------+--------------+---------------|
+| Total             | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+╰-------------------+--------------+--------------+--------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (5/5) | 100.00% (4/4) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (5/5) | 100.00% (4/4) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(branch_with_code_free_else, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public value;
+
+    function execute(bool condition) external {
+        if (condition) {
+            value = 1;
+        } else {
+            uint256 unused;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.execute(true);
+        a.execute(false);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+--------------+---------------+---------------╮
+| File              | % Lines      | % Statements | % Branches    | % Funcs       |
++=================================================================================+
+| src/AContract.sol | 75.00% (3/4) | 50.00% (1/2) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+--------------+--------------+---------------+---------------|
+| Total             | 75.00% (3/4) | 50.00% (1/2) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+--------------+--------------+---------------+---------------╯
+
+"#]]);
+});
+
 forgetest!(identical_bytecodes, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
@@ -2732,3 +2866,56 @@ contract Broken {
         "mutation/coverage conflict should be reported before compile errors:\n{stderr}"
     );
 });
+
+forgetest_init!(coverage_rejects_test_only_modes_before_compile, |prj, cmd| {
+    prj.add_source(
+        "Broken.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Broken {
+    function broken() public pure returns (uint256) {
+        return;
+    }
+}
+"#,
+    );
+
+    for args in [
+        &["--json"][..],
+        &["--junit"],
+        &["--list"],
+        &["--debug"],
+        &["--flamegraph"],
+        &["--flamechart"],
+        &["--evm-profile"],
+        &["--showmap-out", "showmap"],
+        &["--brutalize"],
+        &["--replay-symbolic-artifact", "counterexample.json"],
+        &["--watch", "--json"],
+    ] {
+        let output = cmd.forge_fuse().arg("coverage").args(args).assert_failure();
+        let stderr = output.get_output().stderr_lossy();
+
+        assert!(
+            stderr.contains("`forge coverage` cannot be combined with:"),
+            "unexpected stderr for {args:?}:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("Compiler run failed"),
+            "coverage conflict should be reported before compile errors for {args:?}:\n{stderr}"
+        );
+    }
+});
+
+#[test]
+fn coverage_help_renders_compatibility_note() {
+    let help = CoverageArgs::command().render_long_help().to_string();
+
+    assert!(help.contains(concat!(
+        "Compatibility:\n",
+        "  `forge coverage` supports test filters and `--watch`, but not test-only output"
+    )));
+    assert!(!help.contains("\\n"));
+}

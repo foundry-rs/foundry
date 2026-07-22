@@ -8,7 +8,9 @@
 
 use path_slash::PathBufExt;
 use solar::{
-    ast::{CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind},
+    ast::{
+        CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind, Visibility,
+    },
     interface::source_map::FileName,
     sema::{
         Gcx,
@@ -17,7 +19,7 @@ use solar::{
     },
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     path::{Path, PathBuf},
 };
 use tracing::warn;
@@ -440,30 +442,9 @@ fn extract_inherited_doc_var(gcx: Gcx<'_>, vid: VariableId) -> Option<InheritedD
 /// source spelling so inherited docs can still resolve without panicking.
 pub(crate) fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
     let f = gcx.hir.function(fid);
-    let source_types = gcx
-        .sources
-        .get(f.source)
-        .and_then(|source| source.ast.as_ref())
-        .and_then(|ast| {
-            ast.items.iter().find_map(|item| match &item.kind {
-                ItemKind::Function(func) if item.span == f.span => Some(&func.header.parameters),
-                ItemKind::Contract(c) => c.body.iter().find_map(|m| match &m.kind {
-                    ItemKind::Function(func) if m.span == f.span => Some(&func.header.parameters),
-                    _ => None,
-                }),
-                _ => None,
-            })
-        })
-        .map(|params| {
-            let sm = gcx.sess.source_map();
-            params
-                .vars
-                .iter()
-                .map(|v| {
-                    normalize_sol_type(sm.span_to_snippet(v.ty.span).unwrap_or_default().trim())
-                })
-                .collect::<Vec<_>>()
-        });
+    let source_types = function_source_param_types(gcx, fid).map(|params| {
+        params.into_iter().map(|param| normalize_sol_type(&param)).collect::<Vec<_>>()
+    });
 
     f.parameters
         .iter()
@@ -481,6 +462,30 @@ pub(crate) fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<
             }
         })
         .collect()
+}
+
+/// Extract function parameter types exactly as spelled in source.
+fn function_source_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
+    let f = gcx.hir.function(fid);
+    let ast = gcx.sources.get(f.source)?.ast.as_ref()?;
+    let params = ast.items.iter().find_map(|item| match &item.kind {
+        ItemKind::Function(func) if item.span == f.span => Some(&func.header.parameters),
+        ItemKind::Contract(c) => c.body.iter().find_map(|member| match &member.kind {
+            ItemKind::Function(func) if member.span == f.span => Some(&func.header.parameters),
+            _ => None,
+        }),
+        _ => None,
+    })?;
+    let sm = gcx.sess.source_map();
+    Some(
+        params
+            .vars
+            .iter()
+            .map(|variable| {
+                sm.span_to_snippet(variable.ty.span).unwrap_or_default().trim().to_string()
+            })
+            .collect(),
+    )
 }
 
 /// Canonicalize Solidity type aliases for generated anchors and source fallbacks.
@@ -654,17 +659,126 @@ pub struct LocalMembers {
     name: String,
     /// Member names with a heading (and thus an anchor) on the current page.
     members: HashSet<String>,
+    /// Heading and exact signature anchors rendered on the current page.
+    anchors: HashSet<String>,
+    /// Effective inherited member names and their optional documentation pages.
+    inherited: HashMap<String, Option<PathBuf>>,
+    /// Inherited contracts and the members rendered on their exact pages.
+    inherited_contracts: HashMap<String, InheritedContract>,
+}
+
+#[derive(Debug)]
+enum InheritedContract {
+    Unique { id: ContractId, page: Option<PathBuf>, anchors: HashSet<String> },
+    Ambiguous,
+}
+
+/// Record the heading and exact signature anchor for a rendered Solidity function.
+fn insert_function_anchors(
+    gcx: Gcx<'_>,
+    id: FunctionId,
+    anchors: &mut HashSet<String>,
+) -> Option<String> {
+    let function = gcx.hir.function(id);
+    if function.is_yul || function.is_getter() {
+        return None;
+    }
+    let params = function_source_param_types(gcx, id)?;
+    let name = match function.kind {
+        FunctionKind::Constructor => "constructor".to_string(),
+        FunctionKind::Fallback => "fallback".to_string(),
+        FunctionKind::Receive => "receive".to_string(),
+        FunctionKind::Function | FunctionKind::Modifier => function.name?.as_str().to_string(),
+    };
+    anchors.insert(slug_anchor_segment(&name));
+    anchors.insert(function_signature_anchor(&name, &params));
+    Some(name)
 }
 
 impl LocalMembers {
     /// Create an empty member set for the contract `name`.
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_string(), members: HashSet::new() }
+        Self {
+            name: name.to_string(),
+            members: HashSet::new(),
+            anchors: HashSet::new(),
+            inherited: HashMap::new(),
+            inherited_contracts: HashMap::new(),
+        }
+    }
+
+    /// Create a member set populated with members declared by base contracts.
+    pub fn for_contract(gcx: Gcx<'_>, contract_id: ContractId, name_to_page: &NameToPage) -> Self {
+        let contract = gcx.hir.contract(contract_id);
+        let mut this = Self::new(contract.name.as_str());
+
+        // Solidity's linearization lists the current contract first, followed by bases in
+        // resolution order. Reserve the first inherited declaration even if its page is not
+        // rendered so a farther declaration cannot produce a confidently incorrect link.
+        for &base_id in contract.linearized_bases.iter().filter(|&&id| id != contract_id) {
+            let base = gcx.hir.contract(base_id);
+            let page = name_to_page.get_contract(base_id).cloned();
+            let mut anchors = HashSet::new();
+
+            for &item_id in base.items {
+                let (name, is_inherited) = match item_id {
+                    ItemId::Function(id) => {
+                        let function = gcx.hir.function(id);
+                        (
+                            insert_function_anchors(gcx, id, &mut anchors),
+                            function.visibility != Visibility::Private
+                                && function.kind != FunctionKind::Constructor,
+                        )
+                    }
+                    ItemId::Variable(id) => {
+                        let variable = gcx.hir.variable(id);
+                        (
+                            variable.name.map(|name| name.as_str().to_string()),
+                            variable.visibility != Some(Visibility::Private),
+                        )
+                    }
+                    ItemId::Struct(id) => {
+                        (Some(gcx.hir.strukt(id).name.as_str().to_string()), true)
+                    }
+                    ItemId::Enum(id) => (Some(gcx.hir.enumm(id).name.as_str().to_string()), true),
+                    ItemId::Error(id) => (Some(gcx.hir.error(id).name.as_str().to_string()), true),
+                    ItemId::Event(id) => (Some(gcx.hir.event(id).name.as_str().to_string()), true),
+                    ItemId::Udvt(id) => (Some(gcx.hir.udvt(id).name.as_str().to_string()), true),
+                    ItemId::Contract(_) => (None, false),
+                };
+                if let Some(name) = name {
+                    anchors.insert(slug_anchor_segment(&name));
+                    if is_inherited {
+                        this.inherited.entry(name).or_insert_with(|| page.clone());
+                    }
+                }
+            }
+
+            match this.inherited_contracts.entry(base.name.as_str().to_string()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(InheritedContract::Unique { id: base_id, page, anchors });
+                }
+                Entry::Occupied(mut entry) => {
+                    if matches!(entry.get(), InheritedContract::Unique { id, .. } if *id != base_id)
+                    {
+                        entry.insert(InheritedContract::Ambiguous);
+                    }
+                }
+            }
+        }
+
+        this
     }
 
     /// Record a member that is rendered as a `### member` heading on the page.
     pub fn insert(&mut self, member: &str) {
         self.members.insert(member.to_string());
+        self.anchors.insert(slug_anchor_segment(member));
+    }
+
+    /// Record an exact signature anchor rendered on the current page.
+    pub fn insert_anchor(&mut self, anchor: String) {
+        self.anchors.insert(anchor);
     }
 
     /// Anchor for a bare `{member}` reference, if `member` is documented on this page.
@@ -677,8 +791,39 @@ impl LocalMembers {
     /// Anchor for a qualified `{Contract-member[-params...]}` reference, if `member` is
     /// documented on this page.
     fn xref_member_anchor(&self, part: &str) -> Option<String> {
-        let member = part.split('-').find(|piece| !piece.is_empty())?;
-        self.members.contains(member).then(|| xref_part_anchor(part))
+        let anchor = xref_part_anchor(part);
+        self.anchors.contains(&anchor).then_some(anchor)
+    }
+
+    /// Page and anchor for a bare inherited-member reference.
+    ///
+    /// The outer option indicates whether the name is inherited; the inner option is absent when
+    /// the effective declaration has no rendered page.
+    fn inherited_member_link(&self, member: &str, current_page: &Path) -> Option<Option<String>> {
+        let page = self.inherited.get(member)?;
+        Some(page.as_ref().map(|page| {
+            format!("{}#{}", page_link(page, current_page), slug_anchor_segment(member))
+        }))
+    }
+
+    /// Exact page and anchor for a qualified inherited-contract member reference.
+    ///
+    /// The outer option indicates whether the contract is an inherited base; the inner option is
+    /// absent when that base has no rendered page or the named member has no rendered heading.
+    fn inherited_contract_member_link(
+        &self,
+        contract: &str,
+        part: &str,
+        current_page: &Path,
+    ) -> Option<Option<String>> {
+        let base = self.inherited_contracts.get(contract)?;
+        let InheritedContract::Unique { page, anchors, .. } = base else {
+            return Some(None);
+        };
+        let anchor = xref_part_anchor(part);
+        Some(page.as_ref().and_then(|page| {
+            anchors.contains(&anchor).then(|| format!("{}#{anchor}", page_link(page, current_page)))
+        }))
     }
 }
 
@@ -725,22 +870,47 @@ pub fn replace_inline_links(
                 // `{member}` documented on this page, or `{Contract-member}` where
                 // `Contract` is the contract being rendered.
                 if let Some(local) = local {
-                    let anchor = match part {
-                        None => local.member_anchor(lookup_name),
+                    let local_anchor = match part {
+                        None => local.member_anchor(lookup_name).map(Some),
                         Some(member) if lookup_name == local.name => {
-                            local.xref_member_anchor(member)
+                            Some(local.xref_member_anchor(member))
                         }
                         Some(_) => None,
                     };
-                    if let Some(anchor) = anchor
-                        && !anchor.is_empty()
-                    {
-                        let default_display = match part {
-                            Some(member) => format!("{lookup_name}.{member}"),
-                            None => lookup_name.to_string(),
-                        };
-                        let display = escape_link_label(label.unwrap_or(&default_display));
-                        out.push_str(&format!("[{display}](#{anchor})"));
+                    if let Some(anchor) = local_anchor {
+                        if let Some(anchor) = anchor {
+                            let default_display = match part {
+                                Some(member) => format!("{lookup_name}.{member}"),
+                                None => lookup_name.to_string(),
+                            };
+                            let display = escape_link_label(label.unwrap_or(&default_display));
+                            out.push_str(&format!("[{display}](#{anchor})"));
+                        } else {
+                            let safe_name = lookup_name.replace('`', "'");
+                            out.push_str(&format!("`{safe_name}`"));
+                        }
+                        i += end;
+                        continue;
+                    }
+
+                    let inherited_link = match part {
+                        None => local.inherited_member_link(lookup_name, current_page),
+                        Some(member) => {
+                            local.inherited_contract_member_link(lookup_name, member, current_page)
+                        }
+                    };
+                    if let Some(link) = inherited_link {
+                        if let Some(link) = link {
+                            let default_display = match part {
+                                Some(member) => format!("{lookup_name}.{member}"),
+                                None => lookup_name.to_string(),
+                            };
+                            let display = escape_link_label(label.unwrap_or(&default_display));
+                            out.push_str(&format!("[{display}]({link})"));
+                        } else {
+                            let safe_name = lookup_name.replace('`', "'");
+                            out.push_str(&format!("`{safe_name}`"));
+                        }
                         i += end;
                         continue;
                     }
@@ -832,7 +1002,7 @@ fn slug_anchor_segment(s: &str) -> String {
         if ch.is_ascii_alphanumeric() || ch == '_' {
             out.push(ch);
             last_was_dash = false;
-        } else if !last_was_dash && !out.is_empty() {
+        } else if ch != '$' && !last_was_dash && !out.is_empty() {
             out.push('-');
             last_was_dash = true;
         }

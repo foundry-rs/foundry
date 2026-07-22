@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::{
-    CommentConfig, Separator, State,
+    ChainedNamedCall, CommentConfig, Separator, State,
     common::{BlockFormat, ListFormat},
 };
 use crate::{
@@ -1303,7 +1303,48 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
             ast::ExprKind::Call(call_expr, call_args) => {
                 let cache = self.call_with_opts_and_args;
+                let chained_named_call_cache = self.chained_named_call;
+                // Keep calls within a chained callee inline when they fit, so a multiline named
+                // argument list does not force an earlier break inside the callee.
+                let keep_inline = chained_named_call_cache
+                    .is_some_and(|call| call.keep_inline && call.callee.contains(expr.span))
+                    && !self.has_comments_between_elements(call_args.span, call_args.exprs());
                 self.call_with_opts_and_args = is_call_with_opts_and_args(&expr.kind);
+                let named_args_size = if call_args.is_empty() {
+                    4 + usize::from(self.config.bracket_spacing)
+                } else {
+                    2
+                };
+                self.chained_named_call = (matches!(call_args.kind, ast::CallArgsKind::Named(_))
+                    && is_call_chain(&call_expr.kind, true))
+                .then(|| ChainedNamedCall {
+                    callee: call_expr.span,
+                    keep_inline: !call_chain_contains_options(call_expr)
+                        && !self.has_comment_between(call_expr.span.lo(), call_expr.span.hi())
+                        && self
+                            .estimate_call_chain_size(call_expr)
+                            .is_some_and(|size| size + named_args_size <= self.space_left()),
+                })
+                .or_else(|| {
+                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span))
+                });
+                let list_format = if keep_inline {
+                    ListFormat::inline()
+                } else {
+                    ListFormat::compact().break_cmnts().break_single(true)
+                };
+                let terminal_callee = call_expr.peel_parens();
+                let callee_has_breakable_comment = self
+                    .has_breakable_comment_between(call_expr.span.lo(), terminal_callee.span.lo())
+                    || self.has_breakable_comment_between(
+                        terminal_callee.span.hi(),
+                        call_expr.span.hi(),
+                    )
+                    || if let ast::ExprKind::Member(member_expr, ident) = &terminal_callee.kind {
+                        self.has_breakable_comment_between(member_expr.span.hi(), ident.span.lo())
+                    } else {
+                        false
+                    };
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
@@ -1311,18 +1352,26 @@ impl<'ast> State<'_, 'ast> {
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
                     |s| {
+                        let callee_suffix_can_break = callee_has_breakable_comment
+                            || match &terminal_callee.kind {
+                                ast::ExprKind::Member(member_expr, _) => {
+                                    s.member_suffix_emits_break(terminal_callee, member_expr)
+                                }
+                                ast::ExprKind::Index(..) => !s.skip_index_break,
+                                _ => false,
+                            };
                         s.print_call_args(
                             call_args,
-                            ListFormat::compact()
-                                .break_cmnts()
-                                .break_single(true)
+                            list_format
                                 .without_ind(s.return_bin_expr)
                                 .with_delimiters(!s.call_with_opts_and_args),
                             get_callee_head_size(call_expr),
+                            callee_suffix_can_break,
                         );
                     },
                 );
                 self.call_with_opts_and_args = cache;
+                self.chained_named_call = chained_named_call_cache;
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 // the flag is only meant to be used to format the call args
@@ -1330,7 +1379,7 @@ impl<'ast> State<'_, 'ast> {
                 self.call_with_opts_and_args = false;
 
                 self.print_expr(expr);
-                self.print_named_args(named_args, span.hi());
+                self.print_named_args(named_args, span.hi(), false);
 
                 // restore cached value
                 self.call_with_opts_and_args = cache;
@@ -1353,16 +1402,19 @@ impl<'ast> State<'_, 'ast> {
                     member_expr,
                     MemberOrCallArgs::Member(self.estimate_size(ident.span)),
                     |s| {
-                        s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        match member_expr.kind {
-                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
-                            ast::ExprKind::Index(..) if s.skip_index_break => (),
-                            // Don't add break when accessing a field after a call with named args.
-                            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
-                            // on the same line as the closing `})`.
-                            // See: https://github.com/foundry-rs/foundry/issues/12399
-                            _ if is_call_with_named_args(&member_expr.kind) => (),
-                            _ => s.zerobreak(),
+                        let has_mixed_comment = s
+                            .peek_comment_between(member_expr.span.hi(), ident.span.lo())
+                            .is_some_and(|comment| comment.style.is_mixed());
+                        if has_mixed_comment {
+                            s.print_comments(
+                                ident.span.lo(),
+                                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                            );
+                        } else {
+                            s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
+                        }
+                        if has_mixed_comment || s.member_suffix_emits_break(expr, member_expr) {
+                            s.zerobreak();
                         }
                         s.word(".");
                         s.print_ident(ident);
@@ -1375,7 +1427,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args, ListFormat::compact().break_cmnts(), 7);
+                self.print_call_args(args, ListFormat::compact().break_cmnts(), 7, false);
             }
             ast::ExprKind::Ternary(cond, then, els) => self.print_ternary_expr(cond, then, els),
             ast::ExprKind::Tuple(exprs) => self.print_tuple(
@@ -1669,7 +1721,27 @@ impl<'ast> State<'_, 'ast> {
                 arguments,
                 ListFormat::compact().break_cmnts(),
                 name.to_string().len(),
+                false,
             );
+        }
+    }
+
+    fn member_suffix_emits_break(&self, expr: &ast::Expr<'_>, member_expr: &ast::Expr<'_>) -> bool {
+        match member_expr.kind {
+            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => false,
+            ast::ExprKind::Index(..) if self.skip_index_break => false,
+            _ if self
+                .chained_named_call
+                .is_some_and(|call| call.keep_inline && call.callee.contains(expr.span)) =>
+            {
+                false
+            }
+            // Don't add a break when accessing a field after a call with named args.
+            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
+            // on the same line as the closing `})`.
+            // See: https://github.com/foundry-rs/foundry/issues/12399
+            _ if is_call_with_named_args(&member_expr.kind) => false,
+            _ => true,
         }
     }
 
@@ -1701,19 +1773,23 @@ impl<'ast> State<'_, 'ast> {
             let no_cmnt_or_mixed =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
-            // If call with options, add an extra box to prioritize breaking the call args
+            // If call with options, add an extra box to prioritize breaking the call args.
             if self.call_with_opts_and_args {
                 self.cbox(0);
                 extra_box = true;
             }
 
             // Determine if this chain will add its own indentation
-            let chain_has_indent = is_call_chain(&child_expr.kind, true)
-                || !(no_cmnt_or_mixed
-                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                || !callee_fits_line
-                || (member_depth(0, child_expr) >= 2
-                    && (!total_fits_line || member_or_args.has_comments()));
+            let keep_chain_inline = self
+                .chained_named_call
+                .is_some_and(|call| call.keep_inline && call.callee.contains(child_expr.span));
+            let chain_has_indent = !keep_chain_inline
+                && (is_call_chain(&child_expr.kind, true)
+                    || !(no_cmnt_or_mixed
+                        || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                    || !callee_fits_line
+                    || (member_depth(0, child_expr) >= 2
+                        && (!total_fits_line || member_or_args.has_comments())));
 
             // Start a new chain if needed
             if is_call_chain(&child_expr.kind, false) {
@@ -1758,6 +1834,7 @@ impl<'ast> State<'_, 'ast> {
         args: &'ast ast::CallArgs<'ast>,
         format: ListFormat,
         callee_size: usize,
+        callee_suffix_can_break: bool,
     ) {
         let ast::CallArgs { span, ref kind } = *args;
         if self.handle_span(span, true) {
@@ -1781,7 +1858,11 @@ impl<'ast> State<'_, 'ast> {
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
-                self.print_inside_parens(|state| state.print_named_args(named_args, span.hi()));
+                let without_ind =
+                    self.call_stack.has_indented_parent_chain() && !callee_suffix_can_break;
+                self.print_inside_parens(|state| {
+                    state.print_named_args(named_args, span.hi(), without_ind)
+                });
             }
         }
 
@@ -1790,7 +1871,12 @@ impl<'ast> State<'_, 'ast> {
         self.call_stack.pop();
     }
 
-    fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
+    fn print_named_args(
+        &mut self,
+        args: &'ast [ast::NamedArg<'ast>],
+        pos_hi: BytePos,
+        without_ind: bool,
+    ) {
         let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
@@ -1827,7 +1913,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.has_indented_parent_chain())
+                    .without_ind(without_ind)
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -2246,7 +2332,9 @@ impl<'ast> State<'_, 'ast> {
             {
                 let current_block_multiline = self.is_multiline_block(block, false, true);
                 if !pos.is_first || !skip_ind {
-                    if prev_block_multiline && (current_block_multiline || pos.is_last) {
+                    if (pos.is_first && block.is_empty() && is_call_with_named_args(&expr.kind))
+                        || (prev_block_multiline && (current_block_multiline || pos.is_last))
+                    {
                         self.nbsp();
                     } else {
                         self.space();
@@ -2355,7 +2443,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             ListFormat::consistent()
         };
-        self.print_call_args(args, format.break_cmnts(), path.to_string().len());
+        self.print_call_args(args, format.break_cmnts(), path.to_string().len(), false);
         self.emit_or_revert = false;
         self.end();
     }
@@ -2758,6 +2846,51 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
+    fn estimate_call_chain_size(&self, expr: &ast::Expr<'_>) -> Option<usize> {
+        match &expr.kind {
+            ast::ExprKind::Call(callee, args) => {
+                let ast::CallArgsKind::Unnamed(args) = &args.kind else { return None };
+                let mut size = self.estimate_call_chain_size(callee)? + 2;
+                for arg in args.iter() {
+                    size += self.estimate_call_chain_size(arg)?;
+                }
+                Some(size + args.len().saturating_sub(1) * 2)
+            }
+            ast::ExprKind::Ident(ident) => Some(ident.to_string().len()),
+            ast::ExprKind::Index(expr, kind) => {
+                let index_size = match kind {
+                    ast::IndexKind::Index(Some(index)) => self.estimate_call_chain_size(index)?,
+                    ast::IndexKind::Index(None) => 0,
+                    ast::IndexKind::Range(start, end) => {
+                        let start = match start {
+                            Some(start) => self.estimate_call_chain_size(start)?,
+                            None => 0,
+                        };
+                        let end = match end {
+                            Some(end) => self.estimate_call_chain_size(end)?,
+                            None => 0,
+                        };
+                        start + end + 1
+                    }
+                };
+                Some(self.estimate_call_chain_size(expr)? + index_size + 2)
+            }
+            // Zero is invariant under all number underscore configurations.
+            ast::ExprKind::Lit(lit, None)
+                if matches!(lit.kind, ast::LitKind::Number(_)) && lit.symbol.as_str() == "0" =>
+            {
+                Some(1)
+            }
+            ast::ExprKind::Member(expr, ident) => {
+                Some(self.estimate_call_chain_size(expr)? + ident.to_string().len() + 1)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(expr)] = exprs.as_ref() => {
+                Some(self.estimate_call_chain_size(expr)? + 2)
+            }
+            _ => None,
+        }
+    }
+
     fn has_comments_between_elements<I>(&self, limits: Span, elements: I) -> bool
     where
         I: IntoIterator<Item = &'ast ast::Expr<'ast>>,
@@ -3025,10 +3158,24 @@ const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
-    if let ast::ExprKind::Member(child, ..) = expr_kind {
-        is_call_chain(&child.kind, false)
-    } else {
-        !must_have_child && is_call(expr_kind)
+    match expr_kind {
+        ast::ExprKind::Index(child, ..) | ast::ExprKind::Member(child, ..) => {
+            is_call_chain(&child.kind, false)
+        }
+        ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(child)] = exprs.as_ref() => {
+            is_call_chain(&child.kind, must_have_child)
+        }
+        _ => !must_have_child && is_call(expr_kind),
+    }
+}
+
+fn call_chain_contains_options(expr: &ast::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ast::ExprKind::CallOptions(..) => true,
+        ast::ExprKind::Call(expr, ..)
+        | ast::ExprKind::Index(expr, ..)
+        | ast::ExprKind::Member(expr, ..) => call_chain_contains_options(expr),
+        _ => false,
     }
 }
 
