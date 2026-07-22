@@ -1094,6 +1094,18 @@ contract FocusTarget {
         broken = true;
     }
 
+    function bbbSafe() public {}
+
+    function cccSafe() public {}
+
+    function dddSafe() public {}
+
+    function eeeSafe() public {}
+
+    function fffSafe() public {}
+
+    function yyySafe() public {}
+
     function zzzSafe() public {}
 }
 
@@ -1102,9 +1114,15 @@ contract InvariantSelectorFocusTest is Test {
 
     function setUp() public {
         target = new FocusTarget();
-        bytes4[] memory selectors = new bytes4[](2);
+        bytes4[] memory selectors = new bytes4[](8);
         selectors[0] = target.aaaBreak.selector;
-        selectors[1] = target.zzzSafe.selector;
+        selectors[1] = target.bbbSafe.selector;
+        selectors[2] = target.cccSafe.selector;
+        selectors[3] = target.dddSafe.selector;
+        selectors[4] = target.eeeSafe.selector;
+        selectors[5] = target.fffSafe.selector;
+        selectors[6] = target.yyySafe.selector;
+        selectors[7] = target.zzzSafe.selector;
         targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
     }
 
