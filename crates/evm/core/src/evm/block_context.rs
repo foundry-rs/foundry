@@ -118,7 +118,7 @@ fn transaction_envs<FEN: FoundryEvmNetwork>(
     block: &BlockResponseFor<FEN>,
 ) -> Result<Vec<TxEnvFor<FEN>>> {
     let BlockTransactions::Full(transactions) = block.transactions() else {
-        eyre::bail!("block {} does not contain full transactions", block.header().number())
+        eyre::bail!("block {} does not contain full transactions", block.header().number());
     };
     Ok(transactions
         .iter()

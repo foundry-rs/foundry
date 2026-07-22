@@ -96,7 +96,7 @@ where
         .transact_system_call(system_call.caller, system_call.contract, system_call.data)
         .wrap_err("failed to execute protocol system transaction")?;
     if !result.result.is_success() {
-        eyre::bail!("protocol system transaction reverted or halted")
+        eyre::bail!("protocol system transaction reverted or halted");
     }
 
     merge_prestate(&mut result.state, prestate);

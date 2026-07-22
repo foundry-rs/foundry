@@ -28,9 +28,7 @@ contract MonadReserveBalanceTest is Test {
 
     function test_nested_deployment_updates_tracker() public {
         vm.prank(SPENDER);
-        vm.deployCode(
-            "cheats/MonadReserveBalance.t.sol:PayableChild", INITIAL_BALANCE - 9 ether
-        );
+        vm.deployCode("cheats/MonadReserveBalance.t.sol:PayableChild", INITIAL_BALANCE - 9 ether);
 
         assertEq(SPENDER.balance, 9 ether);
         assertTrue(_dippedIntoReserve());

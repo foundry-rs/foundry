@@ -961,7 +961,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Converts all transactions in a full RPC block into this backend's transaction environment.
     fn full_block_tx_envs(block: &AnyRpcBlock) -> eyre::Result<Vec<TxEnvFor<FEN>>> {
         let BlockTransactions::Full(transactions) = block.transactions() else {
-            eyre::bail!("block {} does not contain full transactions", block.header().number())
+            eyre::bail!("block {} does not contain full transactions", block.header().number());
         };
         transactions.iter().map(TxEnvFor::<FEN>::from_any_rpc_transaction).collect()
     }
@@ -1048,7 +1048,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             .backend()
             .get_full_block(evm_env.block_env.number().saturating_to::<u64>())?;
         let BlockTransactions::Full(transactions) = full_block.transactions() else {
-            eyre::bail!("block {} does not contain full transactions", full_block.header().number())
+            eyre::bail!(
+                "block {} does not contain full transactions",
+                full_block.header().number()
+            );
         };
         let Some(target_index) = transactions.iter().position(|tx| tx.tx_hash() == tx_hash) else {
             return Ok(None);
@@ -1551,7 +1554,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let factory = FEN::EvmFactory::default();
         let context_aux = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
             let BlockTransactions::Full(transactions) = block.transactions() else {
-                eyre::bail!("block {} does not contain full transactions", block.header().number())
+                eyre::bail!("block {} does not contain full transactions", block.header().number());
             };
             let current_tx_index = transactions
                 .iter()
