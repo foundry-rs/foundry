@@ -9,6 +9,9 @@ use dangerous_unary_operator::DANGEROUS_UNARY_OPERATOR;
 mod div_mul;
 use div_mul::DIVIDE_BEFORE_MULTIPLY;
 
+mod ecrecover;
+use ecrecover::ECRECOVER;
+
 mod incorrect_erc20_interface;
 use incorrect_erc20_interface::INCORRECT_ERC20_INTERFACE;
 
@@ -58,6 +61,7 @@ register_lints!(
     (AssertStateChange, late, (ASSERT_STATE_CHANGE)),
     (DangerousUnaryOperator, early, (DANGEROUS_UNARY_OPERATOR)),
     (DivideBeforeMultiply, late, (DIVIDE_BEFORE_MULTIPLY)),
+    (Ecrecover, late, (ECRECOVER)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (IncorrectStrictEquality, late, (INCORRECT_STRICT_EQUALITY)),
