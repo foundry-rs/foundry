@@ -167,7 +167,7 @@ impl CallTraceDecoderBuilder {
     /// Sets the Monad hardfork used to register address-scoped metadata when built.
     #[cfg(feature = "monad")]
     #[inline]
-    pub fn with_monad_hardfork(mut self, hardfork: Option<MonadHardfork>) -> Self {
+    pub const fn with_monad_hardfork(mut self, hardfork: Option<MonadHardfork>) -> Self {
         self.decoder.monad_hardfork = hardfork;
         self
     }

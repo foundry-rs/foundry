@@ -1096,7 +1096,7 @@ impl<N: Network> Backend<N> {
                 updated.set_monad_hardfork(hardfork);
                 *decoder = Arc::new(updated);
             }
-            return Arc::clone(&decoder);
+            Arc::clone(&decoder)
         }
 
         #[cfg(not(feature = "monad"))]

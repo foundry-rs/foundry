@@ -1,5 +1,8 @@
 use alloy_evm::Evm;
-use alloy_primitives::{Address, Bytes, U256, map::AddressMap};
+use alloy_primitives::{
+    Address, Bytes, U256,
+    map::{AddressMap, Entry},
+};
 use eyre::{Result, WrapErr};
 use revm::{
     Database, DatabaseCommit,
@@ -64,11 +67,13 @@ fn load_account<'a, DB: alloy_evm::Database>(
     changes: &'a mut AddressMap<Account>,
     address: Address,
 ) -> Result<&'a mut Account> {
-    if !changes.contains_key(&address) {
-        let info = Database::basic(db, address)?.unwrap_or_default();
-        changes.insert(address, Account::from(info));
+    match changes.entry(address) {
+        Entry::Occupied(entry) => Ok(entry.into_mut()),
+        Entry::Vacant(entry) => {
+            let info = Database::basic(db, address)?.unwrap_or_default();
+            Ok(entry.insert(Account::from(info)))
+        }
     }
-    Ok(changes.get_mut(&address).expect("account was inserted"))
 }
 
 /// Executes one canonical replay transaction, including family-specific protocol system calls.
