@@ -12,7 +12,6 @@ use foundry_compilers::{
     contracts::ArtifactContracts,
 };
 use rayon::prelude::*;
-use semver::Version;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -128,23 +127,34 @@ impl<'a> Linker<'a> {
         &'a self,
         file: &str,
         name: &str,
-        version: Option<&Version>,
-    ) -> Option<&'a ArtifactId> {
-        for id in self.contracts.keys() {
-            if let Some(version) = version
-                && id.version != *version
-            {
-                continue;
-            }
-            let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
-            let library_path = self.project_relative_path(Path::new(file));
+        target: &ArtifactId,
+    ) -> Result<Option<&'a ArtifactId>, LinkerError> {
+        let library_path = self.project_relative_path(Path::new(file));
+        let candidates = self
+            .contracts
+            .keys()
+            .filter(|id| {
+                let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
+                id.version == target.version
+                    && artifact_name == *name
+                    && artifact_path == library_path
+            })
+            .collect::<Vec<_>>();
+        let same_build_and_profile = candidates
+            .iter()
+            .copied()
+            .filter(|id| id.build_id == target.build_id && id.profile == target.profile)
+            .collect::<Vec<_>>();
+        let candidates =
+            if same_build_and_profile.is_empty() { candidates } else { same_build_and_profile };
 
-            if artifact_name == *name && artifact_path == library_path {
-                return Some(id);
-            }
+        if candidates.len() > 1 {
+            return Err(LinkerError::ConflictingLibraryArtifacts {
+                file: library_path.display().to_string(),
+                name: name.to_owned(),
+            });
         }
-
-        None
+        Ok(candidates.into_iter().next())
     }
 
     /// Performs DFS on the graph of link references, and populates `deps` with all found libraries.
@@ -172,12 +182,9 @@ impl<'a> Linker<'a> {
 
         for (file, libs) in references {
             for name in libs {
-                let id = self
-                    .find_artifact_id_by_library_path(&file, &name, Some(&target.version))
-                    .ok_or_else(|| LinkerError::MissingLibraryArtifact {
-                        file: file.clone(),
-                        name,
-                    })?;
+                let id = self.find_artifact_id_by_library_path(&file, &name, target)?.ok_or_else(
+                    || LinkerError::MissingLibraryArtifact { file: file.clone(), name },
+                )?;
                 if deps.insert(id) {
                     self.collect_dependencies(id, deps)?;
                 }
@@ -426,6 +433,7 @@ mod tests {
         multi::MultiCompiler,
         solc::{Solc, SolcCompiler},
     };
+    use semver::Version;
     use std::sync::OnceLock;
 
     fn testdata() -> &'static Path {
@@ -995,6 +1003,49 @@ mod tests {
             .unwrap();
         assert!(output.libs_to_deploy.is_empty());
         assert_eq!(output.library_addresses, [configured_address]);
+    }
+
+    #[test]
+    fn linking_resolves_same_version_library_from_target_build() {
+        let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
+        let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
+        let (library_id, library) = linker
+            .contracts
+            .iter()
+            .find(|(id, _)| id.name == "Lib")
+            .map(|(id, contract)| (id.clone(), contract.clone()))
+            .unwrap();
+        let (consumer_id, consumer) = linker
+            .contracts
+            .iter()
+            .find(|(id, _)| id.name == "LibraryConsumer")
+            .map(|(id, contract)| (id.clone(), contract.clone()))
+            .unwrap();
+
+        let mut contracts = linker.contracts.clone();
+        let mut other_library_id = library_id;
+        other_library_id.build_id = "other".to_string();
+        other_library_id.profile = "other".to_string();
+        contracts.insert(other_library_id, library);
+        let mut ambiguous_consumer_id = consumer_id.clone();
+        ambiguous_consumer_id.build_id = "ambiguous".to_string();
+        ambiguous_consumer_id.profile = "ambiguous".to_string();
+        contracts.insert(ambiguous_consumer_id.clone(), consumer);
+
+        let linker = Linker::new(test.project.root(), contracts);
+        linker
+            .link_with_create2(Libraries::default(), Address::ZERO, B256::ZERO, [&consumer_id])
+            .unwrap();
+
+        let Err(err) = linker.link_with_create2(
+            Libraries::default(),
+            Address::ZERO,
+            B256::ZERO,
+            [&ambiguous_consumer_id],
+        ) else {
+            panic!("expected conflicting library artifacts");
+        };
+        assert!(matches!(err, LinkerError::ConflictingLibraryArtifacts { .. }));
     }
 
     #[test]

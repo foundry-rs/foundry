@@ -628,6 +628,30 @@ Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
 "#]]);
 });
 
+forgetest_init!(create2_factory_is_installed_after_constructor_when_no_libraries, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "Factory.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+contract FactoryTest {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
+    constructor() {
+        require(CREATE2_FACTORY.code.length == 0, "factory installed before constructor");
+    }
+
+    function testFactoryInstalledAfterConstructor() public view {
+        require(CREATE2_FACTORY.code.length > 0, "factory not installed after constructor");
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_success();
+});
+
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(

@@ -805,13 +805,15 @@ impl MultiContractRunnerBuilder {
         };
         let (LinkOutput { libraries, library_addresses, libs_to_deploy }, library_deployment) =
             if let Some(output) = create2 {
-                (
-                    output,
+                let deployment = if output.libs_to_deploy.is_empty() {
+                    LibraryDeployment::Nonce
+                } else {
                     LibraryDeployment::Create2 {
                         deployer: evm_opts.create2_deployer,
                         salt: self.config.create2_library_salt,
-                    },
-                )
+                    }
+                };
+                (output, deployment)
             } else {
                 (
                     linker.link_with_nonce_or_address(
