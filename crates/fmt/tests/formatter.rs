@@ -284,6 +284,103 @@ fn root_rhs_nested_call_indents_only_the_call_spine() {
 }
 
 #[test]
+fn variable_initializer_keeps_a_fitting_call_chain_inline() {
+    let source = r#"contract C {
+    function f() public returns (address) {
+        address lerp = LerpFactoryLike(lerpFab())
+            .newIlkLerp(_name, _target, _ilk, _what, _startTime, _start, _end, _duration);
+        return lerp;
+    }
+}
+"#;
+
+    assert_format(source, source, Arc::new(FormatterConfig::default()));
+}
+
+#[test]
+fn assignment_named_call_fits_on_its_continuation_line() {
+    let source = r#"contract C {
+    function f() external {
+        calls[0] =
+            SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, bob)), value: 0});
+    }
+}
+"#;
+
+    assert_format(source, source, Arc::new(FormatterConfig::default()));
+}
+
+#[test]
+fn short_binary_returns_remain_inline() {
+    let source = r#"contract C {
+    function f(uint256 x, uint256 size, uint256 min, uint256 max) external pure returns (uint256) {
+        if (x <= 3 && size > x) return min + x;
+        if (x >= UINT256_MAX - 3 && size > UINT256_MAX - x) return max - (UINT256_MAX - x);
+        return x;
+    }
+}
+"#;
+    let config = Arc::new(FormatterConfig {
+        single_line_statement_blocks: SingleLineBlockStyle::Single,
+        ..Default::default()
+    });
+
+    assert_format(source, source, config);
+}
+
+#[test]
+fn multiline_binary_returns_keep_their_statement_blocks() {
+    let source = r#"contract C {
+    function f(bool condition) external pure returns (uint256) {
+        if (condition) {
+            return firstExtremelyLongIdentifier + secondExtremelyLongIdentifier
+                + firstExtremelyLongIdentifier + secondExtremelyLongIdentifier;
+        }
+    }
+}
+"#;
+    let config = Arc::new(FormatterConfig {
+        line_length: 100,
+        single_line_statement_blocks: SingleLineBlockStyle::Single,
+        ..Default::default()
+    });
+
+    assert_format(source, source, config);
+}
+
+#[test]
+fn multiline_binary_returns_keep_ancestor_and_else_blocks() {
+    let source = r#"contract C {
+    function withElse(bool condition) external pure returns (uint256) {
+        if (condition) {
+            return firstExtremelyLongIdentifier + secondExtremelyLongIdentifier
+                + firstExtremelyLongIdentifier + secondExtremelyLongIdentifier;
+        } else {
+            return 0;
+        }
+    }
+
+    function nested(bool outer, bool inner) external pure returns (uint256) {
+        if (outer) {
+            if (inner) {
+                return firstExtremelyLongIdentifier + secondExtremelyLongIdentifier
+                    + firstExtremelyLongIdentifier + secondExtremelyLongIdentifier;
+            }
+        }
+        return 0;
+    }
+}
+"#;
+    let config = Arc::new(FormatterConfig {
+        line_length: 100,
+        single_line_statement_blocks: SingleLineBlockStyle::Single,
+        ..Default::default()
+    });
+
+    assert_format(source, source, config);
+}
+
+#[test]
 fn empty_argument_chains_keep_their_statement_blocks() {
     let source = r#"contract C {
     function f(bool condition) external returns (uint256) {

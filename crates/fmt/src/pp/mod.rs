@@ -88,6 +88,7 @@ pub(crate) struct BeginToken {
     continuation_head: bool,
     continuation_head_size: Option<isize>,
     continuation_prefers_nested: bool,
+    continuation_nested_slack: isize,
     transparent: bool,
     isolated: bool,
     isolated_slack: isize,
@@ -611,10 +612,16 @@ impl Printer {
         let fits_continuation = token.continuation_break.is_some_and(|leading| {
             flat_size.saturating_sub(leading.flat_width) <= continuation_space
         });
+        let needs_nested_slack = token.continuation_break.is_some_and(|leading| {
+            flat_size
+                .saturating_sub(leading.flat_width)
+                .saturating_add(token.continuation_nested_slack)
+                > continuation_space
+        });
         let current_head_size = token.continuation_head_size.and_then(|head| {
             token.continuation_break.map(|leading| leading.flat_width.saturating_add(head))
         });
-        let head_fits_current = token.continuation_prefers_nested
+        let head_fits_current = (token.continuation_prefers_nested || needs_nested_slack)
             && current_head_size.is_some_and(|head| head <= self.space);
         let head_fits_continuation = token.continuation_head_size.is_some_and(|head| {
             current_head_size.is_some_and(|current| current > self.space)
@@ -833,6 +840,7 @@ impl Document {
                             continuation_head: false,
                             continuation_head_size: None,
                             continuation_prefers_nested: false,
+                            continuation_nested_slack: 0,
                             transparent: false,
                             isolated: false,
                             isolated_slack: 0,
@@ -954,7 +962,8 @@ fn annotate_continuation_layouts(tokens: &mut [Token], tab_width: usize) {
 
     for start in starts {
         let Token::Begin(start_token) = &tokens[start] else { unreachable!() };
-        let prefers_nested = start_token.continuation_prefers_nested;
+        let prefers_nested =
+            start_token.continuation_prefers_nested || start_token.continuation_nested_slack > 0;
         let mut depth = 0usize;
         let mut leading = None;
         let mut has_content = false;
@@ -1622,6 +1631,70 @@ mod tests {
         p.end();
 
         assert_eq!(p.eof(), "123456789012345678901234567890 call(\n    abcdefghijklmnopqrst\n)");
+    }
+
+    #[test]
+    fn adaptive_continuation_prefers_the_next_line_only_when_contents_fit() {
+        let mut fitting = printer();
+        fitting.word("1234567890123456789012345678901234");
+        fitting.adaptive_continuation_box(4);
+        fitting.space();
+        fitting.word("call(");
+        fitting.cbox(4);
+        fitting.zerobreak();
+        fitting.word("short_argument");
+        fitting.zerobreak();
+        fitting.offset(-4);
+        fitting.end();
+        fitting.word(")");
+        fitting.end();
+
+        assert_eq!(fitting.eof(), "1234567890123456789012345678901234\n    call(short_argument)");
+
+        let mut tight = printer();
+        tight.word("123456789012345678901234567890");
+        tight.adaptive_continuation_box(4);
+        tight.space();
+        tight.word("call(");
+        tight.cbox(4);
+        tight.zerobreak();
+        tight.word("abcdefghijklmnopqrstuvwx");
+        tight.zerobreak();
+        tight.offset(-4);
+        tight.end();
+        tight.word(")");
+        tight.end();
+
+        assert_eq!(
+            tight.eof(),
+            "123456789012345678901234567890 call(\n    abcdefghijklmnopqrstuvwx\n)"
+        );
+
+        let mut overflowing = printer();
+        overflowing.word("1234567890123456789012345678901234");
+        overflowing.adaptive_continuation_box(4);
+        overflowing.space();
+        overflowing.word("call(");
+        overflowing.cbox(4);
+        overflowing.zerobreak();
+        overflowing.word("an_argument_that_exceeds_the_continuation_line,");
+        overflowing.space();
+        overflowing.word("other");
+        overflowing.zerobreak();
+        overflowing.offset(-4);
+        overflowing.end();
+        overflowing.word(")");
+        overflowing.end();
+
+        assert_eq!(
+            overflowing.eof(),
+            concat!(
+                "1234567890123456789012345678901234 call(\n",
+                "    an_argument_that_exceeds_the_continuation_line,\n",
+                "    other\n",
+                ")"
+            )
+        );
     }
 
     #[test]

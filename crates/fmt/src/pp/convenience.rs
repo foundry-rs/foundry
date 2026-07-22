@@ -19,6 +19,7 @@ impl Printer {
             continuation_head: false,
             continuation_head_size: None,
             continuation_prefers_nested: false,
+            continuation_nested_slack: 0,
             transparent: false,
             isolated: false,
             isolated_slack: 0,
@@ -41,6 +42,7 @@ impl Printer {
             continuation_head: false,
             continuation_head_size: None,
             continuation_prefers_nested: false,
+            continuation_nested_slack: 0,
             transparent: false,
             isolated: false,
             isolated_slack: 0,
@@ -65,6 +67,7 @@ impl Printer {
             continuation_head: false,
             continuation_head_size: None,
             continuation_prefers_nested: false,
+            continuation_nested_slack: 0,
             transparent: false,
             isolated: false,
             isolated_slack: 0,
@@ -112,6 +115,7 @@ impl Printer {
             continuation_head: false,
             continuation_head_size: None,
             continuation_prefers_nested: false,
+            continuation_nested_slack: 0,
             transparent: false,
             isolated: false,
             isolated_slack: 0,
@@ -125,6 +129,7 @@ impl Printer {
         indent: isize,
         use_head: bool,
         prefers_nested: bool,
+        nested_slack: isize,
     ) -> GroupId {
         let group = GroupId(self.next_group);
         self.next_group += 1;
@@ -140,6 +145,7 @@ impl Printer {
             continuation_head: use_head,
             continuation_head_size: None,
             continuation_prefers_nested: prefers_nested,
+            continuation_nested_slack: nested_slack,
             transparent: false,
             isolated: false,
             isolated_slack: 0,
@@ -148,13 +154,19 @@ impl Printer {
     }
 
     pub fn continuation_box(&mut self, indent: isize, use_head: bool) -> GroupId {
-        self.continuation_group_box(indent, use_head, false)
+        self.continuation_group_box(indent, use_head, false, 0)
     }
 
     /// Begins a continuation that keeps a fitting head on the current line and delegates the
     /// remaining layout to nested groups.
     pub fn nested_continuation_box(&mut self, indent: isize) -> GroupId {
-        self.continuation_group_box(indent, true, true)
+        self.continuation_group_box(indent, true, true, 0)
+    }
+
+    /// Begins a continuation that keeps a fitting head on the current line when moving the full
+    /// contents would not leave room for its two nested indentation levels.
+    pub fn adaptive_continuation_box(&mut self, indent: isize) -> GroupId {
+        self.continuation_group_box(indent, true, false, indent.max(0).saturating_mul(2))
     }
 
     /// Begins a named scope that inherits its enclosing box's break policy.
@@ -173,6 +185,7 @@ impl Printer {
             continuation_head: false,
             continuation_head_size: None,
             continuation_prefers_nested: false,
+            continuation_nested_slack: 0,
             transparent: true,
             isolated: false,
             isolated_slack: 0,
@@ -195,6 +208,7 @@ impl Printer {
             continuation_head: false,
             continuation_head_size: None,
             continuation_prefers_nested: false,
+            continuation_nested_slack: 0,
             transparent: false,
             isolated: true,
             isolated_slack: slack,

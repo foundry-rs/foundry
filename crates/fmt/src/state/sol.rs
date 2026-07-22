@@ -863,12 +863,21 @@ impl<'ast> State<'_, 'ast> {
                 || matches!(
                     &rhs.kind,
                     ast::ExprKind::Call(callee, args)
-                        if matches!(args.kind, ast::CallArgsKind::Named(_))
+                        if (lhs_group.is_some()
+                            || !self.config.prefer_compact.calls()
+                            || self.config.bracket_spacing)
+                            && matches!(args.kind, ast::CallArgsKind::Named(_))
                             || args.is_empty() && matches!(callee.kind, ast::ExprKind::Member(..))
                 );
+            let adaptive_call_chain = matches!(
+                &rhs.kind,
+                ast::ExprKind::Call(callee, _) if is_call_chain(&callee.kind, true)
+            );
             if continuation {
                 if prefers_nested {
                     self.s.nested_continuation_box(self.ind);
+                } else if adaptive_call_chain {
+                    self.s.adaptive_continuation_box(self.ind);
                 } else {
                     self.s.continuation_box(self.ind, lhs_group.is_some());
                 }
@@ -2319,6 +2328,8 @@ impl<'ast> State<'_, 'ast> {
             {
                 self.neverbreak();
                 self.print_sep(Separator::Nbsp);
+            } else if inline && Self::is_binary_return(then) {
+                self.print_sep(Separator::Nbsp);
             } else {
                 self.print_sep(Separator::Space);
             }
@@ -2408,8 +2419,30 @@ impl<'ast> State<'_, 'ast> {
         };
 
         if inline && stmts.len() == 1 {
-            self.neverbreak();
-            self.print_block_without_braces(stmts, pos_hi, None);
+            if Self::is_binary_return(stmt) {
+                let (_, fit) = self.s.ibox_with_fit(self.ind);
+                self.s.if_fits(
+                    fit,
+                    |p| p.neverbreak(),
+                    |p| {
+                        p.word("{");
+                        p.hardbreak();
+                    },
+                );
+                self.print_block_without_braces(stmts, pos_hi, None);
+                self.end();
+                self.s.if_fits(
+                    fit,
+                    |_| {},
+                    |p| {
+                        p.hardbreak();
+                        p.word("}");
+                    },
+                );
+            } else {
+                self.neverbreak();
+                self.print_block_without_braces(stmts, pos_hi, None);
+            }
         } else {
             // Reset cache for nested (child) stmts within this (parent) block.
             let inline_parent = self.single_line_stmt.take();
@@ -2420,6 +2453,36 @@ impl<'ast> State<'_, 'ast> {
 
             // Restore cache for the rest of stmts within the same height.
             self.single_line_stmt = inline_parent;
+        }
+    }
+
+    fn is_binary_return(stmt: &ast::Stmt<'_>) -> bool {
+        match &stmt.kind {
+            ast::StmtKind::Block(block) if let [stmt] = block.stmts.as_ref() => {
+                Self::is_binary_return(stmt)
+            }
+            ast::StmtKind::Return(Some(expr)) => {
+                matches!(expr.peel_parens().kind, ast::ExprKind::Binary(..))
+            }
+            _ => false,
+        }
+    }
+
+    fn contains_binary_return(stmt: &ast::Stmt<'_>) -> bool {
+        if Self::is_binary_return(stmt) {
+            return true;
+        }
+        match &stmt.kind {
+            ast::StmtKind::Block(block) => block.stmts.iter().any(Self::contains_binary_return),
+            ast::StmtKind::DoWhile(stmt, _) | ast::StmtKind::While(_, stmt) => {
+                Self::contains_binary_return(stmt)
+            }
+            ast::StmtKind::For { body, .. } => Self::contains_binary_return(body),
+            ast::StmtKind::If(_, then, els) => {
+                Self::contains_binary_return(then)
+                    || els.as_ref().is_some_and(|stmt| Self::contains_binary_return(stmt))
+            }
+            _ => false,
         }
     }
 
@@ -2441,6 +2504,14 @@ impl<'ast> State<'_, 'ast> {
         // Dangling-else guard runs before the cache check so an inlined parent can't
         // coerce this `if` into dropping braces and rebinding its `else`.
         if Self::then_block_can_capture_trailing_else(then, els_opt.is_some()) {
+            return Decision { outcome: false, is_cached: false };
+        }
+
+        let direct_binary_return = Self::is_binary_return(then);
+        let nested_binary_return = !direct_binary_return && Self::contains_binary_return(then);
+        let else_binary_return = els_opt.is_some_and(|stmt| Self::contains_binary_return(stmt));
+        if nested_binary_return || els_opt.is_some() && (direct_binary_return || else_binary_return)
+        {
             return Decision { outcome: false, is_cached: false };
         }
 
@@ -2477,8 +2548,7 @@ impl<'ast> State<'_, 'ast> {
             }
         };
 
-        // If no decision was made, estimate the length to be formatted.
-        // NOTE: conservative check -> worst-case scenario is formatting as multi-line block.
+        // Reject statement shapes whose internal layout cannot safely drop braces.
         if !self.can_stmts_be_inlined(cond, then, els_opt) {
             return Decision { outcome: false, is_cached: false };
         }
@@ -2555,7 +2625,6 @@ impl<'ast> State<'_, 'ast> {
                         expr.peel_parens().kind,
                         ast::ExprKind::Array(_)
                             | ast::ExprKind::Assign(..)
-                            | ast::ExprKind::Binary(..)
                             | ast::ExprKind::CallOptions(..)
                             | ast::ExprKind::Ternary(..)
                             | ast::ExprKind::Tuple(_)
