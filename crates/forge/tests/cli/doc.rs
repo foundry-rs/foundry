@@ -221,6 +221,688 @@ Withdraw tokens from the vault
     );
 });
 
+// Test that natspec is inherited implicitly from a base interface when the override carries
+// no `@inheritdoc` tag.
+// fixes <https://github.com/foundry-rs/foundry/issues/4070>
+forgetest_init!(natspec_is_inherited_implicitly, |prj, cmd| {
+    prj.add_source(
+        "IExample.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IExample {
+    /// @notice Deposit tokens into the vault
+    /// @param amount The amount to deposit
+    /// @return shares The amount of shares minted
+    function deposit(uint256 amount) external returns (uint256 shares);
+}
+"#,
+    );
+
+    prj.add_source(
+        "Example.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IExample.sol";
+
+contract Example is IExample {
+    function deposit(uint256 amount) external override returns (uint256 shares) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Example.mdx");
+    assert_data_eq!(
+        Data::read_from(&doc_path, None),
+        str![[r#"
+...
+<a id="deposit-uint256"></a>
+
+### deposit
+
+Deposit tokens into the vault
+
+```solidity
+function deposit(uint256 amount) external override returns (uint256 shares);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| amount | `uint256` | The amount to deposit |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| shares | `uint256` | The amount of shares minted |
+...
+"#]],
+    );
+});
+
+// An override inherits the base overload with the matching signature, continuing past a nearer
+// base that declares a different same-name overload.
+forgetest_init!(implicit_inheritance_matches_the_overload_signature, |prj, cmd| {
+    prj.add_source(
+        "Bases.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface INear {
+    function g(address a) external returns (bool);
+}
+
+interface IFar {
+    /// @notice Far documents g(uint256)
+    function g(uint256 n) external returns (bool);
+}
+"#,
+    );
+
+    prj.add_source(
+        "Impl.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./Bases.sol";
+
+contract Impl is INear, IFar {
+    function g(uint256 n) external override(IFar) returns (bool) {}
+    function g(address a) external override(INear) returns (bool) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Impl.mdx");
+    let rendered = fs::read_to_string(&doc_path).unwrap();
+    assert!(rendered.contains("Far documents g(uint256)"), "{rendered}");
+});
+
+// Implicit inheritance matches through resolved types as well: the same divergent spellings
+// must still inherit when the override carries no NatSpec at all.
+forgetest_init!(implicit_inheritance_matches_semantic_types, |prj, cmd| {
+    prj.add_source(
+        "Store.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract Store {
+    /// @notice Configures the store
+    function configure(mapping(uint => uint) storage store_) internal virtual;
+}
+"#,
+    );
+
+    prj.add_source(
+        "MyStore.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./Store.sol";
+
+contract MyStore is Store {
+    function configure(mapping(uint=>uint) storage store_) internal override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.MyStore.mdx");
+    let rendered = fs::read_to_string(&doc_path).unwrap();
+    assert!(rendered.contains("Configures the store"), "{rendered}");
+});
+
+// A public mapping variable inherits the NatSpec of the interface getter it implements, matched
+// through the getter's generated signature (`balanceOf(address)`).
+forgetest_init!(implicit_inheritance_matches_mapping_getter_signature, |prj, cmd| {
+    prj.add_source(
+        "IERC.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IERC {
+    /// @notice The balance of an account
+    function balanceOf(address account) external view returns (uint256);
+}
+"#,
+    );
+
+    prj.add_source(
+        "Token.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IERC.sol";
+
+contract Token is IERC {
+    mapping(address owner => uint256 amount) public override balanceOf;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Token.mdx");
+    let rendered = fs::read_to_string(&doc_path).unwrap();
+    assert!(rendered.contains("The balance of an account"), "{rendered}");
+});
+
+// A public mapping with a `string` key inherits through its synthetic getter: the getter's
+// generated signature matches the interface function with the location normalized.
+forgetest_init!(implicit_inheritance_matches_string_key_getter, |prj, cmd| {
+    prj.add_source(
+        "IRegistry.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IRegistry {
+    /// @notice The balance registered for a name
+    function balances(string memory name) external view returns (uint256);
+}
+"#,
+    );
+
+    prj.add_source(
+        "Registry.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IRegistry.sol";
+
+contract Registry is IRegistry {
+    mapping(string => uint256) public override balances;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Registry.mdx");
+    let rendered = fs::read_to_string(&doc_path).unwrap();
+    assert!(rendered.contains("The balance registered for a name"), "{rendered}");
+});
+
+// `calldata` in a base member and `memory` in the override are the same signature: locations
+// are normalized before comparison and the NatSpec is inherited.
+forgetest_init!(implicit_inheritance_normalizes_calldata_location, |prj, cmd| {
+    prj.add_source(
+        "Base.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface Base {
+    /// @notice Configures the value
+    function configure(bytes calldata data) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "Child.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./Base.sol";
+
+contract Child is Base {
+    function configure(bytes memory data) public override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Child.mdx");
+    let rendered = fs::read_to_string(&doc_path).unwrap();
+    assert!(rendered.contains("Configures the value"), "{rendered}");
+});
+
+// A documented base overload with a different non-ABI signature must NOT be inherited: the
+// signature gate stays strict even when the base has a single name match.
+forgetest_init!(implicit_inheritance_rejects_non_abi_overload_mismatch, |prj, cmd| {
+    prj.add_source(
+        "Store.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract Store {
+    /// @notice Configures the store
+    function configure(mapping(uint => uint) storage store_) internal virtual;
+}
+"#,
+    );
+
+    prj.add_source(
+        "MyStore.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./Store.sol";
+
+contract MyStore is Store {
+    function configure(mapping(uint => uint) storage store_) internal override {}
+    function configure(mapping(address => address) storage other) internal {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.MyStore.mdx");
+    let rendered = fs::read_to_string(&doc_path).unwrap();
+    let occurrences = rendered.matches("Configures the store").count();
+    assert_eq!(occurrences, 1, "only the matching overload may inherit:\n{rendered}");
+});
+
+// Point 2 (mablr review): names are compared at every level. A leaf cannot jump across an
+// intermediate rename just because it restores the original name.
+forgetest_init!(implicit_inheritance_requires_matching_param_names, |prj, cmd| {
+    prj.add_source(
+        "Rename.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Base {
+    /// @notice Deposits into the vault
+    function deposit(uint256 amount) public virtual returns (uint256) {}
+}
+
+contract Mid is Base {
+    function deposit(uint256 shares) public virtual override returns (uint256) {}
+}
+
+contract Leaf is Mid {
+    function deposit(uint256 amount) public override returns (uint256) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    for contract in ["Mid", "Leaf"] {
+        let rendered = fs::read_to_string(
+            prj.root().join(format!("docs/src/pages/src/contract.{contract}.mdx")),
+        )
+        .unwrap();
+        assert!(!rendered.contains("Deposits into the vault"), "{rendered}");
+    }
+});
+
+// Point 3 (mablr review): the target needs a public getter, and the source needs to be an
+// external function implemented by that getter. A same-name base variable is not a source.
+forgetest_init!(implicit_inheritance_requires_public_getter_and_function_source, |prj, cmd| {
+    prj.add_source(
+        "Variables.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Base {
+    /// @notice Must not reach a private target
+    uint256 private privateTarget;
+
+    /// @notice A variable is not a getter function
+    uint256 private variableSource;
+}
+
+contract Child is Base {
+    uint256 private privateTarget;
+    uint256 public variableSource;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Child.mdx")).unwrap();
+    assert!(!rendered.contains("Must not reach a private target"), "{rendered}");
+    assert!(!rendered.contains("A variable is not a getter function"), "{rendered}");
+});
+
+// Point 1 (mablr review): automatic inheritance needs one semantic base function. Distinct
+// declarations on separate branches are ambiguous; a declaration shared by both branches is not.
+forgetest_init!(implicit_inheritance_resolves_base_ambiguity_per_branch, |prj, cmd| {
+    prj.add_source(
+        "Ambiguity.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IA {
+    /// @notice From IA
+    function direct(uint256 x) external;
+}
+
+interface IB {
+    /// @notice From IB
+    function direct(uint256 x) external;
+}
+
+contract Direct is IA, IB {
+    function direct(uint256 x) external override(IA, IB) {}
+}
+
+contract Root {
+    /// @notice Root branch doc
+    function act(uint256 x) public virtual {}
+}
+
+contract A is Root {
+    /// @notice A branch doc
+    function act(uint256 x) public virtual override {}
+}
+
+contract B is Root {}
+
+contract Asymmetric is A, B {
+    function act(uint256 x) public virtual override(A, Root) {}
+}
+
+contract Leaf is Asymmetric {
+    function act(uint256 x) public override {}
+}
+
+contract SharedRoot {
+    /// @notice Shared root doc
+    function shared(uint256 x) public virtual {}
+}
+
+contract Left is SharedRoot {}
+contract Right is SharedRoot {}
+
+contract Shared is Left, Right {
+    function shared(uint256 x) public override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let page = |contract: &str| {
+        fs::read_to_string(prj.root().join(format!("docs/src/pages/src/contract.{contract}.mdx")))
+            .unwrap()
+    };
+
+    let direct = page("Direct");
+    assert!(!direct.contains("From IA"), "{direct}");
+    assert!(!direct.contains("From IB"), "{direct}");
+
+    for contract in ["Asymmetric", "Leaf"] {
+        let rendered = page(contract);
+        assert!(!rendered.contains("A branch doc"), "{rendered}");
+        assert!(!rendered.contains("Root branch doc"), "{rendered}");
+    }
+
+    let shared = page("Shared");
+    assert!(shared.contains("Shared root doc"), "{shared}");
+});
+
+// Point 5 (mablr review): any local NatSpec item suppresses automatic inheritance. A leaf
+// cannot reach around an intermediate override carrying only a custom tag.
+forgetest_init!(implicit_inheritance_skips_custom_tagged_members, |prj, cmd| {
+    prj.add_source(
+        "Tagged.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Base {
+    /// @notice Base notice
+    function run(uint256 amount) public virtual returns (uint256) {}
+}
+
+contract Mid is Base {
+    /// @custom:audit reviewed
+    function run(uint256 amount) public virtual override returns (uint256) {}
+}
+
+contract Leaf is Mid {
+    function run(uint256 amount) public override returns (uint256) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    for contract in ["Mid", "Leaf"] {
+        let rendered = fs::read_to_string(
+            prj.root().join(format!("docs/src/pages/src/contract.{contract}.mdx")),
+        )
+        .unwrap();
+        assert!(!rendered.contains("Base notice"), "{rendered}");
+    }
+});
+
+// Implicit inheritance only runs when the override has no NatSpec of its own: a local `@notice`
+// keeps the base `@param`/`@return` from being pulled in.
+forgetest_init!(implicit_inheritance_skips_documented_members, |prj, cmd| {
+    prj.add_source(
+        "IExample.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IExample {
+    /// @notice Base notice
+    /// @param amount base amount doc
+    /// @return shares base shares doc
+    function deposit(uint256 amount) external returns (uint256 shares);
+}
+"#,
+    );
+
+    prj.add_source(
+        "Example.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IExample.sol";
+
+contract Example is IExample {
+    /// @notice Local notice only
+    function deposit(uint256 amount) external override returns (uint256 shares) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Example.mdx");
+    let rendered = fs::read_to_string(&doc_path).unwrap();
+    // The local notice is kept.
+    assert!(rendered.contains("Local notice only"), "{rendered}");
+    // The base param and return docs are not pulled in, since the override is documented.
+    assert!(!rendered.contains("base amount doc"), "{rendered}");
+    assert!(!rendered.contains("base shares doc"), "{rendered}");
+});
+
+// Point 4 (mablr review): render every parameter and return of the implemented getter. A
+// missing parameter tag leaves its own row empty instead of borrowing another description.
+forgetest_init!(inherited_getter_renders_param_and_return, |prj, cmd| {
+    prj.add_source(
+        "Entries.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+struct Entry {
+    uint256 amount;
+    bool active;
+}
+
+interface IEntries {
+    /// @notice The entry for an account
+    /// @param account the account to query
+    /// @return amount the stored amount
+    /// @return active whether the entry is active
+    function entries(address account, uint256 tokenId)
+        external
+        view
+        returns (uint256 amount, bool active);
+}
+
+contract Entries is IEntries {
+    mapping(address owner => mapping(uint256 id => Entry entry)) public override entries;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Entries.mdx")).unwrap();
+    assert!(rendered.contains("| owner | `address` | the account to query |"), "{rendered}");
+    assert!(rendered.contains("| id | `uint256` |  |"), "{rendered}");
+    assert!(rendered.contains("| amount | `uint256` | the stored amount |"), "{rendered}");
+    assert!(rendered.contains("| active | `bool` | whether the entry is active |"), "{rendered}");
+});
+
+// steven review: an intermediate override's `@inheritdoc` is resolved and merged, not treated
+// as terminal, so documentation propagates through it. A (documented) -> B (@inheritdoc A) ->
+// C (undocumented): C receives A's documentation through B.
+forgetest_init!(implicit_inheritance_resolves_intermediate_inheritdoc, |prj, cmd| {
+    prj.add_source(
+        "Chain.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IChainBase {
+    /// @notice Documented on the interface
+    function act(uint256 amount) external;
+}
+
+abstract contract ChainMid is IChainBase {
+    /// @inheritdoc IChainBase
+    function act(uint256 amount) public virtual override {}
+}
+
+contract ChainLeaf is ChainMid {
+    function act(uint256 amount) public override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ChainLeaf.mdx")).unwrap();
+    assert!(rendered.contains("Documented on the interface"), "{rendered}");
+});
+
+// steven review: an inherited `@return` maps positionally onto a renamed override's return
+// slot, instead of gluing the base return name into the description.
+forgetest_init!(implicit_inheritance_remaps_renamed_returns, |prj, cmd| {
+    prj.add_source(
+        "Renamed.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IRenamed {
+    /// @notice Reads a value
+    /// @return first the first result
+    function take(uint256 v) external returns (uint256 first);
+}
+
+contract Renamed is IRenamed {
+    function take(uint256 v) external override returns (uint256 renamedFirst) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Renamed.mdx")).unwrap();
+    assert!(rendered.contains("| renamedFirst | `uint256` | the first result |"), "{rendered}");
+    assert!(!rendered.contains("first the first result"), "{rendered}");
+});
+
+// Regression: return-name resolution for the implicit path must not leak into the explicit
+// `@inheritdoc` path. With a partial local `@return` over a named-return override, the local
+// description must win and the base's other returns must not be injected (matches master).
+forgetest_init!(explicit_inheritdoc_partial_return_keeps_local_and_skips_base, |prj, cmd| {
+    prj.add_source(
+        "PartialReturn.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IPartial {
+    /// @notice Base notice
+    /// @return a base A-text
+    /// @return b base B-text
+    function f() external view returns (uint256 a, uint256 b);
+}
+
+contract Partial is IPartial {
+    /// @inheritdoc IPartial
+    /// @return a local A-text
+    function f() external view override returns (uint256 a, uint256 b) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Partial.mdx")).unwrap();
+    assert!(rendered.contains("local A-text"), "{rendered}");
+    assert!(!rendered.contains("base A-text"), "{rendered}");
+    assert!(!rendered.contains("base B-text"), "{rendered}");
+});
+
+// A public state variable's generated getter inherits implicitly through an interface chain:
+// a base function redeclared without NatSpec still propagates its ancestor's documentation, like
+// solc (Impl.data() resolves to IRoot's `@notice` through the undocumented IMid redeclaration).
+forgetest_init!(implicit_getter_inherits_through_interface_chain, |prj, cmd| {
+    prj.add_source(
+        "GetterChain.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IRoot {
+    /// @notice Root getter doc
+    /// @return value the stored value
+    function data() external view returns (uint256 value);
+}
+
+interface IMid is IRoot {
+    function data() external view override returns (uint256 value);
+}
+
+contract Impl is IMid {
+    uint256 public override data;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Impl.mdx")).unwrap();
+    assert!(rendered.contains("Root getter doc"), "{rendered}");
+    assert!(rendered.contains("the stored value"), "{rendered}");
+});
+
 // Test that {Ident} cross-references resolve to root-relative vocs links.
 // fixes <https://github.com/foundry-rs/foundry/issues/12361>
 forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {
