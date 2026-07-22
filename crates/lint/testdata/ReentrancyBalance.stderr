@@ -265,6 +265,22 @@ LL │         callback.pay();
 warning[reentrancy-balance]: external call can be reentered before a stale contract balance is checked
    ╭▸ ROOT/testdata/ReentrancyBalance.sol:LL:CC
    │
+LL │         if (mode == 0) callback.pay();
+   │                        ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-balance
+
+warning[reentrancy-balance]: external call can be reentered before a stale contract balance is checked
+   ╭▸ ROOT/testdata/ReentrancyBalance.sol:LL:CC
+   │
+LL │         if (mode == 0) callback.pay();
+   │                        ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-balance
+
+warning[reentrancy-balance]: external call can be reentered before a stale contract balance is checked
+   ╭▸ ROOT/testdata/ReentrancyBalance.sol:LL:CC
+   │
 LL │         if (takeBaseline) callback.pay();
    │                           ━━━━━━━━━━━━━━
    │

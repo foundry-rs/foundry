@@ -113,8 +113,39 @@ struct PendingBalanceCall {
     paths: PathAlternatives,
 }
 
-type PathPredicates = BTreeMap<VariableId, bool>;
+type PathPredicates = BTreeMap<PathPredicate, bool>;
 type PathAlternatives = BTreeSet<PathPredicates>;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum PathPredicate {
+    Boolean(VariableId),
+    Equality(PredicateOperand, PredicateOperand),
+}
+
+impl PathPredicate {
+    fn contains(self, var_id: VariableId) -> bool {
+        match self {
+            Self::Boolean(predicate_var) => predicate_var == var_id,
+            Self::Equality(lhs, rhs) => {
+                lhs.variable() == Some(var_id) || rhs.variable() == Some(var_id)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum PredicateOperand {
+    Variable(VariableId),
+    Number(U256),
+    Boolean(bool),
+}
+
+impl PredicateOperand {
+    const fn variable(self) -> Option<VariableId> {
+        let Self::Variable(var_id) = self else { return None };
+        Some(var_id)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ReentrantCallKind {
@@ -198,7 +229,7 @@ struct InlineCallKey {
     recursive_cut: Option<FunctionId>,
     balance_only: bool,
     active_balance_guards: Vec<VariableId>,
-    parameter_predicates: Vec<Option<(VariableId, bool)>>,
+    parameter_predicates: Vec<Option<(PathPredicate, bool)>>,
     state: FlowState,
 }
 
@@ -1723,7 +1754,15 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         state.self_address_local_paths.retain(|var_id, _| !belongs_to_function(var_id));
         state.balance_local_paths.retain(|var_id, _| !belongs_to_function(var_id));
         state.balance_comparison_locals.retain(|var_id, _| !belongs_to_function(var_id));
-        state.path_predicates.retain(|var_id, _| !belongs_to_function(var_id));
+        state.path_predicates.retain(|predicate, _| {
+            !matches!(predicate, PathPredicate::Boolean(var_id) if belongs_to_function(var_id))
+                && !matches!(
+                    predicate,
+                    PathPredicate::Equality(lhs, rhs)
+                        if lhs.variable().is_some_and(|var_id| belongs_to_function(&var_id))
+                            || rhs.variable().is_some_and(|var_id| belongs_to_function(&var_id))
+                )
+        });
         for call in &mut state.pending_balance_calls {
             call.stale_locals.retain(|var_id| !belongs_to_function(var_id));
         }
@@ -1866,11 +1905,11 @@ impl FlowState {
         }
     }
 
-    fn constrain_path(&mut self, (var_id, value): (VariableId, bool)) -> bool {
-        match self.path_predicates.get(&var_id) {
+    fn constrain_path(&mut self, (predicate, value): (PathPredicate, bool)) -> bool {
+        match self.path_predicates.get(&predicate) {
             Some(existing) => *existing == value,
             None => {
-                self.path_predicates.insert(var_id, value);
+                self.path_predicates.insert(predicate, value);
                 for paths in self.self_address_local_paths.values_mut() {
                     *paths = constrain_paths(paths, &self.path_predicates);
                 }
@@ -1880,7 +1919,7 @@ impl FlowState {
     }
 }
 
-fn path_predicate(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<(VariableId, bool)> {
+fn path_predicate(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<(PathPredicate, bool)> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => {
             let var_id = unique(reses.iter().filter_map(|res| match res {
@@ -1889,11 +1928,39 @@ fn path_predicate(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<(VariableI
                 }
                 _ => None,
             }))?;
-            Some((var_id, true))
+            Some((PathPredicate::Boolean(var_id), true))
         }
         ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
-            path_predicate(hir, inner).map(|(var_id, value)| (var_id, !value))
+            path_predicate(hir, inner).map(|(predicate, value)| (predicate, !value))
         }
+        ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
+            let mut lhs = predicate_operand(hir, lhs)?;
+            let mut rhs = predicate_operand(hir, rhs)?;
+            if lhs > rhs {
+                std::mem::swap(&mut lhs, &mut rhs);
+            }
+            Some((PathPredicate::Equality(lhs, rhs), op.kind == BinOpKind::Eq))
+        }
+        _ => None,
+    }
+}
+
+fn predicate_operand(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<PredicateOperand> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => {
+            let var_id = unique(reses.iter().filter_map(|res| match res {
+                Res::Item(ItemId::Variable(var_id)) if !hir.variable(*var_id).kind.is_state() => {
+                    Some(*var_id)
+                }
+                _ => None,
+            }))?;
+            Some(PredicateOperand::Variable(var_id))
+        }
+        ExprKind::Lit(lit) => match lit.kind {
+            LitKind::Number(value) => Some(PredicateOperand::Number(value)),
+            LitKind::Bool(value) => Some(PredicateOperand::Boolean(value)),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -1943,7 +2010,7 @@ fn constrain_paths(paths: &PathAlternatives, active: &PathPredicates) -> PathAlt
         .filter(|path| paths_compatible(path, active))
         .map(|path| {
             let mut constrained = path.clone();
-            constrained.extend(active.iter().map(|(var_id, value)| (*var_id, *value)));
+            constrained.extend(active.iter().map(|(predicate, value)| (*predicate, *value)));
             constrained
         })
         .collect()
@@ -1953,7 +2020,7 @@ fn remap_return_paths(
     hir: &hir::Hir<'_>,
     func_id: FunctionId,
     parameters: &[VariableId],
-    parameter_predicates: &[Option<(VariableId, bool)>],
+    parameter_predicates: &[Option<(PathPredicate, bool)>],
     values: &mut [BalanceValue],
 ) {
     for value in values {
@@ -1969,7 +2036,7 @@ fn remap_paths(
     hir: &hir::Hir<'_>,
     func_id: FunctionId,
     parameters: &[VariableId],
-    parameter_predicates: &[Option<(VariableId, bool)>],
+    parameter_predicates: &[Option<(PathPredicate, bool)>],
     paths: &PathAlternatives,
 ) -> PathAlternatives {
     paths
@@ -1977,16 +2044,27 @@ fn remap_paths(
         .filter_map(|path| {
             let mut path = path.clone();
             for (&parameter, &argument) in parameters.iter().zip(parameter_predicates) {
-                let Some(parameter_value) = path.remove(&parameter) else { continue };
-                let Some((argument_var, argument_value)) = argument else { continue };
+                let Some(parameter_value) = path.remove(&PathPredicate::Boolean(parameter)) else {
+                    continue
+                };
+                let Some((argument_predicate, argument_value)) = argument else { continue };
                 let mapped_value = if parameter_value { argument_value } else { !argument_value };
-                if path.get(&argument_var).is_some_and(|existing| *existing != mapped_value) {
+                if path
+                    .get(&argument_predicate)
+                    .is_some_and(|existing| *existing != mapped_value)
+                {
                     return None;
                 }
-                path.insert(argument_var, mapped_value);
+                path.insert(argument_predicate, mapped_value);
             }
-            path.retain(|var_id, _| {
-                hir.variable(*var_id).parent != Some(ItemId::Function(func_id))
+            path.retain(|predicate, _| {
+                !matches!(predicate, PathPredicate::Boolean(var_id) if hir.variable(*var_id).parent == Some(ItemId::Function(func_id)))
+                    && !matches!(
+                        predicate,
+                        PathPredicate::Equality(lhs, rhs)
+                            if lhs.variable().is_some_and(|var_id| hir.variable(var_id).parent == Some(ItemId::Function(func_id)))
+                                || rhs.variable().is_some_and(|var_id| hir.variable(var_id).parent == Some(ItemId::Function(func_id)))
+                    )
             });
             Some(path)
         })
@@ -2884,13 +2962,13 @@ fn collect_local_write_lhs_vars(
 
 fn forget_path_predicates(state: &mut FlowState, vars: impl IntoIterator<Item = VariableId>) {
     for var_id in vars {
-        state.path_predicates.remove(&var_id);
+        state.path_predicates.retain(|predicate, _| !predicate.contains(var_id));
         for paths in state.balance_local_paths.values_mut() {
             *paths = paths
                 .iter()
                 .map(|path| {
                     let mut path = path.clone();
-                    path.remove(&var_id);
+                    path.retain(|predicate, _| !predicate.contains(var_id));
                     path
                 })
                 .collect();
@@ -2900,7 +2978,7 @@ fn forget_path_predicates(state: &mut FlowState, vars: impl IntoIterator<Item = 
                 .iter()
                 .map(|path| {
                     let mut path = path.clone();
-                    path.remove(&var_id);
+                    path.retain(|predicate, _| !predicate.contains(var_id));
                     path
                 })
                 .collect();
@@ -2911,7 +2989,7 @@ fn forget_path_predicates(state: &mut FlowState, vars: impl IntoIterator<Item = 
                 .iter()
                 .map(|path| {
                     let mut path = path.clone();
-                    path.remove(&var_id);
+                    path.retain(|predicate, _| !predicate.contains(var_id));
                     path
                 })
                 .collect();

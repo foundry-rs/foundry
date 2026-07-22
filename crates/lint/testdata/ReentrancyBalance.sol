@@ -424,6 +424,43 @@ contract ReentrancyBalance {
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
     }
 
+    function sequentialComplementaryComparisonPaths(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        uint256 mode
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        if (mode == 0) callback.pay();
+        if (mode != 0) {
+            require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+        }
+    }
+
+    function sequentialSameComparisonPath(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        uint256 mode
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        if (mode == 0) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        if (0 == mode) {
+            require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+        }
+    }
+
+    function reassignedComparisonPredicateStillWarns(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        uint256 mode
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        if (mode == 0) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        mode = 1;
+        if (mode != 0) {
+            require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+        }
+    }
+
     function shortCircuitAndComplementaryPaths(
         IReentrancyBalanceCallback callback,
         uint256 amount,
