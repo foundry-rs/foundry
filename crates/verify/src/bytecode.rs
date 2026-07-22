@@ -2,12 +2,12 @@
 use crate::{
     etherscan::EtherscanVerificationProvider,
     utils::{
-        BytecodeType, JsonResult, check_and_encode_args, check_explorer_args, configure_env_block,
-        load_fork_config_and_evm_opts, maybe_predeploy_contract,
+        BytecodeType, JsonResult, check_and_encode_args, check_explorer_args,
+        load_fork_config_and_evm_opts, maybe_predeploy_contract, synthetic_deployment_context,
     },
     verify::VerifierArgs,
 };
-use alloy_consensus::{BlockHeader, Transaction as ConsensusTransaction};
+use alloy_consensus::Transaction as ConsensusTransaction;
 use alloy_evm::FromRecoveredTx;
 use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
@@ -40,10 +40,10 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
-        FoundryBlock as _, FoundryTransaction as _,
+        FoundryTransaction as _,
         evm::{
             BlockContext, ContextAuxFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
-            SpecFor, TempoEvmNetwork, TxEnvFor,
+            TempoEvmNetwork, TxEnvFor,
         },
     },
     executors::EvmError,
@@ -332,13 +332,6 @@ impl VerifyBytecodeArgs {
         // Obtain Etherscan compilation metadata.
         let etherscan_metadata = source_code.as_ref().and_then(|source| source.items.first());
 
-        // The EVM version to verify against: the explorer-reported version when available,
-        // otherwise the local project configuration.
-        let evm_version = match etherscan_metadata {
-            Some(metadata) => metadata.evm_version()?.unwrap_or_default(),
-            None => config.evm_version,
-        };
-
         // Obtain local artifact
         let artifact = crate::utils::build_project(&self, &config)?;
 
@@ -415,17 +408,16 @@ impl VerifyBytecodeArgs {
             let mut local_bytecode_vec = local_bytecode.to_vec();
             local_bytecode_vec.extend_from_slice(&constructor_args);
 
+            let deploy_block_info = provider.get_block(deploy_block.into()).full().await?;
             let (mut fork_config, evm_opts) = load_fork_config_and_evm_opts(&config)?;
-            let (mut evm_env, _, mut executor) = crate::utils::get_tracing_executor::<FEN>(
+            let (evm_env, _, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 deploy_block,
-                evm_version,
+                deploy_block,
+                deploy_block_info.as_ref(),
                 evm_opts,
             )
             .await?;
-
-            evm_env.block_env.set_number(U256::from(deploy_block));
-            let deploy_block_info = provider.get_block(deploy_block.into()).full().await?;
 
             // Setup genesis tx_env and evm_evm.
             let deployer = Address::with_last_byte(0x1);
@@ -437,13 +429,20 @@ impl VerifyBytecodeArgs {
             tx_env.set_gas_limit(evm_env.block_env.gas_limit());
             tx_env.set_gas_price(evm_env.block_env.basefee() as u128);
 
-            if let Some(ref block) = deploy_block_info {
-                configure_env_block::<FEN>(&mut evm_env, block, config.networks);
-                tx_env.set_gas_limit(block.header().gas_limit());
-                tx_env.set_gas_price(block.header().base_fee_per_gas().unwrap_or_default() as u128);
-            }
-
             let kind = TxKind::Create;
+            let block_context =
+                if !maybe_predeploy && deploy_block != 0 && FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                    let block = deploy_block_info.as_ref().ok_or_else(|| {
+                        eyre::eyre!(
+                            "block {deploy_block} is required to reconstruct deployment context"
+                        )
+                    })?;
+                    Some(BlockContext::<FEN>::fetch(&provider, block).await?)
+                } else {
+                    None
+                };
+            let target_context =
+                synthetic_deployment_context::<FEN>(block_context.as_ref(), &tx_env);
 
             // Seed deployer account with funds
             let account_info = AccountInfo {
@@ -457,9 +456,8 @@ impl VerifyBytecodeArgs {
                 &mut executor,
                 &evm_env,
                 &tx_env,
-                config.evm_spec_id::<SpecFor<FEN>>(),
                 kind,
-                None,
+                target_context,
             )?;
 
             // Compare runtime bytecode. The onchain code is read at `deploy_block` to stay
@@ -652,17 +650,18 @@ impl VerifyBytecodeArgs {
                 }
             };
 
-            // Fork the chain at `simulation_block`.
+            // Fork the chain immediately before `simulation_block`, then execute with the target
+            // block's environment and effective runtime hardfork.
+            let block = provider.get_block(simulation_block.into()).full().await?;
             let (mut fork_config, evm_opts) = load_fork_config_and_evm_opts(&config)?;
-            let (mut evm_env, _tx_env, mut executor) = crate::utils::get_tracing_executor::<FEN>(
+            let (evm_env, _tx_env, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 simulation_block - 1, // env.fork_block_number
-                evm_version,
+                simulation_block,
+                block.as_ref(),
                 evm_opts,
             )
             .await?;
-            evm_env.block_env.set_number(U256::from(simulation_block));
-            let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
             // block.
@@ -676,8 +675,6 @@ impl VerifyBytecodeArgs {
             let factory = FEN::EvmFactory::default();
             let mut target_context = None::<ContextAuxFor<FEN>>;
             if let Some(ref block) = block {
-                configure_env_block::<FEN>(&mut evm_env, block, config.networks);
-
                 let BlockTransactions::Full(txs) = block.transactions() else {
                     return Err(eyre::eyre!("Could not get block txs"));
                 };
@@ -799,9 +796,8 @@ impl VerifyBytecodeArgs {
                 &mut executor,
                 &evm_env,
                 &tx_env,
-                config.evm_spec_id::<SpecFor<FEN>>(),
                 kind,
-                Some(target_context),
+                target_context,
             )?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.
