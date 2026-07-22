@@ -9,8 +9,12 @@ use crate::{
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
+use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
-use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_network::{
+    BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder,
+    primitives::HeaderResponse,
+};
 use alloy_primitives::{Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
@@ -35,7 +39,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config, TracingConfig,
+    Chain, Config, FoundryHardfork, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -334,7 +338,25 @@ impl CallArgs {
             .await?;
 
         if self.debug_trace_call {
-            let block = self.block.unwrap_or(BlockId::latest());
+            let requested_block = self.block.unwrap_or(BlockId::latest());
+            let fetched_block = provider.get_block(requested_block).await?;
+            // Pin moving canonical tags to the block whose timestamp is used for decoding. This
+            // prevents `latest`, `safe`, or `finalized` from crossing an activation boundary
+            // between the block lookup and `debug_traceCall`.
+            let block = if matches!(
+                requested_block,
+                BlockId::Number(
+                    BlockNumberOrTag::Latest | BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized
+                )
+            ) {
+                fetched_block
+                    .as_ref()
+                    .map(|block| BlockId::hash(block.header().hash()))
+                    .unwrap_or(requested_block)
+            } else {
+                requested_block
+            };
+            let block_time_override = block_overrides.as_ref().and_then(|overrides| overrides.time);
             let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -415,6 +437,18 @@ impl CallArgs {
             };
 
             let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            let block_timestamp = if let Some(timestamp) = block_time_override {
+                Some(timestamp)
+            } else {
+                fetched_block.as_ref().map(|block| block.header().timestamp())
+            };
+            // A configured hardfork is an explicit trace-decoding override. Otherwise decode
+            // against the exact effective timestamp used by the RPC call.
+            let resolved_hardfork = config.hardfork.or_else(|| {
+                block_timestamp.and_then(|timestamp| {
+                    FoundryHardfork::from_chain_and_timestamp(chain.id(), timestamp)
+                })
+            });
             handle_traces(
                 result,
                 &config,
@@ -423,7 +457,7 @@ impl CallArgs {
                 &tracing,
                 with_local_artifacts,
                 false,
-                None,
+                resolved_hardfork,
             )
             .await?;
 
@@ -456,6 +490,8 @@ impl CallArgs {
                     evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
+            let resolved_hardfork =
+                TracingExecutor::<FEN>::resolve_spec(&config, networks, &mut evm_env, evm_version);
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
@@ -469,7 +505,7 @@ impl CallArgs {
             let mut executor = TracingExecutor::<FEN>::new(
                 (evm_env, tx_env),
                 fork,
-                evm_version,
+                None,
                 trace_requirements,
                 networks,
                 create2_deployer,
@@ -554,7 +590,7 @@ impl CallArgs {
                 &tracing,
                 with_local_artifacts,
                 debug,
-                None,
+                resolved_hardfork,
             )
             .await?;
 

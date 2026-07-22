@@ -44,12 +44,12 @@ use foundry_evm::{
     core::{
         FoundryBlock as _,
         evm::{
-            BlockContext, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
-            TempoEvmNetwork, TxEnvFor,
+            BlockContext, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork,
+            TxEnvFor,
         },
     },
     executors::{EvmError, Executor, TracingExecutor},
-    hardforks::{ExecutionSpec, FoundryHardfork},
+    hardforks::FoundryHardfork,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
@@ -277,6 +277,18 @@ impl RunArgs {
             };
 
             let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            // A configured hardfork is an explicit trace-decoding override. Otherwise decode
+            // against the transaction's exact historical block timestamp.
+            let resolved_hardfork = if let Some(hardfork) = config.hardfork {
+                Some(hardfork)
+            } else {
+                provider.get_block_by_number(tx_block_number.into()).await?.and_then(|block| {
+                    FoundryHardfork::from_chain_and_timestamp(
+                        chain.id(),
+                        block.header().timestamp(),
+                    )
+                })
+            };
             handle_traces(
                 result,
                 &config,
@@ -285,10 +297,7 @@ impl RunArgs {
                 &tracing,
                 with_local_artifacts,
                 false,
-                config.hardfork.and_then(|hardfork| match hardfork {
-                    FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-                    _ => None,
-                }),
+                resolved_hardfork,
             )
             .await?;
 
@@ -328,14 +337,6 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
-        let mut resolved_tempo_hardfork = config
-            .hardfork
-            .and_then(|hardfork| match hardfork {
-                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-                _ => None,
-            })
-            .or_else(|| (networks.is_tempo() || chain.is_tempo()).then(|| config.evm_spec_id()));
-
         evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
@@ -346,11 +347,6 @@ impl RunArgs {
 
         evm_env.cfg_env.limit_contract_code_size = None;
         evm_env.block_env.set_number(U256::from(tx_block_number));
-        let configured_spec =
-            config.hardfork.and_then(<SpecFor<FEN> as ExecutionSpec>::from_foundry_hardfork);
-        if let Some(spec) = configured_spec {
-            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
-        }
 
         let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
@@ -360,19 +356,17 @@ impl RunArgs {
             // Unless explicitly configured, resolve the correct spec for the block using the same
             // approach as reth: walk known chain activation conditions to find the latest active
             // fork. Falls back to a blob-gas heuristic for unknown chains.
-            if evm_version.is_none() && configured_spec.is_none() {
-                if let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
+            if evm_version.is_none()
+                && config.hardfork.is_none()
+                && FoundryHardfork::from_chain_and_timestamp(
                     evm_env.cfg_env.chain_id,
                     block.header().timestamp(),
-                ) {
-                    if let FoundryHardfork::Tempo(hardfork) = hardfork {
-                        resolved_tempo_hardfork = Some(hardfork);
-                    }
-                    evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
-                } else if block.header().excess_blob_gas().is_some() {
-                    // TODO: add glamsterdam header field checks in the future
-                    evm_version = Some(EvmVersion::Cancun);
-                }
+                )
+                .is_none()
+                && block.header().excess_blob_gas().is_some()
+            {
+                // TODO: add glamsterdam header field checks in the future
+                evm_version = Some(EvmVersion::Cancun);
             }
             apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
                 &mut evm_env,
@@ -380,6 +374,8 @@ impl RunArgs {
                 config.networks,
             );
         }
+        let resolved_hardfork =
+            TracingExecutor::<FEN>::resolve_spec(&config, networks, &mut evm_env, evm_version);
 
         let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
             let block = block.as_ref().ok_or_else(|| {
@@ -404,7 +400,7 @@ impl RunArgs {
         let mut executor = TracingExecutor::<FEN>::new(
             (evm_env.clone(), tx_env),
             fork,
-            evm_version,
+            None,
             trace_requirements,
             networks,
             create2_deployer,
@@ -610,7 +606,7 @@ impl RunArgs {
             &tracing,
             with_local_artifacts,
             debug,
-            resolved_tempo_hardfork,
+            resolved_hardfork,
         )
         .await?;
 

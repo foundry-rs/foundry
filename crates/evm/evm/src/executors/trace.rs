@@ -12,10 +12,13 @@ use foundry_evm_core::{
 };
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
-use foundry_evm_hardforks::TempoHardfork;
+use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceRequirements;
-use revm::{context::Transaction, state::Bytecode};
+use revm::{
+    context::{Block, Transaction},
+    state::Bytecode,
+};
 use std::ops::{Deref, DerefMut};
 
 /// A default executor with tracing enabled
@@ -83,6 +86,48 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         self.executor.spec_id()
     }
 
+    /// Resolves and applies the execution spec for the effective block environment.
+    ///
+    /// Explicit EVM-version overrides take precedence over a configured namespaced hardfork,
+    /// followed by the chain's timestamp-based activation schedule. Network-specific execution
+    /// falls back to its configured default when the chain has no known activation schedule.
+    /// Returns the exact namespaced hardfork, when applicable, for trace labeling and decoding.
+    pub fn resolve_spec(
+        config: &Config,
+        networks: NetworkConfigs,
+        evm_env: &mut EvmEnvFor<FEN>,
+        evm_version: Option<EvmVersion>,
+    ) -> Option<FoundryHardfork> {
+        let explicit_hardfork =
+            evm_version.and_then(|version| network_hardfork_from_evm_version(networks, version));
+
+        let configured_hardfork = config.hardfork.filter(|hardfork| {
+            <SpecFor<FEN> as ExecutionSpec>::from_foundry_hardfork(*hardfork).is_some()
+        });
+        let timestamp_hardfork = FoundryHardfork::from_chain_and_timestamp(
+            evm_env.cfg_env.chain_id,
+            evm_env.block_env.timestamp().saturating_to(),
+        )
+        .filter(|hardfork| {
+            <SpecFor<FEN> as ExecutionSpec>::from_foundry_hardfork(*hardfork).is_some()
+        });
+        let fallback_hardfork = network_hardfork_from_evm_version(networks, config.evm_version);
+
+        let resolved_hardfork = if evm_version.is_some() {
+            explicit_hardfork
+        } else {
+            configured_hardfork.or(timestamp_hardfork).or(fallback_hardfork)
+        };
+        let spec = evm_version.map(evm_spec_id::<SpecFor<FEN>>).or_else(|| {
+            resolved_hardfork.and_then(<SpecFor<FEN> as ExecutionSpec>::from_foundry_hardfork)
+        });
+        if let Some(spec) = spec {
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+        }
+
+        resolved_hardfork
+    }
+
     /// uses the fork block number from the config
     pub async fn get_fork_material(
         config: &mut Config,
@@ -107,6 +152,20 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let chain = tx_env.chain_id().unwrap().into();
         Ok((evm_env, tx_env, fork, chain, networks))
     }
+}
+
+fn network_hardfork_from_evm_version(
+    networks: NetworkConfigs,
+    evm_version: EvmVersion,
+) -> Option<FoundryHardfork> {
+    if networks.is_tempo() {
+        return Some(FoundryHardfork::Tempo(evm_spec_id::<TempoHardfork>(evm_version)));
+    }
+    #[cfg(feature = "monad")]
+    if networks.is_monad() {
+        return Some(FoundryHardfork::Monad(evm_spec_id::<MonadHardfork>(evm_version)));
+    }
+    None
 }
 
 impl<FEN: FoundryEvmNetwork> Deref for TracingExecutor<FEN> {
