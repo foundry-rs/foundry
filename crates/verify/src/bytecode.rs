@@ -161,10 +161,10 @@ impl VerifyBytecodeArgs {
         } else {
             let network = {
                 let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
-                provider.get_chain_id().await?.into()
+                NetworkVariant::from(provider.get_chain_id().await?)
             };
 
-            if !matches!(network, NetworkVariant::Ethereum) {
+            if !network.is_ethereum() {
                 config.networks = network.into();
             }
 
