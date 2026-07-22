@@ -369,19 +369,19 @@ impl RemappingsProvider<'_> {
         // broader filesystem fallback.
         let package_name =
             lib.file_name().and_then(|name| name.to_str()).map(|name| format!("{name}/"));
-        let configured_package_remappings = direct
-            .then(|| {
-                remappings
-                    .iter()
-                    .filter(|remapping| {
-                        remapping.context.is_none()
-                            && Some(&remapping.name) != package_name.as_ref()
-                            && Path::new(&remapping.path) == config.src
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let configured_package_remappings = if direct {
+            remappings
+                .iter()
+                .filter(|remapping| {
+                    remapping.context.is_none()
+                        && Some(&remapping.name) != package_name.as_ref()
+                        && Path::new(&remapping.path) == config.src
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
         remappings = remappings
             .into_iter()
