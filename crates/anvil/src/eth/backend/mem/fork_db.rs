@@ -75,6 +75,8 @@ impl<N: Network> Db for ForkedDatabase<N> {
             best_block_number: Some(best_number),
             blocks,
             transactions,
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
             historical_states,
         }))
     }

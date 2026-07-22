@@ -131,7 +131,9 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Test Monad Anvil integration
         if: matrix.suite == 'anvil'
-        run: cargo test --locked -p anvil --features monad --test it monad -- --test-threads=1
+        run: |
+          cargo test --locked -p anvil --features monad --lib monad
+          cargo test --locked -p anvil --features monad --test it monad -- --test-threads=1
       - name: Test Monad Cast integration
         if: matrix.suite == 'cast'
         run: |

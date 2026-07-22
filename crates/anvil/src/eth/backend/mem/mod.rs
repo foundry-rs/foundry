@@ -836,10 +836,9 @@ impl<N: Network> Backend<N> {
             storage
                 .blocks
                 .iter()
-                .filter(|(hash, block)| {
-                    !storage.monad_block_participants.contains_key(*hash)
-                        && (!block.body.transactions.is_empty()
-                            || block.header.transactions_root() == EMPTY_ROOT_HASH)
+                .filter(|(_, block)| {
+                    !block.body.transactions.is_empty()
+                        || block.header.transactions_root() == EMPTY_ROOT_HASH
                 })
                 .map(|(hash, block)| (*hash, block.body.transactions.clone()))
                 .collect::<Vec<_>>()
@@ -5383,23 +5382,46 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
         let at = self.evm_env.read().block_env.clone();
-        let best_number = self.blockchain.storage.read().best_number;
-        let blocks = self.blockchain.storage.read().serialized_blocks();
-        let transactions = self.blockchain.storage.read().serialized_transactions();
+        #[cfg(feature = "monad")]
+        let mut monad_block_participants = BTreeMap::new();
+        let (best_number, blocks, transactions) = {
+            let storage = self.blockchain.storage.read();
+            #[cfg(feature = "monad")]
+            if self.is_monad() {
+                monad_block_participants = storage
+                    .monad_block_participants
+                    .iter()
+                    .filter(|(hash, _)| {
+                        storage.blocks.get(*hash).is_some_and(|block| {
+                            block.body.transactions.is_empty()
+                                && block.header.transactions_root() != EMPTY_ROOT_HASH
+                        })
+                    })
+                    .map(|(hash, participants)| (*hash, participants.iter().copied().collect()))
+                    .collect();
+            }
+            (storage.best_number, storage.serialized_blocks(), storage.serialized_transactions())
+        };
         let historical_states =
             preserve_historical_states.then(|| self.states.write().serialized_states());
 
-        let state = self.db.read().await.dump_state(
-            at,
-            best_number,
-            blocks,
-            transactions,
-            historical_states,
-        )?;
-        state.ok_or_else(|| {
-            RpcError::invalid_params("Dumping state not supported with the current configuration")
-                .into()
-        })
+        let state = self
+            .db
+            .read()
+            .await
+            .dump_state(at, best_number, blocks, transactions, historical_states)?
+            .ok_or_else(|| {
+                BlockchainError::RpcError(RpcError::invalid_params(
+                    "Dumping state not supported with the current configuration",
+                ))
+            })?;
+        #[cfg(feature = "monad")]
+        let state = {
+            let mut state = state;
+            state.monad_block_participants = monad_block_participants;
+            state
+        };
+        Ok(state)
     }
 
     /// Write all chain data to serialized bytes buffer
@@ -5423,6 +5445,16 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             let mut storage = self.blockchain.storage.write();
             storage.load_blocks(state.blocks.clone());
             storage.load_transactions(state.transactions.clone());
+            #[cfg(feature = "monad")]
+            if self.is_monad() {
+                for (hash, participants) in &state.monad_block_participants {
+                    if storage.blocks.contains_key(hash) {
+                        storage
+                            .monad_block_participants
+                            .insert(*hash, participants.iter().copied().collect());
+                    }
+                }
+            }
         }
         #[cfg(feature = "monad")]
         if self.is_monad() {
@@ -6975,9 +7007,11 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 mod tests {
     use crate::{NodeConfig, spawn};
     #[cfg(feature = "monad")]
+    use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH};
+    #[cfg(feature = "monad")]
     use alloy_network::TransactionBuilder;
     #[cfg(feature = "monad")]
-    use alloy_primitives::U256;
+    use alloy_primitives::{Address, U256};
     #[cfg(feature = "monad")]
     use alloy_provider::Provider;
     #[cfg(feature = "monad")]
@@ -6987,7 +7021,7 @@ mod tests {
     #[cfg(feature = "monad")]
     use monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS;
     #[cfg(feature = "monad")]
-    use std::sync::Arc;
+    use std::{collections::BTreeSet, sync::Arc};
 
     #[tokio::test]
     async fn test_deterministic_block_mining() {
@@ -7075,6 +7109,84 @@ mod tests {
         let storage = loaded_api.backend.blockchain.storage.read();
         let participants = storage.monad_block_participants.get(&block_hash).unwrap();
         assert!(participants.contains(&sender));
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test]
+    async fn monad_load_state_restores_pruned_participant_cache() {
+        let config = || {
+            NodeConfig::test_monad()
+                .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+                .with_transaction_block_keeper(Some(1usize))
+        };
+        let (api, handle) = spawn(config()).await;
+        let provider = handle.http_provider();
+        let accounts = provider.get_accounts().await.unwrap();
+        let sender = accounts[0];
+
+        let first_receipt = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(accounts[1])
+                    .with_value(U256::from(1))
+                    .into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let second_receipt = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(accounts[1])
+                    .with_value(U256::from(1))
+                    .into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let first_block_hash = first_receipt.block_hash.unwrap();
+        let second_block_hash = second_receipt.block_hash.unwrap();
+
+        {
+            let storage = api.backend.blockchain.storage.read();
+            let first_block = storage.blocks.get(&first_block_hash).unwrap();
+            assert!(first_block.body.transactions.is_empty());
+            assert_ne!(first_block.header.transactions_root(), EMPTY_ROOT_HASH);
+            assert!(storage.monad_block_participants[&first_block_hash].contains(&sender));
+            assert!(!storage.blocks[&second_block_hash].body.transactions.is_empty());
+        }
+
+        let mut state = api.serialized_state(false).await.unwrap();
+        assert_eq!(state.monad_block_participants.len(), 1);
+        assert!(state.monad_block_participants[&first_block_hash].contains(&sender));
+
+        // Metadata from a retained body is reconstructable and must take precedence over a
+        // serialized value. Only pruned bodies rely on the serialized side channel.
+        let bogus_participant = Address::repeat_byte(0x42);
+        state
+            .monad_block_participants
+            .insert(second_block_hash, BTreeSet::from([bogus_participant]));
+
+        let (loaded_api, _handle) = spawn(config()).await;
+        loaded_api.backend.load_state(state).await.unwrap();
+
+        {
+            let storage = loaded_api.backend.blockchain.storage.read();
+            assert!(storage.monad_block_participants[&first_block_hash].contains(&sender));
+            assert!(storage.monad_block_participants[&second_block_hash].contains(&sender));
+            assert!(
+                !storage.monad_block_participants[&second_block_hash].contains(&bogus_participant)
+            );
+        }
+
+        let outcome = loaded_api.backend.mine_block(vec![]).await;
+        assert_eq!(outcome.block_number, 3);
     }
 
     #[cfg(feature = "monad")]

@@ -1,5 +1,7 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
+#[cfg(feature = "monad")]
+use std::collections::BTreeSet;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -612,6 +614,10 @@ pub struct SerializableState {
     pub blocks: Vec<SerializableBlock>,
     #[serde(default)]
     pub transactions: Vec<SerializableTransaction>,
+    /// Monad senders and EIP-7702 authorities retained after transaction bodies are pruned.
+    #[cfg(feature = "monad")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub monad_block_participants: BTreeMap<B256, BTreeSet<Address>>,
     /// Historical states of accounts and storage at particular block hashes.
     ///
     /// Note: This is an Option for backwards compatibility.
