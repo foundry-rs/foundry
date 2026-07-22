@@ -1003,15 +1003,29 @@ fn italicize_dev(content: &str) -> String {
 /// the example; a line legitimately starting with `import`/`export` outside a fence would
 /// break the MDX build anyway.
 fn neutralize_esm(text: &str) -> String {
-    let mut in_fence = false;
-    text.lines()
+    // The marker that opened the current fence (```` ``` ```` or `~~~`), or `None` outside a
+    // fence. CommonMark closes a fence only with the marker character that opened it, so an
+    // opposite marker inside an open fence is literal content and must not toggle.
+    let mut fence: Option<&str> = None;
+    text.split('\n')
         .map(|line| {
             let trimmed = line.trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_fence = !in_fence;
+            let marker = if trimmed.starts_with("```") {
+                Some("```")
+            } else if trimmed.starts_with("~~~") {
+                Some("~~~")
+            } else {
+                None
+            };
+            if let Some(marker) = marker {
+                match fence {
+                    None => fence = Some(marker),
+                    Some(open) if open == marker => fence = None,
+                    Some(_) => {}
+                }
                 return line.to_string();
             }
-            if in_fence {
+            if fence.is_some() {
                 return line.to_string();
             }
             for keyword in ["import", "export"] {
@@ -1032,39 +1046,40 @@ fn neutralize_esm(text: &str) -> String {
 }
 
 fn write_comment_block(out: &mut String, data: &CommentData) {
+    let mut block = String::new();
     if !data.titles.is_empty() {
         let label = if data.titles.len() == 1 { "Title" } else { "Titles" };
-        writeln!(out, "**{label}:** {}", data.titles.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.titles.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.authors.is_empty() {
         let label = if data.authors.len() == 1 { "Author" } else { "Authors" };
-        writeln!(out, "**{label}:** {}", data.authors.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.authors.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     // Render descriptions in source order (notices and devs interleaved, continuations joined).
     // `@dev` paragraphs are wrapped in `_..._` per paragraph so each multi-line block renders
     // as a single italic span (markdown emphasis cannot cross blank lines).
     for desc in &data.descriptions {
-        // Neutralize a line MDX would run as an ESM statement (a top-level `import`/`export`),
-        // but never inside a fenced code block, where the character reference would render
-        // literally and corrupt the example.
-        let content = neutralize_esm(&desc.content);
         match desc.kind {
-            DescKind::Notice => writeln!(out, "{content}").unwrap(),
-            DescKind::Dev => writeln!(out, "{}", italicize_dev(&content)).unwrap(),
+            DescKind::Notice => writeln!(block, "{}", desc.content).unwrap(),
+            DescKind::Dev => writeln!(block, "{}", italicize_dev(&desc.content)).unwrap(),
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.customs.is_empty() {
         let label = if data.customs.len() == 1 { "Note" } else { "Notes" };
-        writeln!(out, "**{label}:**").unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:**").unwrap();
+        writeln!(block).unwrap();
         for (tag, content) in &data.customs {
-            writeln!(out, "- **{tag}:** {content}").unwrap();
+            writeln!(block, "- **{tag}:** {content}").unwrap();
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
+    // Neutralize the fully assembled block once: fence state stays continuous across the
+    // whole block, and every displayed line (authors, notices, custom notes), not just
+    // descriptions, is covered.
+    out.push_str(&neutralize_esm(&block));
 }
 
 fn write_code_block(out: &mut String, snippet: &str) {

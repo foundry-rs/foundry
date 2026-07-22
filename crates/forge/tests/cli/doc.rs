@@ -296,6 +296,66 @@ contract Fenced {
     assert!(rendered.contains("&#101;xport const after = 2"), "{rendered}");
 });
 
+// Neutralization covers the whole assembled comment block, not only descriptions: a
+// multiline `@author` whose continuation is a top-level `import` would otherwise reach the
+// page unneutralized.
+forgetest_init!(natspec_neutralizes_esm_across_whole_comment_block, |prj, cmd| {
+    prj.add_source(
+        "AuthorEsm.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @author Bob
+ * import evilAuthorBlock from "y"
+ */
+contract AuthorEsm {
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.AuthorEsm.mdx")).unwrap();
+    assert!(rendered.contains("&#105;mport evilAuthorBlock from \"y\""), "{rendered}");
+    assert!(
+        !rendered.lines().any(|l| l.trim_start().starts_with("import evilAuthorBlock")),
+        "{rendered}"
+    );
+});
+
+// A fence closes only on the marker character that opened it (CommonMark): a `~~~` line
+// inside a backtick fence is literal, so an `import` after it stays verbatim, while a
+// statement after the real closing fence is still neutralized.
+forgetest_init!(natspec_fence_closes_only_on_matching_marker, |prj, cmd| {
+    prj.add_source(
+        "FenceMarker.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract FenceMarker {
+    /// @notice Ex:
+    /// ```
+    /// ~~~
+    /// import insideMixedFence from "z";
+    /// ```
+    /// export const afterFence = 1
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.FenceMarker.mdx")).unwrap();
+    assert!(rendered.contains("import insideMixedFence from \"z\";"), "{rendered}");
+    assert!(!rendered.contains("&#105;mport insideMixedFence"), "{rendered}");
+    assert!(rendered.contains("&#101;xport const afterFence = 1"), "{rendered}");
+});
+
 // Test that {Ident} cross-references resolve to root-relative vocs links.
 // fixes <https://github.com/foundry-rs/foundry/issues/12361>
 forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {
