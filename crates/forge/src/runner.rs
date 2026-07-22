@@ -735,14 +735,17 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         let mut result = TestSetup::default();
         let mut pending_account_diffs = Vec::new();
-        for code in &self.mcr.libs_to_deploy {
-            let recording_library_deployment = !self.contract.library_addresses.is_empty()
-                && self
-                    .executor
-                    .inspector_mut()
-                    .cheatcodes
-                    .as_deref_mut()
-                    .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
+        for (nonce, code) in self.mcr.libs_to_deploy.iter().enumerate() {
+            // Libraries are linked from nonce zero in the same order they are deployed.
+            let expected_address = LIBRARY_DEPLOYER.create(nonce as u64);
+            let recording_library_deployment =
+                self.contract.library_addresses.contains(&expected_address)
+                    && self
+                        .executor
+                        .inspector_mut()
+                        .cheatcodes
+                        .as_deref_mut()
+                        .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
             let deploy_result = self.executor.deploy(
                 LIBRARY_DEPLOYER,
                 code.clone(),
@@ -1055,6 +1058,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 invalid_invariants.into_iter().collect(),
                 warnings,
             );
+        }
+
+        for invariant in &invariant_fns {
+            if invariant.outputs.len() == 1 && invariant.outputs[0].ty == "bool" {
+                warnings.push(format!(
+                    "Invariant function `{}` returns `bool`, but its return value is ignored; use assertions or revert to indicate failure.",
+                    invariant.signature()
+                ));
+            }
         }
 
         // Invariant testing requires tracing to figure out what contracts were created.
