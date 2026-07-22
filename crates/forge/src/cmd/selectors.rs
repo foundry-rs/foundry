@@ -107,7 +107,7 @@ impl SelectorsSubcommands {
                 let mut project = project_from_paths(project_paths)?;
                 let output = if let Some(contract_info) = &contract {
                     let Some(contract_name) = contract_info.name() else {
-                        eyre::bail!("No contract name provided.")
+                        eyre::bail!("No contract name provided.");
                     };
 
                     let target_path = contract_info
@@ -232,6 +232,7 @@ impl SelectorsSubcommands {
                         second_contract.name,
                     ]);
                     for method in &colliding_methods {
+                        #[allow(clippy::tuple_array_conversions)]
                         table.add_row(<[_; 3]>::from(*method));
                     }
                     sh_println!("{} collisions found:", colliding_methods.len())?;

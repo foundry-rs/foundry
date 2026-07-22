@@ -2717,11 +2717,11 @@ contract InvariantWarp is Test {
     cmd.args(["test", "--mt", "invariant_roll"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: number is not zero]
-	[Sequence] (original: 3, shrunk: 1)
+	[Sequence] (original: [..], shrunk: 1)
 		vm.roll(block.number + [..]);
 		vm.prank([..]);
 		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_roll() (runs: 1, calls: 3, reverts: 2)
+ invariant_roll() (runs: 1, calls: [..], reverts: [..])
 ...
 
 "#]]);

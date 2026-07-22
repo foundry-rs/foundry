@@ -449,6 +449,10 @@ impl<'a> Git<'a> {
         self.cmd().arg("add").args(paths).exec().map(drop)
     }
 
+    pub fn add_literal(self, path: &Path) -> Result<()> {
+        self.cmd().args(["--literal-pathspecs", "add", "--"]).arg(path).exec().map(drop)
+    }
+
     pub fn reset(self, hard: bool, tree: impl AsRef<OsStr>) -> Result<()> {
         self.cmd().arg("reset").args(hard.then_some("--hard")).arg(tree).exec().map(drop)
     }
@@ -472,6 +476,14 @@ impl<'a> Git<'a> {
         S: AsRef<OsStr>,
     {
         self.cmd().arg("rm").args(force.then_some("--force")).args(paths).exec().map(drop)
+    }
+
+    pub fn remove_index_path(self, path: &Path) -> Result<()> {
+        self.cmd()
+            .args(["--literal-pathspecs", "rm", "--cached", "--force", "--"])
+            .arg(path)
+            .exec()
+            .map(drop)
     }
 
     pub fn commit(self, msg: &str) -> Result<()> {
@@ -507,6 +519,14 @@ impl<'a> Git<'a> {
 
     pub fn is_clean(self) -> Result<bool> {
         self.cmd().args(["status", "--porcelain"]).exec().map(|out| out.stdout.is_empty())
+    }
+
+    pub fn is_path_clean(self, path: &Path) -> Result<bool> {
+        self.cmd()
+            .args(["--literal-pathspecs", "status", "--porcelain", "--"])
+            .arg(path)
+            .exec()
+            .map(|out| out.stdout.is_empty())
     }
 
     pub fn has_branch(self, branch: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
@@ -704,6 +724,7 @@ ignore them in the `.gitignore` file."
         path: impl AsRef<OsStr>,
     ) -> Result<()> {
         self.cmd()
+            .arg("--literal-pathspecs")
             .stderr(self.stderr())
             .args(["submodule", "add"])
             .args(self.shallow.then_some("--depth=1"))
@@ -777,6 +798,128 @@ ignore them in the `.gitignore` file."
             .args(["config", "--get", &format!("submodule.{}.url", path.to_slash_lossy())])
             .get_stdout_lossy()
             .map(|url| Some(url.trim().to_string()))
+    }
+
+    /// Returns whether `.gitmodules` contains the default section name or an exact path mapping.
+    pub fn has_submodule_mapping(self, path: &Path) -> Result<bool> {
+        let gitmodules = self.root.join(".gitmodules");
+        if !gitmodules.exists() {
+            return Ok(false);
+        }
+
+        let output = self
+            .cmd()
+            .args(["config", "--null", "--file"])
+            .arg(gitmodules)
+            .args(["--get-regexp", r"^submodule\..*"])
+            .output()?;
+        match output.status.code() {
+            Some(0) => {
+                let expected_path = path.to_slash_lossy();
+                for entry in
+                    output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty())
+                {
+                    let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else {
+                        return Err(eyre::eyre!("invalid submodule mapping entry"));
+                    };
+                    let key = std::str::from_utf8(&entry[..separator])?;
+                    let value = std::str::from_utf8(&entry[separator + 1..])?;
+                    let Some(key) = key.strip_prefix("submodule.") else { continue };
+                    let Some((name, field)) = key.rsplit_once('.') else { continue };
+                    if name == expected_path || field == "path" && value == expected_path {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            Some(1) => Ok(false),
+            _ => Err(eyre::eyre!(
+                "failed to inspect .gitmodules: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
+    /// Returns whether the index contains a submodule at the given path.
+    pub fn is_gitlink(self, path: &Path) -> Result<bool> {
+        self.cmd().args(["ls-files", "--stage", "-z", "--"]).arg(path).exec().map(|output| {
+            let expected_path = path.to_slash_lossy();
+            output.stdout.split(|byte| *byte == 0).any(|entry| {
+                entry.starts_with(b"160000 ")
+                    && entry
+                        .iter()
+                        .position(|byte| *byte == b'\t')
+                        .and_then(|separator| entry.get(separator + 1..))
+                        == Some(expected_path.as_bytes())
+            })
+        })
+    }
+
+    /// Returns whether the index contains any entry at or below the given path.
+    pub fn has_index_entries(self, path: &Path) -> Result<bool> {
+        self.cmd()
+            .args(["--literal-pathspecs", "ls-files", "--stage", "-z", "--"])
+            .arg(path)
+            .exec()
+            .map(|output| !output.stdout.is_empty())
+    }
+
+    /// Returns whether a regular stage-0 index entry has no flags and matches the worktree.
+    pub fn is_normal_tracked_file(self, path: &Path) -> Result<bool> {
+        let output = self
+            .cmd()
+            .args(["--literal-pathspecs", "ls-files", "--stage", "-v", "-z", "--"])
+            .arg(path)
+            .exec()?;
+        let mut entries = output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty());
+        let Some(entry) = entries.next() else { return Ok(false) };
+        if entries.next().is_some() {
+            return Ok(false);
+        }
+        let Some(separator) = entry.iter().position(|byte| *byte == b'\t') else {
+            return Err(eyre::eyre!("invalid index entry"));
+        };
+        if entry.get(separator + 1..) != Some(path.to_slash_lossy().as_bytes()) {
+            return Ok(false);
+        }
+        let mut fields = std::str::from_utf8(&entry[..separator])?.split_ascii_whitespace();
+        if fields.next() != Some("H") || !matches!(fields.next(), Some("100644" | "100755")) {
+            return Ok(false);
+        }
+        let Some(index_hash) = fields.next() else { return Ok(false) };
+        if fields.next() != Some("0") || fields.next().is_some() {
+            return Ok(false);
+        }
+        let worktree_hash = self.cmd().args(["hash-object", "--"]).arg(path).get_stdout_lossy()?;
+        Ok(worktree_hash.trim() == index_hash)
+    }
+
+    /// Returns whether local config contains values for the given submodule.
+    pub fn has_submodule_config(self, path: &Path) -> Result<bool> {
+        let pattern = format!(r"^submodule\.{}\.", regex::escape(&path.to_slash_lossy()));
+        let output = self.cmd().args(["config", "--local", "--get-regexp", &pattern]).output()?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(eyre::eyre!(
+                "failed to inspect submodule config: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
+    /// Removes all local config values for the given submodule.
+    pub fn remove_submodule_config(self, path: &Path) -> Result<()> {
+        if self.has_submodule_config(path)? {
+            let section = format!("submodule.{}", path.to_slash_lossy());
+            self.cmd().args(["config", "--local", "--remove-section", &section]).exec()?;
+        }
+        Ok(())
+    }
+
+    /// Returns the absolute path to the repository's Git directory.
+    pub fn absolute_git_dir(self) -> Result<PathBuf> {
+        self.cmd().args(["rev-parse", "--absolute-git-dir"]).get_stdout_lossy().map(PathBuf::from)
     }
 
     /// Returns the fetch URL of the given remote, or `None` if it doesn't exist.

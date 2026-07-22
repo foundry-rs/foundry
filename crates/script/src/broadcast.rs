@@ -148,13 +148,13 @@ where
                     Ordering::Greater => {
                         bail!(
                             "EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider."
-                        )
+                        );
                     }
                     Ordering::Less => {
                         if attempt == 4 {
                             bail!(
                                 "After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce})."
-                            )
+                            );
                         }
                         warn!(
                             "Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second..."
@@ -415,7 +415,7 @@ impl<N: Network> SendTransactionsKind<N> {
         match self {
             Self::Unlocked(unlocked) => {
                 if !unlocked.contains(addr) {
-                    bail!("Sender address {:?} is not unlocked", addr)
+                    bail!("Sender address {:?} is not unlocked", addr);
                 }
                 Ok(SendTransactionKind::Unlocked(tx))
             }
@@ -429,7 +429,7 @@ impl<N: Network> SendTransactionsKind<N> {
                 {
                     Ok(SendTransactionKind::Browser(tx, b))
                 } else {
-                    bail!("No matching signer for {:?} found", addr)
+                    bail!("No matching signer for {:?} found", addr);
                 }
             }
         }
@@ -1183,11 +1183,13 @@ impl BundledState<TempoEvmNetwork> {
             // inspector before broadcast, so tx.to() should always be Some here.
             let to = match tx.to() {
                 Some(addr) => TxKind::Call(addr),
-                None => bail!(
-                    "Unexpected raw CREATE in --batch mode at position {} — \
+                None => {
+                    bail!(
+                        "Unexpected raw CREATE in --batch mode at position {} — \
                      this is a bug; CREATEs should have been rewritten by the inspector.",
-                    call_index + 1
-                ),
+                        call_index + 1
+                    );
+                }
             };
             let value = tx.value().unwrap_or(U256::ZERO);
             let input = tx.input().cloned().unwrap_or_default();

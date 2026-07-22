@@ -212,6 +212,13 @@ else
   common_json_output="${requested_profile}-${requested_suite}-${versions}-${date}.json"
 fi
 args+=(--common-json-output "common/${common_json_output}")
+if [[ -n ${json_output} && ${requested_profile} == ci ]]; then
+  manifest_output=${json_output%.*}-manifest.json
+  args+=(
+    --manifest-output "${manifest_output}"
+    --suite "${requested_profile}:${requested_suite}"
+  )
+fi
 args+=(--verbose)
 
 if [[ ${dry_run} == true ]]; then
