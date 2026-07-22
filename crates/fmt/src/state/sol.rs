@@ -417,15 +417,18 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_struct(&mut self, strukt: &'ast ast::ItemStruct<'ast>, span: Span) {
         let ast::ItemStruct { name, fields } = strukt;
-        self.s.ibox(self.ind);
+        let header_group = self.s.isolated_box(self.ind);
         self.word("struct");
         self.space();
         self.print_ident(name);
         self.word(" {");
+        self.end();
+
+        let body_group = self.s.ibox_with_id(2 * self.ind);
+        self.s.if_break(header_group, |_| {}, |p| p.set_indent(body_group, self.ind));
         if !fields.is_empty() {
-            self.break_offset(SIZE_INFINITY as usize, 0);
+            self.hardbreak();
         }
-        self.s.ibox(0);
         for var in fields.iter() {
             self.print_var_def(var);
             if !self.print_trailing_comment(var.span.hi(), None) {
@@ -434,7 +437,6 @@ impl<'ast> State<'_, 'ast> {
         }
         self.print_comments(span.hi(), CommentConfig::skip_ws());
         self.s.offset(-self.ind);
-        self.end();
         self.end();
         self.word("}");
     }
@@ -486,8 +488,11 @@ impl<'ast> State<'_, 'ast> {
         } = *header;
 
         let header_style = self.config.multiline_func_header;
-        let header_group = if header_style.all() || header_style.attrib_first() {
+        let header_group = if header_style.all() {
             Some(self.s.cbox_with_id(self.ind))
+        } else if header_style.attrib_first() {
+            self.s.isolated_box(self.ind);
+            None
         } else {
             self.s.cbox(self.ind);
             None
@@ -501,14 +506,14 @@ impl<'ast> State<'_, 'ast> {
             self.print_ident(&name);
             self.cursor.advance_to(name.span.hi(), true);
         }
-        let (params_group, params_fit) = if header_style.attrib_first() {
-            let (group, fit) = self.s.ibox_with_fit(-self.ind);
-            (Some(group), Some(fit))
+        let params_group = if header_style.attrib_first() {
+            self.s.cbox(-self.ind);
+            None
         } else if header_style.all() {
-            (Some(self.s.cbox_with_id(-self.ind)), None)
+            Some(self.s.cbox_with_id(-self.ind))
         } else {
             self.s.cbox(-self.ind);
-            (None, None)
+            None
         };
         let params_format = match header_style {
             MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
@@ -532,12 +537,9 @@ impl<'ast> State<'_, 'ast> {
         };
         self.print_parameter_list(parameters, parameters.span, params_format);
         self.end();
-        if let Some(fit) = params_fit {
-            self.s.if_fits(
-                fit,
-                |p| p.flatten_children(params_group.expect("parameter group")),
-                |_| {},
-            );
+        if header_style.attrib_first() {
+            self.end();
+            self.s.cbox(self.ind);
         }
 
         // Map attributes to their corresponding comments
@@ -814,7 +816,16 @@ impl<'ast> State<'_, 'ast> {
     }
 
     /// Prints the RHS of an assignment or variable initializer.
-    fn print_assign_rhs(&mut self, rhs: &'ast ast::Expr<'ast>, cache: bool) {
+    fn print_assign_rhs(
+        &mut self,
+        rhs: &'ast ast::Expr<'ast>,
+        lhs_group: Option<GroupId>,
+        cache: bool,
+    ) {
+        let rhs_scope = self.s.transparent_group(0);
+        if let Some(lhs_group) = lhs_group {
+            self.s.if_break(lhs_group, |p| p.set_indent(rhs_scope, self.ind), |_| {});
+        }
         let inline_disabled = self
             .peek_comment_before(rhs.span.lo())
             .is_some_and(|cmnt| self.inline_config.is_disabled(cmnt.span));
@@ -835,20 +846,35 @@ impl<'ast> State<'_, 'ast> {
             matches!(&rhs.kind, ast::ExprKind::Lit(lit, ..) if lit.is_str_concatenation());
         let binary = matches!(&rhs.kind, ast::ExprKind::Binary(..));
         let delegates_layout = string_concatenation
-            || matches!(&rhs.kind, ast::ExprKind::Member(..))
             || (binary && inline_disabled)
-            || has_complex_successor(&rhs.kind, true);
+            || (has_complex_successor(&rhs.kind, true)
+                && !matches!(rhs.kind, ast::ExprKind::Member(..)));
 
         if binary && !inline_disabled {
-            self.s.ibox(self.ind);
+            self.s.continuation_box(self.ind, true);
             if !self.is_bol_or_only_ind() {
                 self.print_sep_unhandled(Separator::Space);
             }
             self.print_expr(rhs);
             self.end();
         } else if delegates_layout {
+            let continuation = !string_concatenation;
+            let prefers_nested = matches!(rhs.kind, ast::ExprKind::Ternary(..))
+                || matches!(
+                    &rhs.kind,
+                    ast::ExprKind::Call(callee, args)
+                        if matches!(args.kind, ast::CallArgsKind::Named(_))
+                            || args.is_empty() && matches!(callee.kind, ast::ExprKind::Member(..))
+                );
+            if continuation {
+                if prefers_nested {
+                    self.s.nested_continuation_box(self.ind);
+                } else {
+                    self.s.continuation_box(self.ind, lhs_group.is_some());
+                }
+            }
             if !self.is_bol_or_only_ind() {
-                self.print_sep(Separator::Nbsp);
+                self.print_sep(if continuation { Separator::Space } else { Separator::Nbsp });
             }
             if string_concatenation {
                 self.neverbreak();
@@ -856,6 +882,9 @@ impl<'ast> State<'_, 'ast> {
             }
             self.print_expr(rhs);
             if string_concatenation {
+                self.end();
+            }
+            if continuation {
                 self.end();
             }
         } else {
@@ -867,6 +896,7 @@ impl<'ast> State<'_, 'ast> {
             self.end();
         }
 
+        self.end();
         self.var_init = cache;
     }
 
@@ -889,9 +919,7 @@ impl<'ast> State<'_, 'ast> {
         let break_header = is_var_def;
 
         // Non-elementary types use commasep which has its own padding.
-        let previous_var_group = self.var_group;
         let (var_group, header_fit) = self.s.ibox_with_fit(0);
-        self.var_group = Some(var_group);
         if override_.is_some() {
             self.s.cbox(self.ind);
         } else {
@@ -937,9 +965,8 @@ impl<'ast> State<'_, 'ast> {
             self.end();
             self.end();
             self.s.if_fits(header_fit, |p| p.flatten_children(var_group), |_| {});
-            self.var_group = previous_var_group;
 
-            self.print_assign_rhs(init, cache);
+            self.print_assign_rhs(init, Some(var_group), cache);
             return;
         }
         if override_.is_some() {
@@ -948,7 +975,6 @@ impl<'ast> State<'_, 'ast> {
         self.end();
         self.end();
         self.s.if_fits(header_fit, |p| p.flatten_children(var_group), |_| {});
-        self.var_group = previous_var_group;
     }
 
     fn print_attribute(&mut self, attribute: Option<&'static str>, is_var_def: bool) {
@@ -1072,8 +1098,8 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
             ast::TypeKind::Mapping(ast::TypeMapping { key, key_name, value, value_name }) => {
+                self.s.isolated_cbox(0);
                 self.word("mapping(");
-                self.s.cbox(0);
                 if let Some(cmnt) = self.peek_comment_before(key.span.lo()) {
                     if cmnt.style.is_mixed() {
                         self.print_comments(
@@ -1086,9 +1112,6 @@ impl<'ast> State<'_, 'ast> {
                     }
                 } else {
                     self.zerobreak();
-                }
-                if let Some(group) = self.var_group {
-                    self.s.if_break(group, |p| p.break_parent(), |_| {});
                 }
                 self.s.cbox(0);
                 self.print_ty(key);
@@ -1161,8 +1184,8 @@ impl<'ast> State<'_, 'ast> {
                     self.zerobreak();
                     self.s.offset(-self.ind);
                 }
-                self.end();
                 self.word(")");
+                self.end();
             }
             ast::TypeKind::Custom(path) => self.print_path(path, false),
         }
@@ -1230,9 +1253,7 @@ impl<'ast> State<'_, 'ast> {
                     };
                 self.print_member_or_call_chain(
                     call_expr,
-                    MemberOrCallArgs::CallArgs(
-                        self.has_comments_between_elements(call_args.span, call_args.exprs()),
-                    ),
+                    MemberOrCallArgs::CallArgs,
                     |s, callee_layout| {
                         let callee_suffix_can_break = callee_has_breakable_comment
                             || match &terminal_callee.kind {
@@ -1361,10 +1382,12 @@ impl<'ast> State<'_, 'ast> {
 
         let skip_index_break = self.skip_index_break;
         self.skip_index_break = true;
+        self.s.isolated_box(0);
         self.print_expr(lhs);
+        self.end();
         self.skip_index_break = skip_index_break;
         self.word(" =");
-        self.print_assign_rhs(rhs, cache);
+        self.print_assign_rhs(rhs, None, cache);
     }
 
     /// Prints a binary operator expression. Handles operator chains and formatting.
@@ -1377,13 +1400,19 @@ impl<'ast> State<'_, 'ast> {
     ) {
         let prev_chain = self.binary_expr;
         let is_chain = prev_chain.is_some_and(|prev| prev == bin_op.kind.group());
+        let call_lhs_continuation = self.var_init && is_call_chain(&lhs.kind, false);
+        let return_comment_continuation =
+            self.return_bin_expr && self.has_comment_between(lhs.span.hi(), rhs.span.lo());
+        let return_trailing_comment = return_comment_continuation
+            && self.peek_trailing_comment(lhs.span.hi(), Some(rhs.span.lo())).is_some();
+        let owns_continuation = call_lhs_continuation || return_comment_continuation;
 
         // Opening box if starting a new operator chain.
         if !is_chain {
             self.binary_expr = Some(bin_op.kind.group());
 
             let indent = if (is_assign && has_complex_successor(&rhs.kind, true))
-                || self.var_init && is_call_chain(&lhs.kind, false)
+                || owns_continuation && !return_trailing_comment
             {
                 0
             } else {
@@ -1413,7 +1442,12 @@ impl<'ast> State<'_, 'ast> {
                     .is_none_or(|cmnt| cmnt.is_mixed())
             {
                 if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
-                    self.space_if_not_bol();
+                    if owns_continuation && !self.is_bol_or_only_ind() {
+                        let ind = self.ind;
+                        self.break_offset(1, ind);
+                    } else {
+                        self.space_if_not_bol();
+                    }
                 } else if !self.is_bol_or_only_ind() && !self.last_token_is_break() {
                     self.zerobreak();
                 }
@@ -1619,10 +1653,20 @@ impl<'ast> State<'_, 'ast> {
     ) where
         F: FnOnce(&mut Self, Option<NamedCalleeLayout>),
     {
+        fn member_depth(expr: &ast::Expr<'_>) -> usize {
+            if let ast::ExprKind::Member(child, ..) = &expr.kind {
+                member_depth(child) + 1
+            } else {
+                0
+            }
+        }
+
         let (mut extra_box, skip_cache) = (false, self.skip_index_break);
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         let is_named_callee = !parent_is_chain
             && self.chained_named_call.is_some_and(|call| call.callee == child_expr.span);
+        let owns_member_chain =
+            matches!(member_or_args, MemberOrCallArgs::CallArgs) && member_depth(child_expr) >= 2;
         let can_flatten_named_callee = is_named_callee
             && !call_chain_contains_options(child_expr)
             && !call_chain_contains_named_args(child_expr)
@@ -1640,13 +1684,14 @@ impl<'ast> State<'_, 'ast> {
 
             // Determine if this chain will add its own indentation
             let chain_has_indent = is_named_callee
+                || owns_member_chain
                 || is_call_chain(&child_expr.kind, true)
                 || !(no_cmnt_or_mixed
                     || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                || member_or_args.has_comments();
+                || member_depth(child_expr) == 2;
 
             // Start a new chain if needed
-            if is_call_chain(&child_expr.kind, false) {
+            if is_call_chain(&child_expr.kind, false) || owns_member_chain {
                 self.call_stack.push(CallContext::chained(chain_has_indent));
             }
 
@@ -1687,7 +1732,7 @@ impl<'ast> State<'_, 'ast> {
 
         // If a chain was started, clean up the state and end the box.
         if !parent_is_chain {
-            if is_call_chain(&child_expr.kind, false) {
+            if is_call_chain(&child_expr.kind, false) || owns_member_chain {
                 self.call_stack.pop();
             }
             self.end();
@@ -1932,8 +1977,7 @@ impl<'ast> State<'_, 'ast> {
         vars: &'ast BoxSlice<'ast, SpannedOption<ast::VariableDefinition<'ast>>>,
         init_expr: &'ast ast::Expr<'ast>,
     ) {
-        self.s.ibox(self.ind);
-        self.s.ibox(-self.ind);
+        self.s.isolated_box(0);
         self.print_tuple(
             vars,
             span.lo(),
@@ -1949,15 +1993,14 @@ impl<'ast> State<'_, 'ast> {
                 // Manually handled by printing the comment when `None`
                 SpannedOption::None(..) => Span::DUMMY,
             },
-            ListFormat::consistent(),
+            ListFormat::consistent().isolated(),
         );
         self.end();
         self.word(" =");
 
-        self.print_sep(Separator::Space);
-        self.ibox(0);
+        self.s.continuation_box(self.ind, false);
+        self.print_sep_unhandled(Separator::Space);
         self.print_expr(init_expr);
-        self.end();
         self.end();
     }
 
@@ -2104,22 +2147,30 @@ impl<'ast> State<'_, 'ast> {
 
         if let Some(expr) = expr {
             let is_simple = matches!(expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
+            let has_expr_comment = self.peek_comment_before(expr.span.lo()).is_some()
+                || self.has_comment_between(expr.span.lo(), expr.span.hi());
 
             self.return_bin_expr = matches!(expr.kind, ast::ExprKind::Binary(..));
             self.s.ibox(if is_simple { self.ind } else { 0 });
 
             self.print_word("return");
+            if !is_simple {
+                self.s.continuation_box(self.ind, false);
+            }
 
             match self.print_comments(
                 expr.span.lo(),
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
             ) {
                 Some(cmnt) if cmnt.is_trailing() && !is_simple => self.s.offset(self.ind),
-                None => self.print_sep(Separator::SpaceOrNbsp(is_simple)),
+                None => self.print_sep(Separator::SpaceOrNbsp(is_simple || !has_expr_comment)),
                 _ => {}
             }
 
             self.print_expr(expr);
+            if !is_simple {
+                self.end();
+            }
             self.end();
             self.return_bin_expr = false;
         } else {
@@ -2462,19 +2513,63 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>) -> bool {
-        fn has_breakable_call(stmt: &ast::Stmt<'_>) -> bool {
-            match &stmt.kind {
-                ast::StmtKind::Block(block) if let [stmt] = block.stmts.as_ref() => {
-                    has_breakable_call(stmt)
+        fn is_breakable_call_expr(expr: &ast::Expr<'_>) -> bool {
+            match &expr.peel_parens().kind {
+                ast::ExprKind::Call(callee, args) => {
+                    !args.is_empty() || is_call_chain(&callee.kind, false)
                 }
-                ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call(_, args), .. }) => {
-                    !args.is_empty()
+                kind @ (ast::ExprKind::Index(..) | ast::ExprKind::Member(..)) => {
+                    is_call_chain(kind, true)
                 }
                 _ => false,
             }
         }
 
-        if has_breakable_call(stmt) {
+        fn has_breakable_call(stmt: &ast::Stmt<'_>) -> bool {
+            match &stmt.kind {
+                ast::StmtKind::Block(block) if let [stmt] = block.stmts.as_ref() => {
+                    has_breakable_call(stmt)
+                }
+                ast::StmtKind::Expr(expr) => is_breakable_call_expr(expr),
+                _ => false,
+            }
+        }
+
+        fn return_expr_span(stmt: &ast::Stmt<'_>) -> Option<Span> {
+            match &stmt.kind {
+                ast::StmtKind::Block(block) if let [stmt] = block.stmts.as_ref() => {
+                    return_expr_span(stmt)
+                }
+                ast::StmtKind::Return(Some(expr)) => Some(stmt.span.to(expr.span)),
+                _ => None,
+            }
+        }
+
+        fn has_breakable_return(stmt: &ast::Stmt<'_>) -> bool {
+            match &stmt.kind {
+                ast::StmtKind::Block(block) if let [stmt] = block.stmts.as_ref() => {
+                    has_breakable_return(stmt)
+                }
+                ast::StmtKind::Return(Some(expr)) => {
+                    matches!(
+                        expr.peel_parens().kind,
+                        ast::ExprKind::Array(_)
+                            | ast::ExprKind::Assign(..)
+                            | ast::ExprKind::Binary(..)
+                            | ast::ExprKind::CallOptions(..)
+                            | ast::ExprKind::Ternary(..)
+                            | ast::ExprKind::Tuple(_)
+                    ) || is_breakable_call_expr(expr)
+                }
+                _ => false,
+            }
+        }
+
+        if has_breakable_call(stmt) || has_breakable_return(stmt) {
+            return false;
+        }
+        if return_expr_span(stmt).is_some_and(|span| self.has_comment_between(span.lo(), span.hi()))
+        {
             return false;
         }
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
@@ -2645,25 +2740,6 @@ impl<'ast> State<'_, 'ast> {
 
         els_opt.is_none_or(|els| self.is_inline_stmt(els))
     }
-
-    fn has_comments_between_elements<I>(&self, limits: Span, elements: I) -> bool
-    where
-        I: IntoIterator<Item = &'ast ast::Expr<'ast>>,
-    {
-        let mut last_span_end = limits.lo();
-        for expr in elements {
-            if self.has_comment_between(last_span_end, expr.span.lo()) {
-                return true;
-            }
-            last_span_end = expr.span.hi();
-        }
-
-        if self.has_comment_between(last_span_end, limits.hi()) {
-            return true;
-        }
-
-        false
-    }
 }
 
 // -- HELPERS (language-specific) ----------------------------------------------
@@ -2671,7 +2747,7 @@ impl<'ast> State<'_, 'ast> {
 #[derive(Debug)]
 enum MemberOrCallArgs {
     Member,
-    CallArgs(bool),
+    CallArgs,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2679,12 +2755,6 @@ struct NamedCalleeLayout {
     callee_group: GroupId,
     fit: FitId,
     chain_group: GroupId,
-}
-
-impl MemberOrCallArgs {
-    const fn has_comments(&self) -> bool {
-        matches!(self, Self::CallArgs(true))
-    }
 }
 
 #[derive(Debug, Clone)]

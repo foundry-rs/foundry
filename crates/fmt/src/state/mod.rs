@@ -122,8 +122,6 @@ pub(super) struct State<'sess, 'ast> {
     return_bin_expr: bool,
     // Whether inside a call with call options and at least one argument.
     call_with_opts_and_args: bool,
-    // The variable declaration group currently being printed.
-    var_group: Option<pp::GroupId>,
     // Callee of the current chained call with named arguments, if any.
     chained_named_call: Option<ChainedNamedCall>,
     // Whether to skip the index soft breaks because the callee fits inline.
@@ -220,7 +218,6 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_with_opts_and_args: false,
-            var_group: None,
             chained_named_call: None,
             skip_index_break: false,
             binary_expr: None,
@@ -536,6 +533,7 @@ impl<'sess> State<'sess, '_> {
         break_offset: isize,
         is_doc: bool,
         continuation: Option<pp::GroupId>,
+        normalize_heading: bool,
     ) -> pp::GroupId {
         let group = self.s.ibox_with_id(0);
         if !line.starts_with(prefix) {
@@ -584,8 +582,12 @@ impl<'sess> State<'sess, '_> {
                 self.word(leading_ws.to_owned());
             }
             rest
+        } else if prefix == "//" && normalize_heading && content.len() != content.trim_start().len()
+        {
+            self.nbsp();
+            content.trim_start()
         } else {
-            // Non-doc comments: replace first whitespace with nbsp, rest of content continues
+            // Non-doc comments replace one whitespace with nbsp and preserve the rest.
             if let Some(first_char) = content.chars().next() {
                 if first_char.is_whitespace() {
                     self.nbsp();
@@ -647,6 +649,25 @@ impl<'sess> State<'sess, '_> {
             && next_content.split_whitespace().nth(1).is_some()
     }
 
+    fn is_decorative_comment_heading(lines: &[String], index: usize, prefix: &str) -> bool {
+        fn content<'a>(line: &'a str, prefix: &str) -> &'a str {
+            line.strip_prefix(prefix).unwrap_or(line).trim()
+        }
+
+        let Some(previous) = index.checked_sub(1).and_then(|index| lines.get(index)) else {
+            return false;
+        };
+        let Some(current) = lines.get(index) else { return false };
+        let Some(next) = lines.get(index + 1) else { return false };
+        let current = content(current, prefix);
+        current.chars().any(char::is_alphabetic)
+            && current.chars().all(|ch| !ch.is_alphabetic() || ch.is_uppercase())
+            && [previous, next].into_iter().all(|line| {
+                let line = content(line, prefix);
+                !line.is_empty() && line.chars().all(|ch| !ch.is_alphanumeric())
+            })
+    }
+
     fn print_wrapped_comment_boundary(&mut self, group: pp::GroupId, joins: bool) {
         if joins {
             self.s.if_break(group, |p| p.nbsp(), |p| p.hardbreak());
@@ -677,12 +698,15 @@ impl<'sess> State<'sess, '_> {
                 if self.config.wrap_comments {
                     let mut continuation = None;
                     for (index, line) in cmnt.lines.iter().enumerate() {
+                        let normalize_heading =
+                            Self::is_decorative_comment_heading(&cmnt.lines, index, prefix);
                         let group = self.print_wrapped_line(
                             line,
                             prefix,
                             0,
                             cmnt.is_doc,
                             continuation.take(),
+                            normalize_heading,
                         );
                         if let Some(next) = cmnt.lines.get(index + 1) {
                             let joins = Self::can_join_wrapped_comment_lines(line, next, prefix);
@@ -746,6 +770,7 @@ impl<'sess> State<'sess, '_> {
                             0,
                             cmnt.is_doc,
                             continuation.take(),
+                            Self::is_decorative_comment_heading(&cmnt.lines, index, prefix),
                         );
 
                         if is_last {
@@ -819,6 +844,7 @@ impl<'sess> State<'sess, '_> {
                                 config.offset,
                                 cmnt.is_doc,
                                 None,
+                                false,
                             );
                         }
                         if !lpos.is_last {

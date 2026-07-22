@@ -54,10 +54,12 @@ impl<'ast> State<'_, 'ast> {
             }
             yul::StmtKind::Expr(expr_call) => self.print_yul_expr(expr_call),
             yul::StmtKind::If(expr, stmts) => {
+                self.s.isolated_box(0);
                 self.print_word("if "); // 3 chars
                 self.print_yul_expr(expr);
+                self.end();
                 self.nbsp(); // 1 char
-                self.print_yul_block(stmts, span, false);
+                self.print_yul_block(stmts, stmts.span, false);
             }
             yul::StmtKind::For(yul::StmtFor { init, cond, step, body }) => {
                 self.ibox(0);
@@ -211,12 +213,19 @@ impl<'ast> State<'_, 'ast> {
             self.print_word("{");
         }
 
-        let attempt_inline = block.len() <= 1 && !self.is_multiline_yul_block(block);
+        let attempt_inline = block.len() <= 1
+            && !self.is_multiline_yul_block(block)
+            && !self.has_comment_between(span.lo(), span.hi());
+        let mut inline_box_open = false;
         if attempt_inline {
             if let Some(stmt) = block.first() {
-                self.s.cbox(self.ind);
+                // Preserve the inline-block budget independently of the enclosing statement and
+                // include its one-level indentation allowance.
+                self.s.isolated_cbox_with_slack(self.ind, self.ind);
+                inline_box_open = true;
                 self.space();
                 self.print_yul_stmt(stmt);
+                self.neverbreak();
                 if self.peek_comment_before(stmt.span.hi()).is_none()
                     && self.peek_trailing_comment(stmt.span.hi(), None).is_none()
                 {
@@ -226,11 +235,10 @@ impl<'ast> State<'_, 'ast> {
                     stmt.span.hi(),
                     CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
                 );
-                if !self.last_token_is_space() {
+                if self.last_token_still_buffered().is_none() || !self.last_token_is_space() {
                     self.space();
                 }
                 self.s.offset(-self.ind);
-                self.end();
             } else if self.config.bracket_spacing {
                 self.nbsp();
             }
@@ -268,7 +276,16 @@ impl<'ast> State<'_, 'ast> {
             );
         }
         self.print_word("}");
-        self.print_trailing_comment(span.hi(), None);
+        if inline_box_open {
+            let has_trailing = self.peek_trailing_comment(span.hi(), None).is_some();
+            self.print_trailing_comment_no_break(span.hi(), None);
+            self.end();
+            if has_trailing {
+                self.hardbreak_if_not_bol();
+            }
+        } else {
+            self.print_trailing_comment(span.hi(), None);
+        }
     }
 
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.

@@ -14,6 +14,14 @@ impl Printer {
             probe: None,
             probe_size: None,
             force_break: false,
+            continuation: false,
+            continuation_break: None,
+            continuation_head: false,
+            continuation_head_size: None,
+            continuation_prefers_nested: false,
+            transparent: false,
+            isolated: false,
+            isolated_slack: 0,
         });
     }
 
@@ -28,6 +36,14 @@ impl Printer {
             probe: None,
             probe_size: None,
             force_break: false,
+            continuation: false,
+            continuation_break: None,
+            continuation_head: false,
+            continuation_head_size: None,
+            continuation_prefers_nested: false,
+            transparent: false,
+            isolated: false,
+            isolated_slack: 0,
         });
         group
     }
@@ -44,6 +60,14 @@ impl Printer {
             probe: Some(fit),
             probe_size: None,
             force_break: false,
+            continuation: false,
+            continuation_break: None,
+            continuation_head: false,
+            continuation_head_size: None,
+            continuation_prefers_nested: false,
+            transparent: false,
+            isolated: false,
+            isolated_slack: 0,
         });
         (group, fit)
     }
@@ -83,7 +107,114 @@ impl Printer {
             probe: None,
             probe_size: None,
             force_break: false,
+            continuation: false,
+            continuation_break: None,
+            continuation_head: false,
+            continuation_head_size: None,
+            continuation_prefers_nested: false,
+            transparent: false,
+            isolated: false,
+            isolated_slack: 0,
         });
+    }
+
+    /// Begins a group whose leading break is taken only when its contents fit on the
+    /// continuation line. Longer contents delegate breaking to their nested groups.
+    fn continuation_group_box(
+        &mut self,
+        indent: isize,
+        use_head: bool,
+        prefers_nested: bool,
+    ) -> GroupId {
+        let group = GroupId(self.next_group);
+        self.next_group += 1;
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Block { offset: indent },
+            breaks: Breaks::Inconsistent,
+            group: Some(group),
+            probe: None,
+            probe_size: None,
+            force_break: false,
+            continuation: true,
+            continuation_break: None,
+            continuation_head: use_head,
+            continuation_head_size: None,
+            continuation_prefers_nested: prefers_nested,
+            transparent: false,
+            isolated: false,
+            isolated_slack: 0,
+        });
+        group
+    }
+
+    pub fn continuation_box(&mut self, indent: isize, use_head: bool) -> GroupId {
+        self.continuation_group_box(indent, use_head, false)
+    }
+
+    /// Begins a continuation that keeps a fitting head on the current line and delegates the
+    /// remaining layout to nested groups.
+    pub fn nested_continuation_box(&mut self, indent: isize) -> GroupId {
+        self.continuation_group_box(indent, true, true)
+    }
+
+    /// Begins a named scope that inherits its enclosing box's break policy.
+    pub fn transparent_group(&mut self, indent: isize) -> GroupId {
+        let group = GroupId(self.next_group);
+        self.next_group += 1;
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Block { offset: indent },
+            breaks: Breaks::Inconsistent,
+            group: Some(group),
+            probe: None,
+            probe_size: None,
+            force_break: false,
+            continuation: false,
+            continuation_break: None,
+            continuation_head: false,
+            continuation_head_size: None,
+            continuation_prefers_nested: false,
+            transparent: true,
+            isolated: false,
+            isolated_slack: 0,
+        });
+        group
+    }
+
+    fn isolated_group_box(&mut self, indent: isize, breaks: Breaks, slack: isize) -> GroupId {
+        let group = GroupId(self.next_group);
+        self.next_group += 1;
+        self.scan_begin(BeginToken {
+            indent: IndentStyle::Block { offset: indent },
+            breaks,
+            group: Some(group),
+            probe: None,
+            probe_size: None,
+            force_break: false,
+            continuation: false,
+            continuation_break: None,
+            continuation_head: false,
+            continuation_head_size: None,
+            continuation_prefers_nested: false,
+            transparent: false,
+            isolated: true,
+            isolated_slack: slack,
+        });
+        group
+    }
+
+    /// Begins an inconsistent group whose fit is independent of enclosing groups.
+    pub fn isolated_box(&mut self, indent: isize) -> GroupId {
+        self.isolated_group_box(indent, Breaks::Inconsistent, 0)
+    }
+
+    /// Begins a consistent group whose fit is independent of enclosing groups.
+    pub fn isolated_cbox(&mut self, indent: isize) -> GroupId {
+        self.isolated_group_box(indent, Breaks::Consistent, 0)
+    }
+
+    /// Begins a consistent independently fitted group with extra flat-layout allowance.
+    pub fn isolated_cbox_with_slack(&mut self, indent: isize, slack: isize) -> GroupId {
+        self.isolated_group_box(indent, Breaks::Consistent, slack)
     }
 
     pub fn break_offset(&mut self, n: usize, off: isize) {

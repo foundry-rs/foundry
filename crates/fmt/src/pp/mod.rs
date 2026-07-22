@@ -69,6 +69,13 @@ pub(crate) struct BreakToken {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContinuationBreak {
+    flat_width: isize,
+    offset: isize,
+    post_break_width: isize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BeginToken {
     indent: IndentStyle,
     breaks: Breaks,
@@ -76,6 +83,14 @@ pub(crate) struct BeginToken {
     probe: Option<FitId>,
     probe_size: Option<isize>,
     force_break: bool,
+    continuation: bool,
+    continuation_break: Option<ContinuationBreak>,
+    continuation_head: bool,
+    continuation_head_size: Option<isize>,
+    continuation_prefers_nested: bool,
+    transparent: bool,
+    isolated: bool,
+    isolated_slack: isize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,6 +168,9 @@ pub struct Printer {
     print_stack: Vec<PrintFrame>,
     /// Named groups corresponding to `print_stack` frames.
     group_stack: Vec<Option<GroupId>>,
+    flatten_stack: Vec<bool>,
+    flatten_depth: usize,
+    indent_restore_stack: Vec<Option<usize>>,
     group_states: HashMap<GroupId, bool>,
     choice_states: HashMap<FitId, bool>,
     /// Level of indentation of current line.
@@ -205,6 +223,9 @@ impl Printer {
             scan_stack: VecDeque::new(),
             print_stack: Vec::new(),
             group_stack: Vec::new(),
+            flatten_stack: Vec::new(),
+            flatten_depth: 0,
+            indent_restore_stack: Vec::new(),
             group_states: HashMap::new(),
             choice_states: HashMap::new(),
             indent: 0,
@@ -239,6 +260,7 @@ impl Printer {
         loop {
             let mut tokens = self.document.resolve(&broken_groups, &fallback_choices);
             annotate_probe_sizes(&mut tokens, self.tab_width);
+            annotate_continuation_layouts(&mut tokens, self.tab_width);
             let mut renderer =
                 Self::new_inner(self.margin as usize, self.indent_config, self.tab_width, false);
             for token in tokens {
@@ -556,11 +578,77 @@ impl Printer {
             }
         }
 
-        let broken = token.force_break || size > self.space;
+        if token.transparent {
+            if let Some(group) = token.group {
+                self.group_states.insert(group, false);
+            }
+            self.group_stack.push(token.group);
+            self.flatten_stack.push(false);
+            self.indent_restore_stack.push(Some(self.indent));
+            self.print_stack.push(self.get_top());
+            self.indent = match token.indent {
+                IndentStyle::Block { offset } => {
+                    usize::try_from(self.indent as isize + offset).unwrap()
+                }
+                IndentStyle::Visual => (self.margin - self.space) as usize,
+            };
+            return;
+        }
+
+        self.indent_restore_stack.push(None);
+
+        let flat_size = token.probe_size.unwrap_or(size);
+        let next_indent = match token.indent {
+            IndentStyle::Block { offset } => self.indent as isize + offset,
+            IndentStyle::Visual => self.margin - self.space,
+        };
+        let continuation_space = token.continuation_break.map_or(0, |leading| {
+            self.margin
+                .saturating_sub(next_indent.saturating_add(leading.offset))
+                .max(0)
+                .saturating_sub(leading.post_break_width)
+        });
+        let fits_continuation = token.continuation_break.is_some_and(|leading| {
+            flat_size.saturating_sub(leading.flat_width) <= continuation_space
+        });
+        let current_head_size = token.continuation_head_size.and_then(|head| {
+            token.continuation_break.map(|leading| leading.flat_width.saturating_add(head))
+        });
+        let head_fits_current = token.continuation_prefers_nested
+            && current_head_size.is_some_and(|head| head <= self.space);
+        let head_fits_continuation = token.continuation_head_size.is_some_and(|head| {
+            current_head_size.is_some_and(|current| current > self.space)
+                && head <= continuation_space
+        });
+        let layout_size = if token.continuation || token.isolated { flat_size } else { size };
+        let layout_space = if token.isolated {
+            self.space
+                .min(self.margin.saturating_sub(self.indent as isize))
+                .saturating_add(token.isolated_slack)
+        } else {
+            self.space
+        };
+        let inherited_flat = self.flatten_depth > 0;
+        let isolates_children = token.isolated && !token.force_break && layout_size <= layout_space;
+        let continuation_fits_own_line = token.continuation
+            && !token.force_break
+            && flat_size < SIZE_INFINITY
+            && layout_size > layout_space
+            && fits_continuation
+            && !head_fits_current;
+        let flattens_children = isolates_children || continuation_fits_own_line;
+        let broken = token.force_break
+            || !inherited_flat
+                && layout_size > layout_space
+                && (!token.continuation
+                    || fits_continuation && !head_fits_current
+                    || head_fits_continuation);
         if let Some(group) = token.group {
             self.group_states.insert(group, false);
         }
         self.group_stack.push(token.group);
+        self.flatten_stack.push(flattens_children);
+        self.flatten_depth += usize::from(flattens_children);
         if let Some(choice) = token.probe {
             self.choice_states
                 .insert(choice, token.probe_size.is_some_and(|size| size > self.space));
@@ -579,6 +667,10 @@ impl Printer {
     }
 
     fn print_end(&mut self) {
+        let restore_indent = self.indent_restore_stack.pop().expect("unmatched end token");
+        if self.flatten_stack.pop().expect("unmatched end token") {
+            self.flatten_depth -= 1;
+        }
         self.group_stack.pop().expect("unmatched end token");
         let breaks = match self.print_stack.pop().unwrap() {
             PrintFrame::Broken(indent, breaks) => {
@@ -587,6 +679,9 @@ impl Printer {
             }
             PrintFrame::Fits(breaks) => breaks,
         };
+        if let Some(indent) = restore_indent {
+            self.indent = indent;
+        }
         if DEBUG {
             self.out.push(match breaks {
                 Breaks::Consistent => '»',
@@ -597,11 +692,12 @@ impl Printer {
 
     fn print_break(&mut self, token: BreakToken, size: isize) {
         let fits = token.never_break
-            || match self.get_top() {
-                PrintFrame::Fits(..) => true,
-                PrintFrame::Broken(.., Breaks::Consistent) => false,
-                PrintFrame::Broken(.., Breaks::Inconsistent) => size <= self.space,
-            };
+            || token.blank_space < SIZE_INFINITY as usize
+                && match self.get_top() {
+                    PrintFrame::Fits(..) => true,
+                    PrintFrame::Broken(.., Breaks::Consistent) => false,
+                    PrintFrame::Broken(.., Breaks::Inconsistent) => size <= self.space,
+                };
         if fits {
             self.pending_indentation += token.blank_space;
             self.space -= token.blank_space as isize;
@@ -732,6 +828,14 @@ impl Document {
                             probe: Some(*id),
                             probe_size: None,
                             force_break: false,
+                            continuation: false,
+                            continuation_break: None,
+                            continuation_head: false,
+                            continuation_head_size: None,
+                            continuation_prefers_nested: false,
+                            transparent: false,
+                            isolated: false,
+                            isolated_slack: 0,
                         };
                         groups.push(tokens.len());
                         tokens.push(Token::Begin(begin));
@@ -804,7 +908,10 @@ fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
     let mut total = 0usize;
     for index in 0..tokens.len() {
         match &mut tokens[index] {
-            Token::Begin(begin) => stack.push((index, begin.probe.is_some().then_some(total))),
+            Token::Begin(begin) => stack.push((
+                index,
+                (begin.probe.is_some() || begin.continuation || begin.isolated).then_some(total),
+            )),
             Token::End => {
                 let (start, probe_start) = stack.pop().expect("unmatched end token");
                 if let Some(probe_start) = probe_start {
@@ -826,6 +933,112 @@ fn annotate_probe_sizes(tokens: &mut [Token], tab_width: usize) {
     for (index, size) in probes {
         let Token::Begin(begin) = &mut tokens[index] else { unreachable!() };
         begin.probe_size = Some(size);
+    }
+}
+
+fn annotate_continuation_layouts(tokens: &mut [Token], tab_width: usize) {
+    for token in &mut *tokens {
+        if let Token::LineSuffix(tokens) = token {
+            annotate_continuation_layouts(tokens, tab_width);
+        }
+    }
+
+    let starts = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| match token {
+            Token::Begin(begin) if begin.continuation => Some(index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    for start in starts {
+        let Token::Begin(start_token) = &tokens[start] else { unreachable!() };
+        let prefers_nested = start_token.continuation_prefers_nested;
+        let mut depth = 0usize;
+        let mut leading = None;
+        let mut has_content = false;
+        let mut end = tokens.len();
+        for (index, token) in tokens.iter().enumerate().skip(start + 1) {
+            match token {
+                Token::Begin(_) => {
+                    has_content = true;
+                    depth += 1;
+                }
+                Token::End if depth == 0 => {
+                    end = index;
+                    break;
+                }
+                Token::End => depth -= 1,
+                Token::Break(token) if depth == 0 && !has_content => {
+                    leading = Some((index, *token));
+                    break;
+                }
+                Token::String(string) if !string.is_empty() => has_content = true,
+                Token::LineSuffix(tokens) if !tokens.is_empty() => has_content = true,
+                _ => {}
+            }
+        }
+
+        let Some((leading_index, leading)) = leading else { continue };
+
+        if end == tokens.len() {
+            depth = 0;
+            for (index, token) in tokens.iter().enumerate().skip(leading_index + 1) {
+                match token {
+                    Token::Begin(_) => depth += 1,
+                    Token::End if depth == 0 => {
+                        end = index;
+                        break;
+                    }
+                    Token::End => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+
+        let mut min_break_depth = usize::MAX;
+        let mut depth = 0usize;
+        for token in &tokens[leading_index + 1..end] {
+            match token {
+                Token::Begin(_) => depth += 1,
+                Token::End => depth -= 1,
+                Token::Break(_) => min_break_depth = min_break_depth.min(depth),
+                _ => {}
+            }
+        }
+
+        depth = 0;
+        let mut size = 0isize;
+        for token in &tokens[leading_index + 1..end] {
+            match token {
+                Token::Begin(_) => depth += 1,
+                Token::End => depth -= 1,
+                Token::Break(_) if prefers_nested || depth == min_break_depth => break,
+                Token::String(string) => {
+                    size = size.saturating_add(display_width(string, tab_width));
+                }
+                Token::Break(token) => {
+                    size = size.saturating_add(token.blank_space as isize);
+                }
+                Token::LineSuffix(tokens) => {
+                    size = size.saturating_add(flat_size(tokens, tab_width));
+                }
+                Token::BreakChildren(_) | Token::FlattenChildren(_) | Token::SetIndent(..) => {}
+            }
+        }
+
+        let Token::Begin(begin) = &mut tokens[start] else { unreachable!() };
+        begin.continuation_break = Some(ContinuationBreak {
+            flat_width: leading.blank_space as isize,
+            offset: leading.offset,
+            post_break_width: leading
+                .post_break
+                .map_or(0, |prefix| display_width(prefix, tab_width)),
+        });
+        if begin.continuation_head {
+            begin.continuation_head_size = Some(size.min(SIZE_INFINITY));
+        }
     }
 }
 
@@ -885,23 +1098,35 @@ fn flatten_children(tokens: &mut Vec<Token>) {
         }
     }
 
-    fn apply(tokens: &mut Vec<Token>, targets: &HashSet<GroupId>, active: &mut usize) {
+    fn apply(
+        tokens: &mut Vec<Token>,
+        targets: &HashSet<GroupId>,
+        active: &mut usize,
+        forced: &mut usize,
+    ) {
         let mut stack = Vec::new();
         for token in tokens.iter_mut() {
             match token {
                 Token::Begin(begin) => {
                     let targeted = begin.group.is_some_and(|group| targets.contains(&group));
-                    stack.push(targeted);
+                    let force_break = (*active > 0 || targeted) && begin.force_break;
+                    stack.push((targeted, force_break));
                     *active += usize::from(targeted);
+                    *forced += usize::from(force_break);
                 }
-                Token::End if stack.pop().expect("unmatched end token") => *active -= 1,
-                Token::End => {}
+                Token::End => {
+                    let (targeted, force_break) = stack.pop().expect("unmatched end token");
+                    *active -= usize::from(targeted);
+                    *forced -= usize::from(force_break);
+                }
                 Token::Break(token)
-                    if *active > 0 && token.blank_space < SIZE_INFINITY as usize =>
+                    if *active > 0
+                        && *forced == 0
+                        && token.blank_space < SIZE_INFINITY as usize =>
                 {
                     token.never_break = true;
                 }
-                Token::LineSuffix(tokens) => apply(tokens, targets, active),
+                Token::LineSuffix(tokens) => apply(tokens, targets, active, forced),
                 _ => {}
             }
         }
@@ -914,7 +1139,8 @@ fn flatten_children(tokens: &mut Vec<Token>) {
         return;
     }
     let mut active = 0usize;
-    apply(tokens, &targets, &mut active);
+    let mut forced = 0usize;
+    apply(tokens, &targets, &mut active, &mut forced);
 }
 
 fn set_group_indents(tokens: &mut Vec<Token>) {
@@ -1249,6 +1475,305 @@ mod tests {
         p.end();
 
         assert_eq!(p.eof(), "value{ // a_trailing_comment_that_must\n    wrap\nnext");
+    }
+
+    #[test]
+    fn continuation_breaks_when_contents_fit_on_the_next_line() {
+        let mut p = printer();
+        p.word("a_prefix_that_uses_most_of_the_line");
+        p.continuation_box(4, false);
+        p.space();
+        p.word("short_content");
+        p.end();
+
+        assert_eq!(p.eof(), "a_prefix_that_uses_most_of_the_line\n    short_content");
+    }
+
+    #[test]
+    fn continuation_stays_flat_at_the_current_line_boundary() {
+        let mut p = printer();
+        p.word("1234567890123456789012345678901234");
+        p.continuation_box(4, false);
+        p.space();
+        p.word("abcde");
+        p.end();
+
+        assert_eq!(p.eof(), "1234567890123456789012345678901234 abcde");
+    }
+
+    #[test]
+    fn continuation_breaks_at_the_continuation_line_boundary() {
+        let mut p = printer();
+        p.word("1234567890123456789012345678901234567890");
+        p.continuation_box(4, false);
+        p.space();
+        p.word("123456789012345678901234567890123456");
+        p.end();
+
+        assert_eq!(
+            p.eof(),
+            "1234567890123456789012345678901234567890\n    123456789012345678901234567890123456"
+        );
+    }
+
+    #[test]
+    fn continuation_uses_the_actual_leading_break_width() {
+        let mut p = printer();
+        p.word("12345678901234567890123456789012345678");
+        p.continuation_box(4, false);
+        p.break_offset(3, 0);
+        p.word("x");
+        p.end();
+
+        assert_eq!(p.eof(), "12345678901234567890123456789012345678\n    x");
+    }
+
+    #[test]
+    fn continuation_uses_the_leading_break_line_geometry() {
+        let mut p = Printer::new(80, None, 4);
+        p.word("123456789012345678901234567890123456789012345678901234567890123456789012345678");
+        p.continuation_box(4, true);
+        p.scan_break(BreakToken {
+            offset: 4,
+            blank_space: 1,
+            post_break: Some("=> "),
+            ..BreakToken::default()
+        });
+        p.word("call(");
+        p.cbox(4);
+        p.zerobreak();
+        p.word("123456789012345678901234567890123456789012345678901234567890abcde");
+        p.zerobreak();
+        p.offset(-4);
+        p.end();
+        p.word(")");
+        p.end();
+
+        assert_eq!(
+            p.eof(),
+            concat!(
+                "123456789012345678901234567890123456789012345678901234567890123456789012345678\n",
+                "        => call(\n",
+                "        123456789012345678901234567890123456789012345678901234567890abcde\n",
+                "    )"
+            )
+        );
+    }
+
+    #[test]
+    fn continuation_head_can_break_before_nested_layout() {
+        let mut p = printer();
+        p.word("12345678901234567890123456789012345678");
+        p.continuation_box(4, true);
+        p.space();
+        p.word("123456789012345678901234567890");
+        p.space();
+        p.word("123456789012345678901234567890");
+        p.end();
+
+        assert_eq!(
+            p.eof(),
+            concat!(
+                "12345678901234567890123456789012345678\n",
+                "    123456789012345678901234567890\n",
+                "    123456789012345678901234567890"
+            )
+        );
+    }
+
+    #[test]
+    fn continuation_delegates_long_contents_to_nested_groups() {
+        let mut p = printer();
+        p.word("declaration =");
+        p.continuation_box(4, false);
+        p.space();
+        p.word("call(");
+        p.cbox(4);
+        p.zerobreak();
+        p.word("an_argument_that_makes_the_call_too_wide,");
+        p.space();
+        p.word("other");
+        p.zerobreak();
+        p.offset(-4);
+        p.end();
+        p.word(")");
+        p.end();
+
+        assert_eq!(
+            p.eof(),
+            "declaration = call(\n    an_argument_that_makes_the_call_too_wide,\n    other\n)"
+        );
+    }
+
+    #[test]
+    fn nested_continuation_keeps_a_fitting_head_on_the_current_line() {
+        let mut p = printer();
+        p.word("123456789012345678901234567890");
+        p.nested_continuation_box(4);
+        p.space();
+        p.word("call(");
+        p.cbox(4);
+        p.zerobreak();
+        p.word("abcdefghijklmnopqrst");
+        p.zerobreak();
+        p.offset(-4);
+        p.end();
+        p.word(")");
+        p.end();
+
+        assert_eq!(p.eof(), "123456789012345678901234567890 call(\n    abcdefghijklmnopqrst\n)");
+    }
+
+    #[test]
+    fn transparent_group_preserves_the_enclosing_break_policy() {
+        let mut p = printer();
+        p.cbox(4);
+        p.word("12345678901234567890123456789012345");
+        let group = p.transparent_group(0);
+        p.space();
+        p.word("left");
+        p.space();
+        p.word("right");
+        p.set_indent(group, 8);
+        p.end();
+        p.end();
+
+        assert_eq!(
+            p.eof(),
+            "12345678901234567890123456789012345\n            left\n            right"
+        );
+    }
+
+    #[test]
+    fn nested_continuation_counts_its_separator_at_the_current_line_boundary() {
+        let mut p = printer();
+        p.word("123456789012345678901234567890");
+        p.nested_continuation_box(4);
+        p.space();
+        p.word("1234567890");
+        p.cbox(4);
+        p.space();
+        p.word("tail");
+        p.end();
+        p.end();
+
+        assert_eq!(p.eof(), "123456789012345678901234567890\n    1234567890 tail");
+    }
+
+    #[test]
+    fn isolated_group_stays_flat_when_its_parent_breaks() {
+        let mut p = printer();
+        p.cbox(0);
+        p.word("a_parent_prefix_that_uses_the_entire_line");
+        p.space();
+        p.isolated_cbox(4);
+        p.word("short");
+        p.space();
+        p.word("child");
+        p.end();
+        p.end();
+
+        assert_eq!(p.eof(), "a_parent_prefix_that_uses_the_entire_line\nshort child");
+    }
+
+    #[test]
+    fn isolated_group_does_not_mask_nested_break_parent() {
+        let mut p = printer();
+        p.isolated_cbox(0);
+        p.cbox(4);
+        p.word("left");
+        p.space();
+        p.break_parent();
+        p.word("right");
+        p.end();
+        p.end();
+
+        assert_eq!(p.eof(), "left\n    right");
+    }
+
+    #[test]
+    fn isolated_group_does_not_mask_break_children() {
+        let mut p = printer();
+        let outer = p.isolated_cbox(0);
+        p.cbox(4);
+        p.word("left");
+        p.space();
+        p.word("right");
+        p.end();
+        p.break_children(outer);
+        p.end();
+
+        assert_eq!(p.eof(), "left\n    right");
+    }
+
+    #[test]
+    fn forced_children_override_explicit_flattening() {
+        let mut p = printer();
+        let outer = p.cbox_with_id(0);
+        p.cbox(4);
+        p.word("left");
+        p.space();
+        p.word("right");
+        p.end();
+        p.break_children(outer);
+        p.flatten_children(outer);
+        p.end();
+
+        assert_eq!(p.eof(), "left\n    right");
+    }
+
+    #[test]
+    fn forced_outer_group_does_not_override_child_flattening() {
+        let mut p = printer();
+        p.cbox(0);
+        let child = p.cbox_with_id(0);
+        p.word("12345678901234567890123456789012345");
+        p.space();
+        p.word("right");
+        p.end();
+        p.break_parent();
+        p.flatten_children(child);
+        p.end();
+
+        assert_eq!(p.eof(), "12345678901234567890123456789012345 right");
+    }
+
+    #[test]
+    fn isolated_group_slack_allows_controlled_overflow() {
+        let mut p = printer();
+        p.isolated_cbox_with_slack(4, 4);
+        p.word("1234567890123456789012345678901234567890");
+        p.space();
+        p.word("x");
+        p.end();
+
+        assert_eq!(p.eof(), "1234567890123456789012345678901234567890 x");
+    }
+
+    #[test]
+    fn hardbreak_remains_forced_in_a_delegating_continuation() {
+        let mut p = printer();
+        p.continuation_box(4, false);
+        p.word("left");
+        p.hardbreak();
+        p.word("right");
+        p.end();
+
+        assert_eq!(p.eof(), "left\nright");
+    }
+
+    #[test]
+    fn continuation_layout_is_annotated_inside_line_suffixes() {
+        let mut p = printer();
+        p.word("12345678901234567890123456789012345678");
+        let suffix = p.begin_line_suffix();
+        p.continuation_box(4, false);
+        p.space();
+        p.word("short");
+        p.end();
+        p.end_line_suffix(suffix);
+
+        assert_eq!(p.eof(), "12345678901234567890123456789012345678\n    short");
     }
 
     #[test]

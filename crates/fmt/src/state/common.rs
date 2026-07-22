@@ -408,16 +408,19 @@ impl<'ast> State<'_, 'ast> {
 
         let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
         let skip_first_break = if format.with_delimiters || format.is_inline() {
-            self.s.cbox(if format.no_ind { 0 } else { self.ind });
+            self.open_commasep_box(format);
             if is_single_without_cmnts {
                 true
             } else {
                 self.commasep_opening_logic(values, &mut get_span, format, manual_opening)
             }
         } else {
+            if manual_offset {
+                self.open_manual_commasep_box(format);
+            }
             let res = self.commasep_opening_logic(values, &mut get_span, format, manual_opening);
             if !manual_offset {
-                self.s.cbox(if format.no_ind { 0 } else { self.ind });
+                self.open_commasep_box(format);
             }
             res
         };
@@ -541,14 +544,25 @@ impl<'ast> State<'_, 'ast> {
             self.word(sym);
         }
 
-        if !manual_offset {
-            self.end();
-        }
+        self.end();
         self.cursor.advance_to(pos_hi, true);
 
         if last_delimiter_break {
             format.print_break(true, values.len(), &mut self.s);
         }
+    }
+
+    fn open_commasep_box(&mut self, format: ListFormat) {
+        let indent = if format.no_ind { 0 } else { self.ind };
+        if format.isolated {
+            self.s.isolated_cbox(indent);
+        } else {
+            self.s.cbox(indent);
+        }
+    }
+
+    fn open_manual_commasep_box(&mut self, _format: ListFormat) {
+        self.s.transparent_group(0);
     }
 
     pub(super) fn print_path(&mut self, path: &'ast ast::PathSlice, consistent_break: bool) {
@@ -791,6 +805,8 @@ pub(crate) struct ListFormat {
     with_delimiters: bool,
     /// Breaks the list when the referenced group breaks.
     break_if: Option<GroupId>,
+    /// Calculates this list's fit independently of enclosing groups.
+    isolated: bool,
 }
 
 /// The kind of formatting style for a list.
@@ -818,6 +834,7 @@ impl Default for ListFormat {
             with_space: false,
             with_delimiters: true,
             break_if: None,
+            isolated: false,
         }
     }
 }
@@ -903,6 +920,11 @@ impl ListFormat {
 
     pub(crate) const fn break_if(mut self, group: GroupId) -> Self {
         self.break_if = Some(group);
+        self
+    }
+
+    pub(crate) const fn isolated(mut self) -> Self {
+        self.isolated = true;
         self
     }
 
