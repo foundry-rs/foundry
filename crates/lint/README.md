@@ -27,6 +27,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `boolean-cst`: Flags misuse of boolean constants.
   - `dangerous-unary-operator`: Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), e.g. `x =- 1`, which parses as `x = -1` instead of the intended compound `x -= 1`.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
+  - `ecrecover`: Flags direct `ecrecover` calls whose signature `s` value is not proven to be canonical and non-malleable.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
