@@ -95,6 +95,9 @@ const MIN_ESTIMATED_CALLS_PER_INVARIANT_WORKER: u64 =
     MIN_RUNS_PER_INVARIANT_WORKER as u64 * DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP as u64;
 /// Share of parallel workers reserved for selector focus mode.
 const INVARIANT_FOCUS_WORKER_DIVISOR: usize = 8;
+/// Minimum number of distinct candidate target functions required per worker before any worker
+/// is carved out for selector-focus mode.
+const INVARIANT_FOCUS_MIN_CANDIDATES_PER_WORKER: usize = 4;
 
 sol! {
     interface IInvariantTest {
@@ -271,8 +274,10 @@ fn invariant_worker_collects_evm_cmp_log(
     config.corpus.collect_evm_cmp_log() && (worker_count <= 1 || worker_id == 0)
 }
 
-fn invariant_focus_worker_count(worker_count: usize) -> usize {
-    if worker_count <= 1 {
+fn invariant_focus_worker_count(worker_count: usize, candidate_functions: usize) -> usize {
+    if worker_count <= 1
+        || candidate_functions < worker_count * INVARIANT_FOCUS_MIN_CANDIDATES_PER_WORKER
+    {
         0
     } else {
         let max_focus_workers = if worker_count > 2 { worker_count - 2 } else { worker_count - 1 };
@@ -280,9 +285,13 @@ fn invariant_focus_worker_count(worker_count: usize) -> usize {
     }
 }
 
-fn invariant_focus_worker_index(worker_id: u32, worker_count: usize) -> Option<usize> {
+fn invariant_focus_worker_index(
+    worker_id: u32,
+    worker_count: usize,
+    candidate_functions: usize,
+) -> Option<usize> {
     let worker_id = worker_id as usize;
-    let focus_workers = invariant_focus_worker_count(worker_count);
+    let focus_workers = invariant_focus_worker_count(worker_count, candidate_functions);
     if focus_workers == 0 || worker_id >= worker_count {
         return None;
     }
@@ -291,6 +300,20 @@ fn invariant_focus_worker_index(worker_id: u32, worker_count: usize) -> Option<u
     let first_focus_worker = focus_worker_end - focus_workers;
     (worker_id >= first_focus_worker && worker_id < focus_worker_end)
         .then(|| worker_id - first_focus_worker)
+}
+
+/// Number of distinct `(address, selector)` candidates the focus mechanism can pick from.
+///
+/// Mirrors the candidate-building loop in `focused_targeted_contracts` so the gate in
+/// `invariant_focus_worker_count` reflects the same effective selector set.
+fn focus_candidate_count(targeted_contracts: &TargetedContracts) -> usize {
+    let mut seen = HashSet::new();
+    for (address, contract) in targeted_contracts.iter() {
+        for function in contract.abi_fuzzed_functions() {
+            seen.insert((*address, function.selector()));
+        }
+    }
+    seen.len()
 }
 
 #[cfg(test)]
@@ -309,7 +332,9 @@ fn focused_campaign_seed_for_worker(
     worker_count: usize,
     focus_seed: Option<U256>,
 ) -> Option<InvariantCampaignSeed> {
-    let focus_index = invariant_focus_worker_index(plan.worker_id, worker_count)?;
+    let candidate_functions = focus_candidate_count(&campaign_seed.targeted_contracts);
+    let focus_index =
+        invariant_focus_worker_index(plan.worker_id, worker_count, candidate_functions)?;
     let targeted_contracts =
         focused_targeted_contracts(&campaign_seed.targeted_contracts, focus_index, focus_seed)?;
 
@@ -415,8 +440,9 @@ fn invariant_focus_seed(
     runner: &mut TestRunner,
     configured_seed: Option<U256>,
     worker_count: usize,
+    candidate_functions: usize,
 ) -> Option<U256> {
-    if invariant_focus_worker_count(worker_count) == 0 {
+    if invariant_focus_worker_count(worker_count, candidate_functions) == 0 {
         return None;
     }
     configured_seed.or_else(|| {
@@ -954,7 +980,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let setup_contracts = self.setup_contracts;
         let project_contracts = self.project_contracts;
         let base_executor = self.executor.clone();
-        let focus_seed = invariant_focus_seed(&mut runner, self.fuzz_seed, actual_worker_count);
+        let candidate_functions = focus_candidate_count(&campaign_seed.targeted_contracts);
+        trace!(target: "forge::test", candidate_functions, actual_worker_count, "invariant focus candidate count");
+        let focus_seed = invariant_focus_seed(
+            &mut runner,
+            self.fuzz_seed,
+            actual_worker_count,
+            candidate_functions,
+        );
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
@@ -2443,10 +2476,10 @@ mod tests {
         let mut parent = test_runner();
 
         assert_eq!(
-            invariant_focus_seed(&mut parent, Some(configured_seed), 2),
+            invariant_focus_seed(&mut parent, Some(configured_seed), 2, 1000),
             Some(configured_seed)
         );
-        assert_eq!(invariant_focus_seed(&mut parent, Some(configured_seed), 1), None);
+        assert_eq!(invariant_focus_seed(&mut parent, Some(configured_seed), 1, 1000), None);
     }
 
     #[test]
@@ -2455,11 +2488,24 @@ mod tests {
         let mut matching_parent = seeded_test_runner(U256::from(1));
         let mut different_parent = seeded_test_runner(U256::from(2));
 
-        let focus_seed = invariant_focus_seed(&mut parent, None, 2).unwrap();
+        let focus_seed = invariant_focus_seed(&mut parent, None, 2, 1000).unwrap();
 
-        assert_eq!(focus_seed, invariant_focus_seed(&mut matching_parent, None, 2).unwrap());
-        assert_ne!(focus_seed, invariant_focus_seed(&mut different_parent, None, 2).unwrap());
-        assert_eq!(invariant_focus_seed(&mut parent, None, 1), None);
+        assert_eq!(focus_seed, invariant_focus_seed(&mut matching_parent, None, 2, 1000).unwrap());
+        assert_ne!(focus_seed, invariant_focus_seed(&mut different_parent, None, 2, 1000).unwrap());
+        assert_eq!(invariant_focus_seed(&mut parent, None, 1, 1000), None);
+    }
+
+    #[test]
+    fn invariant_focus_seed_disabled_below_candidate_threshold() {
+        let mut parent = test_runner();
+        // worker_count=2 needs >= 8 candidate functions (INVARIANT_FOCUS_MIN_CANDIDATES_PER_WORKER
+        // * worker_count); below that, no worker is carved out for focus mode regardless of an
+        // explicit seed.
+        assert_eq!(invariant_focus_seed(&mut parent, Some(U256::from(1)), 2, 7), None);
+        assert_eq!(
+            invariant_focus_seed(&mut parent, Some(U256::from(1)), 2, 8),
+            Some(U256::from(1))
+        );
     }
 
     #[test]
@@ -2845,21 +2891,36 @@ mod tests {
 
     #[test]
     fn invariant_focus_workers_stay_before_exploratory_tail_worker() {
-        assert_eq!(invariant_focus_worker_count(1), 0);
-        assert_eq!(invariant_focus_worker_count(2), 1);
-        assert_eq!(invariant_focus_worker_count(4), 1);
-        assert_eq!(invariant_focus_worker_count(8), 1);
-        assert_eq!(invariant_focus_worker_count(16), 2);
+        // Well above the per-worker candidate threshold, so focus behaves as before.
+        assert_eq!(invariant_focus_worker_count(1, 1000), 0);
+        assert_eq!(invariant_focus_worker_count(2, 1000), 1);
+        assert_eq!(invariant_focus_worker_count(4, 1000), 1);
+        assert_eq!(invariant_focus_worker_count(8, 1000), 1);
+        assert_eq!(invariant_focus_worker_count(16, 1000), 2);
 
-        assert_eq!(invariant_focus_worker_index(0, 1), None);
-        assert_eq!(invariant_focus_worker_index(1, 2), Some(0));
-        assert_eq!(invariant_focus_worker_index(0, 4), None);
-        assert_eq!(invariant_focus_worker_index(2, 4), Some(0));
-        assert_eq!(invariant_focus_worker_index(3, 4), None);
-        assert_eq!(invariant_focus_worker_index(13, 16), Some(0));
-        assert_eq!(invariant_focus_worker_index(14, 16), Some(1));
-        assert_eq!(invariant_focus_worker_index(15, 16), None);
-        assert_eq!(invariant_focus_worker_index(16, 16), None);
+        assert_eq!(invariant_focus_worker_index(0, 1, 1000), None);
+        assert_eq!(invariant_focus_worker_index(1, 2, 1000), Some(0));
+        assert_eq!(invariant_focus_worker_index(0, 4, 1000), None);
+        assert_eq!(invariant_focus_worker_index(2, 4, 1000), Some(0));
+        assert_eq!(invariant_focus_worker_index(3, 4, 1000), None);
+        assert_eq!(invariant_focus_worker_index(13, 16, 1000), Some(0));
+        assert_eq!(invariant_focus_worker_index(14, 16, 1000), Some(1));
+        assert_eq!(invariant_focus_worker_index(15, 16, 1000), None);
+        assert_eq!(invariant_focus_worker_index(16, 16, 1000), None);
+    }
+
+    #[test]
+    fn invariant_focus_worker_count_disabled_on_small_target_surface() {
+        // Liquity-shaped harness: a single `targetContract` with the pinned scfuzzbench target's
+        // actual 16 candidate functions, fuzzed by 8 workers. 16 < 8 *
+        // INVARIANT_FOCUS_MIN_CANDIDATES_PER_WORKER (32), so no worker should be carved out for
+        // selector-focus mode.
+        assert_eq!(invariant_focus_worker_count(8, 16), 0);
+        assert_eq!(invariant_focus_worker_index(6, 8, 16), None);
+
+        // At and above the threshold, focus re-enables exactly as before.
+        assert_eq!(invariant_focus_worker_count(8, 32), 1);
+        assert_eq!(invariant_focus_worker_index(6, 8, 32), Some(0));
     }
 
     #[test]
@@ -2906,10 +2967,11 @@ mod tests {
     #[test]
     fn invariant_focus_freezes_dynamic_target_updates() {
         let target = Address::from([0x44; 20]);
-        let first = function("first(uint256)");
-        let second = function("second(uint256)");
-        let mut contract = targeted_contract("Target", vec![first.clone(), second.clone()]);
-        contract.targeted_functions = vec![first, second];
+        let functions: Vec<_> = (1..=8).map(|i| function(&format!("f{i}(uint256)"))).collect();
+        // 8 candidate functions clears the worker_count=2 focus threshold
+        // (INVARIANT_FOCUS_MIN_CANDIDATES_PER_WORKER * 2).
+        let mut contract = targeted_contract("Target", functions.clone());
+        contract.targeted_functions = functions;
 
         let mut targeted_contracts = TargetedContracts::new();
         targeted_contracts.insert(target, contract);
