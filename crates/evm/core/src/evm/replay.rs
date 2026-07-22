@@ -245,8 +245,7 @@ mod monad_tests {
         let factory = MonadEvmFactory::default();
         let evm_env =
             EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
-        let mut evm =
-            factory.create_evm_with_inspector(db, evm_env, CountInspector::default());
+        let mut evm = factory.create_evm_with_inspector(db, evm_env, CountInspector::default());
 
         let result = execute_replay_transaction(&factory, &mut evm, tx).unwrap();
 
