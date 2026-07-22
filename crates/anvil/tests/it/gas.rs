@@ -4,7 +4,7 @@ use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 
@@ -215,6 +215,33 @@ async fn test_can_use_fee_history() {
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee as u64);
     }
+}
+
+// Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
+//
+// `eth_feeHistory` reads from a cache that the `FeeHistoryService` populates asynchronously, so it
+// can lag the chain head. Burst-mining many blocks makes the cache trail behind; the response must
+// still cover the full requested range instead of silently dropping the not-yet-cached blocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_complete_when_cache_lags() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    // Mine a burst of blocks. The cache is updated by a separate task and will not have caught up
+    // by the time the RPC call below runs.
+    api.anvil_mine(Some(U256::from(100)), None).await.unwrap();
+
+    let count = 10u64;
+    let fee_history =
+        api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+
+    // Per-block arrays must have exactly `count` entries; `base_fee_per_gas` additionally includes
+    // the next block, so it has `count + 1`.
+    assert_eq!(fee_history.gas_used_ratio.len(), count as usize, "incomplete gas_used_ratio");
+    assert_eq!(
+        fee_history.base_fee_per_gas.len(),
+        count as usize + 1,
+        "incomplete base_fee_per_gas"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
 
@@ -283,111 +283,141 @@ where
         hash: B256,
         header: &impl BlockHeader,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
-        // percentile list from 0.0 to 100.0 with a 0.5 resolution.
-        // this will create 200 percentile points
-        let reward_percentiles: Vec<f64> = {
-            let mut percentile: f64 = 0.0;
-            (0..=200)
-                .map(|_| {
-                    let val = percentile;
-                    percentile += 0.5;
-                    val
-                })
-                .collect()
-        };
-
-        let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas().unwrap_or_default();
-        let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
-        let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
-
-        let mut item = FeeHistoryCacheItem {
-            base_fee: base_fee as u128,
-            gas_used_ratio: 0f64,
-            blob_gas_used_ratio: 0f64,
-            rewards: Vec::new(),
-            excess_blob_gas,
-            base_fee_per_blob_gas,
-            blob_gas_used,
-        };
-
-        let current_block = self.storage_info.block(hash);
-        let current_receipts = self.storage_info.receipts(hash);
-
-        if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number());
-
-            let gas_used = block.header.gas_used() as f64;
-            let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
-            item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
-            item.blob_gas_used_ratio = blob_gas_used
-                .map(|g| {
-                    let max = self.blob_params.max_blob_gas_per_block() as f64;
-                    if max == 0.0 { 0.0 } else { g / max }
-                })
-                .unwrap_or(0.0);
-
-            // extract useful tx info (gas_used, effective_reward)
-            let mut transactions: Vec<(_, _)> = receipts
-                .iter()
-                .enumerate()
-                .map(|(i, receipt)| {
-                    let cumulative = receipt.cumulative_gas_used();
-                    let prev_cumulative =
-                        if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
-                    let gas_used = cumulative - prev_cumulative;
-                    let effective_reward = block
-                        .body
-                        .transactions
-                        .get(i)
-                        .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
-                        .unwrap_or(0);
-
-                    (gas_used, effective_reward)
-                })
-                .collect();
-
-            // sort by effective reward asc
-            transactions.sort_by_key(|(_, reward)| *reward);
-
-            // calculate percentile rewards
-            item.rewards = reward_percentiles
-                .into_iter()
-                .filter_map(|p| {
-                    let target_gas = (p * gas_used / 100f64) as u64;
-                    let mut sum_gas = 0;
-                    for (gas_used, effective_reward) in transactions.iter().copied() {
-                        sum_gas += gas_used;
-                        if target_gas <= sum_gas {
-                            return Some(effective_reward);
-                        }
-                    }
-                    None
-                })
-                .collect();
-        } else {
-            item.rewards = vec![0; reward_percentiles.len()];
-        }
-        (item, block_number)
+        create_fee_history_cache_item(hash, header, &self.storage_info, self.blob_params)
     }
 
     fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
-        if let Some(block_number) = block_number {
-            trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
-            let mut cache = self.cache.lock();
-            cache.insert(block_number, item);
+        insert_fee_history_cache_item(&self.cache, item, block_number, self.fee_history_limit);
+    }
+}
 
-            // adhere to cache limit
-            let pop_next = block_number.saturating_sub(self.fee_history_limit);
+/// Inserts an entry into the fee history cache and trims it back to `fee_history_limit`.
+///
+/// Shared by the async [`FeeHistoryService`] and the `eth_feeHistory` fallback so both paths
+/// enforce [`MAX_FEE_HISTORY_CACHE_SIZE`]; inserting directly would let the cache grow unbounded.
+pub(crate) fn insert_fee_history_cache_item(
+    cache: &FeeHistoryCache,
+    item: FeeHistoryCacheItem,
+    block_number: Option<u64>,
+    fee_history_limit: u64,
+) {
+    if let Some(block_number) = block_number {
+        trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
+        let mut cache = cache.lock();
+        cache.insert(block_number, item);
 
-            let num_remove = (cache.len() as u64).saturating_sub(self.fee_history_limit);
-            for num in 0..num_remove {
-                let key = pop_next - num;
-                cache.remove(&key);
-            }
+        // Trim to the cache limit by dropping the oldest entries (smallest block numbers).
+        // `pop_first` is saturating and correct regardless of insertion order, unlike the
+        // previous index math which could underflow when the `eth_feeHistory` fallback inserts
+        // entries out of order.
+        while cache.len() as u64 > fee_history_limit {
+            cache.pop_first();
         }
     }
+}
+
+/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
+///
+/// Constant across blocks, so it is computed once instead of being rebuilt on every
+/// `create_fee_history_cache_item` call.
+static REWARD_PERCENTILES: LazyLock<Vec<f64>> = LazyLock::new(|| {
+    let mut percentile: f64 = 0.0;
+    (0..=200)
+        .map(|_| {
+            let val = percentile;
+            percentile += 0.5;
+            val
+        })
+        .collect()
+});
+
+/// Builds the [`FeeHistoryCacheItem`] for a single block.
+///
+/// Shared by the async [`FeeHistoryService`] and by `eth_feeHistory` itself: the service can lag
+/// the chain head (it only runs when the node task is polled), so the RPC handler computes any
+/// missing entry on demand with the same logic instead of returning a short response.
+pub(crate) fn create_fee_history_cache_item<N: Network>(
+    hash: B256,
+    header: &impl BlockHeader,
+    storage_info: &StorageInfo<N>,
+    blob_params: BlobParams,
+) -> (FeeHistoryCacheItem, Option<u64>)
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+{
+    let mut block_number: Option<u64> = None;
+    let base_fee = header.base_fee_per_gas().unwrap_or_default();
+    let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
+    let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
+    let base_fee_per_blob_gas = header.blob_fee(blob_params);
+
+    let mut item = FeeHistoryCacheItem {
+        base_fee: base_fee as u128,
+        gas_used_ratio: 0f64,
+        blob_gas_used_ratio: 0f64,
+        rewards: Vec::new(),
+        excess_blob_gas,
+        base_fee_per_blob_gas,
+        blob_gas_used,
+    };
+
+    let current_block = storage_info.block(hash);
+    let current_receipts = storage_info.receipts(hash);
+
+    if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
+        block_number = Some(block.header.number());
+
+        let gas_used = block.header.gas_used() as f64;
+        let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
+        item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
+        item.blob_gas_used_ratio = blob_gas_used
+            .map(|g| {
+                let max = blob_params.max_blob_gas_per_block() as f64;
+                if max == 0.0 { 0.0 } else { g / max }
+            })
+            .unwrap_or(0.0);
+
+        // extract useful tx info (gas_used, effective_reward)
+        let mut transactions: Vec<(_, _)> = receipts
+            .iter()
+            .enumerate()
+            .map(|(i, receipt)| {
+                let cumulative = receipt.cumulative_gas_used();
+                let prev_cumulative = if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
+                let gas_used = cumulative - prev_cumulative;
+                let effective_reward = block
+                    .body
+                    .transactions
+                    .get(i)
+                    .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
+                    .unwrap_or(0);
+
+                (gas_used, effective_reward)
+            })
+            .collect();
+
+        // sort by effective reward asc
+        transactions.sort_by_key(|(_, reward)| *reward);
+
+        // calculate percentile rewards
+        item.rewards = REWARD_PERCENTILES
+            .iter()
+            .filter_map(|&p| {
+                let target_gas = (p * gas_used / 100f64) as u64;
+                let mut sum_gas = 0;
+                for (gas_used, effective_reward) in transactions.iter().copied() {
+                    sum_gas += gas_used;
+                    if target_gas <= sum_gas {
+                        return Some(effective_reward);
+                    }
+                }
+                None
+            })
+            .collect();
+    } else {
+        item.rewards = vec![0; REWARD_PERCENTILES.len()];
+    }
+    (item, block_number)
 }
 
 // An endless future that listens for new blocks and updates the cache

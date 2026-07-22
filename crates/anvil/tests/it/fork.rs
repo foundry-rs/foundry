@@ -455,6 +455,52 @@ async fn test_fork_eth_fee_history() {
         provider.get_fee_history(count, BlockNumberOrTag::Latest, &[]).await.unwrap();
 }
 
+// Regression test for a fork-range bug in `eth_feeHistory`: when the requested range straddles
+// the fork boundary (newest block post-fork, oldest block pre-fork), the cache fallback must not
+// call `backend.get_block` on the pre-fork blocks — local storage has none, which made the call
+// hard-error. The pre-fork portion is served by the fork provider and merged with the locally
+// computed post-fork portion. The earlier guard only covers fully pre-fork ranges, so this needs
+// local blocks mined above the fork block to be exercised.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_fee_history_across_fork_boundary() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine local blocks so `latest` sits above the fork block.
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+
+    // latest = fork + 3, count = 10 => oldest = fork - 6 (pre-fork), newest = fork + 3 (post-fork).
+    let count = 10u64;
+    let history =
+        api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+
+    // The oldest block must be the true range start (latest - count + 1); a split that mistook the
+    // whole range for pre-fork would shift it and return more entries than requested.
+    let latest = api.block_number().unwrap().to::<u64>();
+    assert_eq!(history.oldest_block, latest - count + 1, "wrong oldest_block");
+
+    // Full range covered: per-block arrays have `count` entries; base_fee_per_gas has one more.
+    assert_eq!(history.gas_used_ratio.len(), count as usize, "incomplete gas_used_ratio");
+    assert_eq!(
+        history.base_fee_per_gas.len(),
+        count as usize + 1,
+        "incomplete base_fee_per_gas across the fork boundary"
+    );
+
+    // The pre-fork segment here is pre-Cancun, so the fork provider may return empty blob-fee
+    // arrays. They must still be padded to stay aligned with the gas arrays, otherwise the merged
+    // response is short and misaligned.
+    assert_eq!(
+        history.blob_gas_used_ratio.len(),
+        count as usize,
+        "incomplete blob_gas_used_ratio across the fork boundary"
+    );
+    assert_eq!(
+        history.base_fee_per_blob_gas.len(),
+        count as usize + 1,
+        "incomplete base_fee_per_blob_gas across the fork boundary"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset() {
     let (api, handle) = spawn(fork_config()).await;
