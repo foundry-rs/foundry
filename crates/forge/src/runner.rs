@@ -1057,6 +1057,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             );
         }
 
+        for invariant in &invariant_fns {
+            if invariant.outputs.len() == 1 && invariant.outputs[0].ty == "bool" {
+                warnings.push(format!(
+                    "Invariant function `{}` returns `bool`, but its return value is ignored; use assertions or revert to indicate failure.",
+                    invariant.signature()
+                ));
+            }
+        }
+
         // Invariant testing requires tracing to figure out what contracts were created.
         // For regular test runs we disable debug-level setup traces as an optimization.
         // In `forge test --debug`, keep setup traces in debug mode so setup failures are
