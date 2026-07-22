@@ -51,10 +51,7 @@ abstract contract Issue6636Assertions is Test {
 
         bool libraryCallRecorded;
         for (uint256 i = 1; i < accesses.length; ++i) {
-            if (
-                accesses[i].kind == Vm.AccountAccessKind.DelegateCall
-                    && accesses[i].account == deployment.account
-            ) {
+            if (accesses[i].kind == Vm.AccountAccessKind.DelegateCall && accesses[i].account == deployment.account) {
                 libraryCallRecorded = true;
                 break;
             }
@@ -77,9 +74,7 @@ contract Issue6636Test is Issue6636Assertions {
 
     function testLibraryDeploymentNotRevertedWithRecordingCall() public {
         Issue6636Reverter reverter = new Issue6636Reverter();
-        (bool success,) = address(reverter).call(
-            abi.encodeCall(Issue6636Reverter.startRecordingAndRevert, ())
-        );
+        (bool success,) = address(reverter).call(abi.encodeCall(Issue6636Reverter.startRecordingAndRevert, ()));
         assertTrue(!success);
 
         assertEq(Issue6636Lib.addOne(2), 3);
