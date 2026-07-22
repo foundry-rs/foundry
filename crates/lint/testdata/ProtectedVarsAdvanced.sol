@@ -321,6 +321,54 @@ contract AssemblyWrites {
             sstore(getSlot(root), 1)
         }
     }
+
+    function multiReturnDeclaration() external {
+        assembly {
+            function pair(first, second) -> a, b {
+                a := first
+                b := second
+            }
+            let protectedSlot, ordinarySlot := pair(protectedValue.slot, 0)
+            sstore(ordinarySlot, 1)
+        }
+    }
+
+    function multiReturnDeclarationWrite() external { //~WARN: protected variable `protectedValue` is written without `guard()`
+        assembly {
+            function pair(first, second) -> a, b {
+                a := first
+                b := second
+            }
+            let protectedSlot, ordinarySlot := pair(protectedValue.slot, 0)
+            sstore(protectedSlot, 1)
+        }
+    }
+
+    function multiReturnAssignment() external {
+        assembly {
+            function pair(first, second) -> a, b {
+                a := first
+                b := second
+            }
+            let protectedSlot := 0
+            let ordinarySlot := 0
+            protectedSlot, ordinarySlot := pair(protectedValue.slot, 0)
+            sstore(ordinarySlot, 1)
+        }
+    }
+
+    function multiReturnAssignmentWrite() external { //~WARN: protected variable `protectedValue` is written without `guard()`
+        assembly {
+            function pair(first, second) -> a, b {
+                a := first
+                b := second
+            }
+            let protectedSlot := 0
+            let ordinarySlot := 0
+            protectedSlot, ordinarySlot := pair(protectedValue.slot, 0)
+            sstore(protectedSlot, 1)
+        }
+    }
 }
 
 contract SharedInheritedEntry {

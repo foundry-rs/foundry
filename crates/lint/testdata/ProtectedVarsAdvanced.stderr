@@ -150,6 +150,22 @@ LL │     function helperReturnWrite() external {
    │
    ╰ help: https://getfoundry.sh/forge/linting/protected-vars
 
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function multiReturnDeclarationWrite() external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function multiReturnAssignmentWrite() external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
 warning[protected-vars]: protected variable `protectedValue` is written without `guard()` in most-derived contract `SharedLeafOne`
    ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
    │

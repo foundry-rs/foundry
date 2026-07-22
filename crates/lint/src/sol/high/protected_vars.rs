@@ -970,10 +970,10 @@ impl<'hir> EntryAnalyzer<'hir> {
                 if !self.analyze_expr(base) {
                     return false;
                 }
-                if let Some(start) = start {
-                    if !self.analyze_expr(start) {
-                        return false;
-                    }
+                if let Some(start) = start
+                    && !self.analyze_expr(start)
+                {
+                    return false;
                 }
                 if let Some(end) = end { self.analyze_expr(end) } else { true }
             }
@@ -1033,10 +1033,10 @@ impl<'hir> EntryAnalyzer<'hir> {
                 if !self.analyze_lhs(base) {
                     return false;
                 }
-                if let Some(start) = start {
-                    if !self.analyze_expr(start) {
-                        return false;
-                    }
+                if let Some(start) = start
+                    && !self.analyze_expr(start)
+                {
+                    return false;
                 }
                 if let Some(end) = end { self.analyze_expr(end) } else { true }
             }
@@ -1104,6 +1104,10 @@ impl<'hir> EntryAnalyzer<'hir> {
             &self.aliases.slots,
             &self.call_returns,
         );
+        self.set_slot_alias_roots(variable_id, roots);
+    }
+
+    fn set_slot_alias_roots(&mut self, variable_id: VariableId, roots: StorageRoots) {
         if roots.is_empty() {
             self.aliases.slots.remove(&variable_id);
         } else {
@@ -1139,10 +1143,10 @@ impl<'hir> EntryAnalyzer<'hir> {
                 let Some(expression) = expression else { continue };
                 if let Some(local) = lhs_local_var(self.hir, expression) {
                     let roots = self.storage_roots_for_output(rhs, index, outputs);
-                    self.set_storage_alias_roots(local, roots);
                     if self.assembly_depth > 0 {
-                        self.set_slot_alias(local, rhs);
+                        self.set_slot_alias_roots(local, roots.clone());
                     }
+                    self.set_storage_alias_roots(local, roots);
                 } else {
                     self.record_write(expression);
                 }
@@ -1169,10 +1173,10 @@ impl<'hir> EntryAnalyzer<'hir> {
         for (index, variable_id) in variables.iter().copied().enumerate() {
             let Some(variable_id) = variable_id else { continue };
             let roots = self.storage_roots_for_output(expression, index, variables.len());
-            self.set_storage_alias_roots(variable_id, roots);
             if self.assembly_depth > 0 {
-                self.set_slot_alias(variable_id, expression);
+                self.set_slot_alias_roots(variable_id, roots.clone());
             }
+            self.set_storage_alias_roots(variable_id, roots);
         }
     }
 
