@@ -119,6 +119,9 @@ pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayo
 mod coverage;
 pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
 
+mod trace;
+pub use trace::TracingConfig;
+
 mod fee;
 pub use fee::Eip1559FeeEstimatePreset;
 
@@ -297,7 +300,7 @@ pub struct Config {
     pub optimizer_details: Option<OptimizerDetails>,
     /// Model checker settings.
     pub model_checker: Option<ModelCheckerSettings>,
-    /// verbosity to use
+    /// Verbosity to use for global output.
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
@@ -379,6 +382,8 @@ pub struct Config {
     pub coverage: CoverageConfig,
     /// Configuration for mutation testing
     pub mutation: MutationConfig,
+    /// Configuration for trace rendering.
+    pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to show `console.log` outputs in realtime during script/test execution
@@ -549,7 +554,8 @@ pub struct Config {
     /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
     pub enable_tx_gas_limit: bool,
 
-    /// Address labels
+    /// Deprecated address-label alias; use [`TracingConfig::labels`].
+    #[serde(default, skip_serializing_if = "AddressHashMap::is_empty")]
     pub labels: AddressHashMap<String>,
 
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
@@ -747,6 +753,7 @@ impl Config {
         "symbolic",
         "coverage",
         "mutation",
+        "tracing",
         "labels",
         "dependencies",
         "soldeer",
@@ -829,13 +836,13 @@ impl Config {
     #[doc(alias = "try_from")]
     pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         trace!("load config with provider: {:?}", provider.metadata());
-        Self::from_figment(Figment::from(provider))
+        Self::from_figment(Figment::from(provider.legacy_labels()))
     }
 
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let provider = Figment::from(provider).select(self.profile.clone());
+        let provider = Figment::from(provider.legacy_labels()).select(self.profile.clone());
         let invariant_corpus_random_sequence_weight_configured =
             self.invariant.corpus_random_sequence_weight_configured
                 || provider.contains("invariant.corpus_random_sequence_weight")
@@ -981,12 +988,14 @@ impl Config {
             .merge(
                 Env::prefixed("DAPP_")
                     .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global(),
+                    .global()
+                    .legacy_labels(),
             )
             .merge(
                 Env::prefixed("DAPP_TEST_")
                     .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global(),
+                    .global()
+                    .legacy_labels(),
             )
             .merge(DappEnvCompatProvider)
             .merge(EtherscanEnvProvider::default())
@@ -1003,7 +1012,8 @@ impl Config {
                             key.into()
                         }
                     })
-                    .global(),
+                    .global()
+                    .legacy_labels(),
             )
             .select(profile.clone());
 
@@ -2718,11 +2728,16 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         let root = Value::serialize(self.root.clone())?;
+        let labels = Value::serialize(&self.labels)?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
+            entry.insert("labels".to_string(), labels.clone());
+            normalize_legacy_labels_in_profile(entry);
         }
         if let Some(entry) = data.get_mut(&self.profile) {
             entry.insert("root".to_string(), root);
+            entry.insert("labels".to_string(), labels);
+            normalize_legacy_labels_in_profile(entry);
         }
         Ok(data)
     }
@@ -2789,6 +2804,7 @@ impl Default for Config {
             symbolic: SymbolicConfig::default(),
             coverage: CoverageConfig::default(),
             mutation: MutationConfig::default(),
+            tracing: TracingConfig::default(),
             always_use_create_2_factory: false,
             eip1559_fee_estimate: Eip1559FeeEstimatePreset::default(),
             ffi: false,
@@ -5761,9 +5777,274 @@ mod tests {
                     ),
                 ])
             );
+            assert_eq!(config.tracing.labels, config.labels);
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "[labels]".to_string(),
+                    new: "[tracing.labels]".to_string(),
+                }]
+            );
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_parse_deprecated_profile_labels() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.labels]
+                0x0000000000000000000000000000000000000001 = "Alice"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let labels = AddressHashMap::from_iter(vec![(
+                address!("0x0000000000000000000000000000000000000001"),
+                "Alice".to_string(),
+            )]);
+            assert_eq!(config.labels, labels);
+            assert_eq!(config.tracing.labels, labels);
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "labels".to_string(),
+                    new: "tracing.labels".to_string(),
+                }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_env_labels_use_tracing_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "FOUNDRY_LABELS",
+                r#"{ "0x0000000000000000000000000000000000000001" = "Alice" }"#,
+            );
+            jail.set_env(
+                "FOUNDRY_TRACING_LABELS",
+                r#"{ "0x0000000000000000000000000000000000000001" = "Bob" }"#,
+            );
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.labels,
+                AddressHashMap::from_iter([(
+                    address!("0x0000000000000000000000000000000000000001"),
+                    "Alice".to_string(),
+                )])
+            );
+            assert_eq!(
+                config.tracing.labels,
+                AddressHashMap::from_iter([(
+                    address!("0x0000000000000000000000000000000000000001"),
+                    "Bob".to_string(),
+                )])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_labels_warn_for_inactive_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.ci.labels]
+                0x0000000000000000000000000000000000000001 = "Alice"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "labels".to_string(),
+                    new: "tracing.labels".to_string(),
+                }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_tracing_serialization_keeps_global_verbosity() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
+        let config = Config {
+            tracing: TracingConfig { verbosity: 4, labels: labels.clone(), ..Default::default() },
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        let table = serialized.as_table().unwrap();
+        assert_eq!(table["verbosity"].as_integer(), Some(0));
+        assert!(!table.contains_key("labels"));
+        assert_eq!(table["tracing"]["verbosity"].as_integer(), Some(4));
+
+        let provided = Figment::from(&config).extract::<Config>().unwrap();
+        assert_eq!(provided.verbosity, 0);
+        assert!(provided.labels.is_empty());
+        assert_eq!(provided.tracing.labels, labels);
+
+        let merged = config.merge_inline_provider(("ffi", true)).unwrap();
+        assert_eq!(merged.tracing.verbosity, 4);
+        assert_eq!(merged.tracing.labels, config.tracing.labels);
+    }
+
+    #[test]
+    fn test_legacy_programmatic_labels_survive_serialization() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
+        let config = Config { labels: labels.clone(), ..Default::default() };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(
+            serialized["labels"].as_table().unwrap().values().next().and_then(|v| v.as_str()),
+            Some("Alice")
+        );
+
+        let provided = Config::from_provider(&config).unwrap();
+        assert_eq!(provided.labels, labels);
+        assert_eq!(provided.tracing.labels, labels);
+
+        let merged = config.merge_inline_provider(("ffi", true)).unwrap();
+        assert_eq!(merged.labels, labels);
+        assert_eq!(merged.tracing.labels, labels);
+    }
+
+    #[test]
+    fn test_parse_tracing_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                verbosity = 2
+
+                [tracing]
+                verbosity = 4
+                disable_labels = true
+                compact_labels = true
+                trace_depth = 3
+                decode_internal = true
+
+                [tracing.labels]
+                0x0000000000000000000000000000000000000002 = "Bob"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.verbosity, 2);
+            assert_eq!(config.tracing.verbosity, 4);
+            assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.trace_depth, Some(3));
+            assert!(config.tracing.decode_internal);
+            assert!(config.tracing.compact_labels);
+            let labels = AddressHashMap::from_iter(vec![(
+                address!("0x0000000000000000000000000000000000000002"),
+                "Bob".to_string(),
+            )]);
+            assert!(config.labels.is_empty());
+            assert_eq!(config.tracing.labels, labels);
+            assert!(config.warnings.is_empty());
+
+            let serialized = config.to_string_pretty().unwrap();
+            assert!(!serialized.contains("[labels]"));
+            assert!(serialized.contains("[tracing.labels]"));
+
+            jail.create_file("foundry.toml", &serialized)?;
+            let reloaded = Config::load().unwrap();
+            assert!(reloaded.labels.is_empty());
+            assert_eq!(reloaded.tracing.labels, labels);
+            assert!(reloaded.warnings.is_empty());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_global_and_tracing_verbosity_are_independent() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                verbosity = 4
+
+                [tracing]
+                disable_labels = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.verbosity, 4);
+            assert_eq!(config.tracing.verbosity, 0);
+            assert!(config.tracing.disable_labels);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_label_aliases_preserve_provider_precedence() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = |label: &str| AddressHashMap::from_iter([(address, label.to_string())]);
+        let provider = |global: &str, local: &str| {
+            let figment = Config::merge_toml_provider(
+                Figment::from(Config::default()),
+                Toml::string(global).nested(),
+                Config::DEFAULT_PROFILE,
+            );
+            Config::merge_toml_provider(
+                figment,
+                Toml::string(local).nested(),
+                Config::DEFAULT_PROFILE,
+            )
+        };
+
+        let config = Config::from_provider(provider(
+            r#"[tracing.labels]
+            0x0000000000000000000000000000000000000001 = "global""#,
+            r#"[labels]
+            0x0000000000000000000000000000000000000001 = "local""#,
+        ))
+        .unwrap();
+        assert_eq!(config.tracing.labels, labels("local"));
+
+        let config = Config::from_provider(provider(
+            r#"[labels]
+            0x0000000000000000000000000000000000000001 = "global""#,
+            r#"[tracing.labels]
+            0x0000000000000000000000000000000000000001 = "local""#,
+        ))
+        .unwrap();
+        assert_eq!(config.tracing.labels, labels("local"));
+    }
+
+    #[test]
+    fn test_malformed_tracing_labels_are_not_replaced() {
+        let provider = Toml::string(
+            r#"
+            [profile.default.labels]
+            0x0000000000000000000000000000000000000001 = "legacy"
+
+            [profile.default.tracing]
+            labels = "invalid"
+            "#,
+        )
+        .nested();
+
+        assert!(Config::from_provider(provider).is_err());
     }
 
     #[test]
@@ -6152,6 +6433,140 @@ mod tests {
             let err = Config::load().unwrap_err().to_string();
             assert!(err.contains("Key collision detected"), "unexpected error: {err}");
             assert!(err.contains("symbolic"), "unexpected error: {err}");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_label_aliases_preserve_source_precedence() {
+        figment::Jail::expect_with(|jail| {
+            let address = address!("0x0000000000000000000000000000000000000001");
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "[labels]".to_string(),
+                    new: "[tracing.labels]".to_string(),
+                }]
+            );
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_label_aliases_detect_effective_collisions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert_eq!(
+                err,
+                "failed to extract foundry config:\n\
+                 foundry config error: Key collision detected in profile 'default' when extending \
+                 'base.toml'. Conflicting keys: [\"tracing\"]. Use 'extends.strategy' or \
+                 'extends_strategy' to specify how to handle conflicts.\n"
+            );
 
             Ok(())
         });

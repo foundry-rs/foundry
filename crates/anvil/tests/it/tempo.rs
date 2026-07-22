@@ -1994,6 +1994,44 @@ async fn test_tempo_aa_transaction_basic() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_preserves_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let calls = [
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xde, 0xad]),
+        },
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xbe, 0xef]),
+        },
+    ];
+
+    let hash = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "calls": calls,
+            }),),
+        )
+        .await
+        .unwrap();
+
+    let transaction = provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionByHash".into(), (hash,))
+        .await
+        .unwrap();
+    assert_eq!(transaction["type"], "0x76");
+    assert_eq!(transaction["calls"], serde_json::to_value(calls).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_aa_transaction_with_2d_nonce() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();

@@ -83,6 +83,12 @@ const SYMBOLIC_KEYS: &[&str] = &[
     "storage_layout",
 ];
 
+/// Allowed keys for TracingConfig.
+/// Required because empty labels and optional trace depth are skipped by default serialization,
+/// but they are still valid user-facing config keys.
+const TRACING_KEYS: &[&str] =
+    &["verbosity", "labels", "disable_labels", "compact_labels", "trace_depth", "decode_internal"];
+
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
 
@@ -97,6 +103,9 @@ const BACKWARD_COMPATIBLE_KEYS: &[&str] = &[
     #[cfg(feature = "monad")]
     "monad",
 ];
+
+const LABELS_KEY: &str = "labels";
+const TRACING_LABELS_KEY: &str = "tracing.labels";
 
 /// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {
@@ -165,6 +174,7 @@ impl<P: Provider> WarningsProvider<P> {
             })
             .collect::<BTreeSet<_>>();
         out.extend(deprecated_profile_keys.into_iter().filter_map(deprecated_key_warning));
+        self.collect_deprecated_label_warnings(&data, profiles.clone(), &mut out);
 
         // Add warning for unknown keys within profiles (root keys only here).
         if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
@@ -184,8 +194,7 @@ impl<P: Provider> WarningsProvider<P> {
                         .map(|s| s.to_string())
                         .unwrap_or(Config::FILE_NAME.to_string());
                     for key in profile_dict.keys() {
-                        let is_not_deprecated =
-                            !DEPRECATIONS.iter().any(|(deprecated_key, _)| *deprecated_key == key);
+                        let is_not_deprecated = !Self::is_deprecated_profile_key(key);
                         let is_not_allowed = !allowed_keys.contains(key)
                             && !allowed_keys.contains(&key.to_snake_case());
                         let is_not_reserved =
@@ -251,6 +260,8 @@ impl<P: Provider> WarningsProvider<P> {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
             } else if *section_name == "doc" {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if *section_name == "tracing" {
+                TRACING_KEYS.iter().map(|s| s.to_string()).collect()
             } else if *section_name == "symbolic" {
                 SYMBOLIC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
@@ -327,6 +338,8 @@ impl<P: Provider> WarningsProvider<P> {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else if key == "symbolic" {
                 SYMBOLIC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "tracing" {
+                TRACING_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_value) = default_dict.get(key) else {
                     continue;
@@ -362,6 +375,39 @@ impl<P: Provider> WarningsProvider<P> {
             }
             _ => BTreeSet::new(),
         }
+    }
+
+    fn collect_deprecated_label_warnings<'a>(
+        &self,
+        data: &Map<Profile, Dict>,
+        profiles: impl Iterator<Item = &'a Dict>,
+        out: &mut Vec<Warning>,
+    ) {
+        if data.contains_key(&Profile::new(LABELS_KEY)) {
+            out.push(Self::deprecated_label_warning("[labels]", "[tracing.labels]"));
+        }
+
+        if profiles
+            .flat_map(BTreeMap::values)
+            .filter_map(Value::as_dict)
+            .any(|dict| dict.contains_key(LABELS_KEY))
+        {
+            out.push(Self::deprecated_label_warning(LABELS_KEY, TRACING_LABELS_KEY));
+        }
+
+        if let Some(dict) = data.get(&self.profile)
+            && dict.contains_key(LABELS_KEY)
+        {
+            out.push(Self::deprecated_label_warning(LABELS_KEY, TRACING_LABELS_KEY));
+        }
+    }
+
+    fn deprecated_label_warning(old: &str, new: &str) -> Warning {
+        Warning::DeprecatedKey { old: old.to_string(), new: new.to_string() }
+    }
+
+    fn is_deprecated_profile_key(key: &str) -> bool {
+        key == LABELS_KEY || DEPRECATIONS.iter().any(|(deprecated_key, _)| *deprecated_key == key)
     }
 }
 

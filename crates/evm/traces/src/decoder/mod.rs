@@ -14,6 +14,7 @@ use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
 };
+use foundry_config::TracingConfig;
 #[cfg(feature = "monad")]
 use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
 use foundry_evm_core::{
@@ -113,6 +114,16 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Applies trace rendering settings.
+    #[inline]
+    pub fn with_tracing_config(mut self, config: &TracingConfig) -> Self {
+        self.decoder.labels.extend(config.labels.clone());
+        self.decoder.verbosity = config.verbosity;
+        self.decoder.disable_labels = config.disable_labels;
+        self.decoder.compact_labels = config.compact_labels;
+        self
+    }
+
     /// Sets the signature identifier for events and functions.
     #[inline]
     pub fn with_signature_identifier(mut self, identifier: SignaturesIdentifier) -> Self {
@@ -162,6 +173,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Hides addresses in trace parameters when a label is available.
+    #[inline]
+    pub const fn with_compact_labels(mut self, compact: bool) -> Self {
+        self.decoder.compact_labels = compact;
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -171,7 +189,8 @@ impl CallTraceDecoderBuilder {
 
     /// Build the decoder.
     #[inline]
-    pub fn build(self) -> CallTraceDecoder {
+    pub fn build(mut self) -> CallTraceDecoder {
+        self.decoder.base_labels = self.decoder.labels.clone();
         self.decoder
     }
 }
@@ -191,6 +210,8 @@ pub struct CallTraceDecoder {
     pub contracts: HashMap<Address, String>,
     /// Address labels.
     pub labels: HashMap<Address, String>,
+    /// Labels configured when the decoder was built.
+    base_labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
     pub receive_contracts: HashSet<Address>,
     /// Contract addresses that have fallback functions, mapped to function selectors of that
@@ -239,6 +260,9 @@ pub struct CallTraceDecoder {
 
     /// The Monad hardfork, used to determine network- and hardfork-specific metadata.
     monad_hardfork: Option<MonadHardfork>,
+
+    /// Hide addresses when a label is available, showing only the label.
+    pub compact_labels: bool,
 }
 
 impl CallTraceDecoder {
@@ -359,6 +383,7 @@ impl CallTraceDecoder {
         Self {
             contracts: Default::default(),
             labels,
+            base_labels: Default::default(),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
             non_fallback_contracts: Default::default(),
@@ -385,6 +410,7 @@ impl CallTraceDecoder {
             tempo_hardfork: None,
 
             monad_hardfork: None,
+            compact_labels: false,
         }
     }
 
@@ -392,9 +418,10 @@ impl CallTraceDecoder {
     pub fn clear_addresses(&mut self) {
         self.contracts.clear();
 
-        let default_labels = &Self::new().labels;
-        if self.labels.len() > default_labels.len() {
-            self.labels.clone_from(default_labels);
+        if self.base_labels.is_empty() {
+            self.labels.clone_from(&Self::new().labels);
+        } else {
+            self.labels.clone_from(&self.base_labels);
         }
 
         self.receive_contracts.clear();
@@ -1300,8 +1327,12 @@ impl CallTraceDecoder {
     /// Pretty-prints a value.
     fn format_value(&self, value: &DynSolValue) -> String {
         if let DynSolValue::Address(addr) = value
+            && !self.disable_labels
             && let Some(label) = self.labels.get(addr)
         {
+            if self.compact_labels {
+                return label.clone();
+            }
             return format!("{label}: [{addr}]");
         }
         format_token(value)
@@ -1608,6 +1639,43 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[test]
+    fn compact_labels_hide_address_in_trace_parameters() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let value = DynSolValue::Address(address);
+        let tracing = TracingConfig {
+            labels: AddressHashMap::from_iter([(address, "Alice".to_string())]),
+            ..Default::default()
+        };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        assert_eq!(decoder.format_value(&value), format!("Alice: [{address}]"));
+
+        let tracing = TracingConfig { compact_labels: true, ..tracing };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        assert_eq!(decoder.format_value(&value), "Alice");
+
+        let tracing = TracingConfig { disable_labels: true, ..tracing };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        assert_eq!(decoder.format_value(&value), address.to_string());
+    }
+
+    #[test]
+    fn configured_labels_survive_address_reset() {
+        let configured = address!("0x0000000000000000000000000000000000000100");
+        let discovered = address!("0x0000000000000000000000000000000000000200");
+        let tracing = TracingConfig {
+            labels: AddressHashMap::from_iter([(configured, "configured".to_string())]),
+            ..Default::default()
+        };
+        let mut decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        decoder.labels.insert(discovered, "discovered".to_string());
+
+        decoder.clear_addresses();
+
+        assert_eq!(decoder.labels.get(&configured).map(String::as_str), Some("configured"));
+        assert!(!decoder.labels.contains_key(&discovered));
     }
 
     #[tokio::test]
