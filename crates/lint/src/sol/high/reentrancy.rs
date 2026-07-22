@@ -89,6 +89,7 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
 struct FlowState {
     state_reads: BTreeSet<VariableId>,
     pending_calls: Vec<PendingCall>,
+    internal_function_targets: BTreeMap<VariableId, BTreeSet<FunctionId>>,
     self_address_local_paths: BTreeMap<VariableId, PathAlternatives>,
     balance_locals: BTreeSet<VariableId>,
     balance_local_paths: BTreeMap<VariableId, PathAlternatives>,
@@ -355,6 +356,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let init = self.hir.variable(var_id).initializer;
                 if let Some(init) = init {
                     self.analyze_expr(init, state);
+                    self.update_internal_function_target(state, var_id, init);
                     if self.reentrancy_balance_enabled {
                         self.update_balance_local(state, var_id, Some(init), false);
                     }
@@ -518,6 +520,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => {
                 state.invalidated_balance_guards.extend(self.active_balance_guards.iter().copied());
+                state.internal_function_targets.clear();
                 state.self_address_local_paths.clear();
                 true
             }
@@ -539,6 +542,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.invalidate_balance_guards(state, &written_vars);
                 }
                 forget_path_predicates(state, local_write_lhs_vars(self.hir, lhs));
+                if let Some(var_id) = lhs_local_var(self.hir, lhs) {
+                    if op.is_none() {
+                        self.update_internal_function_target(state, var_id, rhs);
+                    } else {
+                        state.internal_function_targets.remove(&var_id);
+                    }
+                }
                 if self.reentrancy_balance_enabled {
                     self.update_balance_assignment(state, lhs, rhs, op.is_some());
                     self.update_self_address_assignment(state, lhs, rhs, op.is_some());
@@ -552,6 +562,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.invalidate_balance_guards(state, &written_vars);
                 }
                 forget_path_predicates(state, local_write_lhs_vars(self.hir, inner));
+                if let Some(var_id) = lhs_local_var(self.hir, inner) {
+                    state.internal_function_targets.remove(&var_id);
+                }
                 if self.reentrancy_balance_enabled
                     && let Some(var_id) = lhs_local_var(self.hir, inner)
                 {
@@ -618,7 +631,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.emit_balance_calls(cond, state);
                 }
 
-                if let Some(func_id) = self.resolved_internal_function_id(callee) {
+                for func_id in self.resolved_internal_function_ids(callee, state) {
                     let returns = self.analyze_internal_call(func_id, args, state);
                     self.merge_call_balance_values(expr.span, returns);
                 }
@@ -836,15 +849,39 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         returns
     }
 
-    fn resolved_internal_function_id(&self, callee: &'hir hir::Expr<'hir>) -> Option<FunctionId> {
+    fn resolved_internal_function_ids(
+        &self,
+        callee: &'hir hir::Expr<'hir>,
+        state: &FlowState,
+    ) -> BTreeSet<FunctionId> {
+        if let Some(var_id) = lhs_local_var(self.hir, callee)
+            && let Some(targets) = state.internal_function_targets.get(&var_id)
+        {
+            return targets.clone();
+        }
         match &callee.peel_parens().kind {
             ExprKind::Ident(_) => {}
             ExprKind::Member(base, _) if is_super(base) => {}
-            _ => return None,
+            _ => return BTreeSet::new(),
         }
-        let ty = self.gcx.type_of_expr(callee.peel_parens().id)?;
-        let TyKind::Fn(function) = ty.kind else { return None };
-        if function.is_internal() { function.function_id } else { None }
+        let Some(ty) = self.gcx.type_of_expr(callee.peel_parens().id) else {
+            return BTreeSet::new();
+        };
+        let TyKind::Fn(function) = ty.kind else { return BTreeSet::new() };
+        function.is_internal().then_some(function.function_id).flatten().into_iter().collect()
+    }
+
+    fn update_internal_function_target(
+        &self,
+        state: &mut FlowState,
+        var_id: VariableId,
+        value: &'hir hir::Expr<'hir>,
+    ) {
+        let targets = self.resolved_internal_function_ids(value, state);
+        state.internal_function_targets.remove(&var_id);
+        if !targets.is_empty() {
+            state.internal_function_targets.insert(var_id, targets);
+        }
     }
 
     fn merge_call_balance_values(&mut self, span: Span, values: Vec<BalanceValue>) {
@@ -1023,7 +1060,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for arg in args.exprs() {
                     self.collect_direct_internal_calls_expr(arg, calls);
                 }
-                if let Some(func_id) = self.resolved_internal_function_id(callee) {
+                for func_id in self.resolved_internal_function_ids(callee, &FlowState::default()) {
                     calls.insert(func_id);
                 }
             }
@@ -1681,6 +1718,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let belongs_to_function = |var_id: &VariableId| {
             self.hir.variable(*var_id).parent == Some(ItemId::Function(func_id))
         };
+        state.internal_function_targets.retain(|var_id, _| !belongs_to_function(var_id));
         state.balance_locals.retain(|var_id| !belongs_to_function(var_id));
         state.self_address_local_paths.retain(|var_id, _| !belongs_to_function(var_id));
         state.balance_local_paths.retain(|var_id, _| !belongs_to_function(var_id));
@@ -1732,6 +1770,7 @@ impl FlowState {
     fn clear(&mut self) {
         self.state_reads.clear();
         self.pending_calls.clear();
+        self.internal_function_targets.clear();
         self.self_address_local_paths.clear();
         self.balance_locals.clear();
         self.balance_local_paths.clear();
@@ -1753,6 +1792,12 @@ impl FlowState {
             } else {
                 self.pending_calls.push(call.clone());
             }
+        }
+        for (var_id, targets) in &other.internal_function_targets {
+            self.internal_function_targets
+                .entry(*var_id)
+                .or_default()
+                .extend(targets.iter().copied());
         }
         merge_balance_local_paths(
             &mut self.self_address_local_paths,
@@ -1779,6 +1824,7 @@ impl FlowState {
 
     fn balance_only(&self) -> Self {
         Self {
+            internal_function_targets: self.internal_function_targets.clone(),
             self_address_local_paths: self.self_address_local_paths.clone(),
             balance_locals: self.balance_locals.clone(),
             balance_local_paths: self.balance_local_paths.clone(),
@@ -1795,6 +1841,12 @@ impl FlowState {
             &mut self.self_address_local_paths,
             &other.self_address_local_paths,
         );
+        for (var_id, targets) in &other.internal_function_targets {
+            self.internal_function_targets
+                .entry(*var_id)
+                .or_default()
+                .extend(targets.iter().copied());
+        }
         self.balance_locals.extend(other.balance_locals.iter().copied());
         merge_balance_local_paths(&mut self.balance_local_paths, &other.balance_local_paths);
         merge_comparison_locals(
@@ -2063,13 +2115,7 @@ fn standard_reentrancy_guard_lock(
     if body.stmts.iter().map(count_modifier_placeholders).sum::<usize>() != 1 {
         return None;
     }
-    let mut placeholders = body
-        .stmts
-        .iter()
-        .enumerate()
-        .filter(|(_, stmt)| matches!(stmt.kind, StmtKind::Placeholder));
-    let (placeholder_index, _) = placeholders.next()?;
-    debug_assert!(placeholders.next().is_none());
+    let placeholder_index = body.stmts.iter().position(contains_unconditional_placeholder)?;
 
     let mut seen = BTreeSet::new();
     let (lock_var, entered) =
@@ -2078,6 +2124,16 @@ fn standard_reentrancy_guard_lock(
     let (restored_var, restored) =
         guard_restoration_from_stmt(hir, body.stmts.get(placeholder_index + 1)?, &mut seen)?;
     (lock_var == restored_var && entered != restored).then_some(lock_var)
+}
+
+fn contains_unconditional_placeholder(stmt: &hir::Stmt<'_>) -> bool {
+    match stmt.kind {
+        StmtKind::Placeholder => true,
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block.stmts.iter().any(contains_unconditional_placeholder)
+        }
+        _ => false,
+    }
 }
 
 fn count_modifier_placeholders(stmt: &hir::Stmt<'_>) -> usize {
