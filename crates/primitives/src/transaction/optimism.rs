@@ -15,7 +15,7 @@ use super::{FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope
 
 impl OpTransactionTrait for FoundryTxEnvelope {
     fn is_deposit(&self) -> bool {
-        matches!(self, Self::Deposit(_))
+        Self::is_deposit(self)
     }
 
     fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {

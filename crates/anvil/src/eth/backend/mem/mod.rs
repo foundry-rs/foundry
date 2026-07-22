@@ -130,7 +130,7 @@ use foundry_primitives::{
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "optimism")]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
+use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 #[cfg(feature = "optimism")]
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 

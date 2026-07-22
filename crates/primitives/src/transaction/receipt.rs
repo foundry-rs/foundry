@@ -135,6 +135,23 @@ impl FoundryReceiptEnvelope<Log> {
 }
 
 impl<T> FoundryReceiptEnvelope<T> {
+    /// Returns `true` if this is an OP stack deposit receipt.
+    #[cfg(feature = "optimism")]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns `true` if this is an OP stack post-execution synthetic receipt.
+    #[cfg(feature = "optimism")]
+    pub const fn is_post_exec(&self) -> bool {
+        matches!(self, Self::PostExec(_))
+    }
+
+    /// Returns `true` if this is a Tempo receipt.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo(_))
+    }
+
     /// Return the [`FoundryTxType`] of the inner receipt.
     pub const fn tx_type(&self) -> FoundryTxType {
         match self {
@@ -502,6 +519,35 @@ mod tests {
     use super::*;
     use alloy_primitives::{Address, B256, Bytes, LogData, hex};
     use std::str::FromStr;
+
+    fn receipt_for(tx_type: FoundryTxType) -> FoundryReceiptEnvelope {
+        FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
+            true,
+            0,
+            Vec::new(),
+            tx_type,
+            None,
+            None,
+        )
+        .map_logs(|log| log.inner)
+    }
+
+    #[test]
+    fn receipt_predicates() {
+        assert!(receipt_for(FoundryTxType::Legacy).is_legacy());
+        assert!(receipt_for(FoundryTxType::Eip2930).is_eip2930());
+        assert!(receipt_for(FoundryTxType::Eip1559).is_eip1559());
+        assert!(receipt_for(FoundryTxType::Eip4844).is_eip4844());
+        assert!(receipt_for(FoundryTxType::Eip7702).is_eip7702());
+        assert!(receipt_for(FoundryTxType::Tempo).is_tempo());
+        assert!(!receipt_for(FoundryTxType::Tempo).is_legacy());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(receipt_for(FoundryTxType::Deposit).is_deposit());
+            assert!(receipt_for(FoundryTxType::PostExec).is_post_exec());
+        }
+    }
 
     #[test]
     fn encode_legacy_receipt() {
