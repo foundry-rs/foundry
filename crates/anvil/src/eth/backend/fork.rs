@@ -397,9 +397,12 @@ impl<N: Network> ClientFork<N> {
         number: u64,
         trace_types: HashSet<TraceType>,
     ) -> Result<Vec<TraceResultsWithTransactionHash>, TransportError> {
-        // Forward to upstream provider for historical blocks
-        let params = (number, trace_types.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>());
-        self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
+        // Forward to upstream provider for historical blocks. Use the typed trace API so the block
+        // and trace types are serialized in the format upstream providers expect.
+        self.provider()
+            .trace_replay_block_transactions(BlockId::number(number))
+            .trace_types(trace_types)
+            .await
     }
 
     pub async fn trace_replay_transaction(
@@ -516,11 +519,11 @@ impl<N: Network> ClientFork<N> {
     pub async fn simulate_v1(
         &self,
         request: &SimulatePayload,
-        block: Option<BlockNumber>,
+        block: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
         let mut simulate_call = self.provider().simulate(request);
-        if let Some(n) = block {
-            simulate_call = simulate_call.number(n.as_number().unwrap());
+        if let Some(block) = block {
+            simulate_call = simulate_call.block_id(block);
         }
 
         let res = simulate_call.await?;
@@ -671,6 +674,14 @@ impl<N: Network> ClientFork<N> {
         }
 
         self.fetch_full_block(block_number).await
+    }
+
+    /// Fetches a block selected by its original identifier directly from the fork provider.
+    pub async fn fetch_block(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        self.fetch_full_block(block_id).await
     }
 
     async fn fetch_full_block(

@@ -150,6 +150,49 @@ Script ran successfully.
 "#]]);
 });
 
+forgetest!(verbosity_five_shows_script_storage_changes, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "StorageChanges",
+        r#"
+import "forge-std/Script.sol";
+
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) external {
+        number = newNumber;
+    }
+}
+
+contract StorageChanges is Script {
+    Counter public counter = new Counter();
+
+    function run() external {
+        counter.setNumber(1);
+    }
+}
+   "#,
+    );
+
+    let target = format!("{}:StorageChanges", script.display());
+    cmd.args(["script", &target, "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Traces:
+  [..] StorageChanges::run()
+    ├─ [..] Counter::setNumber(1)
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
+
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj.add_source(
@@ -684,6 +727,8 @@ Traces:
     │   └─ ← [Return]
     ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 718 bytes of code
+    ├─  storage changes:
+    │   @ 12: 65537 → [..]
     └─ ← [Stop]
 
 
@@ -767,51 +812,69 @@ Traces:
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
+    ├─  storage changes:
+    │   @ 12: 65537 → [..]
     └─ ← [Stop]
 
 
@@ -2106,6 +2169,10 @@ contract SimpleScript is Script {
 // Asserts that the script runs with expected non-output using `--quiet` flag
 forgetest_async!(adheres_to_json_flag, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.tracing.verbosity = 4;
+        config.tracing.trace_depth = Some(1);
+    });
     prj.add_script(
         "Foo",
         r#"
@@ -2142,6 +2209,41 @@ contract SimpleScript is Script {
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
+});
+
+forgetest!(script_json_trace_depth_removes_nested_nodes, |prj, cmd| {
+    prj.update_config(|config| {
+        config.verbosity = 0;
+        config.tracing.verbosity = 4;
+        config.tracing.trace_depth = Some(0);
+    });
+    prj.add_script(
+        "DepthScript",
+        r#"
+contract Child {
+    function call() external {}
+}
+
+contract DepthScript {
+    function run() external {
+        Child child = new Child();
+        child.call();
+    }
+}
+   "#,
+    );
+
+    let output =
+        cmd.args(["script", "DepthScript", "--json"]).assert_success().get_output().stdout.clone();
+    let output: Value = serde_json::from_slice(&output).unwrap();
+    let traces = output["traces"].as_array().unwrap();
+    assert!(!traces.is_empty());
+
+    for trace in traces {
+        let arena = trace[1]["arena"].as_array().unwrap();
+        assert_eq!(arena.len(), 1);
+        assert!(arena[0]["children"].as_array().unwrap().is_empty());
+    }
 });
 
 // https://github.com/foundry-rs/foundry/issues/10050
@@ -2621,6 +2723,11 @@ forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.verbosity = 0;
+        config.tracing.verbosity = 4;
+        config.tracing.trace_depth = Some(0);
+    });
     prj.add_script(
         "Script.s.sol",
         r#"
@@ -2645,21 +2752,13 @@ contract SimpleScript is Script {
             "#,
     );
 
-    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
+    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint()]);
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
   [..] SimpleScript::run()
-    ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return]
-    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    │   └─ ← [Return] 175 bytes of code
-    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [..] A::getValue() [staticcall]
-    │   │   └─ ← [Return] 100
-    │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
 
 
@@ -2673,8 +2772,6 @@ Simulated On-chain Traces:
     └─ ← [Return] 175 bytes of code
 
   [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [..] A::getValue() [staticcall]
-    │   └─ ← [Return] 100
     └─ ← [Return] 62 bytes of code
 ...
 "#]]);
@@ -3149,12 +3246,18 @@ Traces:
     ├─ [0] VM::signAndAttachDelegation(0x5FbDB2315678afecb367f032d93F642f64180aa3, "<pk>")
     │   └─ ← [Return] (0, 0xd4301eb9f82f747137a5f2c3dc3a5c2d253917cf99ecdc0d49f7bb85313c3159, 0x786d354f0bbd456f44116ddd3aa50475e989d72d8396005e5b3a12cede83fb68, 4, 0x5FbDB2315678afecb367f032d93F642f64180aa3)
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 1 → 2
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512, "<pk>")
     │   └─ ← [Return] (0, 0xaba9128338f7ff036a0d2ecb96d4f4376389005cd565f87aba33b312570af962, 0x69acbe0831fb8ca95338bc4b908dcfebaf7b81b0f770a12c073ceb07b89fbdf3, 7, 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512)
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    │   ├─  storage changes:
+    │   │   @ 0: 2 → 0
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0, "<pk>")
     │   └─ ← [Return] (1, 0x3a3427b66e589338ce7ea06135650708f9152e93e257b4a5ec6eb86a3e09a2ce, 0x444651c354c89fd3312aafb05948e12c0a16220827a5e467705253ab4d8aa8d3, 9, 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0)
@@ -3181,12 +3284,18 @@ Simulated On-chain Traces:
     └─ ← [Return] 481 bytes of code
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─  storage changes:
+    │   @ 0: 0 → 1
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─  storage changes:
+    │   @ 0: 1 → 2
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    ├─  storage changes:
+    │   @ 0: 2 → 0
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)

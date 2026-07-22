@@ -460,6 +460,32 @@ Verifying on blockscout...
 Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
 
 "#]]);
+
+    // Unknown Etherscan chain, explicit Blockscout verifier, and ETHERSCAN_API_KEY set.
+    // This should still use the explicit verifier URL instead of trying to resolve an
+    // Etherscan API URL for the chain.
+    let cmd = cmd.forge_fuse();
+    cmd.env("ETHERSCAN_API_KEY", "dummy");
+    cmd.args([
+        "verify-contract",
+        "--rpc-url",
+        "https://rpc.sepolia-api.lisk.com",
+        "--verifier",
+        "blockscout",
+        "--verifier-url",
+        "https://sepolia-blockscout.lisk.com/api",
+        "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+        "src/Counter.sol:Counter",
+    ])
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+
+Verifying on blockscout...
+Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+
+"#]]);
 });
 
 // Tests that `forge script --broadcast --verify` fails before broadcasting when

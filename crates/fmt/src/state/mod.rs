@@ -972,6 +972,13 @@ impl<'sess> State<'sess, '_> {
         self.comments.iter().filter(|c| c.pos() > start_pos && c.pos() < end_pos).any(|_| true)
     }
 
+    fn has_breakable_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
+        self.comments
+            .iter()
+            .filter(|comment| comment.pos() >= start_pos && comment.pos() < end_pos)
+            .any(|comment| !comment.style.is_blank())
+    }
+
     pub(crate) fn next_comment(&mut self) -> Option<Comment> {
         self.comments.next()
     }
