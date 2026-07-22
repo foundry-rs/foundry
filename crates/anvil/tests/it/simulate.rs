@@ -9,6 +9,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, StateOverridesBuilder},
 };
 use anvil::{EthereumHardfork, NodeConfig, spawn};
+use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -44,6 +45,140 @@ async fn test_fork_simulate_v1() {
         return_full_transactions: true,
     };
     let _res = api.simulate_v1(payload, None).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_normalizes_delegated_block_sequence_rpc() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
+    origin_api.mine_one().await;
+    origin_api.mine_one().await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    api.evm_set_block_timestamp_interval(7).unwrap();
+
+    let endpoint = handle.http_endpoint();
+    let base = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
+    let base_number = quantity(&base["result"]["number"]);
+    let base_timestamp = quantity(&base["result"]["timestamp"]);
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {"number": format!("{:#x}", base_number + 3)}
+            }]
+        }, "0x1"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+
+    let blocks = response["result"].as_array().unwrap();
+    assert_eq!(blocks.len(), 3);
+    for (index, block) in blocks.iter().enumerate() {
+        let offset = index as u64 + 1;
+        assert_eq!(quantity(&block["number"]), base_number + offset);
+        assert_eq!(quantity(&block["timestamp"]), base_timestamp + 7 * offset);
+    }
+
+    let cases = [
+        (
+            json!([{"blockStateCalls": [{
+                "blockOverrides": {"number": format!("{base_number:#x}")}
+            }]}, "0x1"]),
+            -38020,
+        ),
+        (
+            json!([{"blockStateCalls": [{
+                "blockOverrides": {"time": format!("{base_timestamp:#x}")}
+            }]}, "0x1"]),
+            -38021,
+        ),
+        (
+            json!([{"blockStateCalls": [{
+                "blockOverrides": {"number": format!("{:#x}", base_number + 257)}
+            }]}, "0x1"]),
+            -38026,
+        ),
+    ];
+    for (params, code) in cases {
+        let response = rpc_request(&endpoint, "eth_simulateV1", params).await;
+        assert_eq!(response["error"]["code"], code, "{response}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_preserves_delegated_base_selector_rpc() {
+    let (hash_api, hash_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
+    hash_api.evm_set_block_timestamp_interval(1).unwrap();
+    hash_api.mine_one().await;
+    hash_api.mine_one().await;
+    let hash_endpoint = hash_handle.http_endpoint();
+    let hash_base =
+        rpc_request(&hash_endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
+    let hash_selector = hash_base["result"]["hash"].clone();
+
+    let (canonical_api, canonical_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(2_000u64))).await;
+    canonical_api.evm_set_block_timestamp_interval(1).unwrap();
+    canonical_api.mine_one().await;
+    canonical_api.mine_one().await;
+    let canonical_endpoint = canonical_handle.http_endpoint();
+    let canonical_base =
+        rpc_request(&canonical_endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
+    let canonical_hash = canonical_base["result"]["hash"].clone();
+
+    let proxy_endpoint =
+        spawn_hash_aware_rpc_proxy(hash_endpoint, canonical_endpoint, hash_selector.clone()).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(proxy_endpoint.clone()))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    api.evm_set_block_timestamp_interval(7).unwrap();
+    let endpoint = handle.http_endpoint();
+
+    // Cache the selected block, then replace the same-height cache mapping with another block.
+    rpc_request(&endpoint, "eth_getBlockByHash", json!([hash_selector, false])).await;
+    rpc_request(&endpoint, "eth_getBlockByHash", json!([canonical_hash, false])).await;
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{}]}, {"blockHash": hash_selector}]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(
+        quantity(&response["result"][0]["timestamp"]),
+        quantity(&hash_base["result"]["timestamp"]) + 7
+    );
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(proxy_endpoint))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    api.evm_set_block_timestamp_interval(7).unwrap();
+    let endpoint = handle.http_endpoint();
+
+    // Cache a noncanonical block at the selected height before using a numeric selector.
+    rpc_request(&endpoint, "eth_getBlockByHash", json!([hash_selector, false])).await;
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}, "0x1"])).await;
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(
+        quantity(&response["result"][0]["timestamp"]),
+        quantity(&canonical_base["result"]["timestamp"]) + 7
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -893,6 +1028,47 @@ async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     response.json().await.unwrap()
+}
+
+async fn spawn_hash_aware_rpc_proxy(
+    hash_endpoint: String,
+    canonical_endpoint: String,
+    hash_selector: Value,
+) -> String {
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let hash_endpoint = hash_endpoint.clone();
+            let canonical_endpoint = canonical_endpoint.clone();
+            let hash_selector = hash_selector.clone();
+            async move {
+                let method = request["method"].as_str().unwrap();
+                let endpoint = if method == "eth_getBlockByHash"
+                    && request["params"].get(0) == Some(&hash_selector)
+                    || method == "eth_simulateV1"
+                        && request["params"].get(1) == Some(&hash_selector)
+                {
+                    hash_endpoint
+                } else {
+                    canonical_endpoint
+                };
+                let response = reqwest::Client::new()
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
 }
 
 fn quantity(value: &Value) -> u64 {
