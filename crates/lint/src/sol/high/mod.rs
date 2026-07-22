@@ -8,6 +8,7 @@ mod enumerable_loop_removal;
 mod function_selector_collision;
 mod incorrect_exp;
 mod incorrect_shift;
+mod protected_vars;
 mod reentrancy;
 mod rtlo;
 mod unchecked_calls;
@@ -21,6 +22,7 @@ use enumerable_loop_removal::ENUMERABLE_LOOP_REMOVAL;
 use function_selector_collision::FUNCTION_SELECTOR_COLLISION;
 use incorrect_exp::INCORRECT_EXP;
 use incorrect_shift::INCORRECT_SHIFT;
+use protected_vars::PROTECTED_VARS;
 use reentrancy::{REENTRANCY_ETH, REENTRANCY_NO_ETH};
 use rtlo::RTLO;
 use unchecked_calls::{ERC20_UNCHECKED_TRANSFER, UNCHECKED_CALL};
@@ -35,6 +37,7 @@ register_lints!(
     (FunctionSelectorCollision, late, (FUNCTION_SELECTOR_COLLISION)),
     (IncorrectExp, late, (INCORRECT_EXP)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
+    (ProtectedVars, late, (PROTECTED_VARS)),
     (ReentrancyEth, late, (REENTRANCY_ETH, REENTRANCY_NO_ETH)),
     (UncheckedCall, early, (UNCHECKED_CALL)),
     (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER)),

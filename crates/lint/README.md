@@ -20,6 +20,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `function-selector-collision`: Flags colliding selectors between a proxy and the statically typed implementation API targeted by its fallback.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
+  - `protected-vars`: Flags externally callable entry points that write a state variable without its required `@custom:security write-protection` function or modifier.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
 - **Medium Severity:**
   - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
