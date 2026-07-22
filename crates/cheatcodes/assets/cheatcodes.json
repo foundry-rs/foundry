@@ -6706,6 +6706,26 @@
     },
     {
       "func": {
+        "id": "getSelectors",
+        "description": "Gets all function selectors from a contract artifact. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getSelectors(string)",
+        "selector": "0x13d5a709",
+        "selectorBytes": [
+          19,
+          213,
+          167,
+          9
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
         "declaration": "function getStateDiff() external view returns (string memory diff);",
@@ -7602,6 +7622,26 @@
           206,
           120,
           131
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonArrayLength",
+        "description": "Returns the length of the JSON array at `key`.",
+        "declaration": "function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonArrayLength(string,string)",
+        "selector": "0xcdb6e4ac",
+        "selectorBytes": [
+          205,
+          182,
+          228,
+          172
         ]
       },
       "group": "json",

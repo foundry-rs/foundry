@@ -94,6 +94,17 @@ impl<T> Miner<T> {
         None
     }
 
+    /// Returns the configured block interval for fixed or mixed mining.
+    pub(crate) fn block_interval(&self) -> Option<Duration> {
+        let mode = self.mode.read();
+        match &*mode {
+            MiningMode::FixedBlockTime(miner) | MiningMode::Mixed(_, miner) => {
+                Some(miner.interval.period())
+            }
+            MiningMode::None | MiningMode::Auto(_) => None,
+        }
+    }
+
     /// Sets the mining mode to operate in
     pub fn set_mining_mode(&self, mode: MiningMode) {
         let new_mode = format!("{mode:?}");

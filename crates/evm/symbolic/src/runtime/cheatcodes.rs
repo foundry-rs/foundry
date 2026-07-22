@@ -963,7 +963,7 @@ pub(crate) fn sign_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.sign"))?;
     Ok(vec![
-        SymExpr::constant(cx, U256::from(sig.v() as u64 + 27)),
+        SymExpr::constant(cx, U256::from(sig.v_byte())),
         SymExpr::constant(cx, sig.r()),
         SymExpr::constant(cx, sig.s()),
     ])

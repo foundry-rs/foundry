@@ -18,6 +18,7 @@ use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
+    trace::parity::{Action, TraceResultsWithTransactionHash, TraceType},
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
@@ -138,6 +139,39 @@ async fn test_fork_debug_get_raw_receipts() {
     }
 }
 
+// `debug_getRawTransactions` must serve pre-fork blocks from the upstream provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_transactions() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // A pre-fork block known to contain transactions.
+    let block_number = BLOCK_NUMBER - 1;
+    let block = provider.get_block(BlockId::number(block_number)).full().await.unwrap().unwrap();
+    assert!(!block.transactions.is_empty());
+
+    let raw_by_number: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), block.transactions.len());
+
+    // Each entry matches the single-transaction raw encoding path for the same hash.
+    for (raw, hash) in raw_by_number.iter().zip(block.transactions.hashes()) {
+        let single: Bytes =
+            provider.client().request("debug_getRawTransaction", (hash,)).await.unwrap();
+        assert_eq!(*raw, single);
+    }
+}
+
 // `debug_accountInfoAt` must delegate pre-fork blocks to the upstream and resolve block tags
 // against the fork's frozen head, not the upstream's advancing head.
 #[tokio::test(flavor = "multi_thread")]
@@ -193,6 +227,57 @@ async fn test_fork_debug_account_info_at() {
         .await
         .unwrap();
     assert_eq!(by_tag_after.unwrap().balance, amount);
+}
+
+// Pre-fork `trace_replayBlockTransactions` must be forwarded to the upstream with the trace types
+// serialized as their camelCase JSON names (`trace`, `stateDiff`), not their Rust `Debug`
+// representation, otherwise the upstream rejects the request.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_trace_replay_block_transactions_forwards_trace_types() {
+    // Use a local anvil node as the upstream so the request path is fully exercised in-process.
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+
+    let account = origin_handle.dev_wallets().next().unwrap().address();
+    let to = Address::random();
+    let amount = U256::from(1_000u64);
+
+    // Mine two blocks on the upstream; the first strictly predates the fork head.
+    let mut first_block = None;
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().from(account).to(to).value(amount);
+        let tx = WithOtherFields::new(tx);
+        let receipt =
+            origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        first_block.get_or_insert(receipt.block_number.unwrap());
+    }
+    let pre_fork_block = first_block.unwrap();
+
+    // Fork from the upstream head so `pre_fork_block` is delegated upstream.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork_provider = fork_handle.http_provider();
+
+    let results: Vec<TraceResultsWithTransactionHash> = fork_provider
+        .client()
+        .request(
+            "trace_replayBlockTransactions",
+            (pre_fork_block, vec![TraceType::Trace, TraceType::StateDiff]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    let full_trace = &results[0].full_trace;
+    match &full_trace.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, account);
+            assert_eq!(call.to, to);
+        }
+        other => panic!("expected Call action, got {other:?}"),
+    }
+    // `StateDiff` was also requested, so it must be honored, not just `Trace`.
+    assert!(full_trace.state_diff.is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1478,6 +1563,11 @@ async fn test_base_fork_gas_limit() {
     )
     .await;
 
+    // The public Base RPC occasionally returns block zero when it is unhealthy.
+    if api.block_number().unwrap().is_zero() {
+        return;
+    }
+
     let provider = handle.http_provider();
     let block =
         provider.get_block(BlockId::Number(BlockNumberOrTag::Latest)).await.unwrap().unwrap();
@@ -1810,6 +1900,164 @@ async fn test_fork_reset_reuses_cached_remote_state() {
         assert!(db.maybe_inner().unwrap().accounts().read().contains_key(&address));
     }
 
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_does_not_reuse_cache_for_new_rpc_url() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        first_origin_api.mine_one().await;
+        first_origin_api.mine_one().await;
+        second_origin_api.mine_one().await;
+        second_origin_api.mine_one().await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+        let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(2) })).await.unwrap();
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        let local_balance = U256::from(9001u64);
+        api.anvil_set_balance(address, local_balance).await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let unavailable_url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        assert!(
+            api.anvil_reset(Some(Forking {
+                json_rpc_url: Some(unavailable_url),
+                block_number: fork_block_number,
+            }))
+            .await
+            .is_err()
+        );
+        assert_eq!(provider.get_balance(address).await.unwrap(), local_balance);
+
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(second_origin_handle.http_endpoint()),
+            block_number: Some(2),
+        }))
+        .await
+        .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
+            .await
+            .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        let second_fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(second_origin_handle.http_endpoint()));
+        let (_second_fork_api, second_fork_handle) = spawn(second_fork_config).await;
+        let second_fork_provider = second_fork_handle.http_provider();
+        assert_eq!(second_fork_provider.get_balance(address).await.unwrap(), second_balance);
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_after_set_rpc_url_does_not_reuse_old_cache() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        api.anvil_set_rpc_url(second_origin_handle.http_endpoint()).await.unwrap();
+        api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_client_fork_reset_then_backend_reset_rebuilds_database() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        let fork = api.get_fork().unwrap();
+        fork.reset(vec![second_origin_handle.http_endpoint()], fork.block_number()).await.unwrap();
+        api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+    }
+    .await;
     let _ = std::fs::remove_dir_all(cache_dir);
 }
 

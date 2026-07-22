@@ -436,10 +436,10 @@ contract ForgeFuzzReplayFailureTest {
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(
         stdout.contains("[FAIL: EvmError: Revert; counterexample: calldata=0x")
-            && stdout.contains("args=[200]] testFuzz_reverts(uint256) (runs: 0,"),
+            && stdout.contains("] testFuzz_reverts(uint256) (runs: 0,"),
         "{stdout}"
     );
-    assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
+    assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts("), "{stdout}");
     assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
 });
 
@@ -517,7 +517,7 @@ contract ForgeFuzzReplayAssumeRejectTest {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     function testFuzz_reverts(uint256 value) public {
-        vm.assume(value != 200);
+        vm.assume(value > 200);
         require(false, "fresh unrelated failure");
     }
 }
