@@ -11469,8 +11469,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "756d3259a664e087dcc43b4a7d335c8d86d9d1971d396430f128a0ce33622b18"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -11511,8 +11510,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cd401083e2463480b4c11840ec7f654ca0b75a976a915033ca8b1804c3ad95e"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "alloy-primitives",
  "derive_more",
@@ -11528,8 +11526,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d0fb69164d78ebd2e399ebc47818e3a610414fe9da4f6b2579a058d7fc567f9"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
@@ -11546,8 +11543,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4aae5537cc9b12d88f4d4464319b2f3395522b24d8661ae3ae466023f3bb217"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "clap",
  "colorchoice",
@@ -11558,8 +11554,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "199a526376b5b66acaee7a96349207e85242516e8daf4aad20963f1389145ee1"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "bumpalo",
  "indexmap 2.14.0",
@@ -11573,8 +11568,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5eca1dc6ececb31400960e2614fa2c16f361633b8ce3497b3a358f509dd8195e"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -11602,8 +11596,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acba5b79d1cf90faca7c9115c35b2bee41c3f940b611bfd384b926fa40bc7083"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -11613,8 +11606,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdfec224fb34c504576d0124fcfb0ffbdb5461d2b55df00253e89e37fcd3f6f5"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
@@ -11635,8 +11627,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d13d74065eeed9b3f70ab8e62a8a449de624ebcc8618b5fb3afee0520f93cc57"
+source = "git+https://github.com/paradigmxyz/solar?rev=8da6fea5556e7855bb1019dbc01bdc38653a2f04#8da6fea5556e7855bb1019dbc01bdc38653a2f04"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -11645,11 +11636,13 @@ dependencies = [
  "comfy-table",
  "derive_more",
  "either",
+ "indexmap 2.14.0",
  "num-bigint",
  "num-traits",
  "once_map",
  "paste",
  "rayon",
+ "serde",
  "solar-ast",
  "solar-data-structures",
  "solar-interface",

@@ -17,10 +17,16 @@ contract ControlledDelegatecall {
         OrdinaryDelegatecall target;
     }
 
+    struct AddressHolder {
+        address target;
+        address sibling;
+    }
+
     address public implementation;
     address public immutable trustedImplementation;
     address public constant TRUSTED = 0x000000000000000000000000000000000000dEaD;
     mapping(address => address) public plugins;
+    AddressHolder private storedHolder;
     OrdinaryDelegatecallHolder ordinaryHolder;
     OrdinaryDelegatecall[] ordinaryTargets;
     OverloadedDelegatecallFactory overloadedFactory;
@@ -139,6 +145,20 @@ contract ControlledDelegatecall {
         return TRUSTED;
     }
 
+    function nestedTrusted() internal pure returns (address) {
+        return trusted();
+    }
+
+    function branchedTrusted(bool branch) internal pure returns (address) {
+        if (branch) return nestedTrusted();
+        return TRUSTED;
+    }
+
+    function recursiveTrusted(uint256 depth) internal pure returns (address) {
+        if (depth == 0) return TRUSTED;
+        return recursiveTrusted(depth - 1);
+    }
+
     function delegateToHelperReturn(address target, bytes calldata data) external returns (bool ok) {
         (ok,) = id(target).delegatecall(data); //~WARN: delegatecall target is not provably trusted
     }
@@ -149,6 +169,18 @@ contract ControlledDelegatecall {
 
     function delegateToTrustedHelperReturn(bytes calldata data) external returns (bool ok) {
         (ok,) = trusted().delegatecall(data);
+    }
+
+    function delegateToNestedTrustedHelper(bytes calldata data) external returns (bool ok) {
+        (ok,) = nestedTrusted().delegatecall(data);
+    }
+
+    function delegateToBranchedTrustedHelper(bool branch, bytes calldata data) external returns (bool ok) {
+        (ok,) = branchedTrusted(branch).delegatecall(data);
+    }
+
+    function delegateToRecursiveTrustedHelper(uint256 depth, bytes calldata data) external returns (bool ok) {
+        (ok,) = recursiveTrusted(depth).delegatecall(data);
     }
 
     function delegateToDecoded(bytes calldata blob, bytes calldata data) external returns (bool ok) {
@@ -298,6 +330,11 @@ contract ControlledDelegatecall {
         (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
     }
 
+    function delegateAfterLossyGuard(address target, bytes calldata data) external returns (bool ok) {
+        require(uint8(uint160(target)) == uint8(uint160(TRUSTED)));
+        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+    }
+
     modifier onlyOwner() {
         require(msg.sender == address(0x000000000000000000000000000000000000bEEF));
         _;
@@ -314,6 +351,114 @@ contract ControlledDelegatecall {
 
     function setPlugin(address user, address plugin) external {
         plugins[user] = plugin;
+    }
+
+    function delegateToTrustedStruct(bytes calldata data) external returns (bool ok) {
+        AddressHolder memory holder;
+        holder.target = TRUSTED;
+        (ok,) = holder.target.delegatecall(data);
+    }
+
+    function delegateToUntrustedStruct(address target, bytes calldata data) external returns (bool ok) {
+        AddressHolder memory holder;
+        holder.target = target;
+        (ok,) = holder.target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+    }
+
+    function delegateAfterSiblingGuard(AddressHolder memory holder, bytes calldata data)
+        external
+        returns (bool ok)
+    {
+        require(holder.sibling == TRUSTED);
+        (ok,) = holder.target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+    }
+
+    function delegateAfterProjectedAliasGuard(AddressHolder memory holder, bytes calldata data)
+        external
+        returns (bool ok)
+    {
+        address aliasTarget = holder.target;
+        require(aliasTarget == TRUSTED);
+        (ok,) = holder.target.delegatecall(data);
+    }
+
+    function delegateAfterDynamicIndexGuard(
+        address[] memory targets,
+        uint256 checked,
+        uint256 used,
+        bytes calldata data
+    ) external returns (bool ok) {
+        require(targets[checked] == TRUSTED);
+        (ok,) = targets[used].delegatecall(data); //~WARN: delegatecall target is not provably trusted
+    }
+
+    function delegateAfterMemoryAliasWrite(
+        AddressHolder memory holder,
+        address attacker,
+        bytes calldata data
+    ) external returns (bool ok) {
+        AddressHolder memory alias_ = holder;
+        require(holder.target == TRUSTED);
+        alias_.target = attacker;
+        (ok,) = holder.target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+    }
+
+    function delegateAfterConditionalAliasWrite(
+        AddressHolder memory first,
+        AddressHolder memory second,
+        bool chooseFirst,
+        address attacker,
+        bytes calldata data
+    ) external returns (bool ok) {
+        require(first.target == TRUSTED);
+        require(second.target == TRUSTED);
+        AddressHolder memory selected = chooseFirst ? first : second;
+        selected.target = attacker;
+        (ok,) = first.target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+    }
+
+    function makeAddressHolder(address target) internal pure returns (AddressHolder memory holder) {
+        holder.target = target;
+    }
+
+    function delegateAfterDetachedAliasGuard(
+        AddressHolder memory holder,
+        address attacker,
+        bytes calldata data
+    ) external returns (bool ok) {
+        address target = holder.target;
+        AddressHolder memory alias_ = holder;
+        holder = makeAddressHolder(attacker);
+        require(alias_.target == TRUSTED);
+        (ok,) = target.delegatecall(data);
+    }
+
+    function delegateAfterRepeatedFreshAggregate(address attacker, bytes calldata data)
+        external
+        returns (bool ok)
+    {
+        AddressHolder memory saved;
+        saved.target = TRUSTED;
+        for (uint256 i; i < 2; ++i) {
+            AddressHolder memory current = makeAddressHolder(attacker);
+            if (i == 0) {
+                saved = current;
+            } else {
+                current.target = TRUSTED;
+                (ok,) = saved.target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+            }
+        }
+    }
+
+    function delegateAfterStorageAliasWrite(address attacker, bytes calldata data)
+        external
+        returns (bool ok)
+    {
+        AddressHolder storage first = storedHolder;
+        AddressHolder storage second = storedHolder;
+        require(first.target == TRUSTED);
+        second.target = attacker;
+        (ok,) = first.target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
     }
 }
 

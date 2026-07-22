@@ -1,19 +1,14 @@
-use super::{
-    MsgValueLoop,
-    payable_loop::{is_builtin, visit_payable_loop_expressions},
-};
+use super::{MsgValueLoop, payable_loop::visit_payable_loop_expressions};
 use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::{
-    interface::sym,
-    sema::{
-        Gcx,
-        hir::{Expr, ExprKind, Function, Hir},
-    },
+use solar::sema::{
+    Gcx,
+    builtins::Builtin,
+    hir::{FunctionId, Hir},
 };
-use std::collections::HashSet;
+use std::{cell::RefCell, collections::HashSet};
 
 declare_forge_lint!(
     MSG_VALUE_LOOP,
@@ -23,25 +18,31 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for MsgValueLoop {
-    fn check_function(
+    fn check_nested_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
+        function: FunctionId,
     ) {
-        let mut emitted = HashSet::new();
-        visit_payable_loop_expressions(ctx, gcx, hir, func, |ctx, _, _, expr| {
-            if is_msg_value(expr) && emitted.insert(expr.span) {
-                ctx.emit(&MSG_VALUE_LOOP, expr.span);
-            }
-        });
+        let emitted = RefCell::new(HashSet::new());
+        visit_payable_loop_expressions(
+            ctx,
+            gcx,
+            hir,
+            function,
+            |ctx, gcx, _, expr| {
+                if gcx.builtin_member(expr.id) == Some(Builtin::MsgValue)
+                    && emitted.borrow_mut().insert(expr.span)
+                {
+                    ctx.emit(&MSG_VALUE_LOOP, expr.span);
+                }
+            },
+            |ctx, _, _, call| {
+                if emitted.borrow_mut().insert(call.span) {
+                    ctx.emit(&MSG_VALUE_LOOP, call.span);
+                }
+            },
+        );
     }
-}
-
-fn is_msg_value(expr: &Expr<'_>) -> bool {
-    let ExprKind::Member(base, member) = &expr.peel_parens().kind else {
-        return false;
-    };
-    member.name == sym::value && is_builtin(base, sym::msg)
 }

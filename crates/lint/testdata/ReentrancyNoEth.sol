@@ -11,9 +11,31 @@ interface IHook {
     function key() external returns (address);
 }
 
+contract ReentrancyNoEthRecursiveOrder {
+    uint256 private value;
+
+    function entry(IHook hook, uint256 depth) external {
+        orderedEffects(hook, depth);
+    }
+
+    function orderedEffects(IHook hook, uint256 depth) internal {
+        value = 1;
+        if (depth > 0) {
+            orderedEffects(hook, depth - 1);
+        }
+        uint256 snapshot = value;
+        hook.notify(snapshot);
+    }
+}
+
 contract ReentrancyNoEth {
+    struct Account {
+        uint256 balance;
+    }
+
     mapping(address => uint256) public balances;
     mapping(address => uint256) public credits;
+    mapping(address => Account) private accounts;
     uint256 private locked;
 
     function externalCallThenWrite(IHook hook) external {
@@ -36,6 +58,44 @@ contract ReentrancyNoEth {
         credits[msg.sender] = amount;
     }
 
+    function yulCallcodeThenWrite(address target) external {
+        uint256 amount = balances[msg.sender];
+        assembly {
+            pop(callcode(gas(), target, 1, 0, 0, 0, 0)) //~WARN: external call can be reentered before `balances` is updated
+        }
+        balances[msg.sender] = amount;
+    }
+
+    function storageReferenceWriteAfterCall(IHook hook) external {
+        Account storage account = accounts[msg.sender];
+        uint256 amount = account.balance;
+        hook.notify(amount); //~WARN: external call can be reentered before `accounts` is updated
+        account.balance = 0;
+    }
+
+    function rawSlotWriteAfterCall(IHook hook) external {
+        uint256 amount;
+        assembly {
+            amount := sload(0)
+        }
+        hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
+        assembly {
+            sstore(0, 0)
+        }
+    }
+
+    function localRawSlotWriteAfterCall(IHook hook) external {
+        uint256 slot;
+        uint256 amount;
+        assembly {
+            amount := sload(slot)
+        }
+        hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
+        assembly {
+            sstore(slot, 0)
+        }
+    }
+
     function internalHelperCallThenWrite(IHook hook) external {
         uint256 amount = balances[msg.sender];
         notifyHook(hook, amount);
@@ -55,6 +115,20 @@ contract ReentrancyNoEth {
         notifyHookHeavy(hook, amount);
         notifyHookHeavy(hook, amount);
         balances[msg.sender] = 0;
+    }
+
+    function indirectInternalCallThenWrite(IHook hook, bool useHeavy) external {
+        uint256 amount = balances[msg.sender];
+        function(IHook, uint256) internal callback = useHeavy ? pointerHookHeavy : pointerHook;
+        callback(hook, amount);
+        balances[msg.sender] = 0;
+    }
+
+    function harmlessIndirectInternalCallThenWrite() external {
+        uint256 amount = balances[msg.sender];
+        function() internal callback = noop;
+        callback();
+        balances[msg.sender] = amount;
     }
 
     function modifierWriteAfterCall(IHook hook) external writeAfter {
@@ -146,4 +220,14 @@ contract ReentrancyNoEth {
     function notifyHookHeavy(IHook hook, uint256 amount) internal {
         hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
     }
+
+    function pointerHook(IHook hook, uint256 amount) internal {
+        hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
+    }
+
+    function pointerHookHeavy(IHook hook, uint256 amount) internal {
+        hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
+    }
+
+    function noop() internal {}
 }

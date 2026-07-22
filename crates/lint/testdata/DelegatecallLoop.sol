@@ -214,6 +214,14 @@ contract DelegatecallLoop is
         require(ok);
     }
 
+    function payableYulCallcodeLoop(address target, uint256 iterations) external payable {
+        for (uint256 i = 0; i < iterations; ++i) {
+            assembly {
+                pop(callcode(gas(), target, 0, 0, 0, 0, 0)) //~WARN: payable functions should not use `delegatecall` inside a loop
+            }
+        }
+    }
+
     function payableLoopWithInternalLibraryDelegatecall(bytes[] calldata payloads) external payable {
         for (uint256 i = 0; i < payloads.length; ++i) {
             DelegatecallLoopLib.helper(payloads[i]);

@@ -97,6 +97,14 @@ LL │         (bool ok,) = target.delegatecall(payload);
 warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
+LL │                 pop(callcode(gas(), target, 0, 0, 0, 0, 0))
+   │                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
+
+warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+   ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
+   │
 LL │         (bool ok,) = target.delegatecall(payload);
    │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │

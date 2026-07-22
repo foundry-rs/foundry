@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as _},
     interface::{
-        Session,
+        ColorChoice, Session,
         diagnostics::{self, HumanEmitter, JsonEmitter, SilentEmitter},
         source_map::SourceFile,
     },
@@ -328,7 +328,9 @@ impl<'a> Linter for SolidityLinter<'a> {
             } else {
                 Box::new(std::io::BufWriter::new(std::io::stderr()))
             };
-            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(ui_testing);
+            let json_emitter = JsonEmitter::new(writer, sm, ColorChoice::Never)
+                .rustc_like(true)
+                .ui_testing(ui_testing);
             Box::new(json_emitter)
         } else {
             Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))

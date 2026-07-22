@@ -41,8 +41,48 @@ LL │     function calledOnlyExternally(bytes memory payload) public {
 note[external-function]: public function can be declared external
    ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
    │
+LL │     function forwardedExternally(IExternal target, bytes memory payload) public {
+   │              ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function emittedOnly(bytes memory payload) public {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function hashesOnly(bytes memory payload) public pure returns (bytes32) {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function encodesOnly(bytes memory payload) public pure returns (bytes memory) {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
 LL │     function localUnaryStillExternal(bytes memory data) public {
    │              ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function passesOnlyLength(bytes memory data) public {
+   │              ━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/external-function
 
@@ -67,6 +107,14 @@ note[external-function]: public function can be declared external
    │
 LL │     function modifierWithoutArgs(bytes memory data) public checkValues {
    │              ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function modifierReceivesOnlyLength(bytes memory data) public checkLength(data.length) {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/external-function
 

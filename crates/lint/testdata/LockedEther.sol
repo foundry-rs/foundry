@@ -450,6 +450,15 @@ contract LockedSelfdestructToSelf { //~WARN: contract can receive ETH but has no
     }
 }
 
+// A lossy conversion cannot prove that the target remains `address(this)`.
+contract OkLossySelfCast {
+    receive() external payable {}
+
+    function withdraw(uint256 x) external {
+        payable(address(bytes20(bytes1(bytes20(address(this)))))).transfer(x);
+    }
+}
+
 // Receivers reached through struct fields, mapping/array elements, function returns,
 // and ternaries are valid `address payable` values and must be recognized as exits.
 contract OkStructFieldReceiver {
@@ -580,6 +589,22 @@ contract OkDiamondSuperFromBase is DiamondLeftBranch, DiamondRightBranch {
 library SendViaLib {
     function sweep(address payable to, uint256 amount) internal {
         to.transfer(amount);
+    }
+}
+
+library PublicAttachedSend {
+    function execute(address, address payable to, uint256 amount) public {
+        to.transfer(amount);
+    }
+}
+
+contract OkPublicAttachedDelegate {
+    using PublicAttachedSend for address;
+
+    receive() external payable {}
+
+    function withdraw(address payable to, uint256 amount) external {
+        address(this).execute(to, amount);
     }
 }
 

@@ -7,6 +7,8 @@ interface IExternal {
     function ping(bytes calldata data) external;
 }
 
+event Logged(bytes data);
+
 // Library functions are out of scope (different `external` semantics).
 library MathLib {
     function sumMemory(uint256[] memory xs) public pure returns (uint256 s) {
@@ -42,11 +44,38 @@ contract ExternalFunction {
         stored = payload;
     }
 
+    function callsOnlyExternally(bytes memory payload) external {
+        this.calledOnlyExternally(payload);
+    }
+
+    function forwardedExternally(IExternal target, bytes memory payload) public { //~NOTE: public function can be declared external
+        target.ping(payload);
+    }
+
+    function emittedOnly(bytes memory payload) public { //~NOTE: public function can be declared external
+        emit Logged(payload);
+    }
+
+    function hashesOnly(bytes memory payload) public pure returns (bytes32) { //~NOTE: public function can be declared external
+        return keccak256(payload);
+    }
+
+    function encodesOnly(bytes memory payload) public pure returns (bytes memory) { //~NOTE: public function can be declared external
+        return abi.encode(payload);
+    }
+
     function localUnaryStillExternal(bytes memory data) public { //~NOTE: public function can be declared external
         uint256 i = 0;
         i++;
         stored = data;
     }
+
+    function passesOnlyLength(bytes memory data) public { //~NOTE: public function can be declared external
+        consumeLength(data.length);
+        stored = data;
+    }
+
+    function consumeLength(uint256) internal pure {}
 
     // SHOULD PASS:
 
@@ -207,6 +236,11 @@ abstract contract WithGuard {
         require(msg.sender != address(0), "zero");
         _;
     }
+
+    modifier checkLength(uint256 length) {
+        require(length > 0, "empty");
+        _;
+    }
 }
 
 contract EscapingParams is WithGuard {
@@ -253,6 +287,10 @@ contract EscapingParams is WithGuard {
     }
 
     function modifierWithoutArgs(bytes memory data) public checkValues { //~NOTE: public function can be declared external
+        stored = data;
+    }
+
+    function modifierReceivesOnlyLength(bytes memory data) public checkLength(data.length) { //~NOTE: public function can be declared external
         stored = data;
     }
 

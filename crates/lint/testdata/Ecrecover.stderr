@@ -1,0 +1,392 @@
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address signer = ecrecover(hash, v, r, s);
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address signer = ecrecover(hash, v, r, s);
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         storedSigner = ecrecover(hash, v, r, s);
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address signer = ecrecover(hash, v, r, s);
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         signer = ecrecover(hash, v, r, s);
+   │                  ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address signer = ecrecover(hash, v, r, s);
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address second = ecrecover(hash, v, r, s);
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, safeS);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │             signer = ecrecover(hash, v, r, s);
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │             signer = ecrecover(hash, v, r, s);
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, storedS);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, storedS);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, y);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         recovery.signer = ecrecover(hash, v, r, s);
+   │                           ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         recovery.signer = ecrecover(hash, v, r, s);
+   │                           ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         recovery.signer = ecrecover(hash, v, r, s);
+   │                           ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         nested.recovery.signer = ecrecover(hash, v, r, s);
+   │                                  ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         recovery.signer = ecrecover(hash, v, r, s);
+   │                           ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         recovery.signer = ecrecover(hash, v, r, s);
+   │                           ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         nested.recovery.signer = ecrecover(hash, v, r, s);
+   │                                  ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         nested.recovery.signer = ecrecover(hash, v, r, s);
+   │                                  ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, signature.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address payable signer = payable(ecrecover(hash, v, r, s));
+   │                                          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         uint8 signer = uint8(uint160(ecrecover(hash, v, r, s)));
+   │                                      ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, signatures[used].s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         recovered[index] = ecrecover(hash, v, r, s);
+   │                            ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, signature.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, signature.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, signature.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, b.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, first.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, signature.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, storedSignature.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, copy.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, first.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, signature.s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address signer = ecrecover(hash, v, r, signature.s);
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         address signer = ecrecover(hash, v, r, s);
+   │                          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+
+warning[ecrecover]: ecrecover should reject malleable signatures
+   ╭▸ ROOT/testdata/Ecrecover.sol:LL:CC
+   │
+LL │         return ecrecover(hash, v, r, s);
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/ecrecover
+

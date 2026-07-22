@@ -1,0 +1,16 @@
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoopDispatch.sol:LL:CC
+   │
+LL │         target.ping();
+   │         ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoopDispatch.sol:LL:CC
+   │
+LL │         target.ping();
+   │         ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
