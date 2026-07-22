@@ -107,6 +107,10 @@ jobs:
           cargo test --locked -p foundry-evm-networks --features monad --lib monad
           cargo test --locked -p foundry-config --features monad --lib monad
           cargo test --locked -p foundry-evm-core --features monad --lib monad
+          cargo test --locked -p foundry-evm --features monad --lib monad
+          cargo test --locked -p foundry-evm-traces --features monad --lib monad
+          cargo test --locked -p forge-script --features monad --lib monad
+          cargo test --locked -p forge-verify --features monad --lib monad
           cargo test --locked -p chisel --features monad --lib monad
 
   monad-integration-tests:
