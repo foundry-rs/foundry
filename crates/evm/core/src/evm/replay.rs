@@ -163,8 +163,7 @@ mod tests {
 #[cfg(all(test, feature = "monad"))]
 mod monad_tests {
     use super::*;
-    use crate::MonadContextAux;
-    use alloy_evm::EvmEnv;
+    use alloy_evm::{EvmEnv, EvmFactory};
     use alloy_monad_evm::MonadEvmFactory;
     use alloy_sol_types::{SolCall, SolEvent};
     use monad_revm::{
@@ -181,6 +180,7 @@ mod monad_tests {
     use revm::{
         context::{BlockEnv, CfgEnv, TxEnv},
         database::InMemoryDB,
+        inspector::CountInspector,
         primitives::{TxKind, address},
         state::AccountInfo,
     };
@@ -245,11 +245,13 @@ mod monad_tests {
         let factory = MonadEvmFactory::default();
         let evm_env =
             EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
-        let mut evm = factory.create_evm_with_context(db, evm_env, MonadContextAux::default());
+        let mut evm =
+            factory.create_evm_with_inspector(db, evm_env, CountInspector::default());
 
         let result = execute_replay_transaction(&factory, &mut evm, tx).unwrap();
 
         assert!(result.result.is_success());
+        assert!(evm.inspector().call_count() > 0);
         assert_eq!(result.result.logs().len(), 1);
         assert_eq!(result.result.logs()[0].address, STAKING_ADDRESS);
         assert_eq!(result.result.logs()[0].topics()[0], ValidatorRewarded::SIGNATURE_HASH);
