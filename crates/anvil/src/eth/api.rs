@@ -2938,6 +2938,7 @@ impl EthApi<FoundryNetwork> {
                 data: None,
             }));
         }
+        let block_id = block_number;
         let block_request =
             self.block_request(block_number).await.map_err(|error| match error {
                 BlockchainError::BlockOutOfRange(_, _) | BlockchainError::BlockNotFound => {
@@ -2966,7 +2967,8 @@ impl EthApi<FoundryNetwork> {
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(number)
         {
-            let base_block = fork.block_by_number(number).await?.ok_or_else(|| {
+            let block_id = block_id.unwrap_or_else(|| number.into());
+            let base_block = fork.fetch_block(block_id).await?.ok_or_else(|| {
                 BlockchainError::RpcError(RpcError {
                     code: ErrorCode::ServerError(-32000),
                     message: "header not found".into(),

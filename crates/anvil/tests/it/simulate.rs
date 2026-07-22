@@ -113,7 +113,7 @@ async fn test_fork_simulate_normalizes_delegated_block_sequence_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_simulate_pins_delegated_hash_selector_rpc() {
+async fn test_fork_simulate_preserves_delegated_base_selector_rpc() {
     let (hash_api, hash_handle) =
         spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
     hash_api.evm_set_block_timestamp_interval(1).unwrap();
@@ -129,23 +129,28 @@ async fn test_fork_simulate_pins_delegated_hash_selector_rpc() {
     canonical_api.evm_set_block_timestamp_interval(1).unwrap();
     canonical_api.mine_one().await;
     canonical_api.mine_one().await;
+    let canonical_endpoint = canonical_handle.http_endpoint();
+    let canonical_base =
+        rpc_request(&canonical_endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
+    let canonical_hash = canonical_base["result"]["hash"].clone();
 
-    let proxy_endpoint = spawn_hash_aware_rpc_proxy(
-        hash_endpoint,
-        canonical_handle.http_endpoint(),
-        hash_selector.clone(),
-    )
-    .await;
+    let proxy_endpoint =
+        spawn_hash_aware_rpc_proxy(hash_endpoint, canonical_endpoint, hash_selector.clone()).await;
     let (api, handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(proxy_endpoint))
+            .with_eth_rpc_url(Some(proxy_endpoint.clone()))
             .with_fork_block_number(Some(2u64)),
     )
     .await;
     api.evm_set_block_timestamp_interval(7).unwrap();
+    let endpoint = handle.http_endpoint();
+
+    // Cache the selected block, then replace the same-height cache mapping with another block.
+    rpc_request(&endpoint, "eth_getBlockByHash", json!([hash_selector, false])).await;
+    rpc_request(&endpoint, "eth_getBlockByHash", json!([canonical_hash, false])).await;
 
     let response = rpc_request(
-        &handle.http_endpoint(),
+        &endpoint,
         "eth_simulateV1",
         json!([{"blockStateCalls": [{}]}, {"blockHash": hash_selector}]),
     )
@@ -154,6 +159,25 @@ async fn test_fork_simulate_pins_delegated_hash_selector_rpc() {
     assert_eq!(
         quantity(&response["result"][0]["timestamp"]),
         quantity(&hash_base["result"]["timestamp"]) + 7
+    );
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(proxy_endpoint))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    api.evm_set_block_timestamp_interval(7).unwrap();
+    let endpoint = handle.http_endpoint();
+
+    // Cache a noncanonical block at the selected height before using a numeric selector.
+    rpc_request(&endpoint, "eth_getBlockByHash", json!([hash_selector, false])).await;
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}, "0x1"])).await;
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(
+        quantity(&response["result"][0]["timestamp"]),
+        quantity(&canonical_base["result"]["timestamp"]) + 7
     );
 }
 
@@ -1020,6 +1044,7 @@ async fn spawn_hash_aware_rpc_proxy(
             async move {
                 let method = request["method"].as_str().unwrap();
                 let endpoint = if method == "eth_getBlockByHash"
+                    && request["params"].get(0) == Some(&hash_selector)
                     || method == "eth_simulateV1"
                         && request["params"].get(1) == Some(&hash_selector)
                 {

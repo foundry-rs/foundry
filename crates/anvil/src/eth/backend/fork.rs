@@ -676,6 +676,14 @@ impl<N: Network> ClientFork<N> {
         self.fetch_full_block(block_number).await
     }
 
+    /// Fetches a block selected by its original identifier directly from the fork provider.
+    pub async fn fetch_block(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        self.fetch_full_block(block_id).await
+    }
+
     async fn fetch_full_block(
         &self,
         block_id: impl Into<BlockId>,
