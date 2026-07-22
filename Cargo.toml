@@ -531,7 +531,7 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "9cb1db7ef5
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "9cb1db7ef5d30f4f1b336184b70983ea6f38e70d" }
 
 # Monad
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", rev = "e12f28c1af2329b8e923465a9283320eab6cb574", default-features = false, features = [
+alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", rev = "b4996df9d8d4c599c4c06e62f3edf7b05e7f381b", default-features = false, features = [
     "std",
     "memory_limit",
 ] }

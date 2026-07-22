@@ -410,7 +410,7 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.4.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm.git?rev=e12f28c1af2329b8e923465a9283320eab6cb574#e12f28c1af2329b8e923465a9283320eab6cb574"
+source = "git+https://github.com/category-labs/alloy-monad-evm.git?rev=b4996df9d8d4c599c4c06e62f3edf7b05e7f381b#b4996df9d8d4c599c4c06e62f3edf7b05e7f381b"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
