@@ -149,7 +149,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "monad")]
 use monad_revm::{MonadCfgEnv, MonadChainContext, MonadHardfork, instructions::monad_gas_params};
 #[cfg(feature = "optimism")]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
+use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 #[cfg(feature = "optimism")]
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 
@@ -6908,7 +6908,7 @@ fn simulate_transaction_error(error: InvalidTransactionError) -> BlockchainError
     simulate_rpc_error(code, format!("err: {error}"))
 }
 
-fn sanitize_simulation_blocks(
+pub(in crate::eth) fn sanitize_simulation_blocks(
     blocks: Vec<SimBlock>,
     base_number: u64,
     base_timestamp: u64,

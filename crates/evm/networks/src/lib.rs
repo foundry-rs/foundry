@@ -198,6 +198,29 @@ impl std::str::FromStr for NetworkVariant {
 }
 
 impl NetworkVariant {
+    /// Returns `true` if this is the Ethereum network variant.
+    pub const fn is_ethereum(&self) -> bool {
+        matches!(self, Self::Ethereum)
+    }
+
+    /// Returns `true` if this is the Optimism network variant.
+    #[cfg(feature = "optimism")]
+    pub const fn is_optimism(&self) -> bool {
+        matches!(self, Self::Optimism)
+    }
+
+    /// Returns `true` if this is the Tempo network variant.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo)
+    }
+
+    /// Returns `true` if this is the Monad network variant.
+    #[cfg(feature = "monad")]
+    pub const fn is_monad(&self) -> bool {
+        matches!(self, Self::Monad)
+    }
+
+    /// Returns the network variant name.
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Ethereum => "ethereum",
@@ -307,12 +330,12 @@ impl NetworkConfigs {
     }
 
     pub const fn is_tempo(&self) -> bool {
-        matches!(self.resolved_network(), Some(NetworkVariant::Tempo))
+        if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
     }
 
     #[cfg(feature = "monad")]
     pub const fn is_monad(&self) -> bool {
-        matches!(self.resolved_network(), Some(NetworkVariant::Monad))
+        if let Some(network) = self.resolved_network() { network.is_monad() } else { false }
     }
 
     #[cfg(not(feature = "monad"))]
@@ -586,6 +609,36 @@ mod tests {
     };
 
     // --- Equivalence: new flag == legacy flag ---
+
+    #[test]
+    fn network_variant_predicates() {
+        assert!(NetworkVariant::Ethereum.is_ethereum());
+        assert!(!NetworkVariant::Ethereum.is_tempo());
+        assert!(NetworkVariant::Tempo.is_tempo());
+        assert!(!NetworkVariant::Tempo.is_ethereum());
+
+        #[cfg(feature = "monad")]
+        {
+            assert!(!NetworkVariant::Ethereum.is_monad());
+            assert!(!NetworkVariant::Tempo.is_monad());
+            assert!(NetworkVariant::Monad.is_monad());
+            assert!(!NetworkVariant::Monad.is_ethereum());
+            assert!(!NetworkVariant::Monad.is_tempo());
+        }
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(NetworkVariant::Optimism.is_optimism());
+            assert!(!NetworkVariant::Optimism.is_ethereum());
+            assert!(!NetworkVariant::Optimism.is_tempo());
+
+            #[cfg(feature = "monad")]
+            assert!(!NetworkVariant::Optimism.is_monad());
+        }
+
+        #[cfg(all(feature = "optimism", feature = "monad"))]
+        assert!(!NetworkVariant::Monad.is_optimism());
+    }
 
     #[test]
     fn new_tempo_flag_equivalent_to_legacy() {

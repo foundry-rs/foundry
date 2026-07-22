@@ -43,7 +43,7 @@ use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
@@ -54,6 +54,7 @@ use std::{
 pub struct TestContract {
     pub abi: JsonAbi,
     pub bytecode: Bytes,
+    pub library_addresses: BTreeSet<Address>,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
@@ -794,8 +795,12 @@ impl MultiContractRunnerBuilder {
                     continue;
                 };
 
-                deployable_contracts
-                    .insert(id.clone(), TestContract { abi: abi.clone().into_owned(), bytecode });
+                let library_addresses = linker.linked_library_addresses(id, &libraries)?;
+
+                deployable_contracts.insert(
+                    id.clone(),
+                    TestContract { abi: abi.clone().into_owned(), bytecode, library_addresses },
+                );
             }
         }
 

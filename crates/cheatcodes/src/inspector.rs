@@ -607,6 +607,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// merged into the previous vector.
     pub recorded_account_diffs_stack: Option<Vec<Vec<AccountAccess>>>,
 
+    /// Account accesses performed by the test runner before user code can start recording.
+    pending_account_diffs: Option<Arc<[AccountAccess]>>,
+
+    /// Completed account accesses prepended to the active user recording session.
+    recorded_account_diffs_prefix: Option<Arc<[AccountAccess]>>,
+
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
 
@@ -760,6 +766,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             accesses: Default::default(),
             recording_accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
+            pending_account_diffs: Default::default(),
+            recorded_account_diffs_prefix: Default::default(),
             recorded_logs: Default::default(),
             record_debug_steps_info: Default::default(),
             mocked_calls: Default::default(),
@@ -798,6 +806,49 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
     pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
         self.analysis = Some(analysis);
+    }
+
+    /// Starts an internal account diff recording session for test runner setup.
+    pub fn start_internal_state_diff_recording(&mut self) -> bool {
+        if self.recorded_account_diffs_stack.is_some()
+            || self.recorded_account_diffs_prefix.is_some()
+        {
+            return false;
+        }
+        self.recorded_account_diffs_stack = Some(Default::default());
+        true
+    }
+
+    /// Stops an internal account diff recording session without leaving recording enabled.
+    pub fn stop_internal_state_diff_recording(&mut self) -> Vec<AccountAccess> {
+        self.recorded_account_diffs_stack.take().unwrap_or_default().into_iter().flatten().collect()
+    }
+
+    /// Makes account accesses captured by the test runner available to the next recording session.
+    pub fn set_pending_account_diffs(&mut self, accesses: Vec<AccountAccess>) {
+        self.pending_account_diffs = (!accesses.is_empty()).then(|| Arc::from(accesses));
+    }
+
+    /// Starts a user account diff recording session, including pending test runner accesses.
+    pub fn start_state_diff_recording(&mut self) {
+        self.recorded_account_diffs_prefix = self.pending_account_diffs.take();
+        self.recorded_account_diffs_stack = Some(Default::default());
+    }
+
+    /// Returns completed and active account accesses in execution order.
+    pub fn recorded_account_diffs(&self) -> impl Iterator<Item = &AccountAccess> {
+        self.recorded_account_diffs_prefix
+            .iter()
+            .flat_map(|prefix| prefix.iter())
+            .chain(self.recorded_account_diffs_stack.iter().flatten().flatten())
+    }
+
+    /// Takes completed account accesses from the active user recording session.
+    pub fn take_recorded_account_diffs_prefix(&mut self) -> Vec<AccountAccess> {
+        self.recorded_account_diffs_prefix
+            .take()
+            .map(|prefix| prefix.as_ref().to_vec())
+            .unwrap_or_default()
     }
 
     /// Returns the env overrides for the given fork (`None` = no-fork / local).
@@ -2423,58 +2474,46 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
-        // previous call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            // The root call cannot be recorded.
-            if curr_depth > 0
-                && let Some(last_depth) = &mut recorded_account_diffs_stack.pop()
-            {
-                // Update the reverted status of all deeper calls if this call reverted, in
-                // accordance with EVM behavior
-                if outcome.result.is_revert() {
-                    for element in &mut *last_depth {
-                        element.reverted = true;
-                        for storage_access in &mut element.storageAccesses {
-                            storage_access.reverted = true;
-                        }
+        // previous call depth's recorded accesses, if any.
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack
+            && let Some(mut last_depth) = recorded_account_diffs_stack.pop()
+        {
+            // Update the reverted status of all deeper calls if this call reverted, in
+            // accordance with EVM behavior.
+            if outcome.result.is_revert() {
+                for element in &mut *last_depth {
+                    element.reverted = true;
+                    for storage_access in &mut element.storageAccesses {
+                        storage_access.reverted = true;
                     }
                 }
+            }
 
-                if let Some(create_access) = last_depth.first_mut() {
-                    // Assert that we're at the correct depth before recording post-create state
-                    // changes. Depending on what depth the cheat was called at, there
-                    // may not be any pending calls to update if execution has
-                    // percolated up to a higher depth.
-                    let depth = ecx.journal().depth();
-                    if create_access.depth == depth as u64 {
-                        debug_assert_eq!(
-                            create_access.kind as u8,
-                            crate::Vm::AccountAccessKind::Create as u8
-                        );
-                        if let Some(address) = outcome.address
-                            && let Ok(created_acc) = ecx.journal_mut().load_account(address)
-                        {
-                            create_access.newBalance = created_acc.data.info.balance;
-                            create_access.newNonce = created_acc.data.info.nonce;
-                            create_access.deployedCode = created_acc
-                                .data
-                                .info
-                                .code
-                                .clone()
-                                .unwrap_or_default()
-                                .original_bytes();
-                        }
-                    }
-                    // Merge the last depth's AccountAccesses into the AccountAccesses at the
-                    // current depth, or push them back onto the pending
-                    // vector if higher depths were not recorded. This
-                    // preserves ordering of accesses.
-                    if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.append(last_depth);
-                    } else {
-                        recorded_account_diffs_stack.push(last_depth.clone());
+            if let Some(create_access) = last_depth.first_mut() {
+                // Update post-create state only if recording began before this frame.
+                if create_access.depth == curr_depth as u64 {
+                    debug_assert_eq!(
+                        create_access.kind as u8,
+                        crate::Vm::AccountAccessKind::Create as u8
+                    );
+                    if let Some(address) = outcome.address
+                        && let Ok(created_acc) = ecx.journal_mut().load_account(address)
+                    {
+                        create_access.newBalance = created_acc.data.info.balance;
+                        create_access.newNonce = created_acc.data.info.nonce;
+                        create_access.deployedCode =
+                            created_acc.data.info.code.clone().unwrap_or_default().original_bytes();
                     }
                 }
+            }
+            // Merge the last depth's AccountAccesses into the AccountAccesses at the
+            // current depth, or push them back onto the pending
+            // vector if higher depths were not recorded. This
+            // preserves ordering of accesses.
+            if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                last.append(&mut last_depth);
+            } else {
+                recorded_account_diffs_stack.push(last_depth);
             }
         }
 

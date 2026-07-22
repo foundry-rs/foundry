@@ -1,5 +1,7 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, MonadReplayContext, State},
+    backend::mem::{
+        BlockRequest, DatabaseRef, MonadReplayContext, State, sanitize_simulation_blocks,
+    },
     sign::build_impersonated,
 };
 use crate::{
@@ -2935,7 +2937,7 @@ impl EthApi<FoundryNetwork> {
 
     pub async fn simulate_v1(
         &self,
-        request: SimulatePayload,
+        mut request: SimulatePayload,
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
         const DEFAULT_BLOCK_INTERVAL_SECS: u64 = 12;
@@ -2951,6 +2953,7 @@ impl EthApi<FoundryNetwork> {
                 data: None,
             }));
         }
+        let block_id = block_number;
         let block_request =
             self.block_request(block_number).await.map_err(|error| match error {
                 BlockchainError::BlockOutOfRange(_, _) | BlockchainError::BlockNotFound => {
@@ -2962,16 +2965,6 @@ impl EthApi<FoundryNetwork> {
                 }
                 error => error,
             })?;
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
-        }
-
-        // this can be blocking for a bit, especially in forking mode
-        // <https://github.com/foundry-rs/foundry/issues/6036>
         let block_interval = self.backend.time().block_timestamp_interval().unwrap_or_else(|| {
             self.miner
                 .block_interval()
@@ -2983,6 +2976,34 @@ impl EthApi<FoundryNetwork> {
                 })
                 .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS)
         });
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            let block_id = match block_id {
+                Some(BlockId::Hash(hash)) => BlockId::Hash(hash),
+                _ => number.into(),
+            };
+            let base_block = fork.fetch_block(block_id).await?.ok_or_else(|| {
+                BlockchainError::RpcError(RpcError {
+                    code: ErrorCode::ServerError(-32000),
+                    message: "header not found".into(),
+                    data: None,
+                })
+            })?;
+            request.block_state_calls = sanitize_simulation_blocks(
+                request.block_state_calls,
+                base_block.header.number(),
+                base_block.header.timestamp(),
+                block_interval,
+            )?;
+            return Ok(fork.simulate_v1(&request, Some(base_block.header.hash.into())).await?);
+        }
+
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
             let simulated_blocks =
                 this.backend.simulate(request, Some(block_request), block_interval).await?;
@@ -4338,7 +4359,7 @@ impl EthApi<FoundryNetwork> {
         let transaction_type = request.transaction_type;
         let mut request: FoundryTransactionRequest =
             request.try_into().map_err(|_| BlockchainError::FailedToDecodeTransaction)?;
-        if matches!(&request, FoundryTransactionRequest::Tempo(_))
+        if request.is_tempo()
             && self.backend.is_tempo()
             && transaction_type.is_some_and(|ty| ty != TEMPO_TX_TYPE_ID)
         {
@@ -4362,7 +4383,7 @@ impl EthApi<FoundryNetwork> {
                 let evm_env = self.backend.evm_env().read();
                 self.backend.fallback_tx_gas_limit(&evm_env)
             };
-            let estimated_gas = if matches!(&request, FoundryTransactionRequest::Tempo(_)) {
+            let estimated_gas = if request.is_tempo() {
                 fallback_gas_limit
             } else {
                 self.do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())

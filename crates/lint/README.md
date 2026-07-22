@@ -20,12 +20,14 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `function-selector-collision`: Flags colliding selectors between a proxy and the statically typed implementation API targeted by its fallback.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
+  - `protected-vars`: Flags externally callable entry points that write a state variable without its required `@custom:security write-protection` function or modifier.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
 - **Medium Severity:**
   - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
   - `boolean-cst`: Flags misuse of boolean constants.
   - `dangerous-unary-operator`: Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), e.g. `x =- 1`, which parses as `x = -1` instead of the intended compound `x -= 1`.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
+  - `ecrecover`: Flags direct `ecrecover` calls whose signature `s` value is not proven to be canonical and non-malleable.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
@@ -35,6 +37,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
+  - `unsafe-oz-erc721-mint`: Flags calls resolving to `ERC721._mint`, which does not check that the recipient can receive the token; use `_safeMint`.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `unused-return`: Return value of an external call is not used.
   - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.

@@ -60,6 +60,7 @@ use foundry_evm::{
         },
         strategies::EvmFuzzState,
     },
+    inspectors::cheatcodes::Vm::AccountAccess,
     revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
@@ -733,17 +734,36 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
         let mut result = TestSetup::default();
-        for code in &self.mcr.libs_to_deploy {
+        let mut pending_account_diffs = Vec::new();
+        for (nonce, code) in self.mcr.libs_to_deploy.iter().enumerate() {
+            // Libraries are linked from nonce zero in the same order they are deployed.
+            let expected_address = LIBRARY_DEPLOYER.create(nonce as u64);
+            let recording_library_deployment =
+                self.contract.library_addresses.contains(&expected_address)
+                    && self
+                        .executor
+                        .inspector_mut()
+                        .cheatcodes
+                        .as_deref_mut()
+                        .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
             let deploy_result = self.executor.deploy(
                 LIBRARY_DEPLOYER,
                 code.clone(),
                 U256::ZERO,
                 Some(&self.mcr.revert_decoder),
             );
+            let recorded_account_diffs = if recording_library_deployment {
+                self.finish_library_deployment_recording()
+            } else {
+                Vec::new()
+            };
 
             // Record deployed library address.
             if let Ok(deployed) = &deploy_result {
                 result.deployed_libs.push(deployed.address);
+                if self.contract.library_addresses.contains(&deployed.address) {
+                    pending_account_diffs.extend(recorded_account_diffs);
+                }
             }
 
             let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
@@ -753,6 +773,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 result.reason = reason;
                 return Ok(result);
             }
+        }
+        if !pending_account_diffs.is_empty()
+            && let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_deref_mut()
+        {
+            cheats.set_pending_account_diffs(pending_account_diffs);
         }
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
@@ -804,6 +829,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
     fn initial_balance(&self) -> U256 {
         self.evm_opts.initial_balance
+    }
+
+    fn finish_library_deployment_recording(&mut self) -> Vec<AccountAccess> {
+        self.executor
+            .inspector_mut()
+            .cheatcodes
+            .as_deref_mut()
+            .map(|cheats| cheats.stop_internal_state_diff_recording())
+            .unwrap_or_default()
     }
 
     /// Configures this runner with the inline configuration for the contract.
@@ -1024,6 +1058,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 invalid_invariants.into_iter().collect(),
                 warnings,
             );
+        }
+
+        for invariant in &invariant_fns {
+            if invariant.outputs.len() == 1 && invariant.outputs[0].ty == "bool" {
+                warnings.push(format!(
+                    "Invariant function `{}` returns `bool`, but its return value is ignored; use assertions or revert to indicate failure.",
+                    invariant.signature()
+                ));
+            }
         }
 
         // Invariant testing requires tracing to figure out what contracts were created.
