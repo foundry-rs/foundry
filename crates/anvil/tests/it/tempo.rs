@@ -53,6 +53,10 @@ use tempo_precompiles::{
     NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS,
     TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
     TIP403_REGISTRY_ADDRESS,
+    account_keychain::{
+        KeyRestrictions, SignatureType as KeychainSignatureType, TokenLimit as KeychainTokenLimit,
+        authorizeKeyCall,
+    },
     current_committee::{CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee},
     nonce::NonceManager,
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
@@ -60,7 +64,7 @@ use tempo_precompiles::{
 };
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
-    transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType},
+    transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType, TokenLimit},
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
@@ -2948,6 +2952,95 @@ async fn test_tempo_estimate_gas_preserves_fee_payer_recovery_across_probes() {
     let gas = provider.raw_request::<_, U256>("eth_estimateGas".into(), (request,)).await.unwrap();
 
     assert!(gas < U256::from(2_000_000));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_with_key_authorization_limits() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let signer = dev_key(0);
+    let access_key = PrivateKeySigner::random();
+    let chain_id = provider.get_chain_id().await.unwrap();
+
+    let authorization =
+        KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, access_key.address())
+            .with_limits(vec![TokenLimit { token: PATH_USD, limit: U256::from(1), period: 0 }]);
+    let signature = signer.sign_hash(&authorization.signature_hash()).await.unwrap();
+    let authorization = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
+    let request = serde_json::json!({
+        "from": account,
+        "type": "0x76",
+        "feeToken": PATH_USD,
+        "keyId": access_key.address(),
+        "keyAuthorization": authorization,
+        "calls": [tempo_transfer(recipient, U256::ZERO)],
+    });
+
+    let gas = provider
+        .raw_request::<_, U256>("eth_estimateGas".into(), (request.clone(),))
+        .await
+        .unwrap();
+    assert!(gas > U256::from(21_000));
+
+    let mut over_limit = request;
+    over_limit["calls"] = serde_json::json!([tempo_transfer(recipient, U256::from(2))]);
+    let err =
+        provider.raw_request::<_, U256>("eth_estimateGas".into(), (over_limit,)).await.unwrap_err();
+    assert!(err.to_string().contains("execution reverted"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_with_provisioned_key() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let access_key = PrivateKeySigner::random();
+    let authorize = authorizeKeyCall {
+        keyId: access_key.address(),
+        signatureType: KeychainSignatureType::Secp256k1,
+        config: KeyRestrictions {
+            expiry: u64::MAX,
+            enforceLimits: true,
+            limits: vec![KeychainTokenLimit {
+                token: PATH_USD,
+                amount: U256::from(1_000_000),
+                period: 0,
+            }],
+            allowAnyCalls: true,
+            allowedCalls: vec![],
+        },
+    };
+    let authorization_request = serde_json::json!({
+        "from": account,
+        "type": "0x76",
+        "gas": T5_PRECOMPILE_GAS,
+        "feeToken": PATH_USD,
+        "calls": [{
+            "to": ACCOUNT_KEYCHAIN_ADDRESS,
+            "value": "0x0",
+            "input": Bytes::from(authorize.abi_encode()),
+        }],
+    });
+    let tx_hash = provider
+        .raw_request::<_, B256>("eth_sendTransaction".into(), (authorization_request,))
+        .await
+        .unwrap();
+    api.mine_one().await;
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert!(receipt.status());
+
+    let request = serde_json::json!({
+        "from": account,
+        "type": "0x76",
+        "feeToken": PATH_USD,
+        "keyId": access_key.address(),
+        "calls": [tempo_transfer(recipient, U256::ZERO)],
+    });
+    let gas = provider.raw_request::<_, U256>("eth_estimateGas".into(), (request,)).await.unwrap();
+    assert!(gas > U256::from(21_000));
 }
 
 #[tokio::test(flavor = "multi_thread")]

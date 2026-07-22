@@ -163,6 +163,7 @@ enum CallTxEnv {
 }
 
 impl CallTxEnv {
+    #[cfg_attr(not(feature = "js-tracer"), allow(dead_code))]
     const fn base(&self) -> &TxEnv {
         match self {
             Self::Eth(tx) => tx,
@@ -222,6 +223,13 @@ struct PreparedCall {
     evm_env: EvmEnv,
     tx_env: CallTxEnv,
     simulated_tempo_tx: Option<AASigned>,
+}
+
+#[derive(Default)]
+struct TypedCallOverrides {
+    gas_limit: Option<u64>,
+    access_list: Option<AccessList>,
+    disable_fee_charge: bool,
 }
 
 /// Marker trait that abstracts over the per-network inspector trait bounds
@@ -2119,14 +2127,18 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         gas_limit: u64,
+        disable_fee_charge: bool,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         self.call_with_state_typed_inner(
             state,
             request,
             fee_details,
             block_env,
-            Some(gas_limit),
-            None,
+            TypedCallOverrides {
+                gas_limit: Some(gas_limit),
+                disable_fee_charge,
+                ..Default::default()
+            },
         )
     }
 
@@ -2143,8 +2155,7 @@ impl<N: Network> Backend<N> {
             request,
             fee_details,
             block_env,
-            None,
-            Some(access_list),
+            TypedCallOverrides { access_list: Some(access_list), ..Default::default() },
         )
     }
 
@@ -2154,16 +2165,16 @@ impl<N: Network> Backend<N> {
         request: FoundryTransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-        gas_limit: Option<u64>,
-        access_list: Option<AccessList>,
+        overrides: TypedCallOverrides,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
-        let PreparedCall { evm_env, mut tx_env, .. } =
+        let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_typed_call_env(state, request, fee_details, block_env)?;
-        if let Some(gas_limit) = gas_limit {
+        evm_env.cfg_env.disable_fee_charge = overrides.disable_fee_charge;
+        if let Some(gas_limit) = overrides.gas_limit {
             tx_env.base_mut().gas_limit = gas_limit;
         }
-        if let Some(access_list) = access_list {
+        if let Some(access_list) = overrides.access_list {
             tx_env.base_mut().access_list = access_list;
         }
         let ResultAndState { result, state } =
