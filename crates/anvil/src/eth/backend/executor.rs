@@ -6,7 +6,7 @@ use crate::{
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
 use alloy_consensus::{
-    Eip658Value, Transaction, TransactionEnvelope, TxReceipt,
+    Eip658Value, Receipt, ReceiptWithBloom, Transaction, TransactionEnvelope, TxReceipt,
     transaction::{Either, Recovered},
 };
 use alloy_eips::{
@@ -38,12 +38,75 @@ use revm::{
     primitives::hardfork::SpecId,
     state::AccountInfo,
 };
+use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER};
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
 /// Receipt builder for Foundry/Anvil that handles all transaction types
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct FoundryReceiptBuilder;
+
+impl FoundryReceiptBuilder {
+    fn wrap_receipt(
+        tx_type: FoundryTxType,
+        receipt: ReceiptWithBloom<Receipt>,
+    ) -> FoundryReceiptEnvelope {
+        match tx_type {
+            FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
+            FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
+            FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
+            FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
+            FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
+            #[cfg(feature = "optimism")]
+            FoundryTxType::Deposit => {
+                unreachable!("deposit receipts require fork-specific metadata")
+            }
+            #[cfg(feature = "optimism")]
+            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+            FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+        }
+    }
+
+    /// Builds a typed receipt for an RPC-simulated transaction.
+    pub(crate) fn build_simulated_receipt(
+        tx_type: FoundryTxType,
+        result: &ExecutionResult,
+        cumulative_gas_used: u64,
+        trace_transfers: bool,
+        deposit_nonce: Option<u64>,
+        deposit_receipt_version: Option<u64>,
+    ) -> FoundryReceiptEnvelope {
+        let logs = result
+            .clone()
+            .into_logs()
+            .into_iter()
+            .filter(|log| {
+                !trace_transfers
+                    || log.address != TRANSFER_LOG_EMITTER
+                    || log.topics().first() != Some(&TRANSFER_EVENT_TOPIC)
+            })
+            .collect();
+        let receipt =
+            Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
+                .with_bloom();
+        #[cfg(feature = "optimism")]
+        if tx_type == FoundryTxType::Deposit {
+            return FoundryReceiptEnvelope::Deposit(
+                op_alloy_consensus::OpDepositReceiptWithBloom {
+                    receipt: op_alloy_consensus::OpDepositReceipt {
+                        inner: receipt.receipt,
+                        deposit_nonce,
+                        deposit_receipt_version,
+                    },
+                    logs_bloom: receipt.logs_bloom,
+                },
+            );
+        }
+        #[cfg(not(feature = "optimism"))]
+        let _ = (deposit_nonce, deposit_receipt_version);
+        Self::wrap_receipt(tx_type, receipt)
+    }
+}
 
 impl ReceiptBuilder for FoundryReceiptBuilder {
     type Transaction = FoundryTxEnvelope;
@@ -53,27 +116,13 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
         &self,
         ctx: ReceiptBuilderCtx<'_, FoundryTxType, E>,
     ) -> FoundryReceiptEnvelope {
-        let receipt = alloy_consensus::Receipt {
+        let receipt = Receipt {
             status: Eip658Value::Eip658(ctx.result.is_success()),
             cumulative_gas_used: ctx.cumulative_gas_used,
             logs: ctx.result.into_logs(),
         }
         .with_bloom();
-
-        match ctx.tx_type {
-            FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
-            FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
-            FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
-            FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
-            FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => {
-                unreachable!("deposit receipts are built in commit_transaction")
-            }
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
-            FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
-        }
+        Self::wrap_receipt(ctx.tx_type, receipt)
     }
 }
 

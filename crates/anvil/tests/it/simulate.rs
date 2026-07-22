@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address};
+use alloy_primitives::{Address, Bloom, Bytes, TxKind, U256, address};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockOverrides,
@@ -1403,6 +1403,37 @@ async fn test_simulate_validation_defaults_base_fee_to_zero() {
     assert_eq!(response["result"][0]["baseFeePerGas"], "0x0");
     assert_eq!(response["result"][1]["baseFeePerGas"], "0x9");
     assert_eq!(response["result"][2]["baseFeePerGas"], "0x0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_transfer_traces_do_not_change_header_bloom() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_accounts().next().unwrap();
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "calls": [{
+                    "from": sender,
+                    "to": address!("0xc100000000000000000000000000000000000000"),
+                    "value": "0x1"
+                }]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(
+        response["result"][0]["calls"][0]["logs"][0]["address"],
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    );
+    assert_eq!(
+        serde_json::from_value::<Bloom>(response["result"][0]["logsBloom"].clone()).unwrap(),
+        Bloom::ZERO
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
