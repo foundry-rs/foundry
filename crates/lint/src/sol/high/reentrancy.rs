@@ -2115,15 +2115,33 @@ fn standard_reentrancy_guard_lock(
     if body.stmts.iter().map(count_modifier_placeholders).sum::<usize>() != 1 {
         return None;
     }
-    let placeholder_index = body.stmts.iter().position(contains_unconditional_placeholder)?;
-
+    let mut activation_stmts = Vec::new();
+    collect_stmts_before_unconditional_placeholder(body.stmts, &mut activation_stmts)?;
     let mut seen = BTreeSet::new();
-    let (lock_var, entered) =
-        guard_activation_from_stmts(hir, &body.stmts[..placeholder_index], &mut seen)?;
+    let (lock_var, entered) = guard_activation_from_stmt_refs(hir, &activation_stmts, &mut seen)?;
+    let placeholder_index = body.stmts.iter().position(contains_unconditional_placeholder)?;
     let mut seen = BTreeSet::new();
     let (restored_var, restored) =
         guard_restoration_from_stmt(hir, body.stmts.get(placeholder_index + 1)?, &mut seen)?;
     (lock_var == restored_var && entered != restored).then_some(lock_var)
+}
+
+fn collect_stmts_before_unconditional_placeholder<'hir>(
+    stmts: &'hir [hir::Stmt<'hir>],
+    before: &mut Vec<&'hir hir::Stmt<'hir>>,
+) -> Option<()> {
+    for stmt in stmts {
+        match stmt.kind {
+            StmtKind::Placeholder => return Some(()),
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block)
+                if contains_unconditional_placeholder(stmt) =>
+            {
+                return collect_stmts_before_unconditional_placeholder(block.stmts, before);
+            }
+            _ => before.push(stmt),
+        }
+    }
+    None
 }
 
 fn contains_unconditional_placeholder(stmt: &hir::Stmt<'_>) -> bool {
@@ -2229,6 +2247,15 @@ fn function_has_reentrancy_guard(
 fn guard_activation_from_stmts(
     hir: &hir::Hir<'_>,
     stmts: &[hir::Stmt<'_>],
+    seen: &mut BTreeSet<FunctionId>,
+) -> Option<(VariableId, LockValue)> {
+    let stmts = stmts.iter().collect::<Vec<_>>();
+    guard_activation_from_stmt_refs(hir, &stmts, seen)
+}
+
+fn guard_activation_from_stmt_refs(
+    hir: &hir::Hir<'_>,
+    stmts: &[&hir::Stmt<'_>],
     seen: &mut BTreeSet<FunctionId>,
 ) -> Option<(VariableId, LockValue)> {
     let (activation, prefix) = stmts.split_last()?;

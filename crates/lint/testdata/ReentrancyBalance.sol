@@ -982,3 +982,26 @@ contract ReentrancyBalanceNestedPlaceholderGuard {
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
     }
 }
+
+contract ReentrancyBalanceNestedPlaceholderUnlock {
+    uint256 private locked;
+
+    modifier unlockedBeforeBody() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        {
+            locked = 0;
+            _;
+        }
+        locked = 0;
+    }
+
+    function vulnerable(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external unlockedBeforeBody {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
