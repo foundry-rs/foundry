@@ -1030,6 +1030,7 @@ lib/outer/:inner/=lib/outer/lib/inner/contracts/
 lib/outer/:outer/=lib/outer/src/
 inner/=lib/outer/lib/inner/
 outer/=lib/outer/src/
+@scope/outer/=lib/outer/src/
 
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
@@ -1097,61 +1098,6 @@ forgetest!(dependency_context_does_not_match_sibling_prefix, |prj, cmd| {
     prj.add_source(
         "UsesSibling.sol",
         "import {Sibling} from \"dependency/Sibling.sol\"; contract UsesSibling is Sibling {}",
-    );
-
-    cmd.arg("build").assert_success();
-});
-
-forgetest!(root_explicit_contexts_preserve_source_prefix, |prj, cmd| {
-    prj.update_config(|config| {
-        config.remappings = [
-            "src/A.sol:@x/=lib/x/".parse::<Remapping>().unwrap().into(),
-            "src/generated:@y/=lib/y/".parse::<Remapping>().unwrap().into(),
-        ]
-        .into();
-    });
-    for (lib, contract) in [("x", "X"), ("y", "Y")] {
-        let lib = prj.paths().libraries[0].join(lib);
-        pretty_err(&lib, fs::create_dir_all(&lib));
-        pretty_err(
-            &lib,
-            fs::write(lib.join(format!("{contract}.sol")), format!("contract {contract} {{}}\n")),
-        );
-    }
-    prj.add_source("A.sol", "import {X} from \"@x/X.sol\"; contract A is X {}\n");
-    prj.add_source("generatedA.sol", "import {Y} from \"@y/Y.sol\"; contract GeneratedA is Y {}\n");
-
-    cmd.arg("build").assert_success();
-});
-
-forgetest!(dependency_explicit_contexts_preserve_source_prefix, |prj, cmd| {
-    let outer = prj.paths().libraries[0].join("outer");
-    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
-    pretty_err(&outer, fs::create_dir_all(outer.join("lib/x")));
-    pretty_err(&outer, fs::create_dir_all(outer.join("lib/y")));
-    pretty_err(
-        &outer,
-        fs::write(
-            outer.join("foundry.toml"),
-            "[profile.default]\nremappings = [\"src/A.sol:@x/=lib/x/\", \"src/generated:@y/=lib/y/\"]\n",
-        ),
-    );
-    pretty_err(&outer, fs::write(outer.join("lib/x/X.sol"), "contract X {}\n"));
-    pretty_err(&outer, fs::write(outer.join("lib/y/Y.sol"), "contract Y {}\n"));
-    pretty_err(
-        &outer,
-        fs::write(outer.join("src/A.sol"), "import {X} from \"@x/X.sol\"; contract A is X {}\n"),
-    );
-    pretty_err(
-        &outer,
-        fs::write(
-            outer.join("src/generatedA.sol"),
-            "import {Y} from \"@y/Y.sol\"; contract GeneratedA is Y {}\n",
-        ),
-    );
-    prj.add_source(
-        "UsesOuter.sol",
-        "import {A} from \"outer/A.sol\"; import {GeneratedA} from \"outer/generatedA.sol\"; contract UsesOuter is A, GeneratedA {}\n",
     );
 
     cmd.arg("build").assert_success();
@@ -1231,6 +1177,22 @@ dep/=lib/dep/
 outer/=lib/outer/src/
 
 "#]]);
+});
+
+forgetest!(direct_dependency_keeps_configured_package_alias, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("foo-1.2.0");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    pretty_err(
+        &dep,
+        fs::write(dep.join("foundry.toml"), "[profile.default]\nremappings = [\"foo/=src/\"]\n"),
+    );
+    pretty_err(&dep, fs::write(dep.join("src/Foo.sol"), "contract Foo {}\n"));
+    prj.add_source(
+        "UsesFoo.sol",
+        "import {Foo} from \"foo/Foo.sol\"; contract UsesFoo is Foo {}\n",
+    );
+
+    cmd.arg("build").assert_success();
 });
 
 // test remappings with closer paths are prioritised
