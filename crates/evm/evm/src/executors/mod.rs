@@ -794,7 +794,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> eyre::Result<RawCallResult<FEN>> {
         let factory = FEN::EvmFactory::default();
         if factory.protocol_system_call(&tx_env).is_none() {
-            eyre::bail!("transaction is not a protocol system transaction")
+            eyre::bail!("transaction is not a protocol system transaction");
         }
 
         let mut stack = self.inspector().clone();

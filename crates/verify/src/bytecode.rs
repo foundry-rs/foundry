@@ -771,7 +771,7 @@ impl VerifyBytecodeArgs {
             } else if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
                 eyre::bail!(
                     "block {simulation_block} is required to reconstruct transaction context"
-                )
+                );
             }
 
             let kind = ConsensusTransaction::kind(&transaction);
