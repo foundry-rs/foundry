@@ -32,7 +32,7 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -1253,6 +1253,7 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
+        let context_aux = ccx.ecx.db().context_for_synthetic_transaction(&tx_env)?;
 
         // Save current env for restoration after execution.
         let cached_evm_env = ccx.ecx.evm_clone();
@@ -1302,7 +1303,6 @@ impl Cheatcode for executeTransactionCall {
 
         let mut res = None;
         let mut cold_state = Some(cold_state);
-        let context_aux = FEN::EvmFactory::default().context_for_transaction(&modified_tx_env);
         let mut nested_evm_env = {
             let (db, _) = ccx.ecx.db_journal_inner_mut();
             executor.with_fresh_nested_evm(

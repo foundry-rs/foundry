@@ -1,3 +1,13 @@
+#[cfg(feature = "monad")]
+use alloy_consensus::{SignableTransaction, TxEip1559};
+#[cfg(feature = "monad")]
+use alloy_network::TxSignerSync;
+#[cfg(feature = "monad")]
+use alloy_primitives::{Address, TxKind, U256, hex};
+#[cfg(feature = "monad")]
+use alloy_provider::Provider;
+#[cfg(feature = "monad")]
+use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
@@ -304,6 +314,120 @@ contract MonadMemoryLimitTest is Test {
 [FAIL: EvmError: MemoryLimitOOG] test_memory_ending_above_limit() ([GAS])
 ...
 "#]]);
+});
+
+#[cfg(feature = "monad")]
+forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
+    const CHAIN_ID: u64 = 31_337;
+    const GAS_LIMIT: u64 = 100_000;
+    const MAX_FEE_PER_GAS: u128 = 2_000_000_000;
+    const MAX_PRIORITY_FEE_PER_GAS: u128 = 1_000_000_000;
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let ancestor = wallets[0].address();
+    let control = wallets[1].address();
+    let probe = Address::with_last_byte(0x20);
+
+    // Mine the ancestor in the block Forge will fork. The synthetic transaction should execute
+    // in a child of this block, making this sender ineligible to dip into its reserve.
+    let mut ancestor_marker = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+        to: TxKind::Call(wallets[2].address()),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[0].sign_transaction_sync(&mut ancestor_marker).unwrap();
+    let mut encoded = Vec::new();
+    ancestor_marker.into_signed(signature).eip2718_encode(&mut encoded);
+    provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+
+    let value = U256::from(3_000_000_000_000_000_000u128);
+    let mut ancestor_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 1,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+        to: TxKind::Call(probe),
+        value,
+        ..Default::default()
+    };
+    let signature = wallets[0].sign_transaction_sync(&mut ancestor_tx).unwrap();
+    let mut ancestor_raw = Vec::new();
+    ancestor_tx.into_signed(signature).eip2718_encode(&mut ancestor_raw);
+
+    let mut control_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+        to: TxKind::Call(probe),
+        value,
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut control_tx).unwrap();
+    let mut control_raw = Vec::new();
+    control_tx.into_signed(signature).eip2718_encode(&mut control_raw);
+
+    let source = r#"
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256 forkId);
+    function deal(address account, uint256 newBalance) external;
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+}
+
+interface IReserveBalance {
+    function dippedIntoReserve() external returns (bool);
+}
+
+contract ExecuteTransactionMonadContextTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    IReserveBalance constant RESERVE_BALANCE = IReserveBalance(address(0x1001));
+    address constant ANCESTOR = <ancestor>;
+    address constant CONTROL = <control>;
+    address constant PROBE = <probe>;
+
+    function test_execute_transaction_uses_ancestor_context() public {
+        vm.createSelectFork("<rpc>");
+        vm.deal(ANCESTOR, 12 ether);
+        vm.deal(CONTROL, 12 ether);
+
+        // Calls dippedIntoReserve() after receiving value, then returns the result.
+        vm.etch(PROBE, hex"633a61584e5f5260205f6004601c5f6110015af15060205ff3");
+
+        bytes memory ancestorResult = vm.executeTransaction(hex"<ancestor_raw>");
+        require(abi.decode(ancestorResult, (bool)), "ancestor sender must preserve reserve");
+        require(ANCESTOR.balance == 9 ether, "unexpected ancestor balance");
+
+        // The nested transaction's tracker must not replace the outer transaction's tracker.
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "nested tracker leaked into parent");
+
+        bytes memory controlResult = vm.executeTransaction(hex"<control_raw>");
+        require(!abi.decode(controlResult, (bool)), "fresh sender should be allowed to dip");
+        require(CONTROL.balance == 9 ether, "unexpected control balance");
+    }
+}
+"#
+    .replace("<ancestor>", &ancestor.to_string())
+    .replace("<control>", &control.to_string())
+    .replace("<probe>", &probe.to_string())
+    .replace("<rpc>", &handle.http_endpoint())
+    .replace("<ancestor_raw>", &hex::encode(ancestor_raw))
+    .replace("<control_raw>", &hex::encode(control_raw));
+    prj.add_test("ExecuteTransactionMonadContext.t.sol", &source);
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadNine".parse().unwrap());
+    });
+
+    cmd.args(["test", "--network", "monad", "--mc", "ExecuteTransactionMonadContextTest"])
+        .assert_success();
 });
 
 forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
