@@ -182,6 +182,36 @@ async fn test_fork_simulate_preserves_delegated_base_selector_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_pins_delegated_tag_selector_rpc() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64)).with_slots_in_an_epoch(2))
+            .await;
+    origin_api.evm_set_block_timestamp_interval(1).unwrap();
+    origin_api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(4u64))
+            .with_slots_in_an_epoch(2),
+    )
+    .await;
+    api.evm_set_block_timestamp_interval(1).unwrap();
+
+    // Advance the upstream safe tag beyond the fork while the local tag remains at block 2.
+    origin_api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{}]}, "safe"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(quantity(&response["result"][0]["number"]), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_normalizes_block_sequence_rpc() {
     let (_api, handle) = spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
     let endpoint = handle.http_endpoint();

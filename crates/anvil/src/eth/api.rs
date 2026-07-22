@@ -2967,7 +2967,10 @@ impl EthApi<FoundryNetwork> {
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(number)
         {
-            let block_id = block_id.unwrap_or_else(|| number.into());
+            let block_id = match block_id {
+                Some(BlockId::Hash(hash)) => BlockId::Hash(hash),
+                _ => number.into(),
+            };
             let base_block = fork.fetch_block(block_id).await?.ok_or_else(|| {
                 BlockchainError::RpcError(RpcError {
                     code: ErrorCode::ServerError(-32000),
