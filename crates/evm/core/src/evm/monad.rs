@@ -1,6 +1,7 @@
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
 use alloy_monad_evm::{MonadEvm, MonadEvmFactory, MonadPrecompilesMap};
 use alloy_sol_types::SolCall;
+use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadBuilder, MonadCfgEnv, MonadContext, MonadEvm as RevmMonadEvm, MonadHardfork,
@@ -26,7 +27,7 @@ use revm::{
     },
     context_interface::{ContextSetters, transaction::AuthorizationTr},
     handler::{EthFrame, EvmTr, FrameResult, Handler},
-    inspector::InspectorHandler,
+    inspector::{InspectSystemCallEvm, InspectorHandler},
     interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
     primitives::{Address, HashSet},
 };
@@ -34,7 +35,7 @@ use revm::{
 use crate::{
     FoundryContextExt, FoundryContextState, FoundryInspectorExt, MonadContextAux,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm, ProtocolSystemCall},
+    evm::{FoundryEvmFactory, NestedEvm, ProtocolSystemCall, finish_protocol_system_call},
 };
 
 type MonadEvmHandler<'db, I> =
@@ -252,6 +253,23 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         Ok(ResultAndState::new(result, self.ctx_ref().journaled_state.inner.state.clone()))
     }
 
+    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
+        let factory = MonadEvmFactory::default();
+        let Some(system_call) = factory.protocol_system_call(&tx) else {
+            return self.transact_raw(tx).map_err(Into::into);
+        };
+
+        let prestate = system_call.apply_prestate(self.0.ctx.db_mut())?;
+        let result = self
+            .inspect_system_call_with_caller(
+                system_call.caller,
+                system_call.contract,
+                system_call.data,
+            )
+            .wrap_err("failed to execute protocol system transaction")?;
+        finish_protocol_system_call(result, prestate)
+    }
+
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
         self.ctx_ref().evm_clone()
     }
@@ -386,5 +404,75 @@ mod tests {
         assert!(context.chain.parent_senders_and_authorities.contains(&current_authority));
         assert_eq!(context.chain.current_block_senders, vec![child_sender]);
         assert!(context.chain.current_block_authorities[0].contains(&child_authority));
+    }
+
+    #[test]
+    fn transaction_cursor_replaces_target_and_excludes_future_transactions() {
+        let preceding_sender = Address::from([1; 20]);
+        let target_sender = Address::from([2; 20]);
+        let future_sender = Address::from([3; 20]);
+        let synthetic_sender = Address::from([4; 20]);
+
+        let cursor = BlockContext::<MonadEvmNetwork>::new(
+            Vec::new(),
+            Vec::new(),
+            vec![
+                transaction(preceding_sender, Address::ZERO),
+                transaction(target_sender, Address::ZERO),
+                transaction(future_sender, Address::ZERO),
+            ],
+        )
+        .before_transaction(1)
+        .unwrap();
+        let context = cursor.next_transaction(&transaction(synthetic_sender, Address::ZERO));
+
+        assert_eq!(context.chain.current_tx_index, 1);
+        assert_eq!(context.chain.current_block_senders, vec![preceding_sender, synthetic_sender]);
+        assert!(!context.chain.current_block_senders.contains(&target_sender));
+        assert!(!context.chain.current_block_senders.contains(&future_sender));
+    }
+
+    #[test]
+    fn transaction_cursor_accumulates_same_block_transactions() {
+        let fork_sender = Address::from([1; 20]);
+        let first_sender = Address::from([2; 20]);
+        let second_sender = Address::from([3; 20]);
+        let mut cursor = BlockContext::<MonadEvmNetwork>::new(
+            Vec::new(),
+            Vec::new(),
+            vec![transaction(fork_sender, Address::ZERO)],
+        )
+        .into_child();
+
+        cursor.record_transaction(transaction(first_sender, Address::ZERO));
+        let context = cursor.next_transaction(&transaction(second_sender, Address::ZERO));
+
+        assert_eq!(context.chain.current_tx_index, 1);
+        assert_eq!(context.chain.current_block_senders, vec![first_sender, second_sender]);
+        assert!(context.chain.parent_senders_and_authorities.contains(&fork_sender));
+    }
+
+    #[test]
+    fn transaction_cursor_rotates_separate_blocks() {
+        let fork_parent_sender = Address::from([1; 20]);
+        let fork_sender = Address::from([2; 20]);
+        let first_sender = Address::from([3; 20]);
+        let second_sender = Address::from([4; 20]);
+        let mut cursor = BlockContext::<MonadEvmNetwork>::new(
+            Vec::new(),
+            vec![transaction(fork_parent_sender, Address::ZERO)],
+            vec![transaction(fork_sender, Address::ZERO)],
+        )
+        .into_child();
+
+        cursor.record_transaction(transaction(first_sender, Address::ZERO));
+        cursor.advance_block();
+        let context = cursor.next_transaction(&transaction(second_sender, Address::ZERO));
+
+        assert_eq!(context.chain.current_tx_index, 0);
+        assert_eq!(context.chain.current_block_senders, vec![second_sender]);
+        assert!(context.chain.parent_senders_and_authorities.contains(&first_sender));
+        assert!(context.chain.grandparent_senders_and_authorities.contains(&fork_sender));
+        assert!(!context.chain.grandparent_senders_and_authorities.contains(&fork_parent_sender));
     }
 }

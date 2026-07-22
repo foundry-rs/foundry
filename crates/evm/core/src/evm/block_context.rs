@@ -8,6 +8,7 @@ use eyre::{Result, WrapErr};
 use super::{BlockResponseFor, ContextAuxFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor};
 
 /// Transaction metadata for an exact block and its two ancestors.
+#[derive(Clone, Debug)]
 pub struct BlockContext<FEN: FoundryEvmNetwork> {
     grandparent: Vec<TxEnvFor<FEN>>,
     parent: Vec<TxEnvFor<FEN>>,
@@ -54,14 +55,52 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
         )
     }
 
+    /// Returns a cursor positioned immediately before `index` in the current block.
+    pub fn before_transaction(mut self, index: usize) -> Result<Self> {
+        if index > self.current.len() {
+            eyre::bail!(
+                "transaction index {index} exceeds block transaction count {}",
+                self.current.len()
+            );
+        }
+        self.current.truncate(index);
+        Ok(self)
+    }
+
+    /// Returns a cursor positioned at the start of a child block.
+    pub fn into_child(mut self) -> Self {
+        self.grandparent = std::mem::take(&mut self.parent);
+        self.parent = std::mem::take(&mut self.current);
+        self
+    }
+
+    /// Builds context for the next transaction at the cursor's current block position.
+    pub fn next_transaction(&self, tx: &TxEnvFor<FEN>) -> ContextAuxFor<FEN> {
+        let mut current = self.current.clone();
+        let index = current.len();
+        current.push(tx.clone());
+        FEN::EvmFactory::default().context_for_block(
+            &self.grandparent,
+            &self.parent,
+            &current,
+            index,
+        )
+    }
+
+    /// Records a committed transaction at the cursor's current block position.
+    pub fn record_transaction(&mut self, tx: TxEnvFor<FEN>) {
+        self.current.push(tx);
+    }
+
+    /// Advances the cursor to the start of the next block.
+    pub fn advance_block(&mut self) {
+        self.grandparent = std::mem::take(&mut self.parent);
+        self.parent = std::mem::take(&mut self.current);
+    }
+
     /// Builds context for a synthetic transaction in a child of the current block.
     pub fn child(&self, tx: &TxEnvFor<FEN>) -> ContextAuxFor<FEN> {
-        FEN::EvmFactory::default().context_for_block(
-            &self.parent,
-            &self.current,
-            std::slice::from_ref(tx),
-            0,
-        )
+        self.clone().into_child().next_transaction(tx)
     }
 }
 

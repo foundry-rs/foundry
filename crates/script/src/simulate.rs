@@ -148,6 +148,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
+                    runner.executor.advance_block_context();
                     let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
                     runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
@@ -255,7 +256,8 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
             script_config.evm_opts.fork_url = Some(rpc.clone());
-            let runner = script_config.get_runner().await?;
+            let mut runner = script_config.get_runner().await?;
+            runner.executor.enable_block_context_progression()?;
             Ok((rpc, runner))
         });
         try_join_all(futs).await

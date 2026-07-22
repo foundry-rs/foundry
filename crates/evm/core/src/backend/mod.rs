@@ -75,6 +75,15 @@ struct TransactionInputs<FEN: FoundryEvmNetwork> {
     context_aux: ContextAuxFor<FEN>,
 }
 
+/// Canonical chain position represented by a fork's database state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ForkPosition {
+    /// The database contains all transactions through the fork's current block.
+    AfterBlock { block_number: u64 },
+    /// The database contains the transactions before `transaction_index` in `block_number`.
+    BeforeTransaction { block_number: u64, transaction_index: usize },
+}
+
 /// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
@@ -556,9 +565,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
         if let Some(fork) = fork {
             let (fork_id, fork, _) = backend.forks.create_fork(fork)?;
+            let block_number = fork_block_number(&fork_id)
+                .ok_or_else(|| eyre::eyre!("fork {fork_id} is missing its pinned block number"))?;
             let fork_db = ForkDB::new(fork);
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
+                block_number,
                 fork_db,
                 backend.inner.new_journaled_state(),
             );
@@ -575,11 +587,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// as active
     pub(crate) fn new_with_fork(
         id: &ForkId,
-        fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
+        mut fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
     ) -> eyre::Result<Self> {
         let mut backend = Self::spawn(None)?;
-        let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
+        fork.journaled_state = journaled_state;
+        let fork_ids = backend.inner.insert_fork(id.clone(), fork);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
         Ok(backend)
@@ -1006,27 +1019,34 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(BlockContext::new(grandparent, parent, current))
     }
 
-    /// Returns the context for a synthetic transaction in a child of `block`.
-    fn child_context_for_block(
+    /// Returns the block cursor matching the active fork's exact database position.
+    pub fn block_context_for_synthetic_transaction(
         &self,
-        id: LocalForkId,
-        block: &AnyRpcBlock,
-        tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ContextAuxFor<FEN>> {
-        let current = Self::full_block_tx_envs(block)?;
-        let fork = self.inner.get_fork_by_id(id)?;
-        let parent_hash = block.header().parent_hash();
-        let parent = if parent_hash.is_zero() {
-            Vec::new()
-        } else {
-            let parent = fork
-                .backend()
-                .get_full_block(parent_hash)
-                .wrap_err_with(|| format!("failed to fetch parent block {parent_hash}"))?;
-            Self::full_block_tx_envs(&parent)?
+    ) -> eyre::Result<Option<BlockContext<FEN>>> {
+        if !FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+            return Ok(None);
+        }
+        let Some(id) = self.active_fork_id() else {
+            return Ok(None);
         };
 
-        Ok(BlockContext::<FEN>::new(Vec::new(), parent, current).child(tx))
+        let fork = self.inner.get_fork_by_id(id)?;
+        let (block_number, transaction_index) = match fork.position {
+            ForkPosition::AfterBlock { block_number } => (block_number, None),
+            ForkPosition::BeforeTransaction { block_number, transaction_index } => {
+                (block_number, Some(transaction_index))
+            }
+        };
+        let block = fork
+            .backend()
+            .get_full_block(block_number)
+            .wrap_err_with(|| format!("failed to fetch active fork block {block_number}"))?;
+        let context = self.block_context_inputs(id, &block)?;
+
+        match transaction_index {
+            Some(index) => context.before_transaction(index).map(Some),
+            None => Ok(Some(context.into_child())),
+        }
     }
 
     /// Replays all the transactions at the forks current block that were mined before the `tx`
@@ -1139,24 +1159,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ContextAuxFor<FEN>> {
         let factory = FEN::EvmFactory::default();
-        if !FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
-            return Ok(factory.context_for_transaction(tx));
-        }
-        let Some(id) = self.active_fork_id() else {
-            return Ok(factory.context_for_transaction(tx));
-        };
-
-        let block_number = self
-            .active_fork_block_number()
-            .ok_or_else(|| eyre::eyre!("active fork {id} is missing its block number"))?;
-        let block = self
-            .inner
-            .get_fork_by_id(id)?
-            .backend()
-            .get_full_block(block_number)
-            .wrap_err_with(|| format!("failed to fetch active fork block {block_number}"))?;
-
-        self.child_context_for_block(id, &block, tx)
+        self.block_context_for_synthetic_transaction()?.map_or_else(
+            || Ok(factory.context_for_transaction(tx)),
+            |context| Ok(context.next_transaction(tx)),
+        )
     }
 
     fn snapshot_state(
@@ -1251,10 +1257,16 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(create_fork)?;
+        let block_number = fork_block_number(&fork_id)
+            .ok_or_else(|| eyre::eyre!("fork {fork_id} is missing its pinned block number"))?;
 
         let fork_db = ForkDB::new(fork);
-        let (id, _) =
-            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
+        let (id, _) = self.inner.insert_new_fork(
+            fork_id,
+            block_number,
+            fork_db,
+            self.fork_init_journaled_state.clone(),
+        );
         Ok(id)
     }
 
@@ -1433,7 +1445,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let (fork_id, backend, fork_env) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
         // this will update the local mapping
-        self.inner.roll_fork(id, fork_id, backend)?;
+        self.inner.roll_fork(id, fork_id, block_number, backend)?;
 
         if let Some((active_id, active_idx)) = self.active_fork_ids {
             // the currently active fork is the targeted fork of this call
@@ -1499,6 +1511,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         let (fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
+        let transaction_index = match block.transactions() {
+            BlockTransactions::Full(transactions) => {
+                transactions.iter().position(|tx| tx.tx_hash() == transaction)
+            }
+            _ => None,
+        };
 
         // roll the fork to the transaction's parent block or latest if it's pending, because we
         // need to fork off the parent block's state for tx level forking and then replay the txs
@@ -1515,7 +1533,15 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             .update_block_env(self.inner.ensure_fork_id(id).cloned()?, evm_env.block_env.clone());
 
         // replay all transactions that came before
-        self.replay_until(id, evm_env.clone(), transaction, journaled_state)?;
+        let target = self.replay_until(id, evm_env.clone(), transaction, journaled_state)?;
+        if target.is_some()
+            && let Some(transaction_index) = transaction_index
+        {
+            self.inner.get_fork_by_id_mut(id)?.position = ForkPosition::BeforeTransaction {
+                block_number: block.header().number(),
+                transaction_index,
+            };
+        }
 
         Ok(())
     }
@@ -1552,19 +1578,23 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         update_env_block(&mut evm_env, block.header());
 
         let factory = FEN::EvmFactory::default();
-        let context_aux = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+        let current_tx_position = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
             let BlockTransactions::Full(transactions) = block.transactions() else {
                 eyre::bail!("block {} does not contain full transactions", block.header().number());
             };
-            let current_tx_index = transactions
-                .iter()
-                .position(|tx| tx.tx_hash() == transaction)
-                .ok_or_else(|| {
-                eyre::eyre!(
-                    "transaction {transaction:?} is missing from block {}",
-                    block.header().number()
-                )
-            })?;
+            let index = transactions.iter().position(|tx| tx.tx_hash() == transaction).ok_or_else(
+                || {
+                    eyre::eyre!(
+                        "transaction {transaction:?} is missing from block {}",
+                        block.header().number()
+                    )
+                },
+            )?;
+            Some((index, transactions.len()))
+        } else {
+            None
+        };
+        let context_aux = if let Some((current_tx_index, _)) = current_tx_position {
             self.block_context_inputs(id, &block)?.transaction(current_tx_index)
         } else {
             factory.context_for_transaction(&tx_env)
@@ -1578,7 +1608,24 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             &fork_id,
             &persistent_accounts,
             inspector,
-        )
+        )?;
+        if let Some((current_tx_index, transaction_count)) = current_tx_position
+            && fork.position
+                == (ForkPosition::BeforeTransaction {
+                    block_number: block.header().number(),
+                    transaction_index: current_tx_index,
+                })
+        {
+            fork.position = if current_tx_index + 1 == transaction_count {
+                ForkPosition::AfterBlock { block_number: block.header().number() }
+            } else {
+                ForkPosition::BeforeTransaction {
+                    block_number: block.header().number(),
+                    transaction_index: current_tx_index + 1,
+                }
+            };
+        }
+        Ok(())
     }
 
     fn transact_from_tx(
@@ -1925,6 +1972,7 @@ pub enum BackendDatabaseSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
 pub struct Fork<N: Network, B: ForkBlockEnv = BlockEnv> {
     db: ForkDB<N, B>,
     journaled_state: JournaledState,
+    position: ForkPosition,
 }
 
 impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
@@ -2144,6 +2192,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         &mut self,
         id: LocalForkId,
         fork_id: ForkId,
+        block_number: u64,
         db: ForkDB<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
     ) -> ForkLookupIndex {
@@ -2151,7 +2200,8 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.insert(id, fork_id.clone());
         self.created_forks.insert(fork_id, idx);
 
-        let fork = Fork { db, journaled_state };
+        let fork =
+            Fork { db, journaled_state, position: ForkPosition::AfterBlock { block_number } };
         self.forks.push(Some(fork));
         idx
     }
@@ -2160,6 +2210,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         &mut self,
         id: LocalForkId,
         new_fork_id: ForkId,
+        block_number: u64,
         backend: SharedBackend<AnyNetwork, BlockEnvFor<FEN>>,
     ) -> eyre::Result<ForkLookupIndex> {
         let fork_id = self.ensure_fork_id(id)?;
@@ -2172,6 +2223,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
                 merge_db_account_data(addr, &active.db, &mut new_db);
             }
             active.db = new_db;
+            active.position = ForkPosition::AfterBlock { block_number };
         }
         // update mappings
         self.issued_local_fork_ids.insert(id, new_fork_id.clone());
@@ -2185,14 +2237,26 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
     pub fn insert_new_fork(
         &mut self,
         fork_id: ForkId,
+        block_number: u64,
         db: ForkDB<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
+    ) -> (LocalForkId, ForkLookupIndex) {
+        self.insert_fork(
+            fork_id,
+            Fork { db, journaled_state, position: ForkPosition::AfterBlock { block_number } },
+        )
+    }
+
+    /// Inserts an existing fork while preserving its exact chain position.
+    fn insert_fork(
+        &mut self,
+        fork_id: ForkId,
+        fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
     ) -> (LocalForkId, ForkLookupIndex) {
         let idx = self.forks.len();
         self.created_forks.insert(fork_id.clone(), idx);
         let id = self.next_id();
         self.issued_local_fork_ids.insert(id, fork_id);
-        let fork = Fork { db, journaled_state };
         self.forks.push(Some(fork));
         (id, idx)
     }
@@ -2381,7 +2445,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
             inspector,
         );
         evm.journal_inner_mut().depth = depth + 1;
-        evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?
+        evm.transact_replay(tx_env).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
@@ -2433,11 +2497,15 @@ mod tests {
     #[cfg(feature = "monad")]
     use crate::evm::MonadEvmNetwork;
     use crate::{
-        backend::Backend, constants::MONAD_CHEATCODE_ADDRESS, evm::EthEvmNetwork, fork::ForkId,
+        backend::{Backend, ForkPosition},
+        constants::MONAD_CHEATCODE_ADDRESS,
+        evm::EthEvmNetwork,
+        fork::ForkId,
         opts::EvmOpts,
     };
     use alloy_primitives::{U256, address};
     use alloy_provider::Provider;
+    use anvil::{NodeConfig, spawn};
     use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
@@ -2456,6 +2524,37 @@ mod tests {
         {
             let monad = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
             assert!(monad.inner.persistent_accounts.contains(&MONAD_CHEATCODE_ADDRESS));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn temporary_backend_preserves_exact_fork_position() {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        let block_number = provider.get_block_number().await.unwrap();
+
+        let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(handle.http_endpoint());
+        evm_opts.fork_block_number = Some(block_number);
+        let fork = evm_opts.get_fork(&Config::default(), 31_337, Some(block_number)).unwrap();
+        let mut backend = Backend::<EthEvmNetwork>::spawn(Some(fork)).unwrap();
+        let id = backend.active_fork_ids.unwrap().0;
+        let fork_id = backend.inner.ensure_fork_id(id).unwrap().clone();
+
+        for position in [
+            ForkPosition::BeforeTransaction {
+                block_number: block_number + 1,
+                transaction_index: 2,
+            },
+            ForkPosition::AfterBlock { block_number: block_number + 2 },
+        ] {
+            backend.inner.get_fork_by_id_mut(id).unwrap().position = position;
+            let fork = backend.active_fork().unwrap().clone();
+            let journaled_state = fork.journaled_state.clone();
+            let temporary =
+                Backend::<EthEvmNetwork>::new_with_fork(&fork_id, fork, journaled_state).unwrap();
+
+            assert_eq!(temporary.active_fork().unwrap().position, position);
         }
     }
 

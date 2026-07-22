@@ -6,6 +6,7 @@ use crate::{
     FoundryBlock, FoundryContextExt, FoundryContextState, FoundryEvmAuxState, FoundryInspectorExt,
     FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
+    constants::CHEATCODE_ADDRESS,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
@@ -82,6 +83,11 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
 
     fn is_extra_cheatcode_address(address: Address) -> bool {
         Self::EXTRA_CHEATCODE_ADDRESSES.contains(&address)
+    }
+
+    /// Returns whether `address` is a standard or network-specific cheatcode contract.
+    fn is_cheatcode_address(address: Address) -> bool {
+        address == CHEATCODE_ADDRESS || Self::is_extra_cheatcode_address(address)
     }
 }
 
@@ -270,6 +276,14 @@ pub trait NestedEvm {
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
+
+    /// Executes a canonical replay transaction.
+    ///
+    /// Networks with protocol system envelopes must override this method so replay can apply the
+    /// protocol prestate and bypass ordinary transaction validation.
+    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
+        self.transact_raw(tx).map_err(Into::into)
+    }
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }

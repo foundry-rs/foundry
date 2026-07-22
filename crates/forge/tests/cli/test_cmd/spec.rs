@@ -1,9 +1,9 @@
 #[cfg(feature = "monad")]
 use alloy_consensus::{SignableTransaction, TxEip1559};
 #[cfg(feature = "monad")]
-use alloy_network::TxSignerSync;
+use alloy_network::{Ethereum, Network, ReceiptResponse, TransactionBuilder, TxSignerSync};
 #[cfg(feature = "monad")]
-use alloy_primitives::{Address, TxKind, U256, hex};
+use alloy_primitives::{Address, TxKind, U256, address, hex, keccak256};
 #[cfg(feature = "monad")]
 use alloy_provider::Provider;
 #[cfg(feature = "monad")]
@@ -427,6 +427,163 @@ contract ExecuteTransactionMonadContextTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "ExecuteTransactionMonadContextTest"])
+        .assert_success();
+});
+
+#[cfg(feature = "monad")]
+forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd| {
+    const CHAIN_ID: u64 = 31_337;
+    const GAS_LIMIT: u64 = 100_000;
+    const MAX_FEE_PER_GAS: u128 = 3_000_000_000;
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let future_sender = wallets[0].address();
+    let probe = Address::with_last_byte(0x21);
+
+    let mut target_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 2_000_000_000,
+        to: TxKind::Call(wallets[4].address()),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[3].sign_transaction_sync(&mut target_tx).unwrap();
+    let mut target_raw = Vec::new();
+    target_tx.into_signed(signature).eip2718_encode(&mut target_raw);
+
+    let mut future_marker = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(wallets[5].address()),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[0].sign_transaction_sync(&mut future_marker).unwrap();
+    let mut future_marker_raw = Vec::new();
+    future_marker.into_signed(signature).eip2718_encode(&mut future_marker_raw);
+
+    let mut future_probe = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(probe),
+        value: U256::from(3_000_000_000_000_000_000u128),
+        ..Default::default()
+    };
+    let signature = wallets[0].sign_transaction_sync(&mut future_probe).unwrap();
+    let mut future_probe_raw = Vec::new();
+    future_probe.into_signed(signature).eip2718_encode(&mut future_probe_raw);
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let target_pending = provider.send_raw_transaction(&target_raw).await.unwrap();
+    let target_hash = *target_pending.tx_hash();
+    let future_pending = provider.send_raw_transaction(&future_marker_raw).await.unwrap();
+    api.mine_one().await;
+    let target_receipt = target_pending.get_receipt().await.unwrap();
+    let future_receipt = future_pending.get_receipt().await.unwrap();
+    assert_eq!(target_receipt.block_number(), future_receipt.block_number());
+    assert!(target_receipt.transaction_index() < future_receipt.transaction_index());
+
+    let source = r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 transaction) external returns (uint256);
+    function deal(address account, uint256 newBalance) external;
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+}
+
+interface IReserveBalance {
+    function dippedIntoReserve() external returns (bool);
+}
+
+contract TransactionForkMonadContextTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant FUTURE_SENDER = <future_sender>;
+    address constant PROBE = <probe>;
+
+    function test_future_transaction_is_not_an_ancestor() public {
+        vm.createSelectFork("<rpc>", <target_hash>);
+        vm.deal(FUTURE_SENDER, 12 ether);
+
+        // Calls dippedIntoReserve() after receiving value, then returns the result.
+        vm.etch(PROBE, hex"633a61584e5f5260205f6004601c5f6110015af15060205ff3");
+        bytes memory result = vm.executeTransaction(hex"<future_probe_raw>");
+        require(!abi.decode(result, (bool)), "future sender must be allowed to dip");
+        require(FUTURE_SENDER.balance == 9 ether, "unexpected future sender balance");
+    }
+}
+"#
+    .replace("<future_sender>", &future_sender.to_string())
+    .replace("<probe>", &probe.to_string())
+    .replace("<rpc>", &handle.http_endpoint())
+    .replace("<target_hash>", &target_hash.to_string())
+    .replace("<future_probe_raw>", &hex::encode(future_probe_raw));
+    prj.add_test("TransactionForkMonadContext.t.sol", &source);
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadNine".parse().unwrap());
+    });
+
+    cmd.args(["test", "--network", "monad", "--mc", "TransactionForkMonadContextTest"])
+        .assert_success();
+});
+
+#[cfg(feature = "monad")]
+forgetest_async!(transact_replays_monad_protocol_system_target, |prj, cmd| {
+    const SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
+    const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let initial_balance = U256::from(1_000_000_000_000_000_000u128);
+    api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
+    api.anvil_set_balance(SYSTEM_ADDRESS, initial_balance).await.unwrap();
+
+    let request = <Ethereum as Network>::TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(STAKING_ADDRESS)
+        .with_input(keccak256("syscallSnapshot()")[..4].to_vec())
+        .with_gas_limit(1_000_000);
+    let receipt =
+        provider.send_transaction(request.into()).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+    let source = r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256 forkId);
+    function getNonce(address account) external view returns (uint64 nonce);
+    function transact(bytes32 txHash) external;
+}
+
+contract MonadProtocolSystemTargetTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant SYSTEM = 0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e;
+
+    function test_transact_uses_protocol_system_path() public {
+        vm.createSelectFork("<rpc>", <tx_hash>);
+        uint256 balanceBefore = SYSTEM.balance;
+        uint64 nonceBefore = vm.getNonce(SYSTEM);
+
+        vm.transact(<tx_hash>);
+
+        require(SYSTEM.balance == balanceBefore, "protocol caller paid ordinary transaction gas");
+        require(vm.getNonce(SYSTEM) == nonceBefore + 1, "protocol caller nonce was not advanced");
+    }
+}
+"#
+    .replace("<rpc>", &handle.http_endpoint())
+    .replace("<tx_hash>", &receipt.transaction_hash.to_string());
+    prj.add_test("MonadProtocolSystemTarget.t.sol", &source);
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadNine".parse().unwrap());
+    });
+
+    cmd.args(["test", "--network", "monad", "--mc", "MonadProtocolSystemTargetTest"])
         .assert_success();
 });
 

@@ -35,8 +35,8 @@ use foundry_evm_core::{
         history_window_start,
     },
     evm::{
-        ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
-        HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
+        BlockContext, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory,
+        FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -92,6 +92,18 @@ pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
+/// Returns whether a nested revert can be ignored when fail-on-revert is disabled.
+#[inline]
+pub fn should_ignore_revert<FEN: FoundryEvmNetwork>(
+    fail_on_revert: bool,
+    target: Address,
+    reverter: Option<Address>,
+) -> bool {
+    !fail_on_revert
+        && reverter
+            .is_some_and(|reverter| reverter != target && !FEN::is_cheatcode_address(reverter))
+}
+
 sol! {
     interface ITest {
         function setUp() external;
@@ -134,6 +146,8 @@ pub struct Executor<FEN: FoundryEvmNetwork> {
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
+    /// Opt-in cursor for transactions simulated sequentially against one fork.
+    block_context: Option<BlockContext<FEN>>,
 }
 
 impl<FEN: FoundryEvmNetwork> Executor<FEN> {
@@ -197,6 +211,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             inspector,
             gas_limit,
             legacy_assertions,
+            block_context: None,
         }
     }
 
@@ -209,6 +224,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
+            block_context: self.block_context.clone(),
         }
     }
 
@@ -223,6 +239,38 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// this will clone the backend first.
     pub fn backend_mut(&mut self) -> &mut Backend<FEN> {
         Arc::make_mut(&mut self.backend)
+    }
+
+    /// Enables exact block-context progression for sequential committed transactions.
+    ///
+    /// This is opt-in because test and setup calls are execution phases rather than transactions
+    /// that should automatically become part of one simulated block.
+    pub fn enable_block_context_progression(&mut self) -> eyre::Result<()> {
+        self.block_context = self.backend().block_context_for_synthetic_transaction()?;
+        Ok(())
+    }
+
+    /// Advances an enabled block-context cursor to the start of the next block.
+    pub fn advance_block_context(&mut self) {
+        if let Some(context) = &mut self.block_context {
+            context.advance_block();
+        }
+    }
+
+    fn context_for_synthetic_transaction(
+        &self,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ContextAuxFor<FEN>> {
+        self.block_context.as_ref().map_or_else(
+            || self.backend().context_for_synthetic_transaction(tx),
+            |context| Ok(context.next_transaction(tx)),
+        )
+    }
+
+    fn record_transaction_context(&mut self, tx: TxEnvFor<FEN>) {
+        if let Some(context) = &mut self.block_context {
+            context.record_transaction(tx);
+        }
     }
 
     /// Returns a reference to the EVM environment (block and cfg).
@@ -471,7 +519,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env: TxEnvFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let context_aux = self.backend().context_for_synthetic_transaction(&tx_env)?;
+        let context_aux = self.context_for_synthetic_transaction(&tx_env)?;
         self.deploy_with_env_and_context(evm_env, tx_env, context_aux, rd)
     }
 
@@ -698,7 +746,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let context_aux = self.backend().context_for_synthetic_transaction(&tx_env)?;
+        let context_aux = self.context_for_synthetic_transaction(&tx_env)?;
         self.call_with_env_and_context(evm_env, tx_env, context_aux)
     }
 
@@ -744,7 +792,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let context_aux = self.backend().context_for_synthetic_transaction(&tx_env)?;
+        let context_aux = self.context_for_synthetic_transaction(&tx_env)?;
         self.transact_with_env_and_context(evm_env, tx_env, context_aux)
     }
 
@@ -780,7 +828,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         if sancov_trace_cmp {
             SancovGuard::drain_cmp_into(&mut result);
         }
+        let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
+        self.record_transaction_context(committed_tx);
         Ok(result)
     }
 
@@ -814,7 +864,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             &backend,
             has_state_snapshot_failure,
         )?;
+        let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
+        self.record_transaction_context(committed_tx);
         Ok(result)
     }
 
@@ -1696,6 +1748,8 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    #[cfg(feature = "monad")]
+    use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
     use revm::context::{Cfg, TxEnv};
     use std::{sync::mpsc, thread};
 
@@ -1704,6 +1758,35 @@ mod tests {
             edge_coverage: Some(EdgeCoverage::CollisionFree(vec![EdgeCovHit { edge, count: 1 }])),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn nested_revert_is_ignored_only_when_allowed() {
+        let target = Address::from([0x11; 20]);
+        let nested = Address::from([0x22; 20]);
+
+        assert!(should_ignore_revert::<EthEvmNetwork>(false, target, Some(nested)));
+        assert!(!should_ignore_revert::<EthEvmNetwork>(true, target, Some(nested)));
+        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, Some(target)));
+        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, Some(CHEATCODE_ADDRESS)));
+        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, None));
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn network_cheatcode_revert_handling_is_monad_specific() {
+        let target = Address::from([0x11; 20]);
+
+        assert!(should_ignore_revert::<EthEvmNetwork>(
+            false,
+            target,
+            Some(MONAD_CHEATCODE_ADDRESS),
+        ));
+        assert!(!should_ignore_revert::<MonadEvmNetwork>(
+            false,
+            target,
+            Some(MONAD_CHEATCODE_ADDRESS),
+        ));
     }
 
     #[test]

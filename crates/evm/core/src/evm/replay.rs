@@ -28,7 +28,7 @@ pub struct ProtocolSystemCall {
 }
 
 impl ProtocolSystemCall {
-    fn apply_prestate<DB: alloy_evm::Database + DatabaseCommit>(
+    pub(crate) fn apply_prestate<DB: alloy_evm::Database + DatabaseCommit>(
         &self,
         db: &mut DB,
     ) -> Result<AddressMap<Account>> {
@@ -92,9 +92,16 @@ where
     };
 
     let prestate = system_call.apply_prestate(evm.db_mut())?;
-    let mut result = evm
+    let result = evm
         .transact_system_call(system_call.caller, system_call.contract, system_call.data)
         .wrap_err("failed to execute protocol system transaction")?;
+    finish_protocol_system_call(result, prestate)
+}
+
+pub(crate) fn finish_protocol_system_call<H>(
+    mut result: ResultAndState<H>,
+    prestate: AddressMap<Account>,
+) -> Result<ResultAndState<H>> {
     if !result.result.is_success() {
         eyre::bail!("protocol system transaction reverted or halted");
     }
