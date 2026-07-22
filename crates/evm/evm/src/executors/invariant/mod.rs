@@ -2,7 +2,7 @@ use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
         corpus::{
-            DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
+            DynamicTargetCtx, ObservedCallDepth, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
             finalize_corpus_after_campaign, persist_campaign_optimization,
             prepare_corpus_for_campaign,
         },
@@ -1110,7 +1110,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let failures_revision = failures_checkpoint.revision();
             let mut stop_after_run = false;
             let mut run_cancelled = false;
-            let mut observed_call_entries = Vec::<(Vec<ObservedCall>, BasicTxDetails)>::new();
+            let mut observed_call_entries = Vec::<Vec<ObservedCall>>::new();
 
             let initial_seq = corpus_manager.new_inputs(
                 &mut invariant_test.test_data.branch_runner,
@@ -1212,10 +1212,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 }
                 let observed_calls = std::mem::take(&mut call_result.observed_calls);
                 if new_call_coverage && !observed_calls.is_empty() {
-                    observed_call_entries.push((
-                        observed_calls,
-                        current_run.inputs.last().expect("checked above").clone(),
-                    ));
+                    observed_call_entries.push(observed_calls);
                 }
 
                 if discarded {
@@ -1461,11 +1458,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
             }
 
-            for (observed_calls, parent_tx) in observed_call_entries {
-                corpus_manager.hoist_observed_calls(
+            for observed_calls in observed_call_entries {
+                corpus_manager.observe_calls(
                     &observed_calls,
-                    &parent_tx,
                     &invariant_test.targeted_contracts,
+                    ObservedCallDepth::All,
                 );
             }
 
