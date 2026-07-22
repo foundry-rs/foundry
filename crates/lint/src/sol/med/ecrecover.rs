@@ -232,6 +232,14 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
+    fn use_all_pending(&mut self) {
+        for recoveries in std::mem::take(&mut self.state.pending).into_values() {
+            for recovery in recoveries {
+                self.emit_hit(recovery.span);
+            }
+        }
+    }
+
     fn validate_pending(&mut self) {
         let low_s = &self.state.low_s;
         self.state.pending.retain(|_, recoveries| {
@@ -1118,6 +1126,9 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 return ControlFlow::Continue(());
             }
             StmtKind::Err(_) | StmtKind::AssemblyBlock(_) => {
+                // Inline assembly is opaque and may observe any local before changing it. Flush
+                // deferred recoveries before discarding facts so assembly cannot hide a warning.
+                self.use_all_pending();
                 self.state = FlowState::default();
             }
             StmtKind::Return(None) => {

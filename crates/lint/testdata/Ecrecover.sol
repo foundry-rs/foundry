@@ -314,6 +314,41 @@ contract Ecrecover {
         require(uint256(s) <= HALF_ORDER);
     }
 
+    function assemblyAfterRecovery(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        assembly {
+            pop(0)
+        }
+        return signer;
+    }
+
+    function emptyAssemblyAfterRecovery(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        assembly {}
+        return signer;
+    }
+
+    function memorySafeAssemblyAfterRecovery(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        assembly ("memory-safe") {
+            pop(0)
+        }
+        return signer;
+    }
+
+    function assemblyBeforeRecovery(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        assembly {
+            pop(0)
+        }
+        require(uint256(s) <= HALF_ORDER);
+        return ecrecover(hash, v, r, s);
+    }
+
     function nonDominatingGuard(
         bytes32 hash,
         uint8 v,
