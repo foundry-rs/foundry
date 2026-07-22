@@ -599,3 +599,45 @@ Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
 });
+
+// A suite whose internal-cheatcode usage comes from a helper shared by an unannotated function
+// (default network pass) and a Tempo-annotated function (override pass) must warn only once, not
+// once per pass. Regression for the per-pass warning duplication in multi-network runs.
+forgetest_init!(internal_cheatcode_warning_not_duplicated_across_network_passes, |prj, cmd| {
+    prj.add_test(
+        "SharedInternal.t.sol",
+        r#"
+        interface VmInternal {
+            function _expectCheatcodeRevert() external;
+            function parseJsonUint(string calldata, string calldata) external returns (uint256);
+        }
+
+        contract SharedInternal {
+            address internal constant VM =
+                address(uint160(uint256(keccak256("hevm cheat code"))));
+
+            function useInternalCheatcode() internal {
+                VmInternal(VM)._expectCheatcodeRevert();
+                VmInternal(VM).parseJsonUint("invalid json", ".value");
+            }
+
+            function test_default() public {
+                useInternalCheatcode();
+            }
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_tempo() public {
+                useInternalCheatcode();
+            }
+        }
+        "#,
+    );
+
+    let output = cmd.arg("test").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert_eq!(
+        stderr.matches("intended for internal use").count(),
+        1,
+        "internal-cheatcode warning must be emitted once across network passes, got:\n{stderr}"
+    );
+});
