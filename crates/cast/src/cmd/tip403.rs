@@ -1,5 +1,6 @@
 use crate::{
     cmd::tip20::{resolve_tip20_signer, send_tip20_transaction},
+    tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -7,12 +8,10 @@ use alloy_primitives::Address;
 use clap::{Parser, ValueEnum};
 use eyre::Result;
 use foundry_cli::{
-    json::print_json_success,
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
-use foundry_common::shell;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::str::FromStr;
 use tempo_contracts::precompiles::{ITIP403Registry, TIP403_REGISTRY_ADDRESS};
 use tempo_primitives::TempoAddressExt;
@@ -305,18 +304,6 @@ fn warn_if_virtual(account: Address) -> Result<()> {
 
 fn address_array(accounts: &[Address]) -> String {
     format!("[{}]", accounts.iter().map(Address::to_string).collect::<Vec<_>>().join(","))
-}
-
-fn print_payload<F>(payload: Value, human: F) -> Result<()>
-where
-    F: FnOnce(&Value) -> Result<()>,
-{
-    if shell::is_json() {
-        print_json_success(payload)?;
-    } else {
-        human(&payload)?;
-    }
-    Ok(())
 }
 
 impl PolicyKind {

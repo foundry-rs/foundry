@@ -60,6 +60,7 @@ use foundry_evm::{
         },
         strategies::EvmFuzzState,
     },
+    inspectors::cheatcodes::Vm::AccountAccess,
     revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
@@ -733,17 +734,33 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
         let mut result = TestSetup::default();
+        let mut pending_account_diffs = Vec::new();
         for code in &self.mcr.libs_to_deploy {
+            let recording_library_deployment = !self.contract.library_addresses.is_empty()
+                && self
+                    .executor
+                    .inspector_mut()
+                    .cheatcodes
+                    .as_deref_mut()
+                    .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
             let deploy_result = self.executor.deploy(
                 LIBRARY_DEPLOYER,
                 code.clone(),
                 U256::ZERO,
                 Some(&self.mcr.revert_decoder),
             );
+            let recorded_account_diffs = if recording_library_deployment {
+                self.finish_library_deployment_recording()
+            } else {
+                Vec::new()
+            };
 
             // Record deployed library address.
             if let Ok(deployed) = &deploy_result {
                 result.deployed_libs.push(deployed.address);
+                if self.contract.library_addresses.contains(&deployed.address) {
+                    pending_account_diffs.extend(recorded_account_diffs);
+                }
             }
 
             let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
@@ -753,6 +770,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 result.reason = reason;
                 return Ok(result);
             }
+        }
+        if !pending_account_diffs.is_empty()
+            && let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_deref_mut()
+        {
+            cheats.set_pending_account_diffs(pending_account_diffs);
         }
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
@@ -804,6 +826,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
     fn initial_balance(&self) -> U256 {
         self.evm_opts.initial_balance
+    }
+
+    fn finish_library_deployment_recording(&mut self) -> Vec<AccountAccess> {
+        self.executor
+            .inspector_mut()
+            .cheatcodes
+            .as_deref_mut()
+            .map(|cheats| cheats.stop_internal_state_diff_recording())
+            .unwrap_or_default()
     }
 
     /// Configures this runner with the inline configuration for the contract.
@@ -4939,7 +4970,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         let reverted = call_result.reverted;
 
                         // Merge tx result traces in unit test result.
-                        self.result.extend(call_result);
+                        self.result.extend_setup(call_result);
 
                         // To continue unit test execution the call should not revert.
                         if reverted {

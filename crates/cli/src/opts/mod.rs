@@ -6,6 +6,7 @@ mod global;
 mod rpc;
 mod rpc_common;
 mod tempo;
+mod tracing;
 mod transaction;
 
 pub use build::*;
@@ -16,4 +17,5 @@ pub use global::*;
 pub use rpc::*;
 pub use rpc_common::*;
 pub use tempo::*;
+pub use tracing::*;
 pub use transaction::*;

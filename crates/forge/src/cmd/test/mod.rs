@@ -32,8 +32,8 @@ use clap::{Parser, ValueEnum, ValueHint};
 use dialoguer::{Select, console::Term};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::{self, LoadConfig},
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TracingArgs},
+    utils::{self, FoundryPathExt, LoadConfig},
 };
 use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
@@ -69,7 +69,10 @@ use foundry_evm::{
     fuzz::{BasicTxDetails, CounterExample},
     hardforks::TempoHardfork,
     opts::EvmOpts,
-    traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
+    traces::{
+        backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
+        trace_arena_at_depth,
+    },
 };
 use foundry_tui::tui_mode;
 use rand::Rng;
@@ -379,6 +382,14 @@ fn sources_to_compile_from_artifacts(
     artifacts: &ProjectCompileOutput,
     test_matcher: &TestFunctionMatcher<'_>,
 ) -> BTreeSet<PathBuf> {
+    let paths = config.project_paths::<MultiCompilerLanguage>();
+    let empty_filter = EmptyTestFilter::default();
+    let filter_args = test_filter.args();
+    let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+        || filter_args.test_pattern_inverse.is_some()
+        || filter_args.contract_pattern.is_some()
+        || filter_args.contract_pattern_inverse.is_some();
+
     // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
     // identifiers it constructs are project-relative. Match that here for the filter check
     // (notably for the `--rerun` failure list, which is persisted relative) but return the
@@ -387,11 +398,25 @@ fn sources_to_compile_from_artifacts(
         .artifact_ids()
         .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
         .filter(|(id, abi)| {
-            if id.source.starts_with(&config.src) {
+            if id.source.starts_with(&paths.sources) {
                 return true;
             }
+            if paths.is_script(&id.source) && !paths.is_test(&id.source) {
+                return false;
+            }
             let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-            test_matcher.matches_contract(test_filter, &stripped, abi)
+            // ABI-only compilation can omit test functions with invalid bodies, so preserve the
+            // existing filter behavior for conventional test files instead of treating them as
+            // fixtures.
+            if stripped.source.is_sol_test() {
+                return if has_contract_or_test_filter {
+                    test_matcher.matches_contract(test_filter, &stripped, abi)
+                } else {
+                    test_filter.matches_path(&stripped.source)
+                };
+            }
+            !test_matcher.matches_contract(&empty_filter, &stripped, abi)
+                || test_matcher.matches_contract(test_filter, &stripped, abi)
         })
         .map(|(id, _)| id.source)
         .collect()
@@ -581,14 +606,8 @@ pub struct TestArgs {
     #[arg(long, requires = "evm_profile")]
     no_open: bool,
 
-    /// Identify internal functions in traces.
-    ///
-    /// This will trace internal functions and decode stack parameters.
-    ///
-    /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
-    /// single function is matched, similarly to `--debug`, for performance reasons.
-    #[arg(long)]
-    decode_internal: bool,
+    #[command(flatten)]
+    tracing: TracingArgs,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -616,12 +635,8 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Suppress successful test traces and show only traces for failures.
-    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Display options")]
+    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Trace options")]
     suppress_successful_traces: bool,
-
-    /// Defines the depth of a trace
-    #[arg(long)]
-    trace_depth: Option<usize>,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -995,10 +1010,6 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 
-    /// Disables the labels in the traces.
-    #[arg(long, help_heading = "Display options")]
-    pub disable_labels: bool,
-
     /// Replay the persisted corpus and emit AFL-`afl-showmap`-style coverage
     /// files at the given output directory. Disables the regular fuzz/invariant
     /// campaign and skips unit tests.
@@ -1167,6 +1178,52 @@ impl TestArgs {
             bail!(
                 "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
                  mutation testing.",
+                conflicts.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn ensure_coverage_mode_compatible(&self) -> Result<()> {
+        self.ensure_mutation_mode_compatible(true)?;
+
+        let mut conflicts = Vec::new();
+        if shell::is_json() {
+            conflicts.push("--json");
+        }
+        if self.junit {
+            conflicts.push("--junit");
+        }
+        if self.list {
+            conflicts.push("--list");
+        }
+        if self.debug {
+            conflicts.push("--debug");
+        }
+        if self.flamegraph {
+            conflicts.push("--flamegraph");
+        }
+        if self.flamechart {
+            conflicts.push("--flamechart");
+        }
+        if self.evm_profile.is_some() {
+            conflicts.push("--evm-profile");
+        }
+        if self.showmap_out.is_some() {
+            conflicts.push("--showmap-out");
+        }
+        if self.brutalize {
+            conflicts.push("--brutalize");
+        }
+        if self.replay_symbolic_artifact.is_some() {
+            conflicts.push("--replay-symbolic-artifact");
+        }
+        if !conflicts.is_empty() {
+            bail!(
+                "`forge coverage` cannot be combined with: {}. Use `--report lcov` for an \
+                 interoperable coverage report or `--report attribution` for per-test JSON \
+                attribution.",
                 conflicts.join(", ")
             );
         }
@@ -1471,9 +1528,9 @@ impl TestArgs {
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
-    /// This means that it will return all sources that are not test contracts or that match the
-    /// filter. We want to compile all non-test sources always because tests might depend on them
-    /// dynamically through cheatcodes.
+    /// For filtered runs, this includes all configured source files, non-test artifacts outside
+    /// script-only paths, and runnable tests that match the filter. Non-test artifacts remain
+    /// available because tests may resolve them dynamically through cheatcodes.
     #[instrument(target = "forge::test", skip_all)]
     fn get_sources_to_compile(
         &self,
@@ -1493,27 +1550,21 @@ impl TestArgs {
             ));
         }
 
-        let filter_args = test_filter.args();
-        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
-            || filter_args.test_pattern_inverse.is_some()
-            || filter_args.contract_pattern.is_some()
-            || filter_args.contract_pattern_inverse.is_some();
-        if !has_contract_or_test_filter {
-            return Ok((
-                source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    .chain(
-                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
-                            .filter(|path| test_filter.matches_path(path)),
-                    )
-                    .collect(),
-                None,
-            ));
-        }
-
         let mut project = config.create_project(true, true)?;
+        let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+            .chain(
+                source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    // Preserve path-filter behavior for conventional test files while still
+                    // scanning non-test fixtures under the test root.
+                    .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+            )
+            .collect::<BTreeSet<_>>();
         let output = compile_abi_project(
             &mut project,
-            ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true),
+            ProjectCompiler::new()
+                .files(sources)
+                .dynamic_test_linking(config.dynamic_test_linking)
+                .quiet(true),
         )?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
@@ -1899,12 +1950,11 @@ impl TestArgs {
         }
 
         // Enable internal tracing for more informative flamegraph/profile.
-        if !self.decode_internal && trace_output.is_some() {
-            self.decode_internal = true;
-        }
+        config.tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let decode_internal_enabled = config.tracing.decode_internal || trace_output.is_some();
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
-        let decode_internal = if self.decode_internal {
+        let decode_internal = if decode_internal_enabled {
             // If more than one function matched, we enable simple tracing.
             // If only one function matched, we enable full tracing. This is done in `run_tests`.
             InternalTraceMode::Simple
@@ -2577,10 +2627,12 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json()
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
+        let tracing = &config.tracing;
+        let trace_verbosity = tracing.verbosity;
 
         let mut num_filtered = runner.matching_test_functions(filter).count();
 
-        if !self.opcodes.is_empty() && verbosity < 5 {
+        if !self.opcodes.is_empty() && trace_verbosity < 5 {
             sh_eprintln!()?;
             eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
         }
@@ -2680,7 +2732,7 @@ impl TestArgs {
         }
 
         // If exactly one test matched, we enable full tracing.
-        if num_filtered == 1 && self.decode_internal {
+        if num_filtered == 1 && runner.decode_internal != InternalTraceMode::None {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
@@ -2695,6 +2747,11 @@ impl TestArgs {
                     } else {
                         // Empty logs for non verbose runs.
                         test_result.logs = vec![];
+                    }
+                    if let Some(trace_depth) = tracing.trace_depth {
+                        for (_, arena) in &mut test_result.traces {
+                            *arena = trace_arena_at_depth(arena, trace_depth);
+                        }
                     }
                 }
             }
@@ -2741,6 +2798,7 @@ impl TestArgs {
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
         let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
+        let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -2763,9 +2821,8 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
+            .with_tracing_config(tracing)
             .with_known_contracts(&known_contracts)
-            .with_label_disabled(self.disable_labels)
-            .with_verbosity(verbosity)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_tempo_hardfork(
                 (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
@@ -2777,7 +2834,7 @@ impl TestArgs {
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
 
-        if self.decode_internal {
+        if decode_internal {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
@@ -2839,8 +2896,12 @@ impl TestArgs {
                 let show_traces = !self.suppress_successful_traces || test_failed;
                 let render_trace_output = should_render_trace_output(silent, show_traces);
                 let should_include_trace = |kind: &TraceKind| match kind {
-                    TraceKind::Execution => (verbosity == 3 && test_failed) || verbosity >= 4,
-                    TraceKind::Setup => (verbosity == 4 && test_failed) || verbosity >= 5,
+                    TraceKind::Execution => {
+                        (trace_verbosity == 3 && test_failed) || trace_verbosity >= 4
+                    }
+                    TraceKind::Setup => {
+                        (trace_verbosity == 4 && test_failed) || trace_verbosity >= 5
+                    }
                     TraceKind::Deployment => false,
                 };
                 let renders_trace = render_trace_output
@@ -2904,26 +2965,32 @@ impl TestArgs {
                             decoder.identify(arena, &mut identifier);
                         }
 
-                        // verbosity:
-                        // - 0..3: nothing
-                        // - 3: only display traces for failed tests
-                        // - 4: also display the setup trace for failed tests
-                        // - 5..: display all traces for all tests, including storage changes
+                        // Trace verbosity.
+                        // - 0..3: nothing.
+                        // - 3: only display traces for failed tests.
+                        // - 4: also display the setup trace for failed tests.
+                        // - 5..: display all traces for all tests, including storage changes.
                         let should_include = should_include_trace(kind);
 
                         if renders_trace && should_include {
                             decoder.opcodes = self.opcodes.clone();
                             decode_trace_arena(arena, &decoder).await;
 
-                            if let Some(trace_depth) = self.trace_depth {
-                                prune_trace_depth(arena, trace_depth);
+                            if let Some(trace_depth) = tracing.trace_depth {
+                                let mut arena = arena.clone();
+                                prune_trace_depth(&mut arena, trace_depth);
+                                decoded_traces.push(render_trace_arena_inner(
+                                    &arena,
+                                    false,
+                                    trace_verbosity > 4,
+                                ));
+                            } else {
+                                decoded_traces.push(render_trace_arena_inner(
+                                    arena,
+                                    false,
+                                    trace_verbosity > 4,
+                                ));
                             }
-
-                            decoded_traces.push(render_trace_arena_inner(
-                                arena,
-                                false,
-                                verbosity > 4,
-                            ));
                         }
                     }
                 }
@@ -2935,12 +3002,12 @@ impl TestArgs {
                     }
                 }
 
-                // Extract and display backtrace for failed tests when verbosity >= 3.
-                // At verbosity 3-4 backtraces show contract/function names only.
-                // At verbosity 5 backtraces include source file locations.
+                // Extract and display backtrace for failed tests when trace verbosity >= 3.
+                // At trace verbosity 3-4 backtraces show contract/function names only.
+                // At trace verbosity 5 backtraces include source file locations.
                 if !silent
                     && result.status.is_failure()
-                    && verbosity >= 3
+                    && trace_verbosity >= 3
                     && !result.traces.is_empty()
                     && let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
@@ -2980,6 +3047,14 @@ impl TestArgs {
                             decoder.identify(arena, &mut identifier);
                             gas_report.analyze([arena], &decoder).await;
                         }
+                    }
+                }
+
+                if shell::is_json()
+                    && let Some(trace_depth) = tracing.trace_depth
+                {
+                    for (_, arena) in &mut result.traces {
+                        *arena = trace_arena_at_depth(arena, trace_depth);
                     }
                 }
                 // Clear memory.
@@ -4019,7 +4094,13 @@ mod tests {
     #[test]
     fn depth_trace() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--trace-depth", "2"]);
-        assert!(args.trace_depth.is_some());
+        assert!(args.tracing.trace_depth.is_some());
+    }
+
+    #[test]
+    fn compact_labels_trace() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--compact-labels"]);
+        assert!(args.tracing.compact_labels);
     }
 
     #[test]

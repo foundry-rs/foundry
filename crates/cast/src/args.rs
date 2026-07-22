@@ -306,7 +306,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     get_event(event.signature().as_str())?
                         .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
                 } else {
-                    eyre::bail!("No matching event signature found for selector `{selector}`")
+                    eyre::bail!("No matching event signature found for selector `{selector}`");
                 }
             };
             print_tokens(&decoded_event.body)?;
@@ -323,7 +323,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     let _ = sh_println!("{}", error.signature());
                     error
                 } else {
-                    eyre::bail!("No matching error signature found for selector `{selector}`")
+                    eyre::bail!("No matching error signature found for selector `{selector}`");
                 }
             };
             let decoded_error = error.decode_error(&hex::decode(data)?)?;
@@ -781,7 +781,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             });
 
             let sig = match sigs.len() {
-                0 => eyre::bail!("No signatures found"),
+                0 => {
+                    eyre::bail!("No signatures found");
+                }
                 1 => sigs.first().unwrap(),
                 _ => {
                     let i: usize = prompt!("Select a function signature by number: ")?;
