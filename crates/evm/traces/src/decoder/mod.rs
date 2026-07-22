@@ -164,12 +164,11 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Sets the Monad hardfork and registers address-scoped Monad metadata.
+    /// Sets the Monad hardfork used to register address-scoped metadata when built.
     #[cfg(feature = "monad")]
     #[inline]
     pub fn with_monad_hardfork(mut self, hardfork: Option<MonadHardfork>) -> Self {
         self.decoder.monad_hardfork = hardfork;
-        self.decoder.register_monad_metadata();
         self
     }
 
@@ -191,6 +190,8 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn build(mut self) -> CallTraceDecoder {
         self.decoder.base_labels = self.decoder.labels.clone();
+        #[cfg(feature = "monad")]
+        self.decoder.register_monad_metadata();
         self.decoder
     }
 }
@@ -275,6 +276,25 @@ impl CallTraceDecoder {
         // lazy instead of removing it
         static INIT: OnceLock<CallTraceDecoder> = OnceLock::new();
         INIT.get_or_init(Self::init)
+    }
+
+    /// Returns the Monad hardfork used for address-scoped metadata.
+    #[cfg(feature = "monad")]
+    pub const fn monad_hardfork(&self) -> Option<MonadHardfork> {
+        self.monad_hardfork
+    }
+
+    /// Rebuilds address-scoped metadata for a new Monad hardfork.
+    ///
+    /// Hardfork changes invalidate previously identified addresses because the set of active
+    /// precompiles can change. Global ABI and signature metadata is preserved.
+    #[cfg(feature = "monad")]
+    pub fn set_monad_hardfork(&mut self, hardfork: Option<MonadHardfork>) {
+        if self.monad_hardfork == hardfork {
+            return;
+        }
+        self.monad_hardfork = hardfork;
+        self.clear_addresses();
     }
 
     #[instrument(name = "CallTraceDecoder::init", level = "debug")]
@@ -2538,6 +2558,41 @@ mod tests {
         let after = monad_nine.decode_function(&trace).await;
         assert_eq!(
             after.call_data.as_ref().map(|call| call.signature.as_str()),
+            Some("dippedIntoReserve()")
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "monad")]
+    async fn test_monad_metadata_refreshes_across_hardforks() {
+        let trace = CallTrace {
+            address: RESERVE_BALANCE_ADDRESS,
+            data: dippedIntoReserveCall::SELECTOR.to_vec().into(),
+            output: true.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+        let mut decoder = monad_decoder(MonadHardfork::MonadEight);
+
+        decoder.set_monad_hardfork(Some(MonadHardfork::MonadNine));
+        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(
+            decoder.labels.get(&RESERVE_BALANCE_ADDRESS).map(String::as_str),
+            Some("ReserveBalance")
+        );
+        let monad_nine = decoder.decode_function(&trace).await;
+        assert_eq!(
+            monad_nine.call_data.as_ref().map(|call| call.signature.as_str()),
+            Some("dippedIntoReserve()")
+        );
+
+        decoder.set_monad_hardfork(Some(MonadHardfork::MonadEight));
+        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert!(!decoder.labels.contains_key(&RESERVE_BALANCE_ADDRESS));
+        assert_eq!(decoder.labels.get(&STAKING_ADDRESS).map(String::as_str), Some("Staking"));
+        let monad_eight = decoder.decode_function(&trace).await;
+        assert_ne!(
+            monad_eight.call_data.as_ref().map(|call| call.signature.as_str()),
             Some("dippedIntoReserve()")
         );
     }

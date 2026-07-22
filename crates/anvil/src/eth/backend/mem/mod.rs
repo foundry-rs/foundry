@@ -486,8 +486,8 @@ pub struct Backend<N: Network> {
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
-    /// Recorder used for decoding traces, used together with print_traces
-    call_trace_decoder: Arc<CallTraceDecoder>,
+    /// Recorder used for decoding traces, used together with print_traces.
+    call_trace_decoder: Arc<RwLock<Arc<CallTraceDecoder>>>,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -1075,8 +1075,32 @@ impl<N: Network> Backend<N> {
             print_traces: self.print_traces,
             print_logs: self.print_logs,
             enable_steps_tracing: self.enable_steps_tracing,
-            call_trace_decoder: self.call_trace_decoder.clone(),
+            call_trace_decoder: self.call_trace_decoder(),
         }
+    }
+
+    /// Returns a trace decoder configured for the currently resolved hardfork.
+    fn call_trace_decoder(&self) -> Arc<CallTraceDecoder> {
+        #[cfg(feature = "monad")]
+        {
+            let hardfork = self.is_monad().then(|| self.monad_hardfork());
+            let decoder = self.call_trace_decoder.read();
+            if decoder.monad_hardfork() == hardfork {
+                return Arc::clone(&decoder);
+            }
+            drop(decoder);
+
+            let mut decoder = self.call_trace_decoder.write();
+            if decoder.monad_hardfork() != hardfork {
+                let mut updated = decoder.as_ref().clone();
+                updated.set_monad_hardfork(hardfork);
+                *decoder = Arc::new(updated);
+            }
+            return Arc::clone(&decoder);
+        }
+
+        #[cfg(not(feature = "monad"))]
+        Arc::clone(&self.call_trace_decoder.read())
     }
 
     /// Builds the [`PoolTxGasConfig`] from the given EVM environment.
@@ -2171,7 +2195,7 @@ impl<N: Network> Backend<N> {
         inspector.print_logs();
 
         if self.print_traces {
-            inspector.into_print_traces(self.call_trace_decoder.clone());
+            inspector.into_print_traces(self.call_trace_decoder());
         }
 
         Ok((exit_reason, out, gas_used as u128, state))
@@ -2889,7 +2913,7 @@ impl<N: Network> Backend<N> {
             enable_steps_tracing,
             print_logs,
             print_traces,
-            call_trace_decoder,
+            call_trace_decoder: Arc::new(RwLock::new(call_trace_decoder)),
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -3323,7 +3347,7 @@ impl<N: Network> Backend<N> {
         inspector.print_logs();
 
         if self.print_traces {
-            inspector.print_traces(self.call_trace_decoder.clone());
+            inspector.print_traces(self.call_trace_decoder());
         }
 
         Ok((exit_reason, out, gas_used, state, logs))
@@ -4174,7 +4198,7 @@ where
 
                         inspector.print_logs();
                         if self.print_traces {
-                            inspector.print_traces(self.call_trace_decoder.clone());
+                            inspector.print_traces(self.call_trace_decoder());
                         }
 
                         let tracing_inspector = inspector.tracer.expect("tracer disappeared");
@@ -5940,7 +5964,7 @@ impl Backend<FoundryNetwork> {
 
                         inspector.print_logs();
                         if self.print_traces {
-                            inspector.into_print_traces(self.call_trace_decoder.clone());
+                            inspector.into_print_traces(self.call_trace_decoder());
                         }
 
                         // commit the transaction
@@ -6959,7 +6983,11 @@ mod tests {
     #[cfg(feature = "monad")]
     use alloy_rpc_types::TransactionRequest;
     #[cfg(feature = "monad")]
-    use foundry_evm::hardfork::MonadHardfork;
+    use foundry_evm::{hardfork::MonadHardfork, traces::CallTraceDecoderBuilder};
+    #[cfg(feature = "monad")]
+    use monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS;
+    #[cfg(feature = "monad")]
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_deterministic_block_mining() {
@@ -7047,5 +7075,36 @@ mod tests {
         let storage = loaded_api.backend.blockchain.storage.read();
         let participants = storage.monad_block_participants.get(&block_hash).unwrap();
         assert!(participants.contains(&sender));
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test]
+    async fn monad_trace_decoder_follows_resolved_hardfork() {
+        let (monad_eight, _) =
+            spawn(NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadEight.into())))
+                .await;
+        let stale_monad_nine = CallTraceDecoderBuilder::new()
+            .with_monad_hardfork(Some(MonadHardfork::MonadNine))
+            .build();
+        *monad_eight.backend.call_trace_decoder.write() = Arc::new(stale_monad_nine);
+
+        let decoder = monad_eight.backend.call_trace_decoder();
+        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert!(!decoder.labels.contains_key(&RESERVE_BALANCE_ADDRESS));
+
+        let (monad_nine, _) =
+            spawn(NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into())))
+                .await;
+        let stale_monad_eight = CallTraceDecoderBuilder::new()
+            .with_monad_hardfork(Some(MonadHardfork::MonadEight))
+            .build();
+        *monad_nine.backend.call_trace_decoder.write() = Arc::new(stale_monad_eight);
+
+        let decoder = monad_nine.backend.call_trace_decoder();
+        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(
+            decoder.labels.get(&RESERVE_BALANCE_ADDRESS).map(String::as_str),
+            Some("ReserveBalance")
+        );
     }
 }
