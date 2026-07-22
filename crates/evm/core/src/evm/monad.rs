@@ -72,6 +72,7 @@ pub fn monad_context_from_participants(
 
 impl FoundryEvmFactory for MonadEvmFactory {
     const NEEDS_BLOCK_CONTEXT: bool = true;
+    const USES_EIP4788_BEACON_ROOTS: bool = false;
 
     type ContextAux = MonadContextAux;
     type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;

@@ -410,7 +410,7 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
         if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root)?
+            parent_beacon_block_root_for_network::<FEN>(spec_id, parent_beacon_block_root)?
         {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
@@ -588,11 +588,11 @@ impl RunArgs {
     }
 }
 
-fn parent_beacon_block_root_for_spec(
+fn parent_beacon_block_root_for_network<FEN: FoundryEvmNetwork>(
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
 ) -> Result<Option<B256>> {
-    if !spec_id.is_enabled_in(SpecId::CANCUN) {
+    if !FEN::EvmFactory::USES_EIP4788_BEACON_ROOTS || !spec_id.is_enabled_in(SpecId::CANCUN) {
         return Ok(None);
     }
 
@@ -799,16 +799,44 @@ mod tests {
 
     #[test]
     fn parent_beacon_block_root_is_required_for_cancun() {
-        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None).unwrap_err();
+        let err = parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::CANCUN, None)
+            .unwrap_err();
         assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
-            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::CANCUN, Some(root))
+                .unwrap(),
             Some(root),
         );
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
+        assert_eq!(
+            parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::SHANGHAI, Some(root))
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::SHANGHAI, None).unwrap(),
+            None,
+        );
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn parent_beacon_block_root_is_not_used_by_monad() {
+        for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
+            assert_eq!(
+                parent_beacon_block_root_for_network::<MonadEvmNetwork>(spec_id, None).unwrap(),
+                None,
+            );
+            assert_eq!(
+                parent_beacon_block_root_for_network::<MonadEvmNetwork>(
+                    spec_id,
+                    Some(B256::repeat_byte(0x42)),
+                )
+                .unwrap(),
+                None,
+            );
+        }
     }
 
     #[test]
