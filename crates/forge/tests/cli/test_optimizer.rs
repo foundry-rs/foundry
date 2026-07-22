@@ -41,6 +41,160 @@ exit 1
     assert!(!invoked.exists(), "filtered test compilation did not reuse the preprocessed cache");
 });
 
+// <https://github.com/foundry-rs/foundry/issues/8842>
+forgetest_init!(filtered_tests_compile_unimported_test_fixtures, |prj, cmd| {
+    prj.update_config(|config| config.solc = None);
+    prj.add_raw_test(
+        "fixtures/Fixture.sol",
+        r#"
+pragma solidity 0.7.6;
+
+contract Fixture {
+    function version() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Fixture.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IFixture {
+    function version() external pure returns (uint256);
+}
+
+contract FixtureTest is Test {
+    function testFixture() public {
+        address fixture = vm.deployCode("test/fixtures/Fixture.sol:Fixture");
+        assertEq(IFixture(fixture).version(), 1);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "FixtureTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Fixture.t.sol:FixtureTest
+[PASS] testFixture() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    prj.add_raw_test(
+        "fixtures/Fixture.sol",
+        r#"
+pragma solidity 0.7.6;
+
+contract Fixture {
+    function version() external pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Fixture.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IFixture {
+    function version() external pure returns (uint256);
+}
+
+contract FixtureTest is Test {
+    function testFixture() public {
+        address fixture = vm.deployCode("test/fixtures/Fixture.sol:Fixture");
+        assertEq(IFixture(fixture).version(), 2);
+    }
+}
+"#,
+    );
+
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Fixture.t.sol:FixtureTest
+[PASS] testFixture() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/8842>
+forgetest_init!(path_filtered_tests_compile_unimported_test_fixtures, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = None;
+        config.dynamic_test_linking = false;
+    });
+    prj.add_raw_script("Broken.s.sol", "this is not valid Solidity");
+    prj.add_raw_test(
+        "fixtures/Fixture.sol",
+        r#"
+pragma solidity 0.7.6;
+
+contract Fixture {}
+"#,
+    );
+    prj.add_test(
+        "Fixture.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FixtureTest is Test {
+    function testFixture() public {
+        assertGt(vm.getCode("test/fixtures/Fixture.sol:Fixture").length, 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-path", "test/Fixture.t.sol"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/Fixture.t.sol:FixtureTest
+[PASS] testFixture() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#
+    ]]);
+});
+
+forgetest_init!(filtered_tests_support_overlapping_source_roots, |prj, cmd| {
+    prj.update_config(|config| config.script = ".".into());
+    prj.add_source("SourceFixture.sol", "contract SourceFixture {}");
+    prj.add_test("fixtures/Fixture.sol", "contract Fixture {}");
+    prj.add_test(
+        "Fixture.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FixtureTest is Test {
+    function testFixture() public {
+        assertGt(vm.getCode("test/fixtures/Fixture.sol:Fixture").length, 0);
+        assertGt(vm.getCode("src/SourceFixture.sol:SourceFixture").length, 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "FixtureTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Fixture.t.sol:FixtureTest
+[PASS] testFixture() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // Test cache is invalidated when `forge build` if optimize test option toggled.
 forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
     prj.initialize_default_contracts();

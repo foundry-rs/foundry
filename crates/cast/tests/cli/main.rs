@@ -70,7 +70,7 @@ Options:
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
 ...
-          [aliases: --jobs]
+          [alias: --jobs]
 
   -V, --version
           Print version
@@ -2298,6 +2298,109 @@ casttest!(mktx, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(mktx_signature, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ec52eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a01",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
+
+"#]]);
+});
+
+casttest!(mktx_signature_requires_from, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ec52eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a01",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --from <ADDRESS>
+
+Usage: cast[..] mktx --from <ADDRESS> --signature <SIGNATURE> <TO> [SIG] [ARGS]...
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+casttest!(mktx_signature_normalizes_high_s, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ecad125fa586d97f21ce7e1b6454bf6caa9b392849907cbbf8b857282c08003fd700",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
+
+"#]]);
+});
+
+casttest!(mktx_signature_from_mismatch, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ec52eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a01",
+        "--from",
+        "0x0000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: The provided signature recovers to 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf, which does not match the specified sender 0x0000000000000000000000000000000000000001
+
+"#]]);
+});
+
 // ensure recipient or code is required
 casttest!(mktx_requires_to, |_prj, cmd| {
     cmd.args([
@@ -3950,8 +4053,20 @@ forgetest_async!(cast_run_debug_trace_transaction, |prj, cmd| {
     let endpoint = handle.http_endpoint();
     let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
 
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
     let assert = cmd
-        .cast_fuse()
         .args([
             "run",
             "--debug-trace-transaction",
@@ -3968,6 +4083,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
     assert!(
@@ -4378,10 +4497,23 @@ Transaction successfully executed.
 // `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
 // (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
 // targets the identity precompile so the test needs no deployed contract.
-casttest!(cast_call_debug_trace_call, async |_prj, cmd| {
+casttest!(cast_call_debug_trace_call, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    cmd.cast_fuse()
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd
         .args([
             "call",
             "0x0000000000000000000000000000000000000004",
@@ -4400,6 +4532,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
 });
