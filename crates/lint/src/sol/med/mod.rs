@@ -33,6 +33,9 @@ use uninitialized_local::UNINITIALIZED_LOCAL;
 mod uninitialized_state_variables;
 use uninitialized_state_variables::UNINITIALIZED_STATE_VARIABLES;
 
+mod unsafe_oz_erc721_mint;
+use unsafe_oz_erc721_mint::UNSAFE_OZ_ERC721_MINT;
+
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
@@ -66,6 +69,7 @@ register_lints!(
     (TxOrigin, early, (TX_ORIGIN)),
     (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
     (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
+    (UnsafeOzErc721Mint, late, (UNSAFE_OZ_ERC721_MINT)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
     (LockedEther, late, (LOCKED_ETHER)),

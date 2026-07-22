@@ -37,6 +37,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
+  - `unsafe-oz-erc721-mint`: Flags calls resolving to `ERC721._mint`, which does not check that the recipient can receive the token; use `_safeMint`.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `unused-return`: Return value of an external call is not used.
   - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.
