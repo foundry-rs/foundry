@@ -1571,6 +1571,75 @@ contract ForgeFuzzCminInvariantTargetTest is Test {
     assert_eq!(regular_file_count(&prj.root().join("min-invariant-corpus")), 2);
 });
 
+forgetest_init!(forge_fuzz_cmin_minimizes_broken_invariant_corpus, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminBrokenInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzCminBrokenInvariantTest is Test {
+    bool broken;
+    uint256 left;
+    uint256 right;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = this.breakInvariant.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function breakInvariant(uint256 input) external {
+        broken = true;
+        if (input == 1) {
+            left = 1;
+        } else {
+            right = 1;
+        }
+    }
+
+    function invariant_canary() public view {
+        assertFalse(broken);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminBrokenInvariant.t.sol/ForgeFuzzCminBrokenInvariantTest.json",
+    );
+    let one = calldata_for(&abi, "breakInvariant", 1);
+    let two = calldata_for(&abi, "breakInvariant", 2);
+    let corpus = prj.root().join("broken-invariant-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000003-3.json", &two);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminBrokenInvariantTest",
+            "--mt",
+            "invariant_canary",
+            "broken-invariant-corpus",
+            "--corpus-out",
+            "min-broken-invariant-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("minimized corpus: kept 2/3 entries in min-broken-invariant-corpus"),
+        "{stdout}"
+    );
+    assert_eq!(regular_file_count(&prj.root().join("min-broken-invariant-corpus")), 2);
+});
+
 forgetest_init!(forge_fuzz_tmin_removes_redundant_transactions, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzTminRemoveTarget.t.sol",

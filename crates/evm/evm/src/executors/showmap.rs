@@ -182,7 +182,7 @@ impl ReplayFailure {
     }
 
     /// Whether this failure is a broken invariant predicate.
-    const fn is_predicate(&self) -> bool {
+    pub const fn is_predicate(&self) -> bool {
         matches!(self, Self::Invariant { .. } | Self::AfterInvariant)
     }
 }

@@ -397,7 +397,7 @@ impl FuzzCminArgs {
             let mut entry_unmatched_txs = 0usize;
             let mut entry_rejected_txs = 0usize;
             for FuzzMinimizeObservation { target, observation } in observations {
-                if observation.failure.is_some() {
+                if observation.failure.as_ref().is_some_and(|failure| !failure.is_predicate()) {
                     entry_failed = true;
                     entry_failed_replays += observation.replayed;
                     continue;
