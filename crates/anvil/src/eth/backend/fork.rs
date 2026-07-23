@@ -519,11 +519,11 @@ impl<N: Network> ClientFork<N> {
     pub async fn simulate_v1(
         &self,
         request: &SimulatePayload,
-        block: Option<BlockNumber>,
+        block: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
         let mut simulate_call = self.provider().simulate(request);
-        if let Some(n) = block {
-            simulate_call = simulate_call.number(n.as_number().unwrap());
+        if let Some(block) = block {
+            simulate_call = simulate_call.block_id(block);
         }
 
         let res = simulate_call.await?;
@@ -674,6 +674,14 @@ impl<N: Network> ClientFork<N> {
         }
 
         self.fetch_full_block(block_number).await
+    }
+
+    /// Fetches a block selected by its original identifier directly from the fork provider.
+    pub async fn fetch_block(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        self.fetch_full_block(block_id).await
     }
 
     async fn fetch_full_block(

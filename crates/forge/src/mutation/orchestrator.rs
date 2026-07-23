@@ -130,9 +130,11 @@ pub struct MutationRunResult {
 pub async fn run_mutation_testing(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
-    evm_opts: EvmOpts,
+    mut evm_opts: EvmOpts,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
+    let fork_block = evm_opts.pin_fork_block().await?;
+    let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
     let artifact_link_references = output.artifact_ids().filter_map(|(id, artifact)| {
@@ -295,6 +297,7 @@ pub async fn run_mutation_testing(
             handler.src.clone(),
             config.clone(),
             evm_opts.clone(),
+            create2_deployer_available,
             num_workers,
             progress.clone(),
             json_output,

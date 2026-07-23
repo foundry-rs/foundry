@@ -38,6 +38,9 @@ Options:
           
           [alias: --jobs]
 
+      --profile <PROFILE>
+          The configuration profile to use
+
   -V, --version
           Print version
 
@@ -760,6 +763,27 @@ Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d735
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// Checks that clone follows the SparkLend USDS proxy to its AToken implementation.
+forgetest!(flaky_can_clone_proxy_implementation, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--implementation",
+        "0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359",
+    ])
+    .arg(prj.root())
+    .assert_success();
+
+    let metadata: serde_json::Value =
+        serde_json::from_str(&read_string(prj.root().join(".clone.meta"))).unwrap();
+    assert_eq!(metadata["targetContract"], "AToken");
+    assert_eq!(metadata["address"], "0x6175ddec3b9b38c88157c10a01ed4a3fa8639cc6");
+    assert!(prj.root().join(metadata["path"].as_str().unwrap()).exists());
 });
 
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone

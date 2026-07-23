@@ -22,15 +22,15 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::{EtherscanOpts, RpcOpts},
-    utils::{TraceResult, init_progress},
+    opts::{EtherscanOpts, RpcOpts, TracingArgs},
+    utils::{TraceResult, init_progress, load_config_from_provider},
 };
 use foundry_common::{
     SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder, shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Config,
+    Config, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -61,14 +61,6 @@ pub struct RunArgs {
     #[arg(long, short)]
     debug: bool,
 
-    /// Whether to identify internal functions in traces.
-    #[arg(long)]
-    decode_internal: bool,
-
-    /// Defines the depth of a trace
-    #[arg(long)]
-    trace_depth: Option<usize>,
-
     /// Print out opcode traces.
     #[arg(long, short)]
     trace_printer: bool,
@@ -82,10 +74,6 @@ pub struct RunArgs {
     /// Whether to replay system transactions.
     #[arg(long, alias = "sys")]
     replay_system_txes: bool,
-
-    /// Disables the labels in the traces.
-    #[arg(long, default_value_t = false)]
-    disable_labels: bool,
 
     /// Use debug_traceTransaction to fetch the prestate instead of replaying the block.
     ///
@@ -112,11 +100,12 @@ pub struct RunArgs {
     )]
     debug_trace_transaction: bool,
 
-    /// Label addresses in the trace.
-    ///
-    /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
-    #[arg(long, short)]
-    label: Vec<String>,
+    #[command(flatten)]
+    tracing: TracingArgs,
+
+    /// Deprecated short alias for `--labels`.
+    #[arg(short = 'l', value_name = "ADDRESS:LABEL", hide = true)]
+    legacy_labels: Vec<String>,
 
     #[command(flatten)]
     etherscan: EtherscanOpts,
@@ -144,6 +133,14 @@ pub struct RunArgs {
 }
 
 impl RunArgs {
+    fn resolve_tracing(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
+        if self.debug_trace_transaction {
+            self.tracing.resolve_call_tracer(config, verbosity)
+        } else {
+            self.tracing.resolve(config, verbosity)
+        }
+    }
+
     /// Executes the transaction by replaying it
     ///
     /// This replays the entire block the transaction was mined in unless `quick` is set to true
@@ -168,16 +165,15 @@ impl RunArgs {
         self.run_with_evm::<EthEvmNetwork>().await
     }
 
-    async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+    async fn run_with_evm<FEN: FoundryEvmNetwork>(mut self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::from_provider(figment)?.sanitized();
+        let mut config = load_config_from_provider(figment)?;
+        self.tracing.labels.append(&mut self.legacy_labels);
+        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
 
-        let label = self.label;
         let with_local_artifacts = self.with_local_artifacts;
         let debug = self.debug;
-        let decode_internal = self.decode_internal;
-        let disable_labels = self.disable_labels;
         let compute_units_per_second = if self.rpc.common.no_rpc_rate_limit {
             Some(u64::MAX)
         } else {
@@ -247,6 +243,7 @@ impl RunArgs {
             let arena = SparsedTraceArena {
                 arena: call_frame_to_arena_with_root_address(&frame, root_create_address),
                 ignored: Default::default(),
+                diagnostics: Default::default(),
             };
             let result = TraceResult {
                 success,
@@ -276,12 +273,9 @@ impl RunArgs {
                 &config,
                 chain,
                 &contracts_bytecode,
-                label,
+                &tracing,
                 with_local_artifacts,
                 false,
-                false,
-                disable_labels,
-                self.trace_depth,
                 config.hardfork.and_then(|hardfork| match hardfork {
                     FoundryHardfork::Tempo(hardfork) => Some(hardfork),
                     _ => None,
@@ -311,6 +305,7 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
+        let verbosity = tracing.verbosity;
         let (block, (mut evm_env, tx_env, fork, chain, networks)) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
@@ -374,12 +369,12 @@ impl RunArgs {
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)
             .with_debug(self.debug)
-            .with_decode_internal(if self.decode_internal {
+            .with_decode_internal(if tracing.decode_internal {
                 InternalTraceMode::Full
             } else {
                 InternalTraceMode::None
             })
-            .with_state_changes(shell::verbosity() > 4);
+            .with_state_changes(verbosity > 4);
         let mut executor = TracingExecutor::<FEN>::new(
             (evm_env.clone(), tx_env),
             fork,
@@ -525,12 +520,9 @@ impl RunArgs {
             &config,
             chain,
             &contracts_bytecode,
-            label,
+            &tracing,
             with_local_artifacts,
             debug,
-            decode_internal,
-            disable_labels,
-            self.trace_depth,
             resolved_tempo_hardfork,
         )
         .await?;
@@ -697,6 +689,16 @@ impl figment::Provider for RunArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::address;
+
+    #[test]
+    fn parses_legacy_short_label_alias() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let label = format!("{address}:alice");
+        let args = RunArgs::parse_from(["cast run", "0x00", "-l", &label]);
+
+        assert_eq!(args.legacy_labels, vec![label]);
+    }
 
     #[test]
     fn debug_trace_transaction_rejects_local_execution_flags() {
@@ -750,5 +752,13 @@ mod tests {
         );
         assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
         assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
+    }
+
+    #[test]
+    fn debug_trace_transaction_ignores_configured_internal_decoding() {
+        let args = RunArgs::parse_from(["cast run", "0x00", "--debug-trace-transaction"]);
+        let config = TracingConfig { decode_internal: true, ..Default::default() };
+
+        assert!(!args.resolve_tracing(&config, 0).decode_internal);
     }
 }

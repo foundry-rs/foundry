@@ -53,6 +53,7 @@ tracing.workspace = true
 yansi.workspace = true
 
 [dev-dependencies]
+ron.workspace = true
 snapbox.workspace = true
 
 [features]

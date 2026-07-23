@@ -170,6 +170,22 @@ abstract contract LastCallGasFixture is Test {
     }
 }
 
+contract LastCallGasConstructorTest is Test {
+    Target public target;
+
+    constructor() {
+        target = new Target();
+        target.setValue(1);
+    }
+
+    function testConstructorCallIsRecorded() public {
+        Vm.Gas memory gas = vm.lastCallGas();
+        assertGt(gas.gasLimit, 0);
+        assertGt(gas.gasRemaining, 0);
+        assertGt(gas.gasTotalUsed, 0);
+    }
+}
+
 contract LastFrameGasExpectedRevertTest is Test {
     RevertingTarget public target;
 

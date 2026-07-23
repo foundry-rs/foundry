@@ -21,10 +21,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
+    fmt,
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::{U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 pub use revm_inspectors::tracing::{
@@ -55,8 +56,29 @@ pub mod speedscope;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
+/// Presentation-only detail for an otherwise empty EVM revert.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum RevertDiagnostic {
+    /// A call targeted an address without code.
+    CallToNonContract(Address),
+    /// A delegate call targeted an address without code.
+    DelegateCallToNonContract(Address),
+}
+
+impl fmt::Display for RevertDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CallToNonContract(addr) => write!(f, "call to non-contract address {addr}"),
+            Self::DelegateCallToNonContract(addr) => write!(
+                f,
+                "delegatecall to non-contract address {addr} (usually an unliked library)"
+            ),
+        }
+    }
+}
+
 /// Trace arena keeping track of ignored trace items.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SparsedTraceArena {
     /// Full trace arena.
     #[serde(flatten)]
@@ -65,13 +87,55 @@ pub struct SparsedTraceArena {
     /// See `foundry_cheatcodes::utils::IgnoredTraces` for more information.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub ignored: HashMap<(usize, usize), (usize, usize)>,
+    /// Presentation-only revert diagnostics, keyed by trace node index.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub diagnostics: HashMap<usize, RevertDiagnostic>,
+}
+
+impl Serialize for SparsedTraceArena {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct ResolvedArena<'a> {
+            #[serde(flatten)]
+            arena: &'a CallTraceArena,
+            #[serde(skip_serializing_if = "HashMap::is_empty")]
+            ignored: &'a HashMap<(usize, usize), (usize, usize)>,
+        }
+
+        ResolvedArena { arena: &self.resolve_diagnostics(), ignored: &self.ignored }
+            .serialize(serializer)
+    }
 }
 
 impl SparsedTraceArena {
+    /// Applies presentation-only diagnostics to the provided arena.
+    fn apply_diagnostics(&self, arena: &mut CallTraceArena) {
+        for (&node_idx, diagnostic) in &self.diagnostics {
+            if let Some(node) = arena.nodes_mut().get_mut(node_idx) {
+                node.trace.decoded.get_or_insert_default().return_data =
+                    Some(diagnostic.to_string());
+            }
+        }
+    }
+
+    /// Applies presentation-only diagnostics without consuming ignored trace ranges.
+    fn resolve_diagnostics(&self) -> Cow<'_, CallTraceArena> {
+        if self.diagnostics.is_empty() {
+            Cow::Borrowed(&self.arena)
+        } else {
+            let mut arena = self.arena.clone();
+            self.apply_diagnostics(&mut arena);
+            Cow::Owned(arena)
+        }
+    }
+
     /// Goes over entire trace arena and removes ignored trace items.
     fn resolve_arena(&self) -> Cow<'_, CallTraceArena> {
         if self.ignored.is_empty() {
-            Cow::Borrowed(&self.arena)
+            self.resolve_diagnostics()
         } else {
             let mut arena = self.arena.clone();
 
@@ -154,6 +218,8 @@ impl SparsedTraceArena {
 
             clear_node(arena.nodes_mut(), 0, &self.ignored, &mut None);
 
+            self.apply_diagnostics(&mut arena);
+
             Cow::Owned(arena)
         }
     }
@@ -186,13 +252,73 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
     render_trace_arena_inner(arena, false, false)
 }
 
-/// Prunes trace depth if depth is provided as an argument
+/// Prunes trace depth if depth is provided as an argument.
 pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
     for node in arena.nodes_mut() {
         if node.trace.depth >= depth {
             node.ordering.clear();
         }
     }
+}
+
+/// Returns a serializable trace arena containing only nodes visible at `depth`.
+pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedTraceArena {
+    let mut arena = arena.resolve_arena().into_owned();
+    let nodes = arena.nodes_mut();
+    let mut reachable = vec![false; nodes.len()];
+    let mut pending = vec![0];
+    while let Some(node_idx) = pending.pop() {
+        if reachable[node_idx] {
+            continue;
+        }
+        reachable[node_idx] = true;
+        let node = &nodes[node_idx];
+        if node.trace.depth < depth {
+            pending.extend(node.ordering.iter().filter_map(|item| match item {
+                TraceMemberOrder::Call(child_idx) => Some(node.children[*child_idx]),
+                _ => None,
+            }));
+        }
+    }
+
+    let mut remapped = vec![None; nodes.len()];
+    for (next_idx, node) in nodes.iter_mut().filter(|node| reachable[node.idx]).enumerate() {
+        remapped[node.idx] = Some(next_idx);
+        if node.trace.depth >= depth {
+            node.ordering.clear();
+            node.children.clear();
+        } else {
+            let mut child_positions = vec![None; node.children.len()];
+            let mut children = Vec::with_capacity(node.children.len());
+            for (old_position, child) in node.children.iter().copied().enumerate() {
+                if reachable[child] {
+                    child_positions[old_position] = Some(children.len());
+                    children.push(child);
+                }
+            }
+            node.children = children;
+            node.ordering = std::mem::take(&mut node.ordering)
+                .into_iter()
+                .filter_map(|item| match item {
+                    TraceMemberOrder::Call(child_idx) => {
+                        Some(TraceMemberOrder::Call(child_positions[child_idx]?))
+                    }
+                    item => Some(item),
+                })
+                .collect();
+        }
+    }
+
+    nodes.retain(|node| reachable[node.idx]);
+    for node in nodes {
+        node.idx = remapped[node.idx].expect("retained trace node has a remapped index");
+        node.parent = node.parent.and_then(|parent| remapped[parent]);
+        for child in &mut node.children {
+            *child = remapped[*child].expect("retained trace child has a remapped index");
+        }
+    }
+
+    SparsedTraceArena { arena, ignored: Default::default(), diagnostics: Default::default() }
 }
 
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
@@ -550,6 +676,52 @@ mod tests {
     use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
 
     #[test]
+    fn trace_depth_projection_removes_and_reindexes_nodes() {
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut().extend([
+            CallTraceNode {
+                parent: Some(0),
+                children: vec![2],
+                idx: 1,
+                trace: CallTrace { depth: 1, ..Default::default() },
+                ordering: vec![TraceMemberOrder::Call(0)],
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(1),
+                idx: 2,
+                trace: CallTrace { depth: 2, ..Default::default() },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(0),
+                idx: 3,
+                trace: CallTrace { depth: 1, ..Default::default() },
+                ..Default::default()
+            },
+        ]);
+        let root = &mut arena.nodes_mut()[0];
+        root.children = vec![1, 3];
+        root.ordering = vec![TraceMemberOrder::Call(0), TraceMemberOrder::Call(1)];
+        let arena = SparsedTraceArena {
+            arena,
+            ignored: Default::default(),
+            diagnostics: Default::default(),
+        };
+
+        let arena = trace_arena_at_depth(&arena, 1);
+
+        assert_eq!(arena.nodes().len(), 3);
+        assert_eq!(arena.nodes()[0].children, [1, 2]);
+        assert_eq!(arena.nodes()[1].idx, 1);
+        assert!(arena.nodes()[1].children.is_empty());
+        assert!(arena.nodes()[1].ordering.is_empty());
+        assert_eq!(arena.nodes()[2].idx, 2);
+        assert_eq!(arena.nodes()[2].parent, Some(0));
+        assert!(arena.ignored.is_empty());
+    }
+
+    #[test]
     fn decodes_tip1034_packed_channel_state() {
         let settled = U256::from(123u64);
         let deposit = U256::from(456u64);
@@ -596,13 +768,78 @@ mod tests {
         };
 
         let rendered = render_trace_arena_inner(
-            &SparsedTraceArena { arena, ignored: Default::default() },
+            &SparsedTraceArena {
+                arena,
+                ignored: Default::default(),
+                diagnostics: Default::default(),
+            },
             false,
             true,
         );
 
         assert!(rendered.contains("\nDecoded TIP20ChannelReserve storage:\n"));
         assert!(!rendered.contains("\n\nDecoded TIP20ChannelReserve storage:\n"));
+    }
+
+    #[test]
+    fn revert_diagnostic_only_changes_resolved_trace() {
+        let traces = SparsedTraceArena {
+            arena: CallTraceArena::default(),
+            ignored: Default::default(),
+            diagnostics: HashMap::from_iter([(
+                0,
+                RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
+            )]),
+        };
+
+        let resolved = traces.resolve_arena();
+        assert_eq!(
+            resolved.nodes()[0].trace.decoded.as_ref().unwrap().return_data.as_deref(),
+            Some("call to non-contract address 0x0000000000000000000000000000000000000000")
+        );
+        assert!(resolved.nodes()[0].trace.output.is_empty());
+        assert!(traces.arena.nodes()[0].trace.decoded.is_none());
+        assert!(traces.arena.nodes()[0].trace.output.is_empty());
+    }
+
+    #[test]
+    fn serialization_resolves_diagnostics_without_consuming_ignored_ranges() {
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.logs = vec![CallLog::default(), CallLog::default(), CallLog::default()];
+        root.ordering =
+            vec![TraceMemberOrder::Log(0), TraceMemberOrder::Log(1), TraceMemberOrder::Log(2)];
+
+        let traces = SparsedTraceArena {
+            arena,
+            ignored: HashMap::from_iter([((0, 1), (0, 2))]),
+            diagnostics: HashMap::from_iter([(
+                0,
+                RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
+            )]),
+        };
+
+        let serialized = ron::to_string(&traces).unwrap();
+        let deserialized: SparsedTraceArena = ron::from_str(&serialized).unwrap();
+        assert_eq!(
+            deserialized.arena.nodes()[0].ordering,
+            [TraceMemberOrder::Log(0), TraceMemberOrder::Log(1), TraceMemberOrder::Log(2)]
+        );
+        assert_eq!(deserialized.ignored, traces.ignored);
+        assert!(deserialized.diagnostics.is_empty());
+        assert_eq!(
+            deserialized.arena.nodes()[0].trace.decoded.as_ref().unwrap().return_data.as_deref(),
+            Some("call to non-contract address 0x0000000000000000000000000000000000000000")
+        );
+        assert!(deserialized.arena.nodes()[0].trace.output.is_empty());
+
+        let resolved = deserialized.resolve_arena();
+        assert_eq!(resolved.nodes()[0].ordering, [TraceMemberOrder::Log(2)]);
+        assert_eq!(
+            resolved.nodes()[0].trace.decoded.as_ref().unwrap().return_data.as_deref(),
+            Some("call to non-contract address 0x0000000000000000000000000000000000000000")
+        );
+        assert!(render_trace_arena(&deserialized).contains("call to non-contract address"));
     }
 
     #[test]
