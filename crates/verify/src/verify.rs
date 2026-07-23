@@ -3,7 +3,10 @@
 use crate::{
     RetryArgs,
     etherscan::EtherscanVerificationProvider,
-    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
+    provider::{
+        ExternalVerificationContext, VerificationContext, VerificationProvider,
+        VerificationProviderType,
+    },
     sourcify::SourcifyVerificationProvider,
     utils::wrap_verifier_url_error,
 };
@@ -551,19 +554,65 @@ struct ProviderRun {
     required: bool,
 }
 
+#[derive(Clone)]
+enum RunContext {
+    Local(VerificationContext),
+    External(ExternalVerificationContext),
+}
+
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         let config = self.load_config()?;
+        let context = self.resolve_context().await?;
+        self.run_with_resolved_context(RunContext::Local(context), config).await
+    }
 
+    /// Runs verification using caller-provided Standard JSON input.
+    pub async fn run_with_external_context(
+        self,
+        context: ExternalVerificationContext,
+    ) -> Result<()> {
+        self.validate_external_args()?;
+        eyre::ensure!(
+            !context.target.is_empty()
+                && context.target.len() <= 8193
+                && context.target.is_ascii()
+                && !context.target.bytes().any(|byte| byte.is_ascii_control()),
+            "external contract identifier must contain bounded printable ASCII"
+        );
+        let config = context.config.clone();
+        self.run_with_resolved_context(RunContext::External(context), config).await
+    }
+
+    fn validate_external_args(&self) -> Result<()> {
+        eyre::ensure!(!self.flatten, "flattening is unsupported for external verification");
+        eyre::ensure!(
+            !matches!(self.language, Some(ContractLanguage::Vyper)),
+            "Vyper is unsupported for external verification"
+        );
+        eyre::ensure!(
+            !self.guess_constructor_args,
+            "constructor argument guessing is unsupported for external verification"
+        );
+        eyre::ensure!(
+            self.constructor_args_path.is_none(),
+            "constructor args paths are unsupported for external verification; provide encoded constructor args"
+        );
+        Ok(())
+    }
+
+    async fn run_with_resolved_context(
+        mut self,
+        context: RunContext,
+        config: Config,
+    ) -> Result<()> {
         if self.guess_constructor_args && config.get_rpc_url().is_none() {
             eyre::bail!(
                 "You have to provide a valid RPC URL to use --guess-constructor-args feature"
             );
         }
 
-        // If chain is not set, we try to get it from the RPC.
-        // If RPC is not set, the default chain is used.
         let chain = match config.get_rpc_url() {
             Some(_) => {
                 let provider = utils::get_provider(&config)?;
@@ -572,18 +621,18 @@ impl VerifyArgs {
             None => config.chain.unwrap_or_default(),
         };
 
-        let context = self.resolve_context().await?;
-
         // Set Etherscan options.
         self.etherscan.chain = Some(chain);
         // `get_etherscan_config_with_chain` returns None for chains with no known Etherscan API
         // URL (even when a key was explicitly passed), because `ResolvedEtherscanConfig::create`
         // requires `chain.etherscan_urls()`. Fall back to the raw `etherscan_api_key` from config
         // so that the key survives for warning/fallback logic in `client()`.
-        self.etherscan.key = config
+        let config_key = config
             .get_etherscan_config_with_chain(Some(chain))?
             .map(|c| c.key)
             .or_else(|| config.etherscan_api_key.clone());
+        self.etherscan.key =
+            self.verifier.resolve_api_key(config_key.as_deref()).map(str::to_owned);
 
         // Capture whether the user explicitly provided a verifier URL *before* any auto-injection.
         // This is passed to `client()` so that an auto-injected Sourcify URL does not look like a
@@ -606,10 +655,17 @@ impl VerifyArgs {
         }
 
         if self.show_standard_json_input {
-            let args = EtherscanVerificationProvider::default()
-                .create_verify_request(&self, &context)
-                .await?;
-            sh_println!("{}", args.source)?;
+            match &context {
+                RunContext::Local(context) => {
+                    let args = EtherscanVerificationProvider::default()
+                        .create_verify_request(&self, context)
+                        .await?;
+                    sh_println!("{}", args.source)?;
+                }
+                RunContext::External(context) => {
+                    sh_println!("{}", serde_json::to_string(&context.standard_json_input)?)?;
+                }
+            }
             return Ok(());
         }
 
@@ -639,7 +695,11 @@ impl VerifyArgs {
         for ProviderRun { label, args, mut provider, required } in runs {
             sh_status!("\nVerifying on {label}...")?;
             let watch = args.watch;
-            match provider.submit(args, context.clone()).await {
+            let submission = match context.clone() {
+                RunContext::Local(context) => provider.submit(args, context).await,
+                RunContext::External(context) => provider.submit_external(args, context).await,
+            };
+            match submission {
                 Ok(check_args) => {
                     if required
                         && watch
@@ -981,6 +1041,45 @@ const fn is_dev_chain(chain: Chain) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verifier_api_key_takes_precedence_over_etherscan_key() {
+        let args = VerifierArgs { verifier_api_key: Some("explicit".into()), ..Default::default() };
+        assert_eq!(args.resolve_api_key(Some("config")), Some("explicit"));
+        assert_eq!(VerifierArgs::default().resolve_api_key(Some("config")), Some("config"));
+    }
+
+    #[tokio::test]
+    async fn external_context_rejects_control_characters_in_fqn() {
+        let args =
+            VerifyArgs::parse_from(["foundry-cli", "0xd8509bee9c9bf012282ad33aba0d87241baf5064"]);
+        let context = ExternalVerificationContext {
+            config: Config::default(),
+            compiler_version: semver::Version::new(0, 8, 30),
+            standard_json_input: std::sync::Arc::new(serde_json::json!({})),
+            target: "A.sol:A\nforged".into(),
+        };
+        assert!(
+            args.run_with_external_context(context)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("printable")
+        );
+    }
+
+    #[test]
+    fn external_run_context_clone_shares_standard_json() {
+        let input = std::sync::Arc::new(serde_json::json!({"large": [1, 2, 3]}));
+        let context = RunContext::External(ExternalVerificationContext {
+            config: Config::default(),
+            compiler_version: semver::Version::new(0, 8, 30),
+            standard_json_input: input.clone(),
+            target: "A.sol:A".into(),
+        });
+        let RunContext::External(cloned) = context.clone() else { unreachable!() };
+        assert!(std::sync::Arc::ptr_eq(&input, &cloned.standard_json_input));
+    }
 
     #[test]
     fn can_parse_verify_contract() {

@@ -1,6 +1,9 @@
 use crate::{
     VerifierArgs,
-    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
+    provider::{
+        ExternalVerificationContext, VerificationContext, VerificationProvider,
+        VerificationProviderType,
+    },
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
@@ -24,7 +27,7 @@ use foundry_config::Config;
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use regex::Regex;
 use semver::BuildMetadata;
-use std::{fmt::Debug, sync::LazyLock};
+use std::{fmt::Debug, future::Future as StdFuture, pin::Pin, sync::LazyLock, time::Duration};
 
 mod flatten;
 
@@ -69,90 +72,19 @@ impl VerificationProvider for EtherscanVerificationProvider {
         context: VerificationContext,
     ) -> Result<Option<VerifyCheckArgs>> {
         let (etherscan, verify_args) = self.prepare_verify_request(&args, &context).await?;
+        self.submit_verify_request(args, etherscan, verify_args).await
+    }
 
-        if !args.skip_is_verified_check
-            && self.is_contract_verified(&etherscan, &verify_args).await?
-        {
-            sh_status!(
-                "Contract [{}] {:?} is already verified. Skipping verification.",
-                verify_args.contract_name,
-                verify_args.address.to_checksum(None)
-            )?;
-
-            return Ok(None);
-        }
-
-        trace!(?verify_args, "submitting verification request");
-
-        let resp = args
-            .retry
-            .into_retry()
-            .run_async(|| async {
-                sh_status!(
-                    "Submitting verification for [{}] {}.",
-                    verify_args.contract_name,
-                    verify_args.address
-                )?;
-                let resp = etherscan
-                    .submit_contract_verification(&verify_args)
-                    .await
-                    .wrap_err_with(|| {
-                        // valid json
-                        let args = serde_json::to_string(&verify_args).unwrap();
-                        format!("Failed to submit contract verification, payload:\n{args}")
-                    })?;
-
-                trace!(?resp, "Received verification response");
-
-                if resp.status == "0" {
-                    if resp.result == "Contract source code already verified"
-                        // specific for blockscout response
-                        || resp.result == "Smart-contract already verified."
-                    {
-                        return Ok(None);
-                    }
-
-                    if resp.result.starts_with("Unable to locate ContractCode at")
-                        || resp.result.starts_with("The address is not a smart contract")
-                        || resp.result.starts_with("Address is not a smart-contract")
-                    {
-                        warn!("{}", resp.result);
-                        return Err(eyre!("Could not detect deployment: {}", resp.result));
-                    }
-
-                    warn!("Failed verify submission: {:?}", resp);
-                    eyre::bail!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message,
-                        resp.result
-                    );
-                }
-
-                Ok(Some(resp))
-            })
-            .await?;
-
-        if let Some(resp) = resp {
-            let url = etherscan.address_url(args.address);
-            sh_status!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
-                resp.message,
-                resp.result,
-                url
-            )?;
-            if args.print_submission_result_to_stdout {
-                sh_println!("{}\t{}", resp.result, url)?;
-            }
-            Ok(Some(VerifyCheckArgs {
-                id: resp.result,
-                etherscan: args.etherscan,
-                retry: args.retry,
-                verifier: args.verifier,
-            }))
-        } else {
-            sh_status!("Contract source code already verified")?;
-            Ok(None)
-        }
+    fn submit_external(
+        &mut self,
+        args: VerifyArgs,
+        context: ExternalVerificationContext,
+    ) -> Pin<Box<dyn StdFuture<Output = Result<Option<VerifyCheckArgs>>> + '_>> {
+        Box::pin(async move {
+            let etherscan = self.client(&args.etherscan, &args.verifier, &context.config)?;
+            let verify_args = self.create_external_verify_request(&args, &context)?;
+            self.submit_verify_request(args, etherscan, verify_args).await
+        })
     }
 
     /// Executes the command to check verification status on Etherscan
@@ -168,12 +100,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err("Failed to request verification status")
                     .map_err(RetryError::Retry)?;
 
-                trace!(?resp, "Received verification response");
+                trace!(status = %resp.status, "Received Etherscan verification response");
 
                 let _ = sh_status!(
                     "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                    resp.message,
-                    resp.result
+                    sanitize_remote_message(&resp.message),
+                    sanitize_remote_message(&resp.result)
                 );
 
                 if resp.result == "Pending in queue"
@@ -195,7 +127,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     return Err(RetryError::Break(eyre!(
                         "Contract verification failed:\nStatus: `{}`\nResult: `{}`",
                         resp.status,
-                        resp.result
+                        sanitize_remote_message(&resp.result)
                     )));
                 }
 
@@ -211,6 +143,118 @@ impl VerificationProvider for EtherscanVerificationProvider {
 }
 
 impl EtherscanVerificationProvider {
+    async fn submit_verify_request(
+        &self,
+        args: VerifyArgs,
+        etherscan: Client,
+        verify_args: VerifyContract,
+    ) -> Result<Option<VerifyCheckArgs>> {
+        if !args.skip_is_verified_check
+            && self.is_contract_verified(&etherscan, &verify_args).await?
+        {
+            sh_status!(
+                "Contract [{}] {:?} is already verified. Skipping verification.",
+                verify_args.contract_name,
+                verify_args.address.to_checksum(None)
+            )?;
+
+            return Ok(None);
+        }
+
+        trace!(
+            provider = "Etherscan",
+            address = %verify_args.address,
+            target = %verify_args.contract_name,
+            "submitting verification request"
+        );
+
+        let resp = args
+            .retry
+            .into_retry()
+            .run_async(|| async {
+                sh_status!(
+                    "Submitting verification for [{}] {}.",
+                    verify_args.contract_name,
+                    verify_args.address
+                )?;
+                let resp = etherscan
+                    .submit_contract_verification(&verify_args)
+                    .await
+                    .wrap_err("Failed to submit Etherscan contract verification")?;
+
+                trace!(status = %resp.status, "Received Etherscan verification response");
+
+                if resp.status == "0" {
+                    if resp.result == "Contract source code already verified"
+                        // specific for blockscout response
+                        || resp.result == "Smart-contract already verified."
+                    {
+                        return Ok(None);
+                    }
+
+                    if resp.result.starts_with("Unable to locate ContractCode at")
+                        || resp.result.starts_with("The address is not a smart contract")
+                        || resp.result.starts_with("Address is not a smart-contract")
+                    {
+                        warn!("{}", sanitize_remote_message(&resp.result));
+                        return Err(eyre!(
+                            "Could not detect deployment: {}",
+                            sanitize_remote_message(&resp.result)
+                        ));
+                    }
+
+                    warn!(status = %resp.status, "Etherscan verification submission failed");
+                    eyre::bail!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                        sanitize_remote_message(&resp.message),
+                        sanitize_remote_message(&resp.result)
+                    );
+                }
+
+                Ok(Some(resp))
+            })
+            .await?;
+
+        if let Some(resp) = resp {
+            let url = etherscan.address_url(args.address);
+            let display_id = sanitize_remote_message(&resp.result);
+            sh_status!(
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
+                sanitize_remote_message(&resp.message),
+                display_id,
+                url
+            )?;
+            if args.print_submission_result_to_stdout {
+                sh_println!("{}\t{}", display_id, url)?;
+            }
+            Ok(Some(VerifyCheckArgs {
+                id: resp.result,
+                etherscan: args.etherscan,
+                retry: args.retry,
+                verifier: args.verifier,
+            }))
+        } else {
+            sh_status!("Contract source code already verified")?;
+            Ok(None)
+        }
+    }
+
+    fn create_external_verify_request(
+        &self,
+        args: &VerifyArgs,
+        context: &ExternalVerificationContext,
+    ) -> Result<VerifyContract> {
+        let source = serde_json::to_string(&context.standard_json_input)
+            .wrap_err("Failed to serialize standard json input")?;
+        let compiler_version = format!("v{}", context.compiler_version);
+        let mut request =
+            VerifyContract::new(args.address, context.target.clone(), source, compiler_version)
+                .constructor_arguments(args.constructor_args.clone())
+                .code_format(CodeFormat::StandardJsonInput);
+        apply_license_type(&mut request, args.license_type.as_deref());
+        Ok(request)
+    }
+
     /// Create a source provider
     fn source_provider(&self, args: &VerifyArgs) -> Box<dyn EtherscanSourceProvider> {
         if args.flatten {
@@ -296,7 +340,14 @@ impl EtherscanVerificationProvider {
             builder.chain(chain)?
         };
 
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .wrap_err("Failed to create hardened HTTP client")?;
         builder
+            .with_client(http)
             .with_api_key(etherscan_key.unwrap_or_default())
             .build()
             .wrap_err("Failed to create Etherscan client")
@@ -459,6 +510,10 @@ impl EtherscanVerificationProvider {
     }
 }
 
+fn sanitize_remote_message(message: &str) -> String {
+    message.chars().map(|ch| if ch.is_control() { ' ' } else { ch }).take(512).collect()
+}
+
 fn apply_license_type(verify_args: &mut VerifyContract, license_type: Option<&str>) {
     if let Some(license_type) = license_type {
         verify_args.other.insert("licenseType".to_string(), license_type.to_string());
@@ -472,6 +527,29 @@ mod tests {
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
     use tempfile::tempdir;
+
+    #[test]
+    fn external_request_preserves_raw_input_and_target() {
+        let args =
+            VerifyArgs::parse_from(["foundry-cli", "0xd8509bee9c9bf012282ad33aba0d87241baf5064"]);
+        let input = serde_json::json!({
+            "language": "Solidity",
+            "settings": { "unknownSetting": { "futureField": true } },
+            "unknownTopLevel": [1, 2, 3]
+        });
+        let context = ExternalVerificationContext {
+            config: Config::default(),
+            compiler_version: "0.8.30+commit.73712a01".parse().unwrap(),
+            standard_json_input: std::sync::Arc::new(input.clone()),
+            target: "contracts/Unknown.sol:ExactTarget".to_string(),
+        };
+
+        let request =
+            EtherscanVerificationProvider.create_external_verify_request(&args, &context).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&request.source).unwrap(), input);
+        assert_eq!(request.contract_name, "contracts/Unknown.sol:ExactTarget");
+        assert_eq!(request.compiler_version, "v0.8.30+commit.73712a01");
+    }
 
     #[test]
     fn applies_license_type_to_verify_request() {
