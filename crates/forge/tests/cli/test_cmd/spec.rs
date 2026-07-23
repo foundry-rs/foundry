@@ -3,14 +3,173 @@ use alloy_consensus::{SignableTransaction, TxEip1559};
 #[cfg(feature = "monad")]
 use alloy_network::{Ethereum, Network, ReceiptResponse, TransactionBuilder, TxSignerSync};
 #[cfg(feature = "monad")]
-use alloy_primitives::{Address, TxKind, U256, address, hex, keccak256};
+use alloy_primitives::{Address, B256, TxKind, U256, address, hex, keccak256};
 #[cfg(feature = "monad")]
 use alloy_provider::Provider;
 #[cfg(feature = "monad")]
 use anvil::{NodeConfig, spawn};
+#[cfg(feature = "monad")]
+use axum::{Json, Router, routing::post};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
+#[cfg(feature = "monad")]
+use serde_json::{Value, json};
+
+#[cfg(feature = "monad")]
+fn canonicalize_monad_reward_transaction(transaction: &mut Value, target_hash: &str) {
+    let Some(transaction) = transaction.as_object_mut() else { return };
+    if !transaction
+        .get("hash")
+        .and_then(Value::as_str)
+        .is_some_and(|hash| hash.eq_ignore_ascii_case(target_hash))
+    {
+        return;
+    }
+
+    transaction.insert("gas".to_string(), json!("0x0"));
+    transaction.insert("gasPrice".to_string(), json!("0x0"));
+    transaction.insert("r".to_string(), json!("0x0"));
+    transaction.insert("s".to_string(), json!("0x0"));
+    transaction.insert("type".to_string(), json!("0x0"));
+    transaction.insert("v".to_string(), json!("0x0"));
+    transaction.remove("accessList");
+    transaction.remove("maxFeePerGas");
+    transaction.remove("maxPriorityFeePerGas");
+    transaction.remove("yParity");
+}
+
+#[cfg(feature = "monad")]
+fn canonicalize_monad_reward_receipt(receipt: &mut Value, target_hash: &str) {
+    let Some(receipt) = receipt.as_object_mut() else { return };
+    if !receipt
+        .get("transactionHash")
+        .and_then(Value::as_str)
+        .is_some_and(|hash| hash.eq_ignore_ascii_case(target_hash))
+    {
+        return;
+    }
+
+    receipt.insert("cumulativeGasUsed".to_string(), json!("0x0"));
+    receipt.insert("effectiveGasPrice".to_string(), json!("0x0"));
+    receipt.insert("gasUsed".to_string(), json!("0x0"));
+    receipt.insert("type".to_string(), json!("0x0"));
+}
+
+#[cfg(feature = "monad")]
+async fn spawn_canonical_monad_reward_rpc(endpoint: String, target_hash: B256) -> String {
+    let target_hash = target_hash.to_string();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let endpoint = endpoint.clone();
+            let target_hash = target_hash.clone();
+            async move {
+                let method = request["method"].as_str().unwrap();
+                let mut response = reqwest::Client::new()
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+
+                match method {
+                    "eth_getTransactionByHash"
+                    | "eth_getTransactionByBlockHashAndIndex"
+                    | "eth_getTransactionByBlockNumberAndIndex" => {
+                        canonicalize_monad_reward_transaction(
+                            &mut response["result"],
+                            &target_hash,
+                        );
+                    }
+                    "eth_getBlockByHash" | "eth_getBlockByNumber" => {
+                        if let Some(transactions) =
+                            response["result"]["transactions"].as_array_mut()
+                        {
+                            for transaction in transactions {
+                                canonicalize_monad_reward_transaction(transaction, &target_hash);
+                            }
+                        }
+                    }
+                    "eth_getTransactionReceipt" => {
+                        canonicalize_monad_reward_receipt(&mut response["result"], &target_hash);
+                    }
+                    "eth_getBlockReceipts" => {
+                        if let Some(receipts) = response["result"].as_array_mut() {
+                            for receipt in receipts {
+                                canonicalize_monad_reward_receipt(receipt, &target_hash);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+#[cfg(feature = "monad")]
+async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
+    reqwest::Client::new()
+        .post(endpoint)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+#[cfg(feature = "monad")]
+fn monad_staking_validator_id_key(address: Address) -> U256 {
+    let mut key = [0u8; 32];
+    key[0] = 0x06;
+    key[1..21].copy_from_slice(address.as_slice());
+    U256::from_be_bytes(key)
+}
+
+#[cfg(feature = "monad")]
+fn monad_staking_validator_key(namespace: u8, validator_id: u64, offset: u8) -> U256 {
+    let mut key = [0u8; 32];
+    key[0] = namespace;
+    key[1..9].copy_from_slice(&validator_id.to_be_bytes());
+    U256::from_be_bytes(key) + U256::from(offset)
+}
+
+#[cfg(feature = "monad")]
+fn left_aligned_u64(value: u64) -> U256 {
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&value.to_be_bytes());
+    U256::from_be_bytes(bytes)
+}
+
+#[cfg(feature = "monad")]
+fn address_and_flags(address: Address, flags: u64) -> U256 {
+    let mut bytes = [0u8; 32];
+    bytes[..20].copy_from_slice(address.as_slice());
+    bytes[20..28].copy_from_slice(&flags.to_be_bytes());
+    U256::from_be_bytes(bytes)
+}
+
+#[cfg(feature = "monad")]
+fn storage_value(value: U256) -> B256 {
+    B256::from(value.to_be_bytes::<32>())
+}
 
 // Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
@@ -538,46 +697,196 @@ contract TransactionForkMonadContextTest {
 forgetest_async!(transact_replays_monad_protocol_system_target, |prj, cmd| {
     const SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
     const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
+    const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
+    const VALIDATOR_AUTH: Address = address!("0x2222222222222222222222222222222222222222");
+    const VALIDATOR_ID: u64 = 7;
 
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
-    let initial_balance = U256::from(1_000_000_000_000_000_000u128);
+    let mon = U256::from(1_000_000_000_000_000_000u128);
+    let reward = U256::from(25) * mon;
+    let initial_system_balance = U256::from(100) * mon;
+    let initial_staking_balance = U256::from(3) * mon;
+
     api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
-    api.anvil_set_balance(SYSTEM_ADDRESS, initial_balance).await.unwrap();
+    api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
+    api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
+    api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
+    api.anvil_set_storage_at(
+        STAKING_ADDRESS,
+        monad_staking_validator_id_key(BLOCK_AUTHOR),
+        storage_value(left_aligned_u64(VALIDATOR_ID)),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_storage_at(
+        STAKING_ADDRESS,
+        monad_staking_validator_key(0x04, VALIDATOR_ID, 0),
+        storage_value(U256::from(100) * mon),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_storage_at(
+        STAKING_ADDRESS,
+        monad_staking_validator_key(0x04, VALIDATOR_ID, 1),
+        B256::ZERO,
+    )
+    .await
+    .unwrap();
+    api.anvil_set_storage_at(
+        STAKING_ADDRESS,
+        monad_staking_validator_key(0x09, VALIDATOR_ID, 6),
+        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+    )
+    .await
+    .unwrap();
+
+    api.mine_one().await;
+    let parent_block = provider.get_block_number().await.unwrap();
+
+    let mut reward_input = keccak256("syscallReward(address)")[..4].to_vec();
+    reward_input.extend_from_slice(&[0u8; 12]);
+    reward_input.extend_from_slice(BLOCK_AUTHOR.as_slice());
 
     let request = <Ethereum as Network>::TransactionRequest::default()
         .with_from(SYSTEM_ADDRESS)
         .with_to(STAKING_ADDRESS)
-        .with_input(keccak256("syscallSnapshot()")[..4].to_vec())
-        .with_gas_limit(1_000_000);
+        .with_value(reward)
+        .with_input(reward_input)
+        .with_gas_limit(1_000_000)
+        .with_gas_price(2_000_000_000);
     let receipt =
         provider.send_transaction(request.into()).await.unwrap().get_receipt().await.unwrap();
     assert!(receipt.status());
+    assert_eq!(receipt.block_number(), Some(parent_block + 1));
+
+    let target_hash = receipt.transaction_hash;
+    let endpoint = spawn_canonical_monad_reward_rpc(handle.http_endpoint(), target_hash).await;
+    let transaction =
+        rpc_request(&endpoint, "eth_getTransactionByHash", json!([target_hash])).await;
+    assert_eq!(transaction["result"]["gas"], "0x0");
+    assert_eq!(transaction["result"]["gasPrice"], "0x0");
+    assert_eq!(transaction["result"]["r"], "0x0");
+    assert_eq!(transaction["result"]["s"], "0x0");
+    assert_eq!(transaction["result"]["type"], "0x0");
+    assert_eq!(transaction["result"]["v"], "0x0");
+    assert_eq!(transaction["result"]["value"], format!("{reward:#x}"));
+
+    let canonical_receipt =
+        rpc_request(&endpoint, "eth_getTransactionReceipt", json!([target_hash])).await;
+    assert_eq!(canonical_receipt["result"]["status"], "0x1");
+    assert_eq!(canonical_receipt["result"]["gasUsed"], "0x0");
+    assert_eq!(canonical_receipt["result"]["effectiveGasPrice"], "0x0");
+
+    let target_block = rpc_request(
+        &endpoint,
+        "eth_getBlockByNumber",
+        json!([format!("{:#x}", parent_block + 1), true]),
+    )
+    .await;
+    assert_ne!(target_block["result"]["baseFeePerGas"], "0x0");
+    assert_eq!(target_block["result"]["transactions"][0]["hash"], target_hash.to_string());
+    assert_eq!(target_block["result"]["transactions"][0]["gas"], "0x0");
+    assert_eq!(target_block["result"]["transactions"][0]["gasPrice"], "0x0");
+    assert_eq!(target_block["result"]["transactions"][0]["r"], "0x0");
+    assert_eq!(target_block["result"]["transactions"][0]["s"], "0x0");
+    assert_eq!(target_block["result"]["transactions"][0]["v"], "0x0");
+
     let source = r#"
 interface Vm {
+    struct Log {
+        bytes32[] topics;
+        bytes data;
+        address emitter;
+    }
+
     function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256 forkId);
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256 forkId);
+    function recordLogs() external;
+    function getRecordedLogs() external returns (Log[] memory entries);
     function getNonce(address account) external view returns (uint64 nonce);
     function transact(bytes32 txHash) external;
+}
+
+interface IMonadStaking {
+    function getProposerValId() external returns (uint64 validatorId);
+    function getValidator(uint64 validatorId) external;
 }
 
 contract MonadProtocolSystemTargetTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     address constant SYSTEM = 0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e;
+    IMonadStaking constant STAKING = IMonadStaking(address(0x1000));
+    bytes32 constant TARGET_HASH = <tx_hash>;
+    uint256 constant PARENT_BLOCK = <parent_block>;
+    uint64 constant VALIDATOR_ID = 7;
+    uint256 constant REWARD = 25 ether;
 
-    function test_transact_uses_protocol_system_path() public {
-        vm.createSelectFork("<rpc>", <tx_hash>);
-        uint256 balanceBefore = SYSTEM.balance;
+    function test_reward_target_from_transaction_hash_fork() public {
+        vm.createSelectFork("<rpc>", TARGET_HASH);
+        _assertRewardReplay();
+    }
+
+    function test_reward_target_from_parent_block_fork() public {
+        vm.createSelectFork("<rpc>", PARENT_BLOCK);
+        _assertRewardReplay();
+    }
+
+    function _assertRewardReplay() internal {
+        uint256 systemBalanceBefore = SYSTEM.balance;
+        uint256 stakingBalanceBefore = address(STAKING).balance;
         uint64 nonceBefore = vm.getNonce(SYSTEM);
+        (uint256 accumulatorBefore, uint256 unclaimedBefore) = _validatorRewards();
+        require(nonceBefore == 11, "unexpected protocol caller nonce");
+        require(stakingBalanceBefore == 3 ether, "unexpected staking prestate balance");
+        require(accumulatorBefore == 0, "unexpected reward accumulator");
+        require(unclaimedBefore == 0, "unexpected unclaimed rewards");
 
-        vm.transact(<tx_hash>);
+        vm.recordLogs();
+        vm.transact(TARGET_HASH);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
 
-        require(SYSTEM.balance == balanceBefore, "protocol caller paid ordinary transaction gas");
+        require(SYSTEM.balance == systemBalanceBefore, "protocol caller paid gas or value");
         require(vm.getNonce(SYSTEM) == nonceBefore + 1, "protocol caller nonce was not advanced");
+        require(address(STAKING).balance == stakingBalanceBefore + REWARD, "reward was not minted");
+        require(STAKING.getProposerValId() == VALIDATOR_ID, "proposer validator was not updated");
+
+        (uint256 accumulatorAfter, uint256 unclaimedAfter) = _validatorRewards();
+        require(accumulatorAfter > accumulatorBefore, "reward accumulator was not updated");
+        require(unclaimedAfter == unclaimedBefore + REWARD, "validator reward was not credited");
+
+        require(logs.length == 1, "unexpected reward log count");
+        require(logs[0].emitter == address(STAKING), "unexpected reward log emitter");
+        require(logs[0].topics.length == 3, "unexpected reward log topics");
+        require(
+            logs[0].topics[0] == keccak256("ValidatorRewarded(uint64,address,uint256,uint64)"),
+            "unexpected reward event"
+        );
+        require(uint256(logs[0].topics[1]) == uint256(VALIDATOR_ID), "unexpected validator topic");
+        require(
+            logs[0].topics[2] == bytes32(uint256(uint160(SYSTEM))),
+            "unexpected reward sender topic"
+        );
+        (uint256 amount, uint64 epoch) = abi.decode(logs[0].data, (uint256, uint64));
+        require(amount == REWARD, "unexpected logged reward");
+        require(epoch == 0, "unexpected reward epoch");
+    }
+
+    function _validatorRewards() internal returns (uint256 accumulator, uint256 unclaimed) {
+        (bool ok, bytes memory result) = address(STAKING).call(
+            abi.encodeWithSelector(IMonadStaking.getValidator.selector, VALIDATOR_ID)
+        );
+        require(ok && result.length >= 192, "failed to read validator");
+        assembly {
+            accumulator := mload(add(result, 128))
+            unclaimed := mload(add(result, 192))
+        }
     }
 }
 "#
-    .replace("<rpc>", &handle.http_endpoint())
-    .replace("<tx_hash>", &receipt.transaction_hash.to_string());
+    .replace("<rpc>", &endpoint)
+    .replace("<tx_hash>", &target_hash.to_string())
+    .replace("<parent_block>", &parent_block.to_string());
     prj.add_test("MonadProtocolSystemTarget.t.sol", &source);
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
