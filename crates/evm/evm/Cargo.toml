@@ -56,6 +56,7 @@ eyre.workspace = true
 parking_lot.workspace = true
 proptest.workspace = true
 rand.workspace = true
+rustc-hash.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
