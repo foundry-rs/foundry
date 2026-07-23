@@ -996,13 +996,10 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
-/// Byte ranges of `text` that Markdown parses as code: fenced code blocks and inline code
-/// spans, including multi-line ones (fenced blocks are trimmed to MDX's close, see
-/// `mdx_fence_end`). MDX does not execute an `import`/`export` inside them, and
-/// an HTML entity would render literally there, so neutralization skips these ranges. Indented
-/// code blocks are deliberately excluded: MDX does not treat indentation as code, so an indented
-/// `import`/`export` is not executed and renders as ordinary text, where neutralizing it is
-/// harmless rather than corrupting.
+/// Byte ranges that MDX parses as code. Pulldown-cmark reports CommonMark fences and inline code
+/// spans, including multi-line ones. MDX-only fences indented by four or more columns are added
+/// separately. An HTML entity would render literally inside these ranges, so neutralization skips
+/// them.
 fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
     let mut regions = Vec::new();
     let mut fenced_start: Option<usize> = None;
@@ -1019,6 +1016,59 @@ fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
             Event::Code(_) => regions.push(range),
             _ => {}
         }
+    }
+    let indented_fences = mdx_indented_fence_regions(text, &regions);
+    regions.extend(indented_fences);
+    regions
+}
+
+/// Fenced code blocks that MDX recognizes but CommonMark does not: opening fences indented by
+/// four or more columns. Once opened, a matching closer may use any indentation; without one the
+/// block extends to EOF.
+fn mdx_indented_fence_regions(
+    text: &str,
+    parsed_regions: &[std::ops::Range<usize>],
+) -> Vec<std::ops::Range<usize>> {
+    let mut regions = Vec::new();
+    let mut open: Option<(usize, char, usize)> = None;
+    let mut offset = 0;
+
+    for segment in text.split_inclusive('\n') {
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        let line_end = offset + line.len();
+        let marker = line.trim_start_matches([' ', '\t']);
+
+        if let Some((start, fence, open_len)) = open {
+            let run = marker.chars().take_while(|&c| c == fence).count();
+            if run >= open_len && marker[run..].trim_matches([' ', '\t']).is_empty() {
+                regions.push(start..line_end);
+                open = None;
+            }
+        } else {
+            let indent = &line[..line.len() - marker.len()];
+            let indent_columns = indent.bytes().fold(0, |column, byte| match byte {
+                b'\t' => column + 4 - column % 4,
+                _ => column + 1,
+            });
+            if indent_columns >= 4
+                && let Some(fence) = marker.chars().next().filter(|&c| c == '`' || c == '~')
+            {
+                let open_len = marker.chars().take_while(|&c| c == fence).count();
+                let start = offset + indent.len();
+                if open_len >= 3
+                    && (fence != '`' || !marker[open_len..].contains('`'))
+                    && !parsed_regions.iter().any(|region| region.contains(&start))
+                {
+                    open = Some((start, fence, open_len));
+                }
+            }
+        }
+
+        offset += segment.len();
+    }
+
+    if let Some((start, _, _)) = open {
+        regions.push(start..text.len());
     }
     regions
 }
@@ -1059,6 +1109,8 @@ fn mdx_fence_end(text: &str, start: usize, cmark_end: usize) -> usize {
 /// inside a Markdown code span or fenced code block is left untouched (see `code_regions`): the
 /// entity would render literally and corrupt the example, and MDX would not execute it there.
 fn neutralize_esm(text: &str) -> String {
+    let normalized = text.contains('\r').then(|| text.replace("\r\n", "\n").replace('\r', "\n"));
+    let text = normalized.as_deref().unwrap_or(text);
     let regions = code_regions(text);
     let mut offset = 0;
     text.split('\n')
@@ -1331,4 +1383,26 @@ fn dedent(s: &str) -> String {
         .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim() })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::neutralize_esm;
+
+    #[test]
+    fn neutralizes_esm_after_lone_carriage_return() {
+        assert_eq!(
+            neutralize_esm("Intro.\r\rexport const afterCarriageReturn = 1"),
+            "Intro.\n\n&#101;xport const afterCarriageReturn = 1"
+        );
+    }
+
+    #[test]
+    fn normalizes_carriage_returns_before_code_offsets() {
+        assert_eq!(
+            neutralize_esm("```\rimport inside\r```\rexport outside"),
+            "```\nimport inside\n```\n&#101;xport outside"
+        );
+        assert_eq!(neutralize_esm("Intro.\r\nimport outside"), "Intro.\n&#105;mport outside");
+    }
 }

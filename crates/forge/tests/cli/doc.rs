@@ -481,6 +481,54 @@ contract IndentedClose {
     );
 });
 
+// MDX disables indented code blocks, so a fence indented by four or more spaces is still a
+// fence. Preserve ESM-looking lines through its matching closer or EOF without treating
+// ordinary indented prose as code.
+forgetest_init!(natspec_preserves_esm_inside_indented_fence_openers, |prj, cmd| {
+    prj.add_source(
+        "IndentedOpen.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract IndentedOpen {
+    /**
+     * @notice Closed:
+     *     ```solidity
+     *     import insideIndentedFence from "x";
+     *     ```
+     * export const afterIndentedFence = 1
+     */
+    function closed() external {}
+
+    /**
+     * @notice Unclosed:
+     *     ~~~solidity
+     *     export const insideUnclosedIndentedFence = 2
+     */
+    function unclosed() external {}
+
+    /**
+     * @notice Ordinary prose:
+     *     import ordinaryIndentedProse from "z";
+     */
+    function prose() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.IndentedOpen.mdx"))
+            .unwrap();
+    assert!(rendered.contains("import insideIndentedFence from \"x\";"), "{rendered}");
+    assert!(!rendered.contains("&#105;mport insideIndentedFence"), "{rendered}");
+    assert!(rendered.contains("&#101;xport const afterIndentedFence = 1"), "{rendered}");
+    assert!(rendered.contains("export const insideUnclosedIndentedFence = 2"), "{rendered}");
+    assert!(!rendered.contains("&#101;xport const insideUnclosedIndentedFence"), "{rendered}");
+    assert!(rendered.contains("&#105;mport ordinaryIndentedProse from \"z\";"), "{rendered}");
+});
+
 // Test that {Ident} cross-references resolve to root-relative vocs links.
 // fixes <https://github.com/foundry-rs/foundry/issues/12361>
 forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {
