@@ -926,6 +926,8 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             // package entry point remains global
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // context-free direct dependency aliases remain global
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -952,6 +954,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -969,6 +972,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -987,6 +991,10 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
+                .parse()
+                .unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 });
@@ -1217,18 +1225,55 @@ outer/=lib/outer/src/
 
 forgetest!(direct_dependency_keeps_configured_package_alias, |prj, cmd| {
     let dep = prj.paths().libraries[0].join("foo-1.2.0");
-    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    pretty_err(&dep, fs::create_dir_all(dep.join("contracts")));
     pretty_err(
         &dep,
-        fs::write(dep.join("foundry.toml"), "[profile.default]\nremappings = [\"foo/=src/\"]\n"),
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"foo/=contracts/\"]\n",
+        ),
     );
-    pretty_err(&dep, fs::write(dep.join("src/Foo.sol"), "contract Foo {}\n"));
+    pretty_err(&dep, fs::write(dep.join("contracts/Foo.sol"), "contract Foo {}\n"));
     prj.add_source(
         "UsesFoo.sol",
         "import {Foo} from \"foo/Foo.sol\"; contract UsesFoo is Foo {}\n",
     );
 
     cmd.arg("build").assert_success();
+});
+
+forgetest!(configured_lib_order_breaks_equal_remapping_ties, |prj, cmd| {
+    for lib in ["first", "second"] {
+        let lib = prj.root().join(lib);
+        pretty_err(&lib, fs::create_dir_all(lib.join("contracts")));
+        pretty_err(
+            &lib,
+            fs::write(
+                lib.join("foundry.toml"),
+                "[profile.default]\nremappings = [\"shared/=contracts/\"]\n",
+            ),
+        );
+    }
+
+    prj.update_config(|config| config.libs = vec!["first".into(), "second".into()]);
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+first/:shared/=first/contracts/
+second/:shared/=second/contracts/
+first/=first/contracts/
+second/=second/contracts/
+shared/=first/contracts/
+
+"#]]);
+
+    prj.update_config(|config| config.libs = vec!["second".into(), "first".into()]);
+    cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(str![[r#"
+first/:shared/=first/contracts/
+second/:shared/=second/contracts/
+first/=first/contracts/
+second/=second/contracts/
+shared/=second/contracts/
+
+"#]]);
 });
 
 // test remappings with closer paths are prioritised
@@ -1322,6 +1367,7 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
 @openzeppelin/contracts/=lib/openzeppelin-contracts/
 dep1/=lib/dep1/src/
 forge-std/=lib/forge-std/src/
+@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 lib/dep1/:@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 
 "#]])
