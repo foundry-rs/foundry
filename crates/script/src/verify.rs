@@ -204,18 +204,19 @@ fn source_api_key(config: &Config, chain: Chain) -> Option<String> {
 
 enum VerificationJob {
     Local(VerifyArgs),
-    External(VerifyArgs, ExternalVerificationContext),
+    External(VerifyArgs, Box<ExternalVerificationContext>),
 }
 
 impl VerificationJob {
     async fn run(self) -> Result<()> {
         match self {
             Self::Local(args) => args.run().await,
-            Self::External(args, context) => args.run_with_external_context(context).await,
+            Self::External(args, context) => args.run_with_external_context(*context).await,
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn external_job(
     resolver: &mut Option<ExternalResolver>,
     config: &Config,
@@ -318,7 +319,7 @@ async fn external_job(
         language: None,
         creation_transaction_hash: Some(creation_transaction_hash),
     };
-    Ok(VerificationJob::External(args, context))
+    Ok(VerificationJob::External(args, Box::new(context)))
 }
 
 fn concise(reason: &str) -> String {
@@ -364,7 +365,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
         let mut warned_offline = false;
         let mut consumed_receipts = vec![false; sequence.receipts.len()];
 
-        for tx in sequence.transactions.iter() {
+        for tx in &sequence.transactions {
             let Some(tx_hash) = tx.hash else {
                 let _ = sh_warn!("Skipping verification for transaction without a hash.");
                 continue;

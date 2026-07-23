@@ -837,7 +837,9 @@ contract ExternalFactory {
                     if form.get("address").is_some_and(|address| address.to_lowercase() == factory) {
                         serde_json::json!({"status":"1","message":"OK","result":[{
                             "SourceCode": source_json.to_string(), "CompilerVersion": compiler_version,
-                            "ContractName": "ExternalFactory"
+                            "ContractName": "ExternalFactory", "ABI": "[]",
+                            "OptimizationUsed": "1", "OptimizationRuns": "777",
+                            "ConstructorArguments": "", "EVMVersion": "osaka", "IsProxy": "0"
                         }]}).to_string()
                     } else {
                         r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.to_string()
@@ -898,21 +900,23 @@ contract Deploy is Script {{
 
     assert!(!prj.root().join("src/External.sol").exists());
     assert!(!prj.artifacts().join("External.sol/Child.json").exists());
-    let requests = requests.lock().unwrap();
-    assert!(requests.sources.len() >= 2, "source requests: {:?}", requests.sources);
-    let source_addresses = requests
-        .sources
-        .iter()
-        .map(|request| request["address"].to_lowercase())
-        .collect::<Vec<_>>();
-    let expected = [executor.to_lowercase(), factory.to_lowercase()];
-    assert!(
-        source_addresses.windows(2).any(|addresses| addresses == expected),
-        "source request order: {source_addresses:?}"
-    );
-    assert!(requests.sources.iter().all(|request| request["apikey"] == SOURCE_KEY));
-    assert_eq!(requests.submissions.len(), 1, "script stderr: {}", output.stderr_lossy());
-    let submission = &requests.submissions[0];
+    let submission = {
+        let requests = requests.lock().unwrap();
+        assert!(requests.sources.len() >= 2, "source requests: {:?}", requests.sources);
+        let source_addresses = requests
+            .sources
+            .iter()
+            .map(|request| request["address"].to_lowercase())
+            .collect::<Vec<_>>();
+        let expected = [executor.to_lowercase(), factory.to_lowercase()];
+        assert!(
+            source_addresses.windows(2).any(|addresses| addresses == expected),
+            "source request order: {source_addresses:?}"
+        );
+        assert!(requests.sources.iter().all(|request| request["apikey"] == SOURCE_KEY));
+        assert_eq!(requests.submissions.len(), 1, "script stderr: {}", output.stderr_lossy());
+        requests.submissions[0].clone()
+    };
     assert_eq!(submission["apikey"], SUBMISSION_KEY);
     assert_eq!(submission["contractname"], "src/External.sol:Child");
     assert_eq!(submission["codeformat"], "solidity-standard-json-input");

@@ -91,12 +91,14 @@ struct FetchKey {
     address: Address,
 }
 
+type CompiledCandidates = Result<Arc<[Candidate]>, String>;
+
 /// Per-script-run state. Both caches deliberately retain failures, preventing repeated network or
 /// compiler work for the same provenance.
 pub(super) struct ExternalResolver {
     http: reqwest::Client,
     fetch_cache: HashMap<FetchKey, Result<Option<ExternalSource>, String>>,
-    compile_cache: HashMap<(Version, String), Result<Arc<[Candidate]>, String>>,
+    compile_cache: HashMap<(Version, String), CompiledCandidates>,
     compiler_versions: HashSet<Version>,
     compilations: usize,
     retained_source_input: usize,
@@ -550,7 +552,12 @@ fn parse_solc_version_output(output: &[u8]) -> Result<Version, String> {
         .lines()
         .find_map(|line| line.trim().strip_prefix("Version: "))
         .ok_or_else(|| "solc version output is missing Version line".to_string())
-        .and_then(|version| Version::parse(version).map_err(|_| "invalid solc version".to_string()))
+        // Linux solc builds identify GCC as `g++`, whose plus signs are invalid in SemVer build
+        // metadata. Use the same normalization as foundry-compilers' solc version parser.
+        .and_then(|version| {
+            Version::parse(&version.replace(".g++", ".gcc"))
+                .map_err(|_| "invalid solc version".to_string())
+        })
 }
 
 async fn run_bounded_command(
@@ -848,6 +855,11 @@ mod tests {
             parse_solc_version_output(output).unwrap(),
             Version::parse("0.8.30+commit.73712a01.Darwin.appleclang").unwrap()
         );
+        let linux = b"Version: 0.8.30+commit.73712a01.Linux.g++\n";
+        assert_eq!(
+            parse_solc_version_output(linux).unwrap(),
+            Version::parse("0.8.30+commit.73712a01.Linux.gcc").unwrap()
+        );
         assert!(parse_solc_version_output(b"Version: forged").is_err());
     }
 
@@ -883,7 +895,9 @@ mod tests {
         let mut observed = vec![0x60, 0x00];
         observed.extend([0; 31]);
         observed.push(7);
-        let MatchResult::Unique(found) = match_candidates(&observed, &[candidate.clone()]) else {
+        let MatchResult::Unique(found) =
+            match_candidates(&observed, std::slice::from_ref(&candidate))
+        else {
             panic!("expected match")
         };
         assert_eq!(found.constructor_args.len(), 32);
@@ -893,7 +907,10 @@ mod tests {
     #[test]
     fn no_constructor_and_zero_inputs_require_empty_suffix() {
         let none = candidate("A.sol:A", JsonAbi::default());
-        assert!(matches!(match_candidates(&[0x60, 0x00], &[none.clone()]), MatchResult::Unique(_)));
+        assert!(matches!(
+            match_candidates(&[0x60, 0x00], std::slice::from_ref(&none)),
+            MatchResult::Unique(_)
+        ));
         assert!(matches!(match_candidates(&[0x60, 0x00, 0], &[none]), MatchResult::None));
 
         let zero: JsonAbi =

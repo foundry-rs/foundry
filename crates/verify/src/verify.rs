@@ -556,8 +556,8 @@ struct ProviderRun {
 
 #[derive(Clone)]
 enum RunContext {
-    Local(VerificationContext),
-    External(ExternalVerificationContext),
+    Local(Box<VerificationContext>),
+    External(Box<ExternalVerificationContext>),
 }
 
 impl VerifyArgs {
@@ -565,7 +565,7 @@ impl VerifyArgs {
     pub async fn run(self) -> Result<()> {
         let config = self.load_config()?;
         let context = self.resolve_context().await?;
-        self.run_with_resolved_context(RunContext::Local(context), config).await
+        self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
     }
 
     /// Runs verification using caller-provided Standard JSON input.
@@ -582,7 +582,7 @@ impl VerifyArgs {
             "external contract identifier must contain bounded printable ASCII"
         );
         let config = context.config.clone();
-        self.run_with_resolved_context(RunContext::External(context), config).await
+        self.run_with_resolved_context(RunContext::External(Box::new(context)), config).await
     }
 
     fn validate_external_args(&self) -> Result<()> {
@@ -696,8 +696,8 @@ impl VerifyArgs {
             sh_status!("\nVerifying on {label}...")?;
             let watch = args.watch;
             let submission = match context.clone() {
-                RunContext::Local(context) => provider.submit(args, context).await,
-                RunContext::External(context) => provider.submit_external(args, context).await,
+                RunContext::Local(context) => provider.submit(args, *context).await,
+                RunContext::External(context) => provider.submit_external(args, *context).await,
             };
             match submission {
                 Ok(check_args) => {
@@ -1071,13 +1071,14 @@ mod tests {
     #[test]
     fn external_run_context_clone_shares_standard_json() {
         let input = std::sync::Arc::new(serde_json::json!({"large": [1, 2, 3]}));
-        let context = RunContext::External(ExternalVerificationContext {
+        let context = RunContext::External(Box::new(ExternalVerificationContext {
             config: Config::default(),
             compiler_version: semver::Version::new(0, 8, 30),
             standard_json_input: input.clone(),
             target: "A.sol:A".into(),
-        });
-        let RunContext::External(cloned) = context.clone() else { unreachable!() };
+        }));
+        let RunContext::External(context) = &context else { unreachable!() };
+        let cloned = context.clone();
         assert!(std::sync::Arc::ptr_eq(&input, &cloned.standard_json_input));
     }
 
