@@ -890,7 +890,7 @@ async fn test_simulate_preserves_amsterdam_transfer_logs_rpc() {
     assert_ne!(response["result"][0]["logsBloom"], format!("0x{}", "00".repeat(256)));
     let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
     assert_eq!(logs.len(), 1);
-    assert_eq!(logs[0]["address"], "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    assert_eq!(logs[0]["address"], "0xfffffffffffffffffffffffffffffffffffffffe");
     assert_eq!(logs[0]["logIndex"], "0x0");
 }
 
