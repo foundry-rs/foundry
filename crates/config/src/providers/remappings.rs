@@ -7,7 +7,7 @@ use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashSet, btree_map::Entry},
+    collections::{BTreeMap, HashSet, VecDeque, btree_map::Entry},
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -260,7 +260,22 @@ impl RemappingsProvider<'_> {
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
-
+            // Preserve legacy global aliases from direct dependencies while retaining closest-path
+            // arbitration with auto-detected package mappings and stable output grouping.
+            let mut package_lib_remappings = BTreeMap::new();
+            for r in package_remappings {
+                let path = PathBuf::from(r.path);
+                if let Some(existing) = lib_remappings
+                    .get_mut(&r.context)
+                    .and_then(|remappings| remappings.get_mut(&r.name))
+                {
+                    if existing.components().count() > path.components().count() {
+                        *existing = path;
+                    }
+                } else {
+                    insert_closest(&mut package_lib_remappings, r.context, r.name, path);
+                }
+            }
             all_remappings.extend(
                 lib_remappings
                     .into_iter()
@@ -273,12 +288,6 @@ impl RemappingsProvider<'_> {
                     })
                     .collect(),
             );
-            // Configured source directories fill package aliases that filesystem detection could
-            // not infer, without narrowing an existing package-root mapping.
-            let mut package_lib_remappings = BTreeMap::new();
-            for r in package_remappings {
-                insert_closest(&mut package_lib_remappings, r.context, r.name, r.path.into());
-            }
             all_remappings.extend(
                 package_lib_remappings
                     .into_iter()
@@ -298,23 +307,23 @@ impl RemappingsProvider<'_> {
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        let mut pending = self
+        let mut lib_paths = self
             .lib_paths
             .iter()
-            .flat_map(|p| {
-                if p.is_absolute() {
-                    vec![p.clone(), self.root.join("lib")]
-                } else {
-                    vec![self.root.join(p)]
-                }
-            })
+            .map(|p| if p.is_absolute() { p.clone() } else { self.root.join(p) })
+            .collect::<Vec<_>>();
+        if self.lib_paths.iter().any(|p| p.is_absolute()) {
+            lib_paths.push(self.root.join("lib"));
+        }
+        let mut pending = lib_paths
+            .into_iter()
             .flat_map(foundry_toml_dirs)
             .map(|lib| (lib, true))
-            .collect::<Vec<_>>();
+            .collect::<VecDeque<_>>();
         let mut seen = HashSet::new();
         let mut remappings = Vec::new();
 
-        while let Some((lib, direct)) = pending.pop() {
+        while let Some((lib, direct)) = pending.pop_front() {
             let Ok(lib) = dunce::canonicalize(lib) else { continue };
             if !seen.insert(lib.clone()) {
                 continue;
@@ -377,19 +386,11 @@ impl RemappingsProvider<'_> {
         let mut remappings =
             config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
 
-        // A direct dependency may use a package alias that differs from its checkout directory.
-        // Preserve such configured entry points globally; the directory-name alias already has a
-        // broader filesystem fallback.
-        let package_name =
-            lib.file_name().and_then(|name| name.to_str()).map(|name| format!("{name}/"));
+        // Context-free aliases from direct dependencies were historically visible to root imports.
         let configured_package_remappings = if direct {
             remappings
                 .iter()
-                .filter(|remapping| {
-                    remapping.context.is_none()
-                        && Some(&remapping.name) != package_name.as_ref()
-                        && Path::new(&remapping.path) == config.src
-                })
+                .filter(|remapping| remapping.context.is_none())
                 .cloned()
                 .collect::<Vec<_>>()
         } else {

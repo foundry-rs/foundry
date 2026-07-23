@@ -140,14 +140,16 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
 ///     ├── foundry.toml
 /// ```
 pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
-    walkdir::WalkDir::new(root)
+    let mut dirs = walkdir::WalkDir::new(root)
         .max_depth(1)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_dir())
         .filter_map(|e| dunce::canonicalize(e.path()).ok())
         .filter(|p| p.join(Config::FILE_NAME).exists())
-        .collect()
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs
 }
 
 /// Returns a remapping for the given dir
