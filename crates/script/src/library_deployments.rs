@@ -287,6 +287,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     fn used_rerun_unsafe_cheatcode(&self) -> bool {
         const SIGNATURES: &[&str] = &[
             "setEnv(string,string)",
+            "sign(bytes32)",
+            "sign(address,bytes32)",
+            "signCompact(bytes32)",
+            "signCompact(address,bytes32)",
             "rpc(string,string)",
             "rpc(string,string,string)",
             "rpcJson(string,string)",
