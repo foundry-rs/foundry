@@ -429,6 +429,17 @@ contract ForgeFuzzReplayFailureTest {
 
     cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayFailureTest", "-q"]).assert_failure();
 
+    // Legacy stateless failure artifacts only stored calldata and decoded arguments.
+    let failure_path =
+        prj.root().join("cache/fuzz/failures/ForgeFuzzReplayFailureTest/testFuzz_reverts");
+    let mut failure: Value =
+        serde_json::from_str(&std::fs::read_to_string(&failure_path).unwrap()).unwrap();
+    let failure = failure.as_object_mut().unwrap();
+    failure.remove("sender");
+    failure.remove("addr");
+    failure.remove("value");
+    std::fs::write(&failure_path, serde_json::to_vec_pretty(failure).unwrap()).unwrap();
+
     let replay = cmd
         .forge_fuse()
         .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
@@ -441,6 +452,68 @@ contract ForgeFuzzReplayFailureTest {
     );
     assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
     assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
+});
+
+forgetest_init!(stateless_fuzz_preserves_payable_value, |prj, cmd| {
+    let corpus_root = prj.root().join("fuzz_corpus");
+    let frontier_root = prj.root().join("fuzz_frontiers");
+    prj.update_config(|config| {
+        config.initial_balance = U256::from(7);
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(42));
+        config.fuzz.corpus.payable_value_weight = 100;
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+        config.fuzz.corpus.frontier_dir = Some(frontier_root.clone());
+    });
+    prj.add_test(
+        "StatelessPayableValue.t.sol",
+        r#"
+contract StatelessPayableValueTest {
+    function testFuzz_payable(uint256 value) public payable {
+        value;
+        require(msg.value == 0, "received value");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_payable", "-q"]).assert_failure();
+
+    let failure_path =
+        prj.root().join("cache/fuzz/failures/StatelessPayableValueTest/testFuzz_payable");
+    let failure: BaseCounterExample =
+        serde_json::from_str(&std::fs::read_to_string(failure_path).unwrap()).unwrap();
+    assert_eq!(failure.value, Some(U256::from(7)));
+    let sender = failure.sender.unwrap();
+    let target = failure.addr.unwrap();
+
+    let corpus_path = find_first_json(
+        &corpus_root.join("StatelessPayableValueTest/testFuzz_payable/worker0/corpus"),
+    );
+    let corpus: Value =
+        serde_json::from_str(&std::fs::read_to_string(corpus_path).unwrap()).unwrap();
+    let corpus_tx = &corpus[0];
+    assert_eq!(corpus_tx["value"], "0x7");
+    assert_eq!(corpus_tx["sender"].as_str().unwrap().parse(), Ok(sender));
+    assert_eq!(corpus_tx["target"].as_str().unwrap().parse(), Ok(target));
+    assert_eq!(corpus_tx["calldata"], failure.calldata.to_string());
+
+    let frontier_path =
+        frontier_root.join("StatelessPayableValueTest/testFuzz_payable/branch-frontiers.json");
+    let frontier: Value =
+        serde_json::from_str(&std::fs::read_to_string(frontier_path).unwrap()).unwrap();
+    let frontier_tx = &frontier["frontiers"][0]["sequence"][0];
+    assert_eq!(frontier_tx["value"], "0x7");
+    assert_eq!(frontier_tx["sender"].as_str().unwrap().parse(), Ok(sender));
+    assert_eq!(frontier_tx["target"].as_str().unwrap().parse(), Ok(target));
+    assert_eq!(frontier_tx["calldata"], failure.calldata.to_string());
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mt", "testFuzz_payable", "-vvv"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("received value"), "{stdout}");
 });
 
 forgetest_init!(forge_fuzz_show_marks_selector_ambiguous_contracts, |prj, cmd| {
