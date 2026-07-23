@@ -1,7 +1,8 @@
 use crate::{
     eth::{
-        backend::cheats::CheatsManager, error::InvalidTransactionError,
-        pool::transactions::PoolTransaction,
+        backend::{cheats::CheatsManager, db::MaybeFullDatabase},
+        error::InvalidTransactionError,
+        pool::{PrivateBundle, transactions::PoolTransaction},
     },
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
@@ -28,7 +29,10 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
-use foundry_evm::core::{env::FoundryTransaction, evm::IntoInstructionResult};
+use foundry_evm::{
+    backend::StateSnapshot,
+    core::{env::FoundryTransaction, evm::IntoInstructionResult},
+};
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use revm::{
     Database, DatabaseCommit,
@@ -146,6 +150,23 @@ impl<E> AnvilBlockExecutor<E> {
             blob_gas_used: 0,
         }
     }
+}
+
+/// State needed to discard all effects of a failed private bundle.
+pub struct BundleCheckpoint {
+    state: StateSnapshot,
+    receipts_len: usize,
+    gas_used: u64,
+    blob_gas_used: u64,
+}
+
+/// Checkpoint support required for atomic private bundle execution.
+pub trait BundleExecutor: BlockExecutor {
+    fn bundle_checkpoint(&self) -> BundleCheckpoint;
+
+    fn revert_bundle(&mut self, checkpoint: BundleCheckpoint);
+
+    fn blob_gas_used(&self) -> u64;
 }
 
 impl<E> BlockExecutor for AnvilBlockExecutor<E>
@@ -292,6 +313,36 @@ where
     }
 }
 
+impl<E> BundleExecutor for AnvilBlockExecutor<E>
+where
+    E: Evm<
+            DB: StateDB + MaybeFullDatabase,
+            Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
+        >,
+{
+    fn bundle_checkpoint(&self) -> BundleCheckpoint {
+        BundleCheckpoint {
+            state: self.evm.db().read_as_state_snapshot(),
+            receipts_len: self.receipts.len(),
+            gas_used: self.gas_used,
+            blob_gas_used: self.blob_gas_used,
+        }
+    }
+
+    fn revert_bundle(&mut self, checkpoint: BundleCheckpoint) {
+        let db = self.evm.db_mut();
+        db.clear();
+        db.init_from_state_snapshot(checkpoint.state);
+        self.receipts.truncate(checkpoint.receipts_len);
+        self.gas_used = checkpoint.gas_used;
+        self.blob_gas_used = checkpoint.blob_gas_used;
+    }
+
+    fn blob_gas_used(&self) -> u64 {
+        self.blob_gas_used
+    }
+}
+
 /// Result of executing pool transactions against a block executor.
 pub struct ExecutedPoolTransactions<T> {
     /// Successfully included transactions.
@@ -305,6 +356,28 @@ pub struct ExecutedPoolTransactions<T> {
     pub tx_info: Vec<TransactionInfo>,
     /// The raw pending transactions that were included (in order).
     pub txs: Vec<MaybeImpersonatedTransaction<T>>,
+}
+
+impl<T> Default for ExecutedPoolTransactions<T> {
+    fn default() -> Self {
+        Self {
+            included: Vec::new(),
+            invalid: Vec::new(),
+            not_yet_valid: Vec::new(),
+            tx_info: Vec::new(),
+            txs: Vec::new(),
+        }
+    }
+}
+
+impl<T> ExecutedPoolTransactions<T> {
+    fn extend(&mut self, other: Self) {
+        self.included.extend(other.included);
+        self.invalid.extend(other.invalid);
+        self.not_yet_valid.extend(other.not_yet_valid);
+        self.tx_info.extend(other.tx_info);
+        self.txs.extend(other.txs);
+    }
 }
 
 /// Gas-related configuration for pool transaction execution.
@@ -324,8 +397,72 @@ pub struct PoolTxGasConfig {
 /// execution, commit, inspector drain, and result collection.
 ///
 /// This is the shared core of `do_mine_block` and `with_pending_block`.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn execute_pool_transactions<B>(
+    executor: &mut B,
+    pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
+    private_bundles: &[Arc<PrivateBundle<B::Transaction>>],
+    block_number: u64,
+    block_timestamp: u64,
+    gas_config: &PoolTxGasConfig,
+    inspector_config: &InspectorTxConfig,
+    cheats: &CheatsManager,
+    validator: &dyn Fn(
+        &PendingTransaction<B::Transaction>,
+        &AccountInfo,
+    ) -> Result<(), InvalidTransactionError>,
+) -> ExecutedPoolTransactions<B::Transaction>
+where
+    B: BundleExecutor<
+            Transaction = FoundryTxEnvelope,
+            Evm: Evm<DB: Database + Debug, Inspector = AnvilInspector>,
+        >,
+    B::Receipt: TxReceipt,
+    <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
+    <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
+{
+    let mut executed = ExecutedPoolTransactions::default();
+
+    for bundle in private_bundles {
+        if !bundle.is_eligible(block_number, block_timestamp) {
+            continue;
+        }
+
+        let checkpoint = executor.bundle_checkpoint();
+        let bundle_result = execute_transaction_list(
+            executor,
+            &bundle.transactions,
+            gas_config,
+            inspector_config,
+            cheats,
+            validator,
+        );
+        let accepted = bundle_result.included.len() == bundle.transactions.len()
+            && bundle_result.tx_info.iter().all(|info| {
+                info.exit.is_ok() || bundle.reverting_tx_hashes.contains(&info.transaction_hash)
+            });
+
+        if accepted {
+            executed.extend(bundle_result);
+        } else {
+            executor.revert_bundle(checkpoint);
+            trace!(target: "backend", bundle = ?bundle.hash, "skipping invalid private bundle");
+        }
+    }
+
+    executed.extend(execute_transaction_list(
+        executor,
+        pool_transactions,
+        gas_config,
+        inspector_config,
+        cheats,
+        validator,
+    ));
+    executed
+}
+
+#[allow(clippy::type_complexity)]
+fn execute_transaction_list<B>(
     executor: &mut B,
     pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
     gas_config: &PoolTxGasConfig,
@@ -337,7 +474,7 @@ pub fn execute_pool_transactions<B>(
     ) -> Result<(), InvalidTransactionError>,
 ) -> ExecutedPoolTransactions<B::Transaction>
 where
-    B: BlockExecutor<
+    B: BundleExecutor<
             Transaction = FoundryTxEnvelope,
             Evm: Evm<DB: Database + Debug, Inspector = AnvilInspector>,
         >,
@@ -352,7 +489,7 @@ where
     let mut not_yet_valid = Vec::new();
     let mut tx_info: Vec<TransactionInfo> = Vec::new();
     let mut transactions = Vec::new();
-    let mut blob_gas_used = 0u64;
+    let mut blob_gas_used = executor.blob_gas_used();
 
     for pool_tx in pool_transactions {
         let pending = &pool_tx.pending_transaction;
@@ -455,7 +592,7 @@ where
                 });
 
                 // TODO: replace `TransactionInfo` with alloy receipt/transaction types
-                let transaction_index = tx_info.len() as u64;
+                let transaction_index = executor.receipts().len().saturating_sub(1) as u64;
                 let info = TransactionInfo {
                     transaction_hash: pool_tx.hash(),
                     transaction_index,

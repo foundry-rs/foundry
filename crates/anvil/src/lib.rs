@@ -172,7 +172,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
 
     let mode = if let Some(block_time) = block_time {
         if mixed_mining {
-            let listener = pool.add_ready_listener();
+            let listener = pool.add_mining_listener();
             MiningMode::mixed(max_transactions, listener, block_time)
         } else {
             MiningMode::interval(block_time)
@@ -181,7 +181,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         MiningMode::None
     } else {
         // get a listener for ready transactions
-        let listener = pool.add_ready_listener();
+        let listener = pool.add_mining_listener();
         MiningMode::instant(max_transactions, listener)
     };
 

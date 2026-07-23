@@ -17,7 +17,7 @@ use alloy_rpc_types::{
         parity::TraceType,
     },
 };
-use alloy_rpc_types_mev::EthCallBundle;
+use alloy_rpc_types_mev::{EthCallBundle, EthSendBundle};
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
     deserialize_number, deserialize_number_opt, deserialize_number_seq, deserialize_u64_seq,
@@ -208,6 +208,9 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_sendRawTransactionConditional")]
     EthSendRawTransactionConditional(Bytes, TransactionConditional),
+
+    #[serde(rename = "eth_sendBundle", with = "sequence")]
+    EthSendBundle(EthSendBundle),
 
     #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
     AnvilClassifyTransaction(Bytes),
