@@ -64,6 +64,7 @@ use proptest::test_runner::TestRng;
 use proptest::test_runner::TestRunner;
 #[cfg(test)]
 use rand::Rng;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -1259,7 +1260,7 @@ impl WorkerCorpus {
     /// Builds an AFL-style weighted schedule favoring minset entries, rare edges, and recently
     /// productive inputs. Every entry retains base energy so the rest of the corpus is not starved.
     fn mutation_schedule(&self) -> Vec<usize> {
-        let mut edge_frequency = HashMap::<usize, usize>::new();
+        let mut edge_frequency = FxHashMap::<usize, usize>::default();
         for corpus in &self.in_memory_corpus {
             for &edge in &corpus.unique_edges_covered {
                 *edge_frequency.entry(edge).or_default() += 1;
@@ -1275,7 +1276,11 @@ impl WorkerCorpus {
             .collect()
     }
 
-    fn mutation_energy(&self, corpus: &CorpusEntry, edge_frequency: &HashMap<usize, usize>) -> u64 {
+    fn mutation_energy(
+        &self,
+        corpus: &CorpusEntry,
+        edge_frequency: &FxHashMap<usize, usize>,
+    ) -> u64 {
         let favored_energy = u64::from(corpus.is_favored) * 8;
         let rare_edge_energy = corpus
             .unique_edges_covered
@@ -3451,7 +3456,7 @@ mod tests {
         );
 
         manager.in_memory_corpus.extend([favored.clone(), common.clone()]);
-        let edge_frequency = HashMap::from([(1, 1), (2, 2)]);
+        let edge_frequency = FxHashMap::from_iter([(1, 1), (2, 2)]);
 
         assert!(
             manager.mutation_energy(&favored, &edge_frequency)
