@@ -51,7 +51,7 @@ use alloy_evm::{
     block::{BlockExecutionResult, BlockExecutor, StateDB},
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
-    precompiles::{DynPrecompile, Precompile, PrecompilesMap},
+    precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
@@ -175,8 +175,9 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, ContextTr, TxEnv},
     context_interface::{
+        JournalTr,
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
@@ -249,6 +250,11 @@ fn call_config_from_tracer_config(
 }
 
 pub type State = foundry_evm::utils::StateChangeset;
+
+#[derive(Clone, Debug, Default)]
+struct SimulationPrecompileOverrides {
+    moves: Vec<(Address, Address)>,
+}
 
 /// A block request, which includes the Pool Transactions if it's Pending
 pub enum BlockRequest<T> {
@@ -1273,6 +1279,93 @@ impl<N: Network> Backend<N> {
         });
     }
 
+    fn simulation_precompile_overrides(
+        &self,
+        state_overrides: Option<&StateOverride>,
+        evm_env: &EvmEnv,
+    ) -> Result<SimulationPrecompileOverrides, BlockchainError> {
+        let mut moves = state_overrides
+            .into_iter()
+            .flatten()
+            .filter_map(|(source, account)| {
+                account.move_precompile_to.map(|destination| (*source, destination))
+            })
+            .collect::<Vec<_>>();
+        moves.sort_unstable();
+        if moves.is_empty() {
+            return Ok(SimulationPrecompileOverrides::default());
+        }
+        if self.is_optimism() || self.is_tempo() {
+            return Err(simulate_rpc_error(
+                -32000,
+                "precompile moves are not supported on this network",
+            ));
+        }
+
+        let mut precompiles = PrecompilesMap::from_static(Precompiles::new(
+            PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
+        ));
+        self.inject_precompiles(&mut precompiles, evm_env);
+        self.inject_arbitrum_precompile(&mut precompiles, evm_env);
+        let precompile_addresses = precompiles.addresses().copied().collect::<HashSet<_>>();
+
+        // Validate every source first so invalid-source errors take precedence over the more
+        // specific move errors below.
+        for (source, _) in &moves {
+            if !precompile_addresses.contains(source) {
+                return Err(simulate_rpc_error(
+                    -32000,
+                    format!("account {source} is not a precompile"),
+                ));
+            }
+        }
+        for (source, destination) in &moves {
+            if source == destination {
+                return Err(simulate_rpc_error(
+                    -38022,
+                    format!("cannot move precompile {source} to itself"),
+                ));
+            }
+        }
+        let mut destinations = Vec::with_capacity(moves.len());
+        for (_, destination) in &moves {
+            if destinations.contains(destination) {
+                return Err(simulate_rpc_error(
+                    -38023,
+                    format!("multiple precompiles moved to {destination}"),
+                ));
+            }
+            destinations.push(*destination);
+        }
+
+        Ok(SimulationPrecompileOverrides { moves })
+    }
+
+    fn apply_simulation_precompile_overrides(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<alloy_primitives::map::AddressSet, BlockchainError> {
+        let warm_addresses = precompiles.addresses().copied().collect();
+        precompiles.move_precompiles(overrides.moves.iter().copied()).map_err(
+            |MovePrecompileError::NotAPrecompile(address)| {
+                simulate_rpc_error(-32000, format!("account {address} is not a precompile"))
+            },
+        )?;
+
+        // A dynamic lookup must not restore a precompile removed from its protocol address.
+        let moved_sources =
+            Arc::new(overrides.moves.iter().map(|(source, _)| *source).collect::<HashSet<_>>());
+        precompiles.map_precompile_lookup(move |address, previous| {
+            if moved_sources.contains(address) {
+                None
+            } else {
+                previous.and_then(|lookup| lookup.lookup(address))
+            }
+        });
+        Ok(warm_addresses)
+    }
+
     fn inject_tempo_precompiles<DB, I>(
         &self,
         evm: &mut tempo_evm::evm::TempoEvm<DB, I>,
@@ -1338,6 +1431,28 @@ impl<N: Network> Backend<N> {
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        self.transact_eth_with_inspector_ref_and_precompile_overrides(
+            db,
+            evm_env,
+            inspector,
+            tx_env,
+            &SimulationPrecompileOverrides::default(),
+        )
+    }
+
+    fn transact_eth_with_inspector_ref_and_precompile_overrides<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         let mut evm = EthEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
             evm_env.clone(),
@@ -1345,6 +1460,12 @@ impl<N: Network> Backend<N> {
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
         self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        if !overrides.moves.is_empty() {
+            let warm_addresses =
+                self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
+            // EIP-2929 warms protocol precompile addresses, not simulation-only destinations.
+            evm.ctx_mut().journal_mut().warm_precompiles(&warm_addresses);
+        }
         Ok(evm.transact(tx_env)?)
     }
 
@@ -5120,12 +5241,20 @@ impl Backend<FoundryNetwork> {
                     })
                     .unwrap_or_default();
 
-                // apply state overrides before executing the transactions
-                if let Some(state_overrides) = state_overrides {
-                    apply_state_overrides(state_overrides, &mut cache_db)?;
-                }
                 if let Some(block_overrides) = block_overrides {
                     cache_db.apply_block_overrides(block_overrides, &mut block_env);
+                }
+                let simulation_evm_env =
+                    EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
+                let precompile_overrides = self.simulation_precompile_overrides(
+                    state_overrides.as_ref(),
+                    &simulation_evm_env,
+                )?;
+
+                // Apply state overrides after validating precompile moves against this block's
+                // active precompile set.
+                if let Some(state_overrides) = state_overrides {
+                    apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
 
                 // execute all calls in that block
@@ -5207,13 +5336,23 @@ impl Backend<FoundryNetwork> {
                         inspector = inspector.with_transfers();
                     }
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let execution_result = self.transact_with_inspector_ref(
-                        &cache_db,
-                        &evm_env,
-                        &mut inspector,
-                        tx_env,
-                        op_deposit,
-                    );
+                    let execution_result = if precompile_overrides.moves.is_empty() {
+                        self.transact_with_inspector_ref(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            tx_env,
+                            op_deposit,
+                        )
+                    } else {
+                        self.transact_eth_with_inspector_ref_and_precompile_overrides(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            tx_env,
+                            &precompile_overrides,
+                        )
+                    };
                     let ResultAndState { result, mut state } = match execution_result {
                         Err(BlockchainError::InvalidTransaction(error)) => {
                             return Err(simulate_transaction_error(error));
