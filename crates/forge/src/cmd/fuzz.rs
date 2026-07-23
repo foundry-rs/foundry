@@ -397,7 +397,7 @@ impl FuzzCminArgs {
             let mut entry_unmatched_txs = 0usize;
             let mut entry_rejected_txs = 0usize;
             for FuzzMinimizeObservation { target, observation } in observations {
-                if observation.has_non_predicate_failure {
+                if observation.has_non_predicate_failure() {
                     entry_failed = true;
                     entry_failed_replays += observation.replayed;
                     continue;
@@ -1438,7 +1438,6 @@ mod tests {
             (
                 "B".to_string(),
                 ReplayObservation {
-                    failure: Some(ReplayFailure::AfterInvariant),
                     failures: std::collections::BTreeSet::from([ReplayFailure::AfterInvariant]),
                     ..Default::default()
                 },

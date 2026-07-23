@@ -181,21 +181,9 @@ impl ReplayFailure {
         !matches!(self, Self::Handler { terminal: false, .. })
     }
 
-    /// Whether this failure is a broken invariant predicate.
+    /// Whether this failure comes from an invariant predicate or `afterInvariant` hook.
     const fn is_predicate(&self) -> bool {
         matches!(self, Self::Invariant { .. } | Self::AfterInvariant)
-    }
-}
-
-/// Records each unique `failure` while retaining the existing representative failure semantics:
-/// prefer terminal failures over non-terminal handler bugs and keep the first of each class.
-fn record_replay_failure(observation: &mut ReplayObservation, failure: ReplayFailure) {
-    observation.has_non_predicate_failure |= !failure.is_predicate();
-    observation.failures.insert(failure.clone());
-    match &mut observation.failure {
-        slot @ None => *slot = Some(failure),
-        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *existing = failure,
-        Some(_) => {}
     }
 }
 
@@ -206,18 +194,29 @@ pub struct ReplayObservation {
     pub evm_edges: Vec<u8>,
     /// AFL-bucketed native sancov edge coverage for the candidate.
     pub sancov_edges: Vec<u8>,
-    /// Representative failure identity retained for existing replay classification semantics.
-    pub failure: Option<ReplayFailure>,
     /// All unique failure identities observed while replaying the candidate.
     pub failures: BTreeSet<ReplayFailure>,
-    /// Whether replay observed a stateless fuzz or invariant handler failure.
-    pub has_non_predicate_failure: bool,
     /// Number of replayable transactions executed.
     pub replayed: usize,
     /// Number of transactions that do not target this fuzz/invariant context.
     pub unmatched: usize,
     /// Number of transactions rejected via `vm.assume`/`vm.skip`.
     pub skipped: usize,
+}
+
+impl ReplayObservation {
+    /// Whether replay observed a stateless fuzz or invariant handler failure.
+    pub fn has_non_predicate_failure(&self) -> bool {
+        self.failures.iter().any(|failure| !failure.is_predicate())
+    }
+
+    fn has_predicate_failure(&self) -> bool {
+        self.failures.iter().any(ReplayFailure::is_predicate)
+    }
+
+    fn has_terminal_non_predicate_failure(&self) -> bool {
+        self.failures.iter().any(|failure| failure.is_terminal() && !failure.is_predicate())
+    }
 }
 
 /// Replay every corpus entry under `corpus_dir` and emit showmap files.
@@ -345,7 +344,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                     if !target.invariant_replay.is_optimization
                         && let Some(address) = target.invariant_address
                         && let Some(failure) =
-                            broken_invariant(&executor, address, target.invariant_fns)?
+                            first_broken_invariant(&executor, address, target.invariant_fns)?
                     {
                         entry_failure = Some(failure);
                         break;
@@ -378,7 +377,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         {
             if !target.invariant_replay.is_optimization
                 && !last_accepted_checked_invariant
-                && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
+                && let Some(failure) =
+                    first_broken_invariant(&executor, address, target.invariant_fns)?
             {
                 entry_failure = Some(failure);
             } else if target.invariant_replay.call_after_invariant
@@ -506,7 +506,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 fingerprint,
             ) {
                 let terminal = failure.is_terminal();
-                record_replay_failure(&mut observation, failure);
+                observation.failures.insert(failure);
                 if terminal {
                     break;
                 }
@@ -521,8 +521,13 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 if !target.invariant_replay.is_optimization
                     && let Some(address) = target.invariant_address
                 {
-                    for failure in broken_invariants(&executor, address, target.invariant_fns)? {
-                        record_replay_failure(&mut observation, failure);
+                    for failure in newly_broken_invariants(
+                        &executor,
+                        address,
+                        target.invariant_fns,
+                        &observation.failures,
+                    )? {
+                        observation.failures.insert(failure);
                     }
                 }
             }
@@ -532,43 +537,35 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             &mut call_result,
             target.fuzz_fail_on_revert,
         ) {
-            record_replay_failure(
-                &mut observation,
-                ReplayFailure::Fuzz {
-                    selector,
-                    fingerprint,
-                    output: keccak256(call_result.result.as_ref()),
-                },
-            );
-            break;
-        }
-
-        if observation
-            .failure
-            .as_ref()
-            .is_some_and(|failure| failure.is_terminal() && !failure.is_predicate())
-        {
+            observation.failures.insert(ReplayFailure::Fuzz {
+                selector,
+                fingerprint,
+                output: keccak256(call_result.result.as_ref()),
+            });
             break;
         }
     }
 
-    if !observation
-        .failure
-        .as_ref()
-        .is_some_and(|failure| failure.is_terminal() && !failure.is_predicate())
+    if !observation.has_terminal_non_predicate_failure()
         && accepted > 0
         && target.fuzzed_contracts.is_some()
         && let Some(address) = target.invariant_address
     {
         if !target.invariant_replay.is_optimization && !last_accepted_checked_invariant {
-            for failure in broken_invariants(&executor, address, target.invariant_fns)? {
-                record_replay_failure(&mut observation, failure);
+            for failure in newly_broken_invariants(
+                &executor,
+                address,
+                target.invariant_fns,
+                &observation.failures,
+            )? {
+                observation.failures.insert(failure);
             }
-        } else if !observation.failures.iter().any(ReplayFailure::is_predicate)
-            && target.invariant_replay.call_after_invariant
+        }
+        if target.invariant_replay.call_after_invariant
+            && !observation.has_predicate_failure()
             && let Some(failure) = broken_after_invariant(&executor, address)?
         {
-            record_replay_failure(&mut observation, failure);
+            observation.failures.insert(failure);
         }
     }
 
@@ -632,13 +629,17 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
     }
 }
 
-fn broken_invariants<FEN: FoundryEvmNetwork>(
+fn newly_broken_invariants<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
     invariant_fns: &[(&Function, bool)],
+    observed: &BTreeSet<ReplayFailure>,
 ) -> Result<Vec<ReplayFailure>> {
     let mut failures = Vec::new();
     for (invariant, _) in invariant_fns {
+        if has_replay_invariant_failure(observed, &invariant.name) {
+            continue;
+        }
         let (_, success) = call_invariant_function(
             executor,
             invariant_address,
@@ -651,12 +652,28 @@ fn broken_invariants<FEN: FoundryEvmNetwork>(
     Ok(failures)
 }
 
-fn broken_invariant<FEN: FoundryEvmNetwork>(
+fn first_broken_invariant<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
     invariant_fns: &[(&Function, bool)],
 ) -> Result<Option<ReplayFailure>> {
-    Ok(broken_invariants(executor, invariant_address, invariant_fns)?.into_iter().next())
+    for (invariant, _) in invariant_fns {
+        let (_, success) = call_invariant_function(
+            executor,
+            invariant_address,
+            invariant.abi_encode_input(&[])?.into(),
+        )?;
+        if !success {
+            return Ok(Some(ReplayFailure::Invariant { name: invariant.name.clone() }));
+        }
+    }
+    Ok(None)
+}
+
+fn has_replay_invariant_failure(failures: &BTreeSet<ReplayFailure>, name: &str) -> bool {
+    failures.iter().any(|failure| {
+        matches!(failure, ReplayFailure::Invariant { name: observed } if observed == name)
+    })
 }
 
 fn broken_after_invariant<FEN: FoundryEvmNetwork>(
@@ -841,27 +858,48 @@ mod tests {
     }
 
     #[test]
-    fn record_replay_failure_retains_unique_identities() {
-        let handler = ReplayFailure::Handler {
+    fn replay_observation_derives_failure_classification() {
+        let non_terminal_handler = ReplayFailure::Handler {
             target: Address::with_last_byte(1),
             selector: Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
             fingerprint: None,
             terminal: false,
             invariant: None,
         };
-        let first = ReplayFailure::Invariant { name: "invariant_first".to_string() };
-        let second = ReplayFailure::Invariant { name: "invariant_second".to_string() };
-        let expected = BTreeSet::from([handler.clone(), first.clone(), second.clone()]);
         let mut observation = ReplayObservation::default();
 
-        record_replay_failure(&mut observation, handler);
-        record_replay_failure(&mut observation, first.clone());
-        record_replay_failure(&mut observation, first.clone());
-        record_replay_failure(&mut observation, second);
+        assert!(!observation.has_non_predicate_failure());
+        assert!(!observation.has_predicate_failure());
+        assert!(!observation.has_terminal_non_predicate_failure());
 
-        assert_eq!(observation.failure, Some(first));
-        assert_eq!(observation.failures, expected);
-        assert!(observation.has_non_predicate_failure);
+        observation
+            .failures
+            .insert(ReplayFailure::Invariant { name: "invariant_first".to_string() });
+        assert!(!observation.has_non_predicate_failure());
+        assert!(observation.has_predicate_failure());
+        assert!(!observation.has_terminal_non_predicate_failure());
+
+        observation.failures.insert(non_terminal_handler);
+        assert!(observation.has_non_predicate_failure());
+        assert!(!observation.has_terminal_non_predicate_failure());
+
+        observation.failures.insert(ReplayFailure::Fuzz {
+            selector: Selector::ZERO,
+            fingerprint: None,
+            output: B256::ZERO,
+        });
+        assert!(observation.has_terminal_non_predicate_failure());
+    }
+
+    #[test]
+    fn has_replay_invariant_failure_matches_only_observed_predicate() {
+        let failures = BTreeSet::from([
+            ReplayFailure::Invariant { name: "invariant_first".to_string() },
+            ReplayFailure::AfterInvariant,
+        ]);
+
+        assert!(has_replay_invariant_failure(&failures, "invariant_first"));
+        assert!(!has_replay_invariant_failure(&failures, "invariant_second"));
     }
 
     #[test]

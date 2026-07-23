@@ -2303,6 +2303,78 @@ contract ForgeFuzzTminMultiplePredicatesTest is Test {
     assert_eq!(output.as_array().unwrap().len(), 2, "{output}");
 });
 
+forgetest_init!(
+    forge_fuzz_tmin_preserves_after_invariant_after_final_predicate_check,
+    |prj, cmd| {
+        prj.update_config(|config| config.invariant.check_interval = 0);
+        prj.add_test(
+            "ForgeFuzzTminAfterFinalPredicates.t.sol",
+            r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzTminAfterFinalPredicatesTest is Test {
+    bool afterFails;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = this.setAfterInvariantFailure.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function setAfterInvariantFailure(bool value) external {
+        afterFails = value;
+    }
+
+    function invariant_ok() public pure {}
+
+    function afterInvariant() external view {
+        if (afterFails) {
+            revert("after");
+        }
+    }
+}
+   "#,
+        );
+        cmd.args(["build", "-q"]).assert_success();
+
+        let abi = artifact_abi(
+            prj.root(),
+            "out/ForgeFuzzTminAfterFinalPredicates.t.sol/ForgeFuzzTminAfterFinalPredicatesTest.json",
+        );
+        let arm_after_invariant = calldata_for(&abi, "setAfterInvariantFailure", 1);
+        let corpus = prj.root().join("tmin-after-final-predicates-corpus");
+        std::fs::create_dir_all(&corpus).unwrap();
+        write_corpus_sequence_entry(
+            &corpus,
+            "00000000-0000-0000-0000-000000000001-1.json",
+            &[&arm_after_invariant],
+        );
+
+        cmd.forge_fuse()
+            .args([
+                "fuzz",
+                "tmin",
+                "--mc",
+                "ForgeFuzzTminAfterFinalPredicatesTest",
+                "--mt",
+                "invariant_ok",
+                "tmin-after-final-predicates-corpus/00000000-0000-0000-0000-000000000001-1.json",
+                "--corpus-out",
+                "tmin-after-final-predicates-output.json",
+            ])
+            .assert_success();
+
+        let output: Value = serde_json::from_str(
+            &std::fs::read_to_string(prj.root().join("tmin-after-final-predicates-output.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(output.as_array().unwrap().len(), 1, "{output}");
+        assert_eq!(output[0]["calldata"].as_str().unwrap(), arm_after_invariant);
+    }
+);
+
 forgetest_init!(forge_fuzz_tmin_rejects_assume_and_skip_candidates, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzTminRejectedCandidateTarget.t.sol",
