@@ -5,7 +5,12 @@ use crate::utils::{self, EnvExternalities};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256, hex};
 use anvil::{NodeConfig, spawn};
-use axum::{Router, extract::Query};
+use axum::{
+    Router,
+    extract::Query,
+    http::{StatusCode, header},
+    response::IntoResponse,
+};
 use forge_script_sequence::ScriptSequence;
 use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
@@ -16,7 +21,6 @@ use foundry_test_utils::{
 };
 use std::{
     collections::HashMap,
-    io::Write,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -714,7 +718,6 @@ contract Deploy is Script {
 // by the script is compiled in a different project and can only be identified from its factory's
 // verified Standard JSON input.
 forgetest_async!(script_verifies_external_create2_contract, |prj, cmd| {
-    const SOURCE_KEY: &str = "source-key";
     const SUBMISSION_KEY: &str = "submission-key";
     const GUID: &str = "external-create2-guid";
 
@@ -820,6 +823,33 @@ contract ExternalFactory {
     let source_json = standard_json.clone();
     let factory_for_server = factory.to_lowercase();
     let compiler_version_for_server = compiler_version.clone();
+
+    // Verification requests are trusted and must retain normal redirect handling. External source
+    // discovery uses the same selected endpoint, but remains on the non-redirecting client.
+    let redirect_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let redirect_url = format!("http://{}", redirect_listener.local_addr().unwrap());
+    let redirect_state = requests.clone();
+    let redirect_app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = redirect_state.clone();
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned().collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("verifysourcecode") => {
+                    state.lock().unwrap().submissions.push(form);
+                    format!(r#"{{"status":"1","message":"OK","result":"{GUID}"}}"#)
+                }
+                Some("checkverifystatus") => {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#.to_string()
+                }
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.to_string(),
+            }
+        }
+    });
+    let _redirect_server =
+        tokio::spawn(async move { axum::serve(redirect_listener, redirect_app).await.unwrap() });
+
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let verifier_url = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
@@ -827,6 +857,7 @@ contract ExternalFactory {
         let source_json = source_json.clone();
         let factory = factory_for_server.clone();
         let compiler_version = compiler_version_for_server.clone();
+        let redirect_url = redirect_url.clone();
         async move {
             let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
             let form = url::form_urlencoded::parse(encoded.as_bytes())
@@ -840,30 +871,22 @@ contract ExternalFactory {
                             "ContractName": "ExternalFactory", "ABI": "[]",
                             "OptimizationUsed": "1", "OptimizationRuns": "777",
                             "ConstructorArguments": "", "EVMVersion": "osaka", "IsProxy": "0"
-                        }]}).to_string()
+                        }]}).to_string().into_response()
                     } else {
-                        r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.to_string()
+                        r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.into_response()
                     }
                 }
-                Some("verifysourcecode") => {
-                    state.lock().unwrap().submissions.push(form);
-                    format!(r#"{{"status":"1","message":"OK","result":"{GUID}"}}"#)
-                }
-                Some("checkverifystatus") => r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#.to_string(),
-                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.to_string(),
+                Some("verifysourcecode" | "checkverifystatus") => (
+                    StatusCode::TEMPORARY_REDIRECT,
+                    [(header::LOCATION, redirect_url)],
+                )
+                    .into_response(),
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.into_response(),
             }
         }
     });
     let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    writeln!(
-        std::fs::OpenOptions::new().append(true).open(prj.config()).unwrap(),
-        r#"
-[etherscan]
-31337 = {{ key = "{SOURCE_KEY}", url = "{verifier_url}" }}
-"#,
-    )
-    .unwrap();
     prj.add_source(
         "IExternalFactory.sol",
         "interface IExternalFactory { function deployChild(uint256) external returns (address); }",
@@ -913,7 +936,7 @@ contract Deploy is Script {{
             source_addresses.windows(2).any(|addresses| addresses == expected),
             "source request order: {source_addresses:?}"
         );
-        assert!(requests.sources.iter().all(|request| request["apikey"] == SOURCE_KEY));
+        assert!(requests.sources.iter().all(|request| request["apikey"] == SUBMISSION_KEY));
         assert_eq!(requests.submissions.len(), 1, "script stderr: {}", output.stderr_lossy());
         requests.submissions[0].clone()
     };

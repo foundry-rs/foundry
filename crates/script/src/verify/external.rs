@@ -5,7 +5,7 @@ use alloy_json_abi::Constructor;
 use alloy_primitives::{Address, Bytes, keccak256};
 use eyre::{Result, bail, eyre};
 use foundry_compilers::{artifacts::CompilerOutput, solc::Solc};
-use foundry_config::{Chain, Config, NamedChain};
+use foundry_config::{Chain, NamedChain};
 use futures::StreamExt;
 use semver::Version;
 use serde::Deserialize;
@@ -129,16 +129,13 @@ impl ExternalResolver {
 
     pub(super) async fn resolve_etherscan(
         &mut self,
-        config: &Config,
         chain: Chain,
         address: Address,
-        api_key: Option<String>,
+        endpoint: Option<&str>,
+        api_key: Option<&str>,
     ) -> Result<Option<ExternalSource>, String> {
-        let resolved = config
-            .get_etherscan_config_with_chain(Some(chain))
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Etherscan is not configured".to_string())?;
-        let provider = SourceProvider::Etherscan { endpoint: resolved.api_url.clone() };
+        let endpoint = endpoint.ok_or_else(|| "Etherscan is not configured".to_string())?;
+        let provider = SourceProvider::Etherscan { endpoint: endpoint.to_string() };
         let key = FetchKey { chain: chain.id(), provider: provider.clone(), address };
         if let Some(cached) = self.fetch_cache.get(&key) {
             return cached.clone();
@@ -150,12 +147,12 @@ impl ExternalResolver {
             let address = address.to_string();
             let response = self
                 .http
-                .get(&resolved.api_url)
+                .get(endpoint)
                 .query(&[
                     ("module", "contract"),
                     ("action", "getsourcecode"),
                     ("address", address.as_str()),
-                    ("apikey", api_key.as_deref().unwrap_or_default()),
+                    ("apikey", api_key.unwrap_or_default()),
                 ])
                 .send()
                 .await
@@ -701,6 +698,7 @@ pub(super) fn match_candidates<'a>(
 mod tests {
     use super::*;
     use alloy_json_abi::JsonAbi;
+    use tokio::net::TcpListener;
 
     fn input() -> Value {
         json!({
@@ -782,6 +780,41 @@ mod tests {
         assert!(error.contains("metadata"));
         assert_eq!(resolver.retained_candidates, 0);
         assert_eq!(resolver.retained_creation_bytecode, 0);
+    }
+
+    #[tokio::test]
+    async fn etherscan_source_discovery_does_not_follow_redirects() {
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let source = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", source.local_addr().unwrap());
+        let location = format!("http://{}", target.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = source.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let bytes_read = socket.read(&mut request).await.unwrap();
+            assert!(bytes_read > 0);
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let error = ExternalResolver::new()
+            .unwrap()
+            .resolve_etherscan(Chain::mainnet(), Address::ZERO, Some(&endpoint), None)
+            .await
+            .unwrap_err();
+        server.await.unwrap();
+        assert!(error.contains("HTTP 307"), "unexpected discovery error: {error}");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), target.accept()).await.is_err(),
+            "external source discovery followed the redirect"
+        );
     }
 
     #[test]

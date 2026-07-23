@@ -66,6 +66,7 @@ pub struct VerifyBundle {
     pub verifier: VerifierArgs,
     pub via_ir: bool,
     pub verify_external: bool,
+    source_api_url: Option<String>,
     source_api_key: Option<String>,
 }
 
@@ -105,19 +106,41 @@ impl VerifyBundle {
             verifier,
             via_ir,
             verify_external,
+            source_api_url: None,
             source_api_key: None,
         }
     }
 
     /// Configures the chain and sets the etherscan key, if available
-    pub fn set_chain(&mut self, config: &Config, chain: Chain) {
+    pub fn set_chain(&mut self, config: &Config, chain: Chain) -> Result<()> {
         // If dealing with multiple chains, we need to be able to change in between the config
         // chain_id.
         let config_key = source_api_key(config, chain);
-        self.source_api_key = config_key.clone();
-        self.etherscan.key =
-            self.verifier.resolve_api_key(config_key.as_deref()).map(str::to_owned);
+        let resolved_key = self.verifier.resolve_api_key(config_key.as_deref()).map(str::to_owned);
+        let provider = self.verifier.resolve(resolved_key.as_deref(), Some(chain));
+
+        // A selected Etherscan-compatible verifier is both the source and submission endpoint.
+        // Sourcify credentials must not be sent to the independent Etherscan discovery fallback.
+        if provider.is_sourcify() {
+            // Etherscan is optional when Sourcify is selected, so an invalid fallback must not
+            // prevent verification through the selected provider.
+            self.source_api_url = config
+                .get_etherscan_config_with_chain(Some(chain))
+                .ok()
+                .flatten()
+                .map(|config| config.api_url);
+            self.source_api_key = config_key;
+        } else if let Some(url) = &self.verifier.verifier_url {
+            self.source_api_url = Some(url.clone());
+            self.source_api_key = resolved_key.clone();
+        } else {
+            self.source_api_url =
+                config.get_etherscan_config_with_chain(Some(chain))?.map(|config| config.api_url);
+            self.source_api_key = resolved_key.clone();
+        }
+        self.etherscan.key = resolved_key;
         self.etherscan.chain = Some(chain);
+        Ok(())
     }
 
     /// Given a `VerifyBundle` and contract details, it tries to generate a valid `VerifyArgs` to
@@ -240,7 +263,12 @@ async fn external_job(
             (
                 "Etherscan",
                 resolver
-                    .resolve_etherscan(config, chain, creator, verify.source_api_key.clone())
+                    .resolve_etherscan(
+                        chain,
+                        creator,
+                        verify.source_api_url.as_deref(),
+                        verify.source_api_key.as_deref(),
+                    )
                     .await,
             ),
         ];
@@ -351,7 +379,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 ) -> Result<()> {
     trace!(target: "script", "verifying {} contracts [{}]", verify.known_contracts.len(), sequence.chain);
 
-    verify.set_chain(config, sequence.chain.into());
+    verify.set_chain(config, sequence.chain.into())?;
 
     if verify.etherscan.has_key()
         || verify.verifier.effective_type() != VerificationProviderType::Etherscan
@@ -544,12 +572,11 @@ mod tests {
     }
 
     #[test]
-    fn source_key_is_only_read_from_etherscan_config() {
+    fn source_key_reads_etherscan_config_fallback() {
         let mut config = Config { etherscan_api_key: Some("source".into()), ..Default::default() };
-        let verifier_key = "submission-only";
         assert_eq!(source_api_key(&config, Chain::mainnet()).as_deref(), Some("source"));
         config.etherscan_api_key = None;
-        assert_ne!(source_api_key(&config, Chain::mainnet()).as_deref(), Some(verifier_key));
+        assert!(source_api_key(&config, Chain::mainnet()).is_none());
     }
 
     #[test]

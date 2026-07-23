@@ -313,7 +313,13 @@ impl EtherscanVerificationProvider {
         // API key passed.
         let is_etherscan = verifier_type.is_etherscan()
             || (verifier_type.is_sourcify() && etherscan_key.is_some());
-        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+        let etherscan_config = match config.get_etherscan_config_with_chain(Some(chain)) {
+            Ok(config) => config,
+            // The selected URL is authoritative, so an invalid lower-priority endpoint must not
+            // prevent creating the client.
+            Err(_) if verifier_url.is_some() => None,
+            Err(err) => return Err(err.into()),
+        };
 
         let api_url =
             verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
@@ -343,9 +349,8 @@ impl EtherscanVerificationProvider {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .wrap_err("Failed to create hardened HTTP client")?;
+            .wrap_err("Failed to create Etherscan HTTP client")?;
         builder
             .with_client(http)
             .with_api_key(etherscan_key.unwrap_or_default())

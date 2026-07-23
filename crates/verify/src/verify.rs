@@ -627,10 +627,19 @@ impl VerifyArgs {
         // URL (even when a key was explicitly passed), because `ResolvedEtherscanConfig::create`
         // requires `chain.etherscan_urls()`. Fall back to the raw `etherscan_api_key` from config
         // so that the key survives for warning/fallback logic in `client()`.
-        let config_key = config
-            .get_etherscan_config_with_chain(Some(chain))?
-            .map(|c| c.key)
-            .or_else(|| config.etherscan_api_key.clone());
+        let config_key = match config.get_etherscan_config_with_chain(Some(chain)) {
+            Ok(config) => config.map(|config| config.key),
+            // A user-selected URL does not depend on the optional configured endpoint. Explicit
+            // Sourcify likewise must not fail because an unrelated Etherscan fallback is invalid.
+            Err(_)
+                if self.verifier.verifier_url.is_some()
+                    || self.verifier.verifier.is_some_and(|provider| provider.is_sourcify()) =>
+            {
+                None
+            }
+            Err(err) => return Err(err.into()),
+        }
+        .or_else(|| config.etherscan_api_key.clone());
         self.etherscan.key =
             self.verifier.resolve_api_key(config_key.as_deref()).map(str::to_owned);
 

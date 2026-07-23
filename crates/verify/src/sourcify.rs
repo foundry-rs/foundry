@@ -65,7 +65,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
         args.retry
             .into_retry()
             .run_async_until_break(|| async {
-                let response = hardened_client()
+                let response = verification_client()
                     .map_err(RetryError::Break)?
                     .get(&url)
                     .send()
@@ -129,11 +129,10 @@ fn sanitize_remote_message(message: &str) -> String {
 
 const MAX_RESPONSE_BODY: usize = 1024 * 1024;
 
-fn hardened_client() -> Result<reqwest::Client> {
+fn verification_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
         .build()
         .wrap_err("Failed to create Sourcify HTTP client")
 }
@@ -186,7 +185,7 @@ impl SourcifyVerificationProvider {
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
         let url =
             Self::get_verify_url(args.verifier.verifier_url.as_deref(), chain_id, args.address);
-        let client = hardened_client()?;
+        let client = verification_client()?;
 
         let resp = args
             .retry
@@ -352,7 +351,7 @@ impl SourcifyVerificationProvider {
         let url =
             Self::get_lookup_url(args.verifier.verifier_url.as_deref(), chain_id, args.address);
 
-        match hardened_client()?.get(&url).send().await {
+        match verification_client()?.get(&url).send().await {
             Ok(response) => {
                 if response.status().is_success() {
                     let contract_response: SourcifyContractResponse =
@@ -445,6 +444,11 @@ mod tests {
     use foundry_config::Config;
     use foundry_test_utils::forgetest_async;
     use serde_json::json;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
 
     #[test]
     fn external_request_preserves_raw_input_and_target() {
@@ -478,6 +482,53 @@ mod tests {
         assert!(ui.ends_with(&format!("verify-ui/jobs/{encoded}")), "{ui}");
         assert_eq!(encode_path_segment("."), "%2E");
         assert_eq!(encode_path_segment(".."), "%2E%2E");
+    }
+
+    #[tokio::test]
+    async fn verification_client_follows_redirects() {
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        let target_url = format!("http://{}", target.local_addr().unwrap());
+        let target_thread = thread::spawn(move || {
+            let (mut socket, _) = target.accept().unwrap();
+            let mut request = [0; 4096];
+            let bytes_read = socket.read(&mut request).unwrap();
+            assert!(std::str::from_utf8(&request[..bytes_read]).unwrap().starts_with("GET "));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nredirected",
+                )
+                .unwrap();
+        });
+
+        let source = TcpListener::bind("127.0.0.1:0").unwrap();
+        let source_url = format!("http://{}", source.local_addr().unwrap());
+        let source_thread = thread::spawn(move || {
+            let (mut socket, _) = source.accept().unwrap();
+            let mut request = [0; 4096];
+            let bytes_read = socket.read(&mut request).unwrap();
+            assert!(bytes_read > 0);
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nLocation: {target_url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+        });
+
+        let response = verification_client()
+            .unwrap()
+            .get(source_url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        source_thread.join().unwrap();
+        target_thread.join().unwrap();
+        assert_eq!(response, "redirected");
     }
 
     forgetest_async!(creates_correct_verify_request_body, |prj, _cmd| {
