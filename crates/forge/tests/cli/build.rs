@@ -3,6 +3,104 @@ use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
 use std::fs;
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_symlinked_dependency_with_nested_config,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let dependency = external.path().join("deep/dependency/cache/actual-package");
+        let src = "very/deep/configured/custom-source";
+        fs::create_dir_all(dependency.join(src)).unwrap();
+        fs::create_dir_all(dependency.join("vendor/inner/src")).unwrap();
+        fs::write(
+            dependency.join("foundry.toml"),
+            format!(
+                r#"
+[profile.default]
+src = "{src}"
+remappings = ["special-alias/=vendor/inner/src/"]
+"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dependency.join(src).join("Dep.sol"),
+            r#"
+pragma solidity >=0.8.0;
+
+import {Thing} from "special-alias/Thing.sol";
+import {Nested} from "nested-alias/Nested.sol";
+
+contract Dep is Thing, Nested {}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dependency.join(src).join("Other.sol"),
+            r#"
+pragma solidity >=0.8.0;
+
+contract Other {}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dependency.join("vendor/inner/src/Thing.sol"),
+            r#"
+pragma solidity >=0.8.0;
+
+contract Thing {}
+"#,
+        )
+        .unwrap();
+
+        let nested = external.path().join("even/deeper/dependency/cache/nested-target");
+        fs::create_dir_all(nested.join("nested-source")).unwrap();
+        fs::write(nested.join("foundry.toml"), "[profile.default]\nsrc = \"nested-source\"\n")
+            .unwrap();
+        fs::write(
+            nested.join("nested-source/Nested.sol"),
+            r#"
+pragma solidity >=0.8.0;
+
+contract Nested {}
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(dependency.join("lib")).unwrap();
+        symlink(&nested, dependency.join("lib/nested-alias")).unwrap();
+
+        fs::create_dir_all(prj.root().join("lib")).unwrap();
+        symlink(&dependency, prj.root().join("lib/package-alias")).unwrap();
+        symlink(&dependency, prj.root().join("lib/second-alias")).unwrap();
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep} from "package-alias/Dep.sol";
+import {Other} from "second-alias/Other.sol";
+
+contract Root is Dep, Other {}
+"#,
+        );
+
+        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+nested-alias/=lib/package-alias/lib/nested-alias/nested-source/
+package-alias/=lib/package-alias/very/deep/configured/custom-source/
+second-alias/=lib/second-alias/very/deep/configured/custom-source/
+special-alias/=[..]/deep/dependency/cache/actual-package/vendor/inner/src/
+
+"#]]);
+
+        cmd.forge_fuse();
+        cmd.arg("build").assert_success();
+    }
+);
+
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();

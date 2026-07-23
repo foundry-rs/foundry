@@ -1,4 +1,7 @@
-use crate::{Config, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline};
+use crate::{
+    Config, FigmentProviders, foundry_toml_dir_entries, remappings_from_env_var,
+    remappings_from_newline,
+};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map},
@@ -7,7 +10,7 @@ use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashSet, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, HashSet, btree_map::Entry},
     fs,
     path::{Path, PathBuf},
 };
@@ -213,6 +216,11 @@ impl RemappingsProvider<'_> {
                 || self.find_nested_foundry_remappings(),
                 || self.auto_detect_remappings(),
             );
+            let nested_foundry_remappings = nested_foundry_remappings.collect::<Vec<_>>();
+            let configured_keys = nested_foundry_remappings
+                .iter()
+                .map(|remapping| (remapping.context.clone(), remapping.name.clone()))
+                .collect::<HashSet<_>>();
 
             let mut lib_remappings = BTreeMap::new();
             for r in nested_foundry_remappings {
@@ -220,7 +228,9 @@ impl RemappingsProvider<'_> {
             }
             for r in auto_detected_remappings {
                 // this is an additional safety check for weird auto-detected remappings
-                if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
+                if ["lib/", "src/", "contracts/"].contains(&r.name.as_str())
+                    || configured_keys.contains(&(r.context.clone(), r.name.clone()))
+                {
                     trace!(target: "forge", "- skipping the remapping");
                     continue;
                 }
@@ -246,55 +256,78 @@ impl RemappingsProvider<'_> {
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        self.lib_paths
-            .par_iter()
-            .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
-            .flat_map(foundry_toml_dirs)
-            .flat_map_iter(|lib| {
-                trace!(?lib, "find all remappings of nested foundry.toml");
-                self.nested_foundry_remappings(&lib)
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-    }
+        let root = dunce::canonicalize(self.root).unwrap_or_else(|_| self.root.to_path_buf());
+        let mut pending = self
+            .lib_paths
+            .iter()
+            .map(|path| if path.is_absolute() { path.clone() } else { self.root.join(path) })
+            .flat_map(foundry_toml_dir_entries)
+            .map(|entry| (entry, vec![root.clone()]))
+            .collect::<BTreeSet<_>>();
+        let mut configs = BTreeMap::<PathBuf, (PathBuf, Vec<PathBuf>)>::new();
+        let mut failed = HashSet::new();
+        let mut remappings = Vec::new();
 
-    fn nested_foundry_remappings(&self, lib: &Path) -> Vec<Remapping> {
-        // load config of the nested lib if it exists, using fallback mode since libs may not
-        // define all profiles the main project uses
-        let Ok(config) = Config::load_with_root_and_fallback(lib) else { return vec![] };
-        let config = config.sanitized();
-
-        // if the configured _src_ directory is set to something that
-        // `Remapping::find_many` doesn't classify as a src directory (src, contracts,
-        // lib), then we need to manually add a remapping here
-        let src_remapping = if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
-            .contains(&config.src.as_path())
-            && let Some(name) = lib.file_name().and_then(|s| s.to_str())
-        {
-            let mut r = Remapping {
-                context: None,
-                name: format!("{name}/"),
-                path: format!("{}", lib.join(&config.src).display()),
-            };
-            if !r.path.ends_with('/') {
-                r.path.push('/')
+        while let Some((entry, mut ancestors)) = pending.pop_first() {
+            if ancestors.contains(&entry.canonical) {
+                continue;
             }
-            Some(r)
-        } else {
-            None
-        };
 
-        // Eventually, we could set context for remappings at this location,
-        // taking into account the OS platform. We'll need to be able to handle nested
-        // contexts depending on dependencies for this to work.
-        // For now, we just leave the default context (none).
-        let mut remappings =
-            config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
+            let (src, libs) = if let Some(config) = configs.get(&entry.canonical) {
+                config.clone()
+            } else {
+                if failed.contains(&entry.canonical) {
+                    continue;
+                }
 
-        if let Some(r) = src_remapping {
-            remappings.push(r);
+                trace!(lib = ?entry.canonical, "find all remappings of nested foundry.toml");
+                // Nested configs are traversed here, so load their declared remappings without
+                // recursively installing another remappings provider.
+                let figment =
+                    Config::with_root(&entry.canonical).to_figment(FigmentProviders::Cast);
+                let Ok(config) = Config::from_figment_fallback(figment) else {
+                    failed.insert(entry.canonical);
+                    continue;
+                };
+                let src = config.src.clone();
+                let libs = config.libs.clone();
+                let config = config.sanitized();
+
+                remappings.extend(config.remappings.into_iter().map(Remapping::from));
+                configs.insert(entry.canonical.clone(), (src.clone(), libs.clone()));
+                (src, libs)
+            };
+
+            ancestors.push(entry.canonical);
+            for lib in libs {
+                let lib = if lib.is_absolute() { lib } else { entry.path.join(lib) };
+                pending.extend(
+                    foundry_toml_dir_entries(lib)
+                        .into_iter()
+                        .map(|entry| (entry, ancestors.clone())),
+                );
+            }
+
+            // If the configured _src_ directory is set to something that `Remapping::find_many`
+            // doesn't classify as a src directory, manually add a remapping for every lexical
+            // alias while loading the target config only once.
+            if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
+                .contains(&src.as_path())
+                && let Some(name) = entry.path.file_name().and_then(|name| name.to_str())
+            {
+                let mut remapping = Remapping {
+                    context: None,
+                    name: format!("{name}/"),
+                    path: entry.path.join(src).display().to_string(),
+                };
+                if !remapping.path.ends_with('/') {
+                    remapping.path.push('/');
+                }
+                remappings.push(remapping);
+            }
         }
-        remappings
+
+        remappings.into_iter()
     }
 
     /// Auto detect remappings from the lib paths
@@ -348,6 +381,65 @@ impl Provider for RemappingsProvider<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+    #[cfg(unix)]
+    use tempfile::tempdir;
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_remappings_ignore_symlinks_back_to_the_project_root() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir(root.join("lib")).unwrap();
+        fs::write(root.join(Config::FILE_NAME), "").unwrap();
+        symlink(root, root.join("lib/self")).unwrap();
+        let libs = vec![PathBuf::from("lib")];
+        let provider = RemappingsProvider {
+            auto_detect_remappings: true,
+            lib_paths: Cow::Borrowed(&libs),
+            root,
+            remappings: Ok(vec![]),
+        };
+
+        assert!(provider.find_nested_foundry_remappings().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_remappings_visit_each_config_once_across_a_dependency_cycle() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("project");
+        let dependency = temp.path().join("dependency");
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::create_dir_all(dependency.join("lib")).unwrap();
+        fs::create_dir(dependency.join("custom-source")).unwrap();
+        fs::write(root.join(Config::FILE_NAME), "").unwrap();
+        fs::write(
+            dependency.join(Config::FILE_NAME),
+            "[profile.default]\nsrc = \"custom-source\"\n",
+        )
+        .unwrap();
+        symlink(&dependency, root.join("lib/dependency-alias")).unwrap();
+        symlink(&root, dependency.join("lib/back")).unwrap();
+        let libs = vec![PathBuf::from("lib")];
+        let provider = RemappingsProvider {
+            auto_detect_remappings: true,
+            lib_paths: Cow::Borrowed(&libs),
+            root: &root,
+            remappings: Ok(vec![]),
+        };
+
+        assert_eq!(
+            provider.find_nested_foundry_remappings().collect::<Vec<_>>(),
+            vec![Remapping {
+                context: None,
+                name: "dependency-alias/".to_string(),
+                path: format!("{}/", root.join("lib/dependency-alias/custom-source").display()),
+            }]
+        );
+    }
 
     #[test]
     fn test_sol_file_remappings() {
