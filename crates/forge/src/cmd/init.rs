@@ -84,7 +84,7 @@ impl InitArgs {
         } = self;
         let DependencyInstallOpts { shallow, no_git, commit } = install;
 
-        let tempo = matches!(network, Some(NetworkVariant::Tempo));
+        let tempo = network.is_some_and(|network| network.is_tempo());
 
         // create the root dir if it does not exist
         if !root.exists() {

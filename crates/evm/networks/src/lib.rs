@@ -161,6 +161,23 @@ impl std::str::FromStr for NetworkVariant {
 }
 
 impl NetworkVariant {
+    /// Returns `true` if this is the Ethereum network variant.
+    pub const fn is_ethereum(&self) -> bool {
+        matches!(self, Self::Ethereum)
+    }
+
+    /// Returns `true` if this is the Optimism network variant.
+    #[cfg(feature = "optimism")]
+    pub const fn is_optimism(&self) -> bool {
+        matches!(self, Self::Optimism)
+    }
+
+    /// Returns `true` if this is the Tempo network variant.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo)
+    }
+
+    /// Returns the network variant name.
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Ethereum => "ethereum",
@@ -247,7 +264,7 @@ impl NetworkConfigs {
     }
 
     pub const fn is_tempo(&self) -> bool {
-        matches!(self.resolved_network(), Some(NetworkVariant::Tempo))
+        if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
     }
 
     pub const fn is_celo(&self) -> bool {
@@ -450,6 +467,21 @@ mod tests {
     };
 
     // --- Equivalence: new flag == legacy flag ---
+
+    #[test]
+    fn network_variant_predicates() {
+        assert!(NetworkVariant::Ethereum.is_ethereum());
+        assert!(!NetworkVariant::Ethereum.is_tempo());
+        assert!(NetworkVariant::Tempo.is_tempo());
+        assert!(!NetworkVariant::Tempo.is_ethereum());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(NetworkVariant::Optimism.is_optimism());
+            assert!(!NetworkVariant::Optimism.is_ethereum());
+            assert!(!NetworkVariant::Optimism.is_tempo());
+        }
+    }
 
     #[test]
     fn new_tempo_flag_equivalent_to_legacy() {
