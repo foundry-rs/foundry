@@ -548,6 +548,10 @@ monad-revm = { version = "0.6.0", default-features = false, features = [
     "memory_limit",
 ] }
 
+# Base
+base-common-genesis = { git = "https://github.com/base/base", rev = "2dfecc2fa8fae92f084f2cf874b437c5a8d17a29" }
+base-common-evm = { git = "https://github.com/base/base", rev = "2dfecc2fa8fae92f084f2cf874b437c5a8d17a29", default-features = false }
+
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # testing
