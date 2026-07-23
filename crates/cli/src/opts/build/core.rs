@@ -199,7 +199,7 @@ impl<'a> From<&'a BuildOpts> for Figment {
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
             .with_figment(&figment);
         remappings.extend_explicit_with_precedence(
-            figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default(),
+            Remappings::from_figment(&figment).unwrap_or_default(),
             &root,
         );
         figment = figment.merge(("remappings", remappings.into_inner())).merge(args);

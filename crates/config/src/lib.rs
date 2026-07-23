@@ -223,6 +223,7 @@ pub struct Config {
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
     /// Remappings to use for this repo
+    #[serde(deserialize_with = "crate::deserialize_relative_remappings")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
@@ -1067,7 +1068,7 @@ impl Config {
                     .map(Cow::Owned)
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
-                remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                remappings: Remappings::from_figment(&figment),
             };
             figment = figment.merge(remappings);
         }
@@ -3034,7 +3035,11 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "crate::deserialize_relative_remappings"
+    )]
     pub remappings: Vec<RelativeRemapping>,
     /// The active non-Ethereum network (e.g. `"tempo"`).
     #[serde(skip)]

@@ -1431,10 +1431,10 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
 @utils/libraries/Contract.sol=src/Contract.sol
 @utils/=src/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/
+lib/dep1/:@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 dep1/=lib/dep1/src/
 forge-std/=lib/forge-std/src/
 @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
-lib/dep1/:@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 
 "#]])
         .stderr_eq(str![[r#"
@@ -1456,6 +1456,7 @@ forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
         config.remappings = vec![
             Remapping::from_str("@global/=lib/global/").unwrap().into(),
             Remapping::from_str("ctx-a:@scoped/=lib/a/").unwrap().into(),
+            Remapping::from_str("@second/=lib/second/").unwrap().into(),
             Remapping::from_str("ctx-b:@scoped/=lib/b/").unwrap().into(),
         ];
     });
@@ -1463,6 +1464,7 @@ forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
     cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
 @global/=lib/global/
 ctx-a:@scoped/=lib/a/
+@second/=lib/second/
 ctx-b:@scoped/=lib/b/
 
 "#]]);
@@ -1473,6 +1475,7 @@ ctx-b:@scoped/=lib/b/
         .stdout_eq(str![[r#"
 @global/=lib/global/
 ctx-a:@scoped/=lib/a/
+@second/=lib/second/
 ctx-b:@scoped/=lib/b/
 
 "#]])

@@ -5,12 +5,57 @@ use figment::{
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use rayon::prelude::*;
+use serde::{Deserialize, Deserializer, de};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashSet, VecDeque, btree_map::Entry},
     fs,
     path::{Component, Path, PathBuf},
 };
+
+fn parse_configured_remapping(remapping: &str) -> Result<RelativeRemapping, String> {
+    let (key, path) = remapping
+        .split_once('=')
+        .ok_or_else(|| format!("invalid remapping format: {remapping}"))?;
+    let bytes = key.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+        && let Some(delimiter) = key[2..].find(':')
+    {
+        let delimiter = delimiter + 2;
+        let name = &key[delimiter + 1..];
+        if name.trim().is_empty() || path.trim().is_empty() {
+            return Err(format!("invalid remapping format: {remapping}"));
+        }
+        return Ok(Remapping {
+            context: Some(key[..delimiter].to_string()),
+            name: name.to_string(),
+            path: path.to_string(),
+        }
+        .into());
+    }
+    remapping.parse::<Remapping>().map(Into::into).map_err(|err| err.to_string())
+}
+
+pub(crate) fn deserialize_relative_remappings<'de, D>(
+    deserializer: D,
+) -> Result<Vec<RelativeRemapping>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer)?
+        .into_iter()
+        .map(|remapping| parse_configured_remapping(&remapping).map_err(de::Error::custom))
+        .collect()
+}
+
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct ConfiguredRemappings(
+    #[serde(deserialize_with = "deserialize_relative_remappings")] Vec<RelativeRemapping>,
+);
 
 fn remapping_names_overlap(a: &str, b: &str) -> bool {
     let is_prefix = |prefix: &str, name: &str| {
@@ -73,6 +118,13 @@ impl Remappings {
     /// Create a new `Remappings` wrapper with a vector of remappings.
     pub const fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
         Self { remappings, project_paths: Vec::new() }
+    }
+
+    /// Extract configured remappings without corrupting absolute Windows contexts.
+    pub fn from_figment(figment: &Figment) -> Result<Vec<Remapping>, Error> {
+        figment
+            .extract_inner::<ConfiguredRemappings>("remappings")
+            .map(|remappings| remappings.0.into_iter().map(Remapping::from).collect::<Vec<_>>())
     }
 
     /// Extract project paths that cannot be remapped by dependencies.
@@ -572,6 +624,50 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
+
+    #[test]
+    fn windows_absolute_context_roundtrips() {
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Wrapper {
+            #[serde(deserialize_with = "deserialize_relative_remappings")]
+            remappings: Vec<RelativeRemapping>,
+        }
+
+        let wrapper = Wrapper {
+            remappings: vec![
+                Remapping {
+                    context: Some("C:/deps/pkg/".to_string()),
+                    name: "alias/".to_string(),
+                    path: "C:/deps/pkg/src/".to_string(),
+                }
+                .into(),
+                Remapping {
+                    context: Some("D:\\deps\\pkg\\".to_string()),
+                    name: "windows-alias/".to_string(),
+                    path: "D:/deps/pkg/src/".to_string(),
+                }
+                .into(),
+            ],
+        };
+        let figment = Figment::from(figment::providers::Serialized::defaults(&wrapper));
+        let configured = Remappings::from_figment(&figment).unwrap();
+        assert_eq!(configured[0].context.as_deref(), Some("C:/deps/pkg/"));
+        assert_eq!(configured[0].name, "alias/");
+        assert_eq!(configured[1].context.as_deref(), Some("D:\\deps\\pkg\\"));
+        assert_eq!(configured[1].name, "windows-alias/");
+
+        let serialized = toml::to_string(&wrapper).unwrap();
+        let deserialized = toml::from_str::<Wrapper>(&serialized).unwrap();
+        let remappings =
+            deserialized.remappings.into_iter().map(Remapping::from).collect::<Vec<_>>();
+
+        assert_eq!(remappings[0].context.as_deref(), Some("C:/deps/pkg/"));
+        assert_eq!(remappings[0].name, "alias/");
+        assert_eq!(remappings[0].path, "C:/deps/pkg/src/");
+        assert_eq!(remappings[1].context.as_deref(), Some("D:\\deps\\pkg\\"));
+        assert_eq!(remappings[1].name, "windows-alias/");
+        assert_eq!(remappings[1].path, "D:/deps/pkg/src/");
+    }
 
     #[test]
     fn test_sol_file_remappings() {
