@@ -194,7 +194,6 @@ max_fuzz_dictionary_literals = 6553600
 gas_report_samples = 256
 frontier_limit = 256
 corpus_gzip = true
-corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
 evm_edge_coverage_collision_free = true
@@ -232,7 +231,6 @@ max_assume_rejects = 65536
 gas_report_samples = 256
 frontier_limit = 256
 corpus_gzip = true
-corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
 evm_edge_coverage_collision_free = true
@@ -1497,7 +1495,6 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "frontier_dir": null,
     "frontier_limit": 256,
     "corpus_gzip": true,
-    "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
     "evm_edge_coverage_collision_free": true,
@@ -1538,7 +1535,6 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "frontier_dir": null,
     "frontier_limit": 256,
     "corpus_gzip": true,
-    "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
     "evm_edge_coverage_collision_free": true,
