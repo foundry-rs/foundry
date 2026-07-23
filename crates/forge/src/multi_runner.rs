@@ -39,7 +39,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 
-use foundry_linking::{LinkOutput, Linker};
+use foundry_linking::{LinkOutput, Linker, LinkerError};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
@@ -72,6 +72,10 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub revert_decoder: RevertDecoder,
     /// Libraries to deploy.
     pub libs_to_deploy: Vec<Bytes>,
+    /// Addresses of libraries required by linked test artifacts.
+    pub library_addresses: Vec<Address>,
+    /// How libraries should be deployed.
+    pub library_deployment: LibraryDeployment,
     /// Library addresses used to link contracts.
     pub libraries: Libraries,
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
@@ -88,6 +92,13 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig<FEN>,
+}
+
+/// Forge-local library deployment strategy.
+#[derive(Clone, Copy, Debug)]
+pub enum LibraryDeployment {
+    Nonce,
+    Create2 { deployer: Address, salt: alloy_primitives::B256 },
 }
 
 impl<FEN: FoundryEvmNetwork> Deref for MultiContractRunner<FEN> {
@@ -635,9 +646,19 @@ pub struct MultiContractRunnerBuilder {
     pub fuzz_failure_replay: bool,
     /// Symbolic artifact replay mode (CLI-only, off by default).
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
+    /// Whether the configured CREATE2 deployer is available in the execution environment.
+    pub create2_deployer_available: Option<bool>,
 }
 
 impl MultiContractRunnerBuilder {
+    fn create2_deployer_available(&self, evm_opts: &EvmOpts) -> bool {
+        self.create2_deployer_available.unwrap_or_else(|| {
+            self.fork.is_none()
+                && evm_opts.fork_url.is_none()
+                && evm_opts.create2_deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
+        })
+    }
+
     pub fn new(config: Arc<Config>, inline_config: Arc<InlineConfig>) -> Self {
         Self {
             config,
@@ -657,7 +678,13 @@ impl MultiContractRunnerBuilder {
             fuzz_only: false,
             fuzz_failure_replay: false,
             symbolic_artifact_replay: None,
+            create2_deployer_available: None,
         }
+    }
+
+    pub const fn with_create2_deployer_available(mut self, available: bool) -> Self {
+        self.create2_deployer_available = Some(available);
+        self
     }
 
     pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
@@ -761,12 +788,44 @@ impl MultiContractRunnerBuilder {
             .filter_map(|contract| contract.abi.as_ref().map(|abi| abi.borrow()));
         let revert_decoder = RevertDecoder::new().with_abis(abis);
 
-        let LinkOutput { libraries, libs_to_deploy } = linker.link_with_nonce_or_address(
-            Default::default(),
-            LIBRARY_DEPLOYER,
-            0,
-            linker.contracts.keys(),
-        )?;
+        let configured_libraries = self.config.libraries_with_remappings()?;
+        let create2_deployer_available = self.create2_deployer_available(&evm_opts);
+        let create2 = if create2_deployer_available {
+            match linker.link_with_create2(
+                configured_libraries.clone(),
+                evm_opts.create2_deployer,
+                self.config.create2_library_salt,
+                linker.contracts.keys(),
+            ) {
+                Ok(output) => Some(output),
+                Err(LinkerError::CyclicDependency) => None,
+                Err(err) => return Err(err.into()),
+            }
+        } else {
+            None
+        };
+        let (LinkOutput { libraries, library_addresses, libs_to_deploy }, library_deployment) =
+            if let Some(output) = create2 {
+                let deployment = if output.libs_to_deploy.is_empty() {
+                    LibraryDeployment::Nonce
+                } else {
+                    LibraryDeployment::Create2 {
+                        deployer: evm_opts.create2_deployer,
+                        salt: self.config.create2_library_salt,
+                    }
+                };
+                (output, deployment)
+            } else {
+                (
+                    linker.link_with_nonce_or_address(
+                        configured_libraries,
+                        LIBRARY_DEPLOYER,
+                        0,
+                        linker.contracts.keys(),
+                    )?,
+                    LibraryDeployment::Nonce,
+                )
+            };
 
         let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
         let inline_config = self.inline_config;
@@ -860,6 +919,8 @@ impl MultiContractRunnerBuilder {
             revert_decoder,
             known_contracts,
             libs_to_deploy,
+            library_addresses,
+            library_deployment,
             libraries,
             analysis,
             fuzz_literals,
@@ -1023,5 +1084,30 @@ mod tests {
         let generated_abi =
             abi_with_functions(&[&format!("{SYMBOLIC_REGRESSION_MARKER}()"), "test_fails()"]);
         assert!(is_generated_symbolic_regression_contract(&generated_abi));
+    }
+
+    #[test]
+    fn create2_deployer_availability_default_is_conservative() {
+        let config = Arc::new(Config::default());
+        let mut builder = MultiContractRunnerBuilder::new(config, Arc::new(InlineConfig::new()));
+        let mut evm_opts = EvmOpts::default();
+        assert!(builder.create2_deployer_available(&evm_opts));
+
+        builder.fork = Some(CreateFork {
+            enable_caching: false,
+            url: "http://localhost:8545".into(),
+            evm_opts: evm_opts.clone(),
+        });
+        assert!(!builder.create2_deployer_available(&evm_opts));
+        builder.fork = None;
+
+        evm_opts.fork_url = Some("http://localhost:8545".into());
+        assert!(!builder.create2_deployer_available(&evm_opts));
+        evm_opts.fork_url = None;
+        evm_opts.create2_deployer = Address::ZERO;
+        assert!(!builder.create2_deployer_available(&evm_opts));
+        assert!(
+            builder.with_create2_deployer_available(true).create2_deployer_available(&evm_opts)
+        );
     }
 }

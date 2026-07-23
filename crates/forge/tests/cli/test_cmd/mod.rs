@@ -591,6 +591,91 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(rejects_library_key_collisions_across_versions, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| config.solc = None);
+
+    prj.add_source(
+        "Lib.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+library Lib {
+    function identity(uint256 value) external pure returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "New.t.sol",
+        &format!(
+            r#"
+pragma solidity {SOLC_VERSION};
+
+import "src/Lib.sol";
+
+contract NewTest {{
+    function testIdentity() public {{
+        require(Lib.identity(1) == 1);
+    }}
+}}
+"#
+        ),
+    );
+    prj.add_test(
+        "Old.t.sol",
+        &format!(
+            r#"
+pragma solidity {OTHER_SOLC_VERSION};
+
+import "src/Lib.sol";
+
+contract OldTest {{
+    function testIdentity() public {{
+        require(Lib.identity(1) == 1);
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
+
+"#]]);
+
+    prj.update_config(|config| config.create2_deployer = Address::ZERO);
+    cmd.forge_fuse().arg("test").assert_failure().stderr_eq(str![[r#"
+Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
+
+"#]]);
+});
+
+forgetest_init!(create2_factory_is_installed_after_constructor_when_no_libraries, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "Factory.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+contract FactoryTest {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
+    constructor() {
+        require(CREATE2_FACTORY.code.length == 0, "factory installed before constructor");
+    }
+
+    function testFactoryInstalledAfterConstructor() public view {
+        require(CREATE2_FACTORY.code.length > 0, "factory not installed after constructor");
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_success();
+});
+
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(

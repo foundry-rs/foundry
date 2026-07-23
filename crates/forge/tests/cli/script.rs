@@ -3947,6 +3947,79 @@ contract CreationCodeScript is Script {
     cmd.args(["build"]).assert_success();
 });
 
+// Regression: tests and scripts must link shared libraries to the same CREATE2 address so that
+// `type(Consumer).creationCode` is stable across both commands.
+forgetest_init!(test_and_script_use_same_create2_library_linking, |prj, cmd| {
+    prj.update_config(|c| {
+        c.dynamic_test_linking = false;
+        c.create2_library_salt = alloy_primitives::B256::with_last_byte(0x42);
+    });
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+library ExternalLibrary {
+    function value() external pure returns (uint256) { return 42; }
+}
+
+contract Consumer {
+    function value() external pure returns (uint256) { return ExternalLibrary.value(); }
+}
+        "#,
+    );
+    prj.add_test(
+        "CreationCode.t.sol",
+        r#"
+import {Test, console2} from "forge-std/Test.sol";
+import {Consumer} from "../src/Consumer.sol";
+
+contract CreationCodeTest is Test {
+    function testCreationCodeHash() external {
+        console2.log("CREATION_CODE_HASH", vm.toString(keccak256(type(Consumer).creationCode)));
+        assertEq(new Consumer().value(), 42);
+    }
+}
+        "#,
+    );
+    prj.add_script(
+        "CreationCode.s.sol",
+        r#"
+import {Script, console2} from "forge-std/Script.sol";
+import {Consumer} from "../src/Consumer.sol";
+
+contract CreationCodeScript is Script {
+    function run() external {
+        console2.log("CREATION_CODE_HASH", vm.toString(keccak256(type(Consumer).creationCode)));
+        require(new Consumer().value() == 42);
+    }
+}
+        "#,
+    );
+
+    fn creation_code_hash(output: &[u8]) -> String {
+        let output = String::from_utf8_lossy(output);
+        let marker = "CREATION_CODE_HASH ";
+        let start = output.find(marker).expect("missing creation code hash marker") + marker.len();
+        output[start..].split_whitespace().next().unwrap().to_owned()
+    }
+
+    let test_output = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "testCreationCodeHash", "-vv"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let script_output = cmd
+        .forge_fuse()
+        .args(["script", "script/CreationCode.s.sol:CreationCodeScript", "-vv"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(creation_code_hash(&test_output), creation_code_hash(&script_output));
+});
+
 forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
