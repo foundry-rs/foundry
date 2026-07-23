@@ -6,7 +6,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256, map::AddressHashMap};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
-use foundry_common::TransactionMaybeSigned;
+use foundry_common::{LIBRARY_DEPLOYER, TransactionMaybeSigned};
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -56,6 +56,34 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         }
     }
 
+    fn deploy_local_libraries(
+        &mut self,
+        libraries: &[foundry_linking::LinkedLibrary],
+        debug_bytecodes: &mut AddressHashMap<Bytes>,
+    ) -> Result<()> {
+        if libraries.is_empty() {
+            return Ok(());
+        }
+        let balance = self.executor.get_balance(LIBRARY_DEPLOYER)?;
+        let nonce = self.executor.get_nonce(LIBRARY_DEPLOYER)?;
+        self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
+        self.executor.set_nonce(LIBRARY_DEPLOYER, 0)?;
+        for library in libraries {
+            let DeployResult { address, raw } = self
+                .executor
+                .deploy(LIBRARY_DEPLOYER, library.bytecode.clone(), U256::ZERO, None)
+                .map_err(|err| eyre::eyre!("couldn't deploy local library: {err}"))?;
+            eyre::ensure!(
+                library.address == address,
+                "local library deployed at an unexpected address"
+            );
+            self.extend_debug_bytecodes(debug_bytecodes, raw.debug_bytecodes);
+        }
+        self.executor.set_balance(LIBRARY_DEPLOYER, balance)?;
+        self.executor.set_nonce(LIBRARY_DEPLOYER, nonce)?;
+        Ok(())
+    }
+
     /// Deploys the libraries and broadcast contract. Calls setUp method if requested.
     pub fn setup(
         &mut self,
@@ -92,8 +120,10 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
         // Deploy libraries
         match libraries {
-            ScriptPredeployLibraries::Default(libraries) => {
-                for code in libraries {
+            ScriptPredeployLibraries::Default { onchain, local } => {
+                self.deploy_local_libraries(local, &mut debug_bytecodes)?;
+                for library in onchain {
+                    let code = &library.bytecode;
                     let RawCallResult {
                         traces: deploy_traces,
                         debug_bytecodes: deploy_debug_bytecodes,
@@ -101,7 +131,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     } = self
                         .executor
                         .deploy(self.evm_opts.sender, code.clone(), U256::ZERO, None)
-                        .expect("couldn't deploy library")
+                        .map_err(|err| eyre::eyre!("couldn't deploy library: {err}"))?
                         .raw;
 
                     self.extend_debug_bytecodes(&mut debug_bytecodes, deploy_debug_bytecodes);
@@ -123,15 +153,17 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     })
                 }
             }
-            ScriptPredeployLibraries::Create2(libraries, salt) => {
+            ScriptPredeployLibraries::Create2 { onchain, salt, local } => {
+                self.deploy_local_libraries(local, &mut debug_bytecodes)?;
                 let create2_deployer = self.executor.create2_deployer();
-                for library in libraries {
-                    let address = create2_deployer.create2_from_code(salt, library.as_ref());
+                for library in onchain {
+                    let address =
+                        create2_deployer.create2_from_code(salt, library.bytecode.as_ref());
                     // Skip if already deployed
                     if !self.executor.is_empty_code(address)? {
                         continue;
                     }
-                    let calldata = [salt.as_ref(), library.as_ref()].concat();
+                    let calldata = [salt.as_ref(), library.bytecode.as_ref()].concat();
                     let RawCallResult {
                         traces: deploy_traces,
                         debug_bytecodes: deploy_debug_bytecodes,
@@ -144,7 +176,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                             calldata.clone().into(),
                             U256::from(0),
                         )
-                        .expect("couldn't deploy library");
+                        .map_err(|err| eyre::eyre!("couldn't deploy library: {err}"))?;
 
                     self.extend_debug_bytecodes(&mut debug_bytecodes, deploy_debug_bytecodes);
 

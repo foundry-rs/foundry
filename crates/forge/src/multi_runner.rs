@@ -5,8 +5,7 @@ use crate::{
     progress::TestsProgress,
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
-        ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
-        count_runnable_invariant_campaign_anchors,
+        ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
     },
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
@@ -15,8 +14,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
-    ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, TestFunctionKind,
-    get_contract_name,
+    ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
+    TestFunctionKind, get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,

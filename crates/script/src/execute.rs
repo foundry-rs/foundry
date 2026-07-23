@@ -298,6 +298,16 @@ pub struct ExecutedState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     /// Collects the data we need for simulation and various post-execution tasks.
     pub async fn prepare_simulation(self) -> Result<PreSimulationState<FEN>> {
+        self.prepare_simulation_inner(false).await
+    }
+
+    /// Collects simulation data without emitting warnings for an optimization candidate that may
+    /// be discarded.
+    pub(crate) async fn prepare_simulation_silent(self) -> Result<PreSimulationState<FEN>> {
+        self.prepare_simulation_inner(true).await
+    }
+
+    async fn prepare_simulation_inner(self, silent: bool) -> Result<PreSimulationState<FEN>> {
         let returns = self.get_returns()?;
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
@@ -316,7 +326,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         }
         let rpc_data = RpcData::from_transactions(&txs);
 
-        if rpc_data.is_multi_chain() {
+        if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
             if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
@@ -324,7 +334,9 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 );
             }
         }
-        rpc_data.check_shanghai_support().await?;
+        if !silent {
+            rpc_data.check_shanghai_support().await?;
+        }
 
         Ok(PreSimulationState {
             args: self.args,

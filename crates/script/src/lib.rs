@@ -71,6 +71,7 @@ use std::path::PathBuf;
 mod broadcast;
 mod build;
 mod execute;
+mod library_deployments;
 mod multi_sequence;
 mod progress;
 mod providers;
@@ -417,6 +418,8 @@ impl ScriptArgs {
                 .execute()
                 .await?
                 .prepare_simulation()
+                .await?
+                .optimize_library_deployments()
                 .await?;
 
             if pre_simulation.args.debug {
@@ -874,6 +877,9 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
         let (evm_env, mut tx_env, fork_block) = self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
+        if self.evm_opts.fork_url.is_some() && self.evm_opts.fork_block_number.is_none() {
+            self.evm_opts.fork_block_number = fork_block;
+        }
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
