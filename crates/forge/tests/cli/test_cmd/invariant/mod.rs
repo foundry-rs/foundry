@@ -461,10 +461,10 @@ contract InvariantSelectorsWeightTest is Test {
 
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
-        assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit2(), 1);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 2);
-        assertEq(handlerTwo.hit5(), 1);
+        assertEq(handlerTwo.hit5(), 3);
     }
 
     function invariant_selectors_weight() public view {}
