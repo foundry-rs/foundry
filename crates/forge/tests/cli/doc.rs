@@ -590,18 +590,18 @@ forgetest_init!(implicit_inheritance_resolves_base_ambiguity_per_branch, |prj, c
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-interface IA {
-    /// @notice From IA
+interface IAlpha {
+    /// @notice From IAlpha
     function direct(uint256 x) external;
 }
 
-interface IB {
-    /// @notice From IB
+interface IBeta {
+    /// @notice From IBeta
     function direct(uint256 x) external;
 }
 
-contract Direct is IA, IB {
-    function direct(uint256 x) external override(IA, IB) {}
+contract Direct is IAlpha, IBeta {
+    function direct(uint256 x) external override(IAlpha, IBeta) {}
 }
 
 contract Root {
@@ -645,8 +645,8 @@ contract Shared is Left, Right {
     };
 
     let direct = page("Direct");
-    assert!(!direct.contains("From IA"), "{direct}");
-    assert!(!direct.contains("From IB"), "{direct}");
+    assert!(!direct.contains("From IAlpha"), "{direct}");
+    assert!(!direct.contains("From IBeta"), "{direct}");
 
     for contract in ["Asymmetric", "Leaf"] {
         let rendered = page(contract);
@@ -901,6 +901,313 @@ contract Impl is IMid {
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Impl.mdx")).unwrap();
     assert!(rendered.contains("Root getter doc"), "{rendered}");
     assert!(rendered.contains("the stored value"), "{rendered}");
+});
+
+// A private base function is not overridden by a same-signature child function and cannot donate
+// its documentation to it.
+// `forge doc` can render parseable sources that Solidity would reject later. A private
+// same-signature declaration is still not a valid override source for inherited docs.
+forgetest_init!(implicit_inheritance_rejects_private_base, |prj, cmd| {
+    prj.add_source(
+        "PrivateBase.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract PrivateBase {
+    /// @notice Must not escape a private declaration
+    function privateCandidate(uint256 value) private {}
+}
+
+contract PrivateLeaf is PrivateBase {
+    function privateCandidate(uint256 value) public {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.PrivateLeaf.mdx")).unwrap();
+    assert!(!rendered.contains("Must not escape"), "{rendered}");
+});
+
+// A lowered Yul helper is not part of Solidity's override frontier. It must not shadow the real
+// Solidity declaration in the next ancestor. Solar lowers Yul helpers as private, so this pins the
+// effective boundary instead of proving `is_yul` independently from private visibility.
+forgetest_init!(implicit_inheritance_ignores_yul_shadow, |prj, cmd| {
+    prj.add_source(
+        "YulShadow.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract YulRoot {
+    /// @notice Must pass through the Yul-only intermediate declaration
+    function yulCandidate(uint256 value) public virtual {}
+}
+
+contract YulMid is YulRoot {
+    function helper(uint256 input) public pure returns (uint256 output) {
+        assembly {
+            function yulCandidate(shadow) -> result { result := shadow }
+            output := yulCandidate(input)
+        }
+    }
+}
+
+contract YulLeaf is YulMid {
+    function yulCandidate(uint256 value) public override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.YulLeaf.mdx")).unwrap();
+    assert!(rendered.contains("Must pass through"), "{rendered}");
+});
+
+// A generated getter is not an ordinary function declaration on the override frontier.
+forgetest_init!(implicit_inheritance_rejects_generated_getter_base, |prj, cmd| {
+    prj.add_source(
+        "GetterBase.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract GetterBase {
+    /// @notice Must not escape a generated getter
+    uint256 public getterCandidate;
+}
+
+contract GetterLeaf is GetterBase {
+    function getterCandidate() public {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.GetterLeaf.mdx")).unwrap();
+    assert!(!rendered.contains("Must not escape"), "{rendered}");
+});
+
+// `forge doc` lowers parseable sources without running Solidity's full override validation.
+// Even for an invalid cross-domain collision, it must not copy modifier docs onto a function.
+forgetest_init!(implicit_inheritance_keeps_function_modifier_domains_separate, |prj, cmd| {
+    prj.add_source(
+        "FunctionModifier.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract ModifierBase {
+    /// @notice A modifier is not a function override
+    modifier sameSpelling() { _; }
+}
+
+contract FunctionLeaf is ModifierBase {
+    function sameSpelling() public {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.FunctionLeaf.mdx"))
+            .unwrap();
+    assert!(!rendered.contains("A modifier is not"), "{rendered}");
+});
+
+// Fallback and receive have no AST header name, but they still take part in explicit and
+// implicit NatSpec inheritance through their HIR function kinds.
+forgetest_init!(inheritance_supports_fallback_and_receive, |prj, cmd| {
+    prj.add_source(
+        "SpecialFunctions.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract SpecialBase {
+    /// @notice Base fallback documentation
+    fallback() external virtual {}
+
+    /// @notice Base receive documentation
+    receive() external payable virtual {}
+}
+
+contract SpecialImplicit is SpecialBase {
+    fallback() external override {}
+    receive() external payable override {}
+}
+
+contract SpecialExplicit is SpecialBase {
+    /// @inheritdoc SpecialBase
+    fallback(bytes calldata input) external override returns (bytes memory output) {
+        input;
+        return output;
+    }
+
+    /// @inheritdoc SpecialBase
+    receive() external payable override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    for contract in ["SpecialImplicit", "SpecialExplicit"] {
+        let rendered = fs::read_to_string(
+            prj.root().join(format!("docs/src/pages/src/contract.{contract}.mdx")),
+        )
+        .unwrap();
+        let fallback_start = rendered.find("### fallback").unwrap();
+        let receive_start = rendered.find("### receive").unwrap();
+        let fallback = &rendered[fallback_start..receive_start];
+        let receive = &rendered[receive_start..];
+        assert!(fallback.contains("Base fallback documentation"), "{rendered}");
+        assert!(!fallback.contains("Base receive documentation"), "{rendered}");
+        assert!(receive.contains("Base receive documentation"), "{rendered}");
+        assert!(!receive.contains("Base fallback documentation"), "{rendered}");
+    }
+});
+
+// Return descriptions are remapped at each override hop before a generated getter consumes
+// them. The final rows use the getter field names, not either interface's return names.
+forgetest_init!(implicit_getter_remaps_returns_at_every_hop, |prj, cmd| {
+    prj.add_source(
+        "ReturnChain.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+struct Pair {
+    uint256 getterFirst;
+    uint256 getterSecond;
+}
+
+interface IRootPair {
+    /// @return originalFirst first value documentation
+    /// @return originalSecond second value documentation
+    function pair(uint256 key)
+        external
+        view
+        returns (uint256 originalFirst, uint256 originalSecond);
+}
+
+interface IMiddlePair is IRootPair {
+    function pair(uint256 key)
+        external
+        view
+        override
+        returns (uint256 middleFirst, uint256 middleSecond);
+}
+
+contract PairStore is IMiddlePair {
+    mapping(uint256 key => Pair value) public override pair;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.PairStore.mdx")).unwrap();
+    assert!(
+        rendered.contains("| getterFirst | `uint256` | first value documentation |"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("| getterSecond | `uint256` | second value documentation |"),
+        "{rendered}"
+    );
+});
+
+// An explicit `@inheritdoc` relay remaps inherited return names before the getter consumes them.
+forgetest_init!(implicit_getter_remaps_returns_after_inheritdoc_relay, |prj, cmd| {
+    prj.add_source(
+        "ExplicitReturnChain.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+struct ExplicitPair {
+    uint256 getterFirst;
+    uint256 getterSecond;
+}
+
+interface IExplicitRoot {
+    /// @return originalFirst first relayed value
+    /// @return originalSecond second relayed value
+    function relayedPair(uint256 key)
+        external
+        view
+        returns (uint256 originalFirst, uint256 originalSecond);
+}
+
+interface IExplicitMiddle is IExplicitRoot {
+    /// @inheritdoc IExplicitRoot
+    /// @notice Relayed through the middle interface
+    function relayedPair(uint256 key)
+        external
+        view
+        override
+        returns (uint256 middleFirst, uint256 middleSecond);
+}
+
+contract ExplicitPairStore is IExplicitMiddle {
+    mapping(uint256 key => ExplicitPair value) public override relayedPair;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ExplicitPairStore.mdx"))
+            .unwrap();
+    assert!(rendered.contains("Relayed through the middle interface"), "{rendered}");
+    assert!(rendered.contains("| getterFirst | `uint256` | first relayed value |"), "{rendered}");
+    assert!(rendered.contains("| getterSecond | `uint256` | second relayed value |"), "{rendered}");
+});
+
+// Getter tables use the same NatSpec sanitizer as ordinary functions, including the escaped
+// placeholder for an unnamed generated return.
+forgetest_init!(inherited_getter_sanitizes_mdx_and_unnamed_returns, |prj, cmd| {
+    prj.add_source(
+        "UnsafeGetter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IUnsafeGetter {
+    /// @param key Locate <amount> with {Reference}
+    /// @return Result <amount> from {Reference}
+    function values(uint256 key) external view returns (uint256);
+}
+
+contract UnsafeGetter is IUnsafeGetter {
+    mapping(uint256 => uint256) public override values;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.UnsafeGetter.mdx"), None,),
+        str![[r#"
+...
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| key | `uint256` | Locate &lt;amount> with `Reference` |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `uint256` | Result &lt;amount> from `Reference` |
+...
+"#]],
+    );
 });
 
 // Test that {Ident} cross-references resolve to root-relative vocs links.

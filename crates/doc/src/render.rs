@@ -291,9 +291,9 @@ fn render_contract<'ast, 'gcx>(
                         .and_then(|cid| hir_ext::resolve_implicit_inheritdoc_var(gcx, cid, &vname)),
                     None => None,
                 };
+                let sanitize =
+                    |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                 if let Some(ref base_doc) = inherited {
-                    let sanitize =
-                        |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                     if c.notices.is_empty() {
                         let inherited_notices: Vec<String> =
                             base_doc.notices.iter().map(|s| sanitize(s)).collect();
@@ -328,8 +328,8 @@ fn render_contract<'ast, 'gcx>(
                 // (possibly mapping) type.
                 let getter_doc = inherited.as_ref().filter(|d| !d.getter_returns.is_empty());
                 if let Some(base_doc) = getter_doc {
-                    write_getter_table(out, "Parameters", &base_doc.getter_params);
-                    write_getter_table(out, "Returns", &base_doc.getter_returns);
+                    write_getter_table(out, "Parameters", &base_doc.getter_params, &sanitize);
+                    write_getter_table(out, "Returns", &base_doc.getter_returns, &sanitize);
                 } else if !c.returns.is_empty() {
                     let ty = format!("`{}`", ctx.snippet(v.ty.span).trim());
                     writeln!(out, "**Returns**").unwrap();
@@ -366,7 +366,14 @@ fn render_contract<'ast, 'gcx>(
         writeln!(out, "## Functions").unwrap();
         writeln!(out).unwrap();
         for (span, f, docs) in &functions {
-            let fn_name = f.header.name.map(|n| n.as_str().to_string());
+            let fn_name = match f.kind {
+                FunctionKind::Constructor => None,
+                FunctionKind::Fallback => Some("fallback".to_string()),
+                FunctionKind::Receive => Some("receive".to_string()),
+                FunctionKind::Function | FunctionKind::Modifier => {
+                    f.header.name.map(|name| name.as_str().to_string())
+                }
+            };
             // Explicit `@inheritdoc` merges into a partial local doc; implicit inheritance
             // only runs when the function has no local NatSpec at all.
             let inherited = fn_name.as_deref().and_then(|fname| {
@@ -960,7 +967,12 @@ fn has_local_natspec(docs: &DocComments<'_>) -> bool {
 }
 
 /// Render a getter signature table (`Parameters` or `Returns`) from its inherited rows.
-fn write_getter_table(out: &mut String, heading: &str, fields: &[hir_ext::GetterField]) {
+fn write_getter_table(
+    out: &mut String,
+    heading: &str,
+    fields: &[hir_ext::GetterField],
+    sanitize: &impl Fn(&str) -> String,
+) {
     if fields.is_empty() {
         return;
     }
@@ -969,9 +981,13 @@ fn write_getter_table(out: &mut String, heading: &str, fields: &[hir_ext::Getter
     writeln!(out, "| Name | Type | Description |").unwrap();
     writeln!(out, "| ---- | ---- | ----------- |").unwrap();
     for field in fields {
-        let name = escape_table_cell(field.name.as_deref().unwrap_or("<none>"));
+        let name = field
+            .name
+            .as_deref()
+            .map(escape_table_cell)
+            .unwrap_or_else(|| "&lt;none&gt;".to_string());
         let ty = escape_table_cell(&field.ty);
-        let desc = escape_table_cell(&field.description);
+        let desc = escape_table_cell(&sanitize(&field.description));
         writeln!(out, "| {name} | `{ty}` | {desc} |").unwrap();
     }
     writeln!(out).unwrap();

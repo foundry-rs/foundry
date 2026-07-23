@@ -295,6 +295,16 @@ pub fn resolve_inheritdoc(
     base_name: &str,
     param_types: Option<&[String]>,
 ) -> Option<InheritedDoc> {
+    resolve_inheritdoc_source(gcx, contract_id, fn_name, base_name, param_types).map(|(_, doc)| doc)
+}
+
+fn resolve_inheritdoc_source(
+    gcx: Gcx<'_>,
+    contract_id: ContractId,
+    fn_name: &str,
+    base_name: &str,
+    param_types: Option<&[String]>,
+) -> Option<(FunctionId, InheritedDoc)> {
     let contract = gcx.hir.contract(contract_id);
 
     // Find the named base contract in the linearized hierarchy.
@@ -350,7 +360,7 @@ pub fn resolve_inheritdoc(
                         || !doc.params.is_empty()
                         || !doc.returns.is_empty())
                 {
-                    return Some(doc);
+                    return Some((fid, doc));
                 }
             }
         }
@@ -368,7 +378,7 @@ pub fn resolve_inheritdoc(
                     || !doc.params.is_empty()
                     || !doc.returns.is_empty())
             {
-                return Some(doc);
+                return Some((fid, doc));
             }
         }
     }
@@ -529,7 +539,9 @@ pub fn resolve_implicit_inheritdoc(
     if !param_names_match(gcx, target, base) {
         return None;
     }
-    implicit_function_doc(gcx, base)
+    let mut doc = implicit_function_doc(gcx, base)?;
+    remap_inherited_return_names(gcx, target, &mut doc);
+    Some(doc)
 }
 
 /// The effective documentation of `fid`, resolved level by level like solc: local tags are
@@ -545,7 +557,7 @@ fn implicit_function_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> 
             && let Some(cid) = gcx.hir.function(fid).contract
             && let Some(fn_name) = function_member_name(gcx, fid)
         {
-            let base_doc = resolve_inheritdoc(
+            let base_doc = resolve_inheritdoc_source(
                 gcx,
                 cid,
                 &fn_name,
@@ -553,7 +565,11 @@ fn implicit_function_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> 
                 function_param_types(gcx, fid).as_deref(),
             );
             return match base_doc {
-                Some(base_doc) => Some(merge_missing(local, base_doc)),
+                Some((source, mut base_doc)) => {
+                    resolve_return_names(gcx, source, &mut base_doc);
+                    remap_inherited_return_names(gcx, fid, &mut base_doc);
+                    Some(merge_missing(local, base_doc))
+                }
                 None => Some(local).filter(InheritedDoc::is_renderable),
             };
         }
@@ -565,7 +581,15 @@ fn implicit_function_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> 
     if !param_names_match(gcx, fid, base) {
         return None;
     }
-    implicit_function_doc(gcx, base)
+    let mut doc = implicit_function_doc(gcx, base)?;
+    remap_inherited_return_names(gcx, fid, &mut doc);
+    Some(doc)
+}
+
+#[derive(Clone, Copy)]
+struct OverrideDomain {
+    kind: FunctionKind,
+    external_only: bool,
 }
 
 /// The single function directly overridden by `target`, if unambiguous. Mirrors solc's
@@ -585,7 +609,8 @@ fn single_direct_base(
     }
     let contract = f.contract?;
     let want = function_param_types(gcx, target)?;
-    match direct_base_functions(gcx, contract, fn_name, &want, external_declared_only)[..] {
+    let domain = OverrideDomain { kind: f.kind, external_only: external_declared_only };
+    match direct_base_functions(gcx, contract, fn_name, &want, domain)[..] {
         [base] => Some(base),
         _ => None,
     }
@@ -596,20 +621,12 @@ fn direct_base_functions(
     contract: ContractId,
     fn_name: &str,
     want: &[String],
-    external_declared_only: bool,
+    domain: OverrideDomain,
 ) -> Vec<FunctionId> {
     let mut visited = HashSet::new();
     let mut out = Vec::new();
     for &base in gcx.hir.contract(contract).bases {
-        collect_branch_base(
-            gcx,
-            base,
-            fn_name,
-            want,
-            external_declared_only,
-            &mut visited,
-            &mut out,
-        );
+        collect_branch_base(gcx, base, fn_name, want, domain, &mut visited, &mut out);
     }
     out
 }
@@ -619,7 +636,7 @@ fn collect_branch_base(
     contract: ContractId,
     fn_name: &str,
     want: &[String],
-    external_declared_only: bool,
+    domain: OverrideDomain,
     visited: &mut HashSet<ContractId>,
     out: &mut Vec<FunctionId>,
 ) {
@@ -630,8 +647,11 @@ fn collect_branch_base(
     for &item in gcx.hir.contract(contract).items {
         if let ItemId::Function(fid) = item {
             let f = gcx.hir.function(fid);
-            let eligible = !external_declared_only
-                || (f.visibility == Visibility::External && f.gettee.is_none());
+            let eligible = !f.is_yul
+                && f.visibility != Visibility::Private
+                && f.kind == domain.kind
+                && f.gettee.is_none()
+                && (!domain.external_only || f.visibility == Visibility::External);
             if eligible
                 && function_name_matches(gcx, fid, fn_name)
                 && function_param_types(gcx, fid).as_deref() == Some(want)
@@ -645,7 +665,7 @@ fn collect_branch_base(
     }
     if !declared {
         for &base in gcx.hir.contract(contract).bases {
-            collect_branch_base(gcx, base, fn_name, want, external_declared_only, visited, out);
+            collect_branch_base(gcx, base, fn_name, want, domain, visited, out);
         }
     }
 }
@@ -902,6 +922,21 @@ fn resolve_return_names(gcx: Gcx<'_>, fid: FunctionId, doc: &mut InheritedDoc) {
             *desc = rest.trim_start().to_string();
         }
         *name = declared.to_string();
+    }
+}
+
+/// Re-key inherited return descriptions to the callable at the current inheritance hop.
+///
+/// Solidity override return lists are positional, so an override rename replaces the name from
+/// the previous declaration while preserving the description in the same slot.
+fn remap_inherited_return_names(gcx: Gcx<'_>, fid: FunctionId, doc: &mut InheritedDoc) {
+    let returns = gcx.hir.function(fid).returns;
+    for (index, (name, _)) in doc.returns.iter_mut().enumerate() {
+        *name = returns
+            .get(index)
+            .and_then(|&vid| gcx.hir.variable(vid).name)
+            .map(|name| name.as_str().to_string())
+            .unwrap_or_default();
     }
 }
 
