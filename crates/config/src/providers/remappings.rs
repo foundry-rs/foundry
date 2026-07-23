@@ -411,21 +411,43 @@ impl RemappingsProvider<'_> {
     fn with_dependency_context(mut remapping: Remapping, lib: &Path) -> Option<Remapping> {
         let context = if let Some(context) = remapping.context.take() {
             let context = Path::new(&context);
-            if context.is_absolute()
-                || context.components().any(|component| component == Component::ParentDir)
-            {
-                trace!(?context, ?lib, "skipping dependency remapping with escaping context");
-                return None;
+            let mut normalized = PathBuf::new();
+            for component in context.components() {
+                match component {
+                    Component::CurDir => {}
+                    Component::Normal(component) => normalized.push(component),
+                    Component::ParentDir if normalized.pop() => {}
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                        trace!(
+                            ?context,
+                            ?lib,
+                            "skipping dependency remapping with escaping context"
+                        );
+                        return None;
+                    }
+                }
             }
-            lib.join(context)
+            lib.join(normalized)
         } else {
             lib.to_path_buf()
         };
-        let Ok(context) = dunce::canonicalize(context) else { return None };
-        if !context.is_dir() || !context.starts_with(lib) {
+
+        let mut ancestor = context.as_path();
+        loop {
+            match fs::symlink_metadata(ancestor) {
+                Ok(_) => break,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    ancestor = ancestor.parent()?;
+                }
+                Err(_) => return None,
+            }
+        }
+        let Ok(canonical_ancestor) = dunce::canonicalize(ancestor) else { return None };
+        if !canonical_ancestor.is_dir() || !canonical_ancestor.starts_with(lib) {
             trace!(?context, ?lib, "skipping dependency remapping with escaping context");
             return None;
         }
+        let context = canonical_ancestor.join(context.strip_prefix(ancestor).ok()?);
 
         let mut context = context.to_string_lossy().into_owned();
         if !context.ends_with('/') {
@@ -701,13 +723,23 @@ mod tests {
         .unwrap();
         let expected_context = format!("{}/", src.display());
         assert_eq!(contextual.context.as_deref(), Some(expected_context.as_str()));
-        assert!(
-            RemappingsProvider::with_dependency_context(
-                remapping_with_context(Path::new("src/generated")),
-                &lib,
-            )
-            .is_none()
-        );
+        let generated = RemappingsProvider::with_dependency_context(
+            remapping_with_context(Path::new("src/generated/../artifacts")),
+            &lib,
+        )
+        .unwrap();
+        let expected_context = format!("{}/", src.join("artifacts").display());
+        assert_eq!(generated.context.as_deref(), Some(expected_context.as_str()));
+        fs::write(lib.join("file"), "").unwrap();
+        for context in ["file", "file/missing"] {
+            assert!(
+                RemappingsProvider::with_dependency_context(
+                    remapping_with_context(Path::new(context)),
+                    &lib,
+                )
+                .is_none()
+            );
+        }
         assert!(
             RemappingsProvider::with_dependency_context(
                 remapping_with_context(Path::new("../outside")),
@@ -723,20 +755,25 @@ mod tests {
         #[cfg(unix)]
         {
             symlink(&outside, lib.join("link")).unwrap();
-            assert!(
-                RemappingsProvider::with_dependency_context(
-                    remapping_with_context(Path::new("link")),
-                    &lib,
-                )
-                .is_none()
-            );
-            assert!(
-                RemappingsProvider::with_dependency_context(
-                    remapping_with_context(Path::new("link/missing")),
-                    &lib,
-                )
-                .is_none()
-            );
+            symlink(lib.join("missing"), lib.join("dangling")).unwrap();
+            for context in ["link", "link/missing", "dangling", "dangling/missing"] {
+                assert!(
+                    RemappingsProvider::with_dependency_context(
+                        remapping_with_context(Path::new(context)),
+                        &lib,
+                    )
+                    .is_none()
+                );
+            }
+
+            symlink(&src, lib.join("internal")).unwrap();
+            let internal = RemappingsProvider::with_dependency_context(
+                remapping_with_context(Path::new("internal/missing")),
+                &lib,
+            )
+            .unwrap();
+            let expected_context = format!("{}/", src.join("missing").display());
+            assert_eq!(internal.context.as_deref(), Some(expected_context.as_str()));
         }
     }
 }

@@ -1074,6 +1074,24 @@ forgetest!(nested_config_remappings_are_dependency_scoped, |prj, cmd| {
     cmd.arg("build").assert_success();
 });
 
+forgetest!(missing_dependency_context_is_preserved, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"generated/:alias/=src/\"]\n",
+        ),
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+lib/dep/generated/:alias/=lib/dep/src/
+dep/=lib/dep/src/
+
+"#]]);
+});
+
 forgetest!(dependency_explicit_aliases_are_preserved, |prj, cmd| {
     let dep = prj.paths().libraries[0].join("dep");
     pretty_err(&dep, fs::create_dir_all(dep.join("src")));
