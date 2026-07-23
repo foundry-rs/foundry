@@ -19,6 +19,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `enumerable-loop-removal`: Flags `remove` on an EnumerableSet inside a loop that also iterates a set with `at`; swap-and-pop removal corrupts the iteration.
   - `function-selector-collision`: Flags colliding selectors between a proxy and the statically typed implementation API targeted by its fallback.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
+  - `reentrancy-balance`: Flags reentrant calls between saving `address(this).balance` and checking the current balance against that stale value.
   - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
   - `protected-vars`: Flags externally callable entry points that write a state variable without its required `@custom:security write-protection` function or modifier.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
