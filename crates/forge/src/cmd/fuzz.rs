@@ -664,7 +664,7 @@ fn replay_baseline(
     let mut has_failure = false;
     let mut has_coverage = false;
     for FuzzMinimizeObservation { target, observation } in observations {
-        let observation_has_failure = observation.failure.is_some();
+        let observation_has_failure = !observation.failures.is_empty();
         let observation_has_coverage = has_edges(&observation);
         if observation.replayed == 0 && !observation_has_failure && !observation_has_coverage {
             continue;
@@ -722,11 +722,11 @@ impl<'a> MinimizeContext<'a> {
             let Some(candidate) = observations.get(target) else {
                 return Ok(false);
             };
-            if let Some(failure) = &baseline.failure {
-                if candidate.failure.as_ref() != Some(failure) {
+            if !baseline.failures.is_empty() {
+                if candidate.failures != baseline.failures {
                     return Ok(false);
                 }
-            } else if candidate.failure.is_some() || !same_edge_hit_sets(candidate, baseline) {
+            } else if !candidate.failures.is_empty() || !same_edge_hit_sets(candidate, baseline) {
                 return Ok(false);
             }
         }
@@ -741,7 +741,9 @@ fn has_new_active_targets(
 ) -> bool {
     observations.iter().any(|(target, observation)| {
         !baseline.contains_key(target)
-            && (observation.failure.is_some() || observation.replayed > 0 || has_edges(observation))
+            && (!observation.failures.is_empty()
+                || observation.replayed > 0
+                || has_edges(observation))
     })
 }
 
@@ -1437,6 +1439,7 @@ mod tests {
                 "B".to_string(),
                 ReplayObservation {
                     failure: Some(ReplayFailure::AfterInvariant),
+                    failures: std::collections::BTreeSet::from([ReplayFailure::AfterInvariant]),
                     ..Default::default()
                 },
             ),

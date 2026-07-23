@@ -40,7 +40,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fmt,
     fs::File,
     io::{BufWriter, Write},
@@ -135,7 +135,7 @@ pub struct InvariantReplayOptions {
 }
 
 /// A structured identity for a failure observed during corpus replay.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ReplayFailure {
     /// A stateless fuzz test call failed. Keyed by selector, code-path fingerprint, and output.
     Fuzz { selector: Selector, fingerprint: Option<B256>, output: B256 },
@@ -187,10 +187,11 @@ impl ReplayFailure {
     }
 }
 
-/// Records `failure` as the representative failure for an observation, preferring
-/// terminal failures over non-terminal handler bugs and keeping the first of each class.
+/// Records each unique `failure` while retaining the existing representative failure semantics:
+/// prefer terminal failures over non-terminal handler bugs and keep the first of each class.
 fn record_replay_failure(observation: &mut ReplayObservation, failure: ReplayFailure) {
     observation.has_non_predicate_failure |= !failure.is_predicate();
+    observation.failures.insert(failure.clone());
     match &mut observation.failure {
         slot @ None => *slot = Some(failure),
         Some(existing) if !existing.is_terminal() && failure.is_terminal() => *existing = failure,
@@ -205,8 +206,10 @@ pub struct ReplayObservation {
     pub evm_edges: Vec<u8>,
     /// AFL-bucketed native sancov edge coverage for the candidate.
     pub sancov_edges: Vec<u8>,
-    /// Comparable failure identity, if replaying this candidate fails.
+    /// Representative failure identity retained for existing replay classification semantics.
     pub failure: Option<ReplayFailure>,
+    /// All unique failure identities observed while replaying the candidate.
+    pub failures: BTreeSet<ReplayFailure>,
     /// Whether replay observed a stateless fuzz or invariant handler failure.
     pub has_non_predicate_failure: bool,
     /// Number of replayable transactions executed.
@@ -516,12 +519,11 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             ) {
                 last_accepted_checked_invariant = true;
                 if !target.invariant_replay.is_optimization
-                    && !observation.failure.as_ref().is_some_and(ReplayFailure::is_predicate)
                     && let Some(address) = target.invariant_address
-                    && let Some(failure) =
-                        broken_invariant(&executor, address, target.invariant_fns)?
                 {
-                    record_replay_failure(&mut observation, failure);
+                    for failure in broken_invariants(&executor, address, target.invariant_fns)? {
+                        record_replay_failure(&mut observation, failure);
+                    }
                 }
             }
         } else if !fuzz_replay_call_succeeded(
@@ -550,17 +552,20 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         }
     }
 
-    if !observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal)
+    if !observation
+        .failure
+        .as_ref()
+        .is_some_and(|failure| failure.is_terminal() && !failure.is_predicate())
         && accepted > 0
         && target.fuzzed_contracts.is_some()
         && let Some(address) = target.invariant_address
     {
-        if !target.invariant_replay.is_optimization
-            && !last_accepted_checked_invariant
-            && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
-        {
-            record_replay_failure(&mut observation, failure);
-        } else if target.invariant_replay.call_after_invariant
+        if !target.invariant_replay.is_optimization && !last_accepted_checked_invariant {
+            for failure in broken_invariants(&executor, address, target.invariant_fns)? {
+                record_replay_failure(&mut observation, failure);
+            }
+        } else if !observation.failures.iter().any(ReplayFailure::is_predicate)
+            && target.invariant_replay.call_after_invariant
             && let Some(failure) = broken_after_invariant(&executor, address)?
         {
             record_replay_failure(&mut observation, failure);
@@ -627,11 +632,12 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
     }
 }
 
-fn broken_invariant<FEN: FoundryEvmNetwork>(
+fn broken_invariants<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
     invariant_fns: &[(&Function, bool)],
-) -> Result<Option<ReplayFailure>> {
+) -> Result<Vec<ReplayFailure>> {
+    let mut failures = Vec::new();
     for (invariant, _) in invariant_fns {
         let (_, success) = call_invariant_function(
             executor,
@@ -639,10 +645,18 @@ fn broken_invariant<FEN: FoundryEvmNetwork>(
             invariant.abi_encode_input(&[])?.into(),
         )?;
         if !success {
-            return Ok(Some(ReplayFailure::Invariant { name: invariant.name.clone() }));
+            failures.push(ReplayFailure::Invariant { name: invariant.name.clone() });
         }
     }
-    Ok(None)
+    Ok(failures)
+}
+
+fn broken_invariant<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    invariant_address: Address,
+    invariant_fns: &[(&Function, bool)],
+) -> Result<Option<ReplayFailure>> {
+    Ok(broken_invariants(executor, invariant_address, invariant_fns)?.into_iter().next())
 }
 
 fn broken_after_invariant<FEN: FoundryEvmNetwork>(
@@ -824,6 +838,30 @@ mod tests {
         assert!(report.contains("corpus entry 19 failed during replay"), "{report}");
         assert!(report.contains("... and 3 more failed corpus entries"), "{report}");
         assert!(!report.contains("corpus entry 20 failed during replay"), "{report}");
+    }
+
+    #[test]
+    fn record_replay_failure_retains_unique_identities() {
+        let handler = ReplayFailure::Handler {
+            target: Address::with_last_byte(1),
+            selector: Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
+            fingerprint: None,
+            terminal: false,
+            invariant: None,
+        };
+        let first = ReplayFailure::Invariant { name: "invariant_first".to_string() };
+        let second = ReplayFailure::Invariant { name: "invariant_second".to_string() };
+        let expected = BTreeSet::from([handler.clone(), first.clone(), second.clone()]);
+        let mut observation = ReplayObservation::default();
+
+        record_replay_failure(&mut observation, handler);
+        record_replay_failure(&mut observation, first.clone());
+        record_replay_failure(&mut observation, first.clone());
+        record_replay_failure(&mut observation, second);
+
+        assert_eq!(observation.failure, Some(first));
+        assert_eq!(observation.failures, expected);
+        assert!(observation.has_non_predicate_failure);
     }
 
     #[test]

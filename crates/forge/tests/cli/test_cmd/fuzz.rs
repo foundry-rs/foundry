@@ -2160,6 +2160,149 @@ contract ForgeFuzzTminFailureTargetTest {
     );
 });
 
+forgetest_init!(forge_fuzz_tmin_preserves_handler_and_predicate_failures, |prj, cmd| {
+    prj.update_config(|config| config.invariant.check_interval = 1);
+    prj.add_test(
+        "ForgeFuzzTminHandlerAndPredicate.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzTminHandlerAndPredicateTest is Test {
+    bool broken;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = this.assertHandler.selector;
+        selectors[1] = this.breakInvariant.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function assertHandler() external {
+        assertTrue(false);
+    }
+
+    function breakInvariant() external {
+        broken = true;
+    }
+
+    function invariant_canary() public view {
+        assertFalse(broken);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzTminHandlerAndPredicate.t.sol/ForgeFuzzTminHandlerAndPredicateTest.json",
+    );
+    let assert_handler = calldata_for_args(&abi, "assertHandler", &[]);
+    let break_invariant = calldata_for_args(&abi, "breakInvariant", &[]);
+    let corpus = prj.root().join("tmin-handler-predicate-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_sequence_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        &[&assert_handler, &break_invariant],
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminHandlerAndPredicateTest",
+            "--mt",
+            "invariant_canary",
+            "tmin-handler-predicate-corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--corpus-out",
+            "tmin-handler-predicate-output.json",
+        ])
+        .assert_success();
+
+    let output: Value = serde_json::from_str(
+        &std::fs::read_to_string(prj.root().join("tmin-handler-predicate-output.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(output.as_array().unwrap().len(), 2, "{output}");
+});
+
+forgetest_init!(forge_fuzz_tmin_preserves_multiple_predicate_failures, |prj, cmd| {
+    prj.update_config(|config| config.invariant.check_interval = 1);
+    prj.add_test(
+        "ForgeFuzzTminMultiplePredicates.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzTminMultiplePredicatesTest is Test {
+    bool firstBroken;
+    bool secondBroken;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = this.breakFirst.selector;
+        selectors[1] = this.breakSecond.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function breakFirst() external {
+        firstBroken = true;
+    }
+
+    function breakSecond() external {
+        secondBroken = true;
+    }
+
+    function invariant_first() public view {
+        assertFalse(firstBroken);
+    }
+
+    function invariant_second() public view {
+        assertFalse(secondBroken);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzTminMultiplePredicates.t.sol/ForgeFuzzTminMultiplePredicatesTest.json",
+    );
+    let break_first = calldata_for_args(&abi, "breakFirst", &[]);
+    let break_second = calldata_for_args(&abi, "breakSecond", &[]);
+    let corpus = prj.root().join("tmin-multiple-predicates-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_sequence_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        &[&break_first, &break_second],
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminMultiplePredicatesTest",
+            "--mt",
+            "invariant_",
+            "tmin-multiple-predicates-corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--corpus-out",
+            "tmin-multiple-predicates-output.json",
+        ])
+        .assert_success();
+
+    let output: Value = serde_json::from_str(
+        &std::fs::read_to_string(prj.root().join("tmin-multiple-predicates-output.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(output.as_array().unwrap().len(), 2, "{output}");
+});
+
 forgetest_init!(forge_fuzz_tmin_rejects_assume_and_skip_candidates, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzTminRejectedCandidateTarget.t.sol",
