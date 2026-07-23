@@ -61,6 +61,7 @@ use proptest::{
     test_runner::{TestRng, TestRunner},
 };
 use rand::distr::{Distribution, weighted::WeightedIndex};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -85,6 +86,26 @@ const CACHED_DISK_CORPUS_MAX_LEN: usize = 128;
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
+
+/// Precomputed AFL-style donor energy weights for the in-memory corpus, built once per
+/// [`WorkerCorpus::new_inputs`] call and reused for both donor picks.
+struct MutationSchedule {
+    weights: Vec<u64>,
+    total: u64,
+}
+
+impl MutationSchedule {
+    fn pick(&self, rng: &mut TestRng) -> usize {
+        let mut pick = rng.random_range(0..self.total);
+        for (index, &weight) in self.weights.iter().enumerate() {
+            if pick < weight {
+                return index;
+            }
+            pick -= weight;
+        }
+        unreachable!("non-empty corpus has positive mutation energy")
+    }
+}
 
 fn weighted_arg_mutation(
     rng: &mut impl Rng,
@@ -1152,6 +1173,7 @@ impl WorkerCorpus {
     fn random_mutation_corpus(
         &mut self,
         rng: &mut TestRng,
+        schedule: Option<&MutationSchedule>,
     ) -> foundry_common::fs::Result<Option<(Option<usize>, CorpusEntry)>> {
         if self.in_memory_corpus.is_empty() {
             return self
@@ -1171,16 +1193,17 @@ impl WorkerCorpus {
         let index = if rng.random_ratio(1, 10) {
             rng.random_range(0..self.in_memory_corpus.len())
         } else {
-            self.weighted_mutation_index(rng)
+            let schedule = schedule.expect("non-empty in-memory corpus has a mutation schedule");
+            schedule.pick(rng)
         };
         Ok(Some((Some(index), self.in_memory_corpus[index].clone())))
     }
 
-    /// Selects an in-memory donor with AFL-style energy for favored/minset entries, rare edges,
-    /// and recently productive inputs. A separate exploration branch in
-    /// [`Self::random_mutation_corpus`] keeps this from starving the rest of the corpus.
-    fn weighted_mutation_index(&self, rng: &mut TestRng) -> usize {
-        let mut edge_frequency = HashMap::<usize, usize>::new();
+    /// Builds the AFL-style donor energy schedule for the current in-memory corpus once, so a
+    /// single [`Self::new_inputs`] call can reuse it for both the primary and secondary donor
+    /// picks instead of recomputing edge frequencies and weights from scratch for each.
+    fn build_mutation_schedule(&self) -> MutationSchedule {
+        let mut edge_frequency = FxHashMap::<usize, usize>::default();
         for corpus in &self.in_memory_corpus {
             for &edge in &corpus.unique_edges_covered {
                 *edge_frequency.entry(edge).or_default() += 1;
@@ -1192,18 +1215,15 @@ impl WorkerCorpus {
             .iter()
             .map(|corpus| self.mutation_energy(corpus, &edge_frequency))
             .collect::<Vec<_>>();
-        let total = weights.iter().copied().sum::<u64>();
-        let mut pick = rng.random_range(0..total);
-        for (index, weight) in weights.into_iter().enumerate() {
-            if pick < weight {
-                return index;
-            }
-            pick -= weight;
-        }
-        unreachable!("non-empty corpus has positive mutation energy")
+        let total = weights.iter().copied().sum();
+        MutationSchedule { weights, total }
     }
 
-    fn mutation_energy(&self, corpus: &CorpusEntry, edge_frequency: &HashMap<usize, usize>) -> u64 {
+    fn mutation_energy(
+        &self,
+        corpus: &CorpusEntry,
+        edge_frequency: &FxHashMap<usize, usize>,
+    ) -> u64 {
         let favored_energy = u64::from(corpus.is_favored) * 8;
         let rare_edge_energy = corpus
             .unique_edges_covered
@@ -1354,12 +1374,19 @@ impl WorkerCorpus {
             let mutation_type =
                 weighted_mutation_type(test_runner.rng(), &self.mutation_distribution);
 
-            let Some((primary_index, primary)) = self.random_mutation_corpus(test_runner.rng())?
+            // Built once and reused for both donor picks below: rebuilding edge frequencies and
+            // weights per pick made scheduling cost scale with corpus/favored-set size on every
+            // single mutation.
+            let schedule =
+                (!self.in_memory_corpus.is_empty()).then(|| self.build_mutation_schedule());
+
+            let Some((primary_index, primary)) =
+                self.random_mutation_corpus(test_runner.rng(), schedule.as_ref())?
             else {
                 return Ok(vec![self.new_tx(test_runner)?]);
             };
             let Some((secondary_index, secondary)) =
-                self.random_mutation_corpus(test_runner.rng())?
+                self.random_mutation_corpus(test_runner.rng(), schedule.as_ref())?
             else {
                 return Ok(vec![self.new_tx(test_runner)?]);
             };
@@ -1639,7 +1666,10 @@ impl WorkerCorpus {
             self.current_mutated_index = None;
             self.new_tx(test_runner)?
         } else {
-            let Some((corpus_index, corpus)) = self.random_mutation_corpus(test_runner.rng())?
+            let schedule =
+                (!self.in_memory_corpus.is_empty()).then(|| self.build_mutation_schedule());
+            let Some((corpus_index, corpus)) =
+                self.random_mutation_corpus(test_runner.rng(), schedule.as_ref())?
             else {
                 self.current_mutated_index = None;
                 return Ok(self.new_tx(test_runner)?.call_details.calldata);
@@ -3693,7 +3723,7 @@ mod tests {
         );
 
         manager.in_memory_corpus.extend([favored.clone(), common.clone()]);
-        let edge_frequency = HashMap::from([(1, 1), (2, 2)]);
+        let edge_frequency = FxHashMap::from_iter([(1, 1), (2, 2)]);
 
         assert!(
             manager.mutation_energy(&favored, &edge_frequency)

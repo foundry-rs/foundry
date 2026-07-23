@@ -5698,6 +5698,7 @@ dependencies = [
  "rayon",
  "revm",
  "revm-inspectors",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempo-precompiles",
