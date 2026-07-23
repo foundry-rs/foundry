@@ -60,8 +60,8 @@ impl Remappings {
             .collect()
     }
 
-    /// Push an element to the remappings vector, but only if it's not already present.
-    fn push(&mut self, remapping: Remapping) {
+    /// Push an explicit remapping without applying autodetection's prefix-conflict filtering.
+    fn push_explicit(&mut self, remapping: Remapping) {
         // Special handling for .sol file remappings, only allow one remapping per source file.
         if remapping.name.ends_with(".sol") && !remapping.path.ends_with(".sol") {
             return;
@@ -86,6 +86,22 @@ impl Remappings {
             return;
         }
 
+        // Ignore global remappings of root project src, test or script dir.
+        // See <https://github.com/foundry-rs/foundry/issues/3440>.
+        if remapping.context.is_none()
+            && self
+                .project_paths
+                .iter()
+                .any(|project_path| remapping.name.eq_ignore_ascii_case(&project_path.name))
+        {
+            return;
+        }
+
+        self.remappings.push(remapping);
+    }
+
+    /// Push an auto-detected remapping, but only if it's not already present.
+    fn push(&mut self, remapping: Remapping) {
         if self.remappings.iter().any(|existing| {
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
@@ -115,23 +131,20 @@ impl Remappings {
             return;
         };
 
-        // Ignore remappings of root project src, test or script dir.
-        // See <https://github.com/foundry-rs/foundry/issues/3440>.
-        if self
-            .project_paths
-            .iter()
-            .any(|project_path| remapping.name.eq_ignore_ascii_case(&project_path.name))
-        {
-            return;
-        };
-
-        self.remappings.push(remapping);
+        self.push_explicit(remapping);
     }
 
     /// Extend the remappings vector, leaving out the remappings that are already present.
     pub fn extend(&mut self, remappings: Vec<Remapping>) {
         for remapping in remappings {
             self.push(remapping);
+        }
+    }
+
+    /// Extend with explicitly configured remappings, preserving overlapping aliases.
+    pub fn extend_explicit(&mut self, remappings: Vec<Remapping>) {
+        for remapping in remappings {
+            self.push_explicit(remapping);
         }
     }
 }
@@ -236,7 +249,7 @@ impl RemappingsProvider<'_> {
             // sibling imports.
             let (dependency_remappings, package_remappings): (Vec<_>, Vec<_>) =
                 nested_foundry_remappings.partition(|remapping| remapping.context.is_some());
-            all_remappings.extend(dependency_remappings);
+            all_remappings.extend_explicit(dependency_remappings);
 
             let mut lib_remappings = BTreeMap::new();
             for r in auto_detected_remappings {
@@ -630,6 +643,21 @@ mod tests {
         ]);
 
         assert_eq!(remappings.into_inner().len(), 2);
+    }
+
+    #[test]
+    fn explicit_overlapping_remappings_are_preserved() {
+        let remapping = |name: &str| Remapping {
+            context: Some("lib/dep/".to_string()),
+            name: name.to_string(),
+            path: format!("lib/dep/{name}"),
+        };
+
+        for names in [["@scope/pkg/", "@scope/"], ["@scope/", "@scope/pkg/"]] {
+            let mut remappings = Remappings::new();
+            remappings.extend_explicit(names.map(remapping).into());
+            assert_eq!(remappings.into_inner().len(), 2);
+        }
     }
 
     #[test]

@@ -198,8 +198,9 @@ impl<'a> From<&'a BuildOpts> for Figment {
         // remappings should stack
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
             .with_figment(&figment);
-        remappings
-            .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
+        remappings.extend_explicit(
+            figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default(),
+        );
         figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
 
         if let Some(skip) = &args.skip {
