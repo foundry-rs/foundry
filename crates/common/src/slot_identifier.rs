@@ -406,7 +406,9 @@ impl SlotIdentifier {
 
             // Check if we're able to match on a slot from the layout i.e any of the base slots.
             // This will always be the case for primitive types that fit in a single slot.
-            if storage.slot == slot_str
+            // Compare numerically rather than by string: `storage.slot` may be formatted as
+            // decimal (ordinary storage) or 0x-prefixed hex (e.g. ERC-7201 namespaced storage).
+            if U256::from_str(&storage.slot).ok() == Some(slot_u256)
                 && let Some(parsed_type) = dyn_type.cloned()
             {
                 // Successfully parsed - handle arrays or simple types
@@ -994,4 +996,78 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
 /// Checks if a given type label represents a struct type.
 pub fn is_struct(s: &str) -> bool {
     s.starts_with("struct ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `forge inspect <contract> storageLayout` renders ERC-7201 namespaced base slots as
+    // 0x-prefixed hex (they're keccak-derived, not small sequential indices), unlike ordinary
+    // storage slots which solc renders as plain decimal. `identify` must resolve both.
+    #[test]
+    fn identify_resolves_hex_formatted_slot() {
+        let slot_hex = "0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500";
+        let storage = Storage {
+            ast_id: 0,
+            contract: "MyContract [erc7201:example.main]".to_string(),
+            label: "value".to_string(),
+            offset: 0,
+            slot: slot_hex.to_string(),
+            storage_type: "uint256".to_string(),
+        };
+        let mut types = BTreeMap::new();
+        types.insert(
+            "uint256".to_string(),
+            StorageType {
+                encoding: ENCODING_INPLACE.to_string(),
+                key: None,
+                label: "uint256".to_string(),
+                number_of_bytes: "32".to_string(),
+                value: None,
+                other: BTreeMap::new(),
+            },
+        );
+        let layout = StorageLayout { storage: vec![storage], types };
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let slot: B256 = U256::from_str(slot_hex).unwrap().into();
+        let info = identifier
+            .identify(&slot, None)
+            .expect("should identify a storage entry whose slot is hex-formatted");
+        assert_eq!(info.label, "value");
+    }
+
+    // Ordinary (non-namespaced) storage slots are rendered by solc as plain decimal strings;
+    // guard against a regression in that existing behavior.
+    #[test]
+    fn identify_resolves_decimal_formatted_slot() {
+        let storage = Storage {
+            ast_id: 0,
+            contract: "MyContract".to_string(),
+            label: "value".to_string(),
+            offset: 0,
+            slot: "0".to_string(),
+            storage_type: "uint256".to_string(),
+        };
+        let mut types = BTreeMap::new();
+        types.insert(
+            "uint256".to_string(),
+            StorageType {
+                encoding: ENCODING_INPLACE.to_string(),
+                key: None,
+                label: "uint256".to_string(),
+                number_of_bytes: "32".to_string(),
+                value: None,
+                other: BTreeMap::new(),
+            },
+        );
+        let layout = StorageLayout { storage: vec![storage], types };
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let info = identifier
+            .identify(&B256::ZERO, None)
+            .expect("should identify a storage entry whose slot is decimal-formatted");
+        assert_eq!(info.label, "value");
+    }
 }

@@ -1,16 +1,17 @@
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
+use alloy_primitives::U256;
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_matching_contract_artifact, find_target_path, shell,
+    erc7201, find_matching_contract_artifact, find_target_path, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
     artifacts::{
-        StorageLayout,
+        Storage, StorageLayout, StorageType,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
             EvmOutputSelection, EwasmOutputSelection, OutputSelection,
@@ -21,8 +22,24 @@ use foundry_compilers::{
 use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
-use solar::sema::interface::source_map::FileName;
-use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
+use solar::sema::{
+    Gcx,
+    ast::Visibility,
+    eval::ConstantEvaluator,
+    hir::{
+        Block, ContractId, ElementaryType, FunctionId, ItemId, NatSpecKind, Stmt, StmtKind,
+        StructId, TypeKind, VariableId,
+    },
+    interface::source_map::FileName,
+};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt,
+    ops::ControlFlow,
+    path::Path,
+    str::FromStr,
+    sync::LazyLock,
+};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -129,7 +146,15 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                let mut layout =
+                    artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
+                if is_solidity_source(&target_path) {
+                    let (entries, types) =
+                        collect_erc7201_entries(&mut output, &target_path, contract.name())?;
+                    layout.storage.extend(entries);
+                    layout.types.extend(types);
+                }
+                print_storage_layout(Some(&layout), wrap)?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -439,6 +464,475 @@ fn print_table(
     add_rows(&mut table);
     sh_println!("\n{table}\n")?;
     Ok(())
+}
+
+/// Returns the canonical Solidity label for a type.
+fn hir_type_label<'hir>(gcx: Gcx<'hir>, kind: &TypeKind<'hir>) -> String {
+    let hir = &gcx.hir;
+    match kind {
+        TypeKind::Elementary(et) => match et {
+            ElementaryType::Address(_) => "address".to_string(),
+            ElementaryType::Bool => "bool".to_string(),
+            ElementaryType::String => "string".to_string(),
+            ElementaryType::Bytes => "bytes".to_string(),
+            ElementaryType::Int(size) => format!("int{}", size.bits()),
+            ElementaryType::UInt(size) => format!("uint{}", size.bits()),
+            ElementaryType::FixedBytes(size) => format!("bytes{}", size.bytes()),
+            ElementaryType::Fixed(m, n) => format!("fixed{}x{}", m.bits(), n.get()),
+            ElementaryType::UFixed(m, n) => format!("ufixed{}x{}", m.bits(), n.get()),
+        },
+        TypeKind::Array(arr) => {
+            let elem_label = hir_type_label(gcx, &arr.element.kind);
+            let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
+                ConstantEvaluator::new(gcx)
+                    .try_eval(size_expr)
+                    .ok()
+                    .and_then(|s| s.as_u256())
+                    .and_then(|n| n.try_into().ok())
+                    .filter(|&n: &u64| n > 0)
+            });
+            match fixed_len {
+                Some(n) => format!("{elem_label}[{n}]"),
+                None => format!("{elem_label}[]"),
+            }
+        }
+        TypeKind::Mapping(m) => {
+            let key_label = hir_type_label(gcx, &m.key.kind);
+            let val_label = hir_type_label(gcx, &m.value.kind);
+            format!("mapping({key_label} => {val_label})")
+        }
+        TypeKind::Custom(ItemId::Struct(id)) => {
+            let s = hir.strukt(*id);
+            if let Some(cid) = s.contract {
+                format!("struct {}.{}", hir.contract(cid).name.as_str(), s.name.as_str())
+            } else {
+                format!("struct {}", s.name.as_str())
+            }
+        }
+        TypeKind::Custom(ItemId::Enum(id)) => {
+            let e = hir.enumm(*id);
+            if let Some(cid) = e.contract {
+                format!("enum {}.{}", hir.contract(cid).name.as_str(), e.name.as_str())
+            } else {
+                format!("enum {}", e.name.as_str())
+            }
+        }
+        TypeKind::Custom(ItemId::Udvt(id)) => {
+            let u = hir.udvt(*id);
+            if let Some(cid) = u.contract {
+                format!("{}.{}", hir.contract(cid).name.as_str(), u.name.as_str())
+            } else {
+                u.name.as_str().to_string()
+            }
+        }
+        TypeKind::Custom(ItemId::Contract(id)) => {
+            format!("contract {}", hir.contract(*id).name.as_str())
+        }
+        TypeKind::Function(f) => match f.visibility {
+            Visibility::External | Visibility::Public => "function () external".to_string(),
+            _ => "function () internal".to_string(),
+        },
+        TypeKind::Custom(_) | TypeKind::Err(_) => "unknown".to_string(),
+    }
+}
+
+/// Returns `(label, number_of_bytes, slot_count, encoding)` for a HIR type in storage context.
+///
+/// - `number_of_bytes`: actual data bytes (used in `StorageType.numberOfBytes`)
+/// - `slot_count`: 0 for packable value types; ≥ 1 for slot-boundary types (arrays, structs,
+///   mappings, string, bytes). The packing algorithm advances `current_slot` by this amount.
+fn hir_type_storage_info<'hir>(
+    gcx: Gcx<'hir>,
+    kind: &TypeKind<'hir>,
+) -> (String, u64, u64, &'static str) {
+    let hir = &gcx.hir;
+    let label = hir_type_label(gcx, kind);
+    let (byte_size, slot_count, encoding) = match kind {
+        TypeKind::Elementary(et) => match et {
+            ElementaryType::Address(_) => (20u64, 0u64, "inplace"),
+            ElementaryType::Bool => (1, 0, "inplace"),
+            ElementaryType::String => (32, 1, "bytes"),
+            ElementaryType::Bytes => (32, 1, "bytes"),
+            ElementaryType::Int(size) => (size.bytes() as u64, 0, "inplace"),
+            ElementaryType::UInt(size) => (size.bytes() as u64, 0, "inplace"),
+            ElementaryType::FixedBytes(size) => (size.bytes() as u64, 0, "inplace"),
+            ElementaryType::Fixed(m, _) => (m.bytes() as u64, 0, "inplace"),
+            ElementaryType::UFixed(m, _) => (m.bytes() as u64, 0, "inplace"),
+        },
+        TypeKind::Array(arr) => {
+            // Use Solar's constant evaluator to resolve the array size expression, including
+            // non-literal sizes like `uint256 constant N = 5; uint256[N] arr`.
+            let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
+                ConstantEvaluator::new(gcx)
+                    .try_eval(size_expr)
+                    .ok()
+                    .and_then(|s| s.as_u256())
+                    .and_then(|n| n.try_into().ok())
+                    .filter(|&n: &u64| n > 0)
+            });
+            match fixed_len {
+                Some(n) => {
+                    let (_, elem_bytes, elem_slots, _) =
+                        hir_type_storage_info(gcx, &arr.element.kind);
+                    if elem_slots == 0 {
+                        // Packable element: compute tight packing.
+                        // elements_per_slot = floor(32 / elem_bytes), minimum 1.
+                        let per_slot = (32u64 / elem_bytes).max(1);
+                        let slots = n.div_ceil(per_slot);
+                        (slots * 32, slots, "inplace")
+                    } else {
+                        // Slot-boundary element (e.g. T is itself an array or struct).
+                        let slots = n * elem_slots;
+                        (slots * 32, slots, "inplace")
+                    }
+                }
+                // Dynamic array or unresolvable size: 1 slot base.
+                None => (32, 1, "dynamic_array"),
+            }
+        }
+        TypeKind::Mapping(_) => (32, 1, "mapping"),
+        TypeKind::Custom(ItemId::Struct(id)) => {
+            let slot_count = pack_fields(gcx, hir.strukt(*id).fields, |_, _, _, _| {});
+            (slot_count * 32, slot_count, "inplace")
+        }
+        TypeKind::Custom(ItemId::Enum(_)) => (1, 0, "inplace"),
+        TypeKind::Custom(ItemId::Udvt(id)) => {
+            let (_, bytes, slots, encoding) = hir_type_storage_info(gcx, &hir.udvt(*id).ty.kind);
+            (bytes, slots, encoding)
+        }
+        TypeKind::Custom(ItemId::Contract(_)) => (20, 0, "inplace"),
+        TypeKind::Function(f) => {
+            let bytes = match f.visibility {
+                Visibility::External | Visibility::Public => 24,
+                _ => 8,
+            };
+            (bytes, 0, "inplace")
+        }
+        TypeKind::Custom(_) | TypeKind::Err(_) => (32, 1, "inplace"),
+    };
+    (label, byte_size, slot_count, encoding)
+}
+
+/// Runs Solidity's storage packing algorithm over `fields`, invoking
+/// `on_field(var_id, type_label, slot, byte_offset)` for each field.
+/// Returns the total number of 32-byte slots consumed.
+fn pack_fields<'hir>(
+    gcx: Gcx<'hir>,
+    fields: &'hir [VariableId],
+    mut on_field: impl FnMut(VariableId, &str, u64, u64),
+) -> u64 {
+    let hir = &gcx.hir;
+    let mut current_slot: u64 = 0;
+    let mut current_offset: u64 = 0;
+    for &var_id in fields {
+        let var = hir.variable(var_id);
+        let (type_label, byte_size, slot_count, _) = hir_type_storage_info(gcx, &var.ty.kind);
+        let (field_slot, field_offset) = if slot_count > 0 {
+            if current_offset > 0 {
+                current_slot += 1;
+                current_offset = 0;
+            }
+            let s = current_slot;
+            current_slot += slot_count;
+            (s, 0u64)
+        } else {
+            if current_offset + byte_size > 32 {
+                current_slot += 1;
+                current_offset = 0;
+            }
+            let s = current_slot;
+            let o = current_offset;
+            current_offset += byte_size;
+            (s, o)
+        };
+        on_field(var_id, &type_label, field_slot, field_offset);
+    }
+    if current_offset > 0 { current_slot + 1 } else { current_slot }
+}
+
+/// Inserts `kind`'s [`StorageType`] entry into `types`, recursively populating composite metadata:
+/// arrays get a `"base"` key, mappings get `key`/`value`, structs get a `"members"` array.
+///
+/// Returns the type label used as the key in `types` and as `Storage.storage_type`.
+fn register_type_recursive<'hir>(
+    gcx: Gcx<'hir>,
+    kind: &TypeKind<'hir>,
+    types: &mut BTreeMap<String, StorageType>,
+) -> String {
+    let (label, byte_size, _, encoding) = hir_type_storage_info(gcx, kind);
+
+    if types.contains_key(&label) {
+        return label;
+    }
+
+    let st = match kind {
+        TypeKind::Array(arr) => {
+            let base = register_type_recursive(gcx, &arr.element.kind, types);
+            let mut other = BTreeMap::new();
+            other.insert("base".to_string(), Value::String(base));
+            StorageType {
+                encoding: encoding.to_string(),
+                key: None,
+                label: label.clone(),
+                number_of_bytes: byte_size.to_string(),
+                value: None,
+                other,
+            }
+        }
+        TypeKind::Mapping(m) => {
+            let key_type = register_type_recursive(gcx, &m.key.kind, types);
+            let val_type = register_type_recursive(gcx, &m.value.kind, types);
+            StorageType {
+                encoding: encoding.to_string(),
+                key: Some(key_type),
+                label: label.clone(),
+                number_of_bytes: byte_size.to_string(),
+                value: Some(val_type),
+                other: BTreeMap::new(),
+            }
+        }
+        TypeKind::Custom(ItemId::Struct(id)) => {
+            let hir = &gcx.hir;
+            let s = hir.strukt(*id);
+            // Placeholder inserted before recursing so self-referential types hit contains_key;
+            // overwritten by the real entry at the end of this function.
+            {
+                let mut placeholder_other = BTreeMap::new();
+                placeholder_other.insert("members".to_string(), Value::Array(vec![]));
+                types.insert(
+                    label.clone(),
+                    StorageType {
+                        encoding: encoding.to_string(),
+                        key: None,
+                        label: label.clone(),
+                        number_of_bytes: byte_size.to_string(),
+                        value: None,
+                        other: placeholder_other,
+                    },
+                );
+            }
+            let mut members: Vec<Value> = Vec::new();
+            pack_fields(gcx, s.fields, |var_id, field_type, field_slot, field_offset| {
+                let var = hir.variable(var_id);
+                let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
+                register_type_recursive(gcx, &var.ty.kind, types);
+                members.push(serde_json::json!({
+                    "astId": 0,
+                    "contract": label,
+                    "label": field_name,
+                    "offset": field_offset,
+                    "slot": field_slot.to_string(),
+                    "type": field_type,
+                }));
+            });
+            let mut other = BTreeMap::new();
+            other.insert("members".to_string(), Value::Array(members));
+            StorageType {
+                encoding: encoding.to_string(),
+                key: None,
+                label: label.clone(),
+                number_of_bytes: byte_size.to_string(),
+                value: None,
+                other,
+            }
+        }
+        _ => StorageType {
+            encoding: encoding.to_string(),
+            key: None,
+            label: label.clone(),
+            number_of_bytes: byte_size.to_string(),
+            value: None,
+            other: BTreeMap::new(),
+        },
+    };
+
+    types.insert(label.clone(), st);
+    label
+}
+
+/// Returns `true` if `kind` resolves to `struct_id`, directly or through arrays/mappings.
+fn type_references_struct(kind: &TypeKind<'_>, struct_id: StructId) -> bool {
+    match kind {
+        TypeKind::Custom(ItemId::Struct(id)) => *id == struct_id,
+        TypeKind::Array(arr) => type_references_struct(&arr.element.kind, struct_id),
+        TypeKind::Mapping(m) => {
+            type_references_struct(&m.key.kind, struct_id)
+                || type_references_struct(&m.value.kind, struct_id)
+        }
+        _ => false,
+    }
+}
+
+/// Returns `true` if any statement in `block` references `struct_id`, recursing into nested
+/// blocks, loops, conditionals, switches, and try/catch clauses.
+fn block_references_struct<'hir>(gcx: Gcx<'hir>, block: &Block<'hir>, struct_id: StructId) -> bool {
+    block.stmts.iter().any(|stmt| stmt_references_struct(gcx, stmt, struct_id))
+}
+
+fn stmt_references_struct<'hir>(gcx: Gcx<'hir>, stmt: &Stmt<'hir>, struct_id: StructId) -> bool {
+    let hir = &gcx.hir;
+    match &stmt.kind {
+        StmtKind::DeclSingle(var_id) => {
+            type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)
+        }
+        StmtKind::DeclMulti(vars, _) => vars
+            .iter()
+            .flatten()
+            .any(|var_id| type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)),
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block_references_struct(gcx, block, struct_id)
+        }
+        StmtKind::Loop(block, _) => block_references_struct(gcx, block, struct_id),
+        StmtKind::If(_, then, else_) => {
+            stmt_references_struct(gcx, then, struct_id)
+                || else_.is_some_and(|e| stmt_references_struct(gcx, e, struct_id))
+        }
+        StmtKind::Switch(sw) => {
+            sw.cases.iter().any(|case| block_references_struct(gcx, &case.body, struct_id))
+        }
+        StmtKind::Try(t) => t.clauses.iter().any(|clause| {
+            clause
+                .args
+                .iter()
+                .any(|&var_id| type_references_struct(&hir.variable(var_id).ty.kind, struct_id))
+                || block_references_struct(gcx, &clause.block, struct_id)
+        }),
+        _ => false,
+    }
+}
+
+/// Returns `true` if `func_id` references `struct_id` in its return types or the local variable
+/// declarations in its body.
+///
+/// Parameters are deliberately excluded: a storage-pointer parameter is just a reference the
+/// caller supplies, and says nothing about where that storage actually lives (it could just as
+/// well point at an ordinary state variable, as in the state-variable case above). A return type
+/// or a local variable initialized from an accessor call, by contrast, is the idiomatic ERC-7201
+/// accessor/consumer pattern itself.
+fn function_references_struct<'hir>(
+    gcx: Gcx<'hir>,
+    func_id: FunctionId,
+    struct_id: StructId,
+) -> bool {
+    let hir = &gcx.hir;
+    let func = hir.function(func_id);
+    func.returns
+        .iter()
+        .any(|&var_id| type_references_struct(&hir.variable(var_id).ty.kind, struct_id))
+        || func.body.is_some_and(|body| block_references_struct(gcx, &body, struct_id))
+}
+
+/// Returns `true` if `struct_id` is referenced anywhere in the function declarations (return
+/// types or local variables) of any contract in `linearized_bases`.
+///
+/// State variable declarations are deliberately excluded: a struct used as an actual state
+/// variable is allocated and reported by solc's own `storageLayout` at its real sequential slot,
+/// so treating that as a reference here would synthesize a second, conflicting entry for the
+/// same field at the unrelated ERC-7201 namespace slot.
+fn contract_references_struct<'hir>(
+    gcx: Gcx<'hir>,
+    linearized_bases: &HashSet<ContractId>,
+    struct_id: StructId,
+) -> bool {
+    let hir = &gcx.hir;
+    linearized_bases.iter().any(|&base_id| {
+        hir.contract(base_id)
+            .all_functions()
+            .any(|func_id| function_references_struct(gcx, func_id, struct_id))
+    })
+}
+
+/// Collects ERC-7201 namespaced storage entries for the target contract using Solar HIR.
+///
+/// Scans all structs annotated with `@custom:storage-location erc7201:<namespace>` in the
+/// target contract's linearization chain, computes their base slot via [`erc7201`], and
+/// synthesises [`Storage`] and [`StorageType`] entries using Solidity's packing rules.
+fn collect_erc7201_entries(
+    output: &mut ProjectCompileOutput,
+    target_path: &Path,
+    target_name: Option<&str>,
+) -> Result<(Vec<Storage>, BTreeMap<String, StorageType>)> {
+    let mut entries: Vec<Storage> = Vec::new();
+    let mut types: BTreeMap<String, StorageType> = BTreeMap::new();
+
+    let compiler = output.parser_mut().solc_mut().compiler_mut();
+    compiler.enter_mut(|compiler| -> Result<()> {
+        let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
+
+        let gcx = compiler.gcx();
+        let hir = &gcx.hir;
+
+        // Locate the target contract: require exactly one match.
+        let mut it = hir.contract_ids().filter(|id| {
+            let c = hir.contract(*id);
+            if let Some(name) = target_name
+                && c.name.as_str() != name
+            {
+                return false;
+            }
+            matches!(&hir.source(c.source).file.name, FileName::Real(p) if p == target_path)
+        });
+        let target_id = match (it.next(), it.next()) {
+            (Some(id), None) => id,
+            _ => return Ok(()),
+        };
+
+        let linearized_bases: HashSet<_> =
+            hir.contract(target_id).linearized_bases.iter().copied().collect();
+        let target_contract_name = hir.contract(target_id).name.as_str().to_string();
+
+        // Walk every struct in the HIR; keep those with an @custom:storage-location
+        // erc7201:<ns> annotation that are referenced by the linearization chain.
+        for struct_id in hir.strukt_ids() {
+            let strukt = hir.strukt(struct_id);
+
+            let referenced = match strukt.contract {
+                Some(struct_contract_id) => linearized_bases.contains(&struct_contract_id),
+                None => contract_references_struct(gcx, &linearized_bases, struct_id),
+            };
+            if !referenced {
+                continue;
+            }
+            if strukt.doc.is_empty() {
+                continue;
+            }
+
+            let docs = gcx.natspec_doc_comments(strukt.doc);
+            let namespace = docs.iter().find_map(|item| {
+                if let NatSpecKind::Custom { name } = item.kind
+                    && name.name.as_str() == "storage-location"
+                {
+                    item.content().trim().strip_prefix("erc7201:")
+                } else {
+                    None
+                }
+            });
+
+            let Some(namespace) = namespace else { continue };
+
+            let base_slot = U256::from_be_bytes(erc7201(namespace).0);
+            let contract_label = format!("{target_contract_name} [erc7201:{namespace}]");
+
+            pack_fields(gcx, strukt.fields, |var_id, type_label, field_slot, field_offset| {
+                let var = hir.variable(var_id);
+                let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
+                let slot_value = base_slot + U256::from(field_slot);
+                entries.push(Storage {
+                    ast_id: 0,
+                    contract: contract_label.clone(),
+                    label: field_name,
+                    offset: field_offset as i64,
+                    slot: format!("{slot_value:#066x}"),
+                    storage_type: type_label.to_string(),
+                });
+                register_type_recursive(gcx, &var.ty.kind, &mut types);
+            });
+        }
+
+        Ok(())
+    })?;
+
+    Ok((entries, types))
 }
 
 fn print_linearization(
