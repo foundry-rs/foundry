@@ -1066,6 +1066,42 @@ forgetest!(nested_config_remappings_are_dependency_scoped, |prj, cmd| {
     cmd.arg("build").assert_success();
 });
 
+forgetest!(dependency_explicit_aliases_are_preserved, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    for (path, contract) in [
+        ("lib/pkg/Pkg.sol", "Pkg"),
+        ("lib/scope/Other.sol", "Other"),
+        ("lib/src/SrcAlias.sol", "SrcAlias"),
+        ("lib/test/TestAlias.sol", "TestAlias"),
+        ("lib/script/ScriptAlias.sol", "ScriptAlias"),
+    ] {
+        let path = dep.join(path);
+        pretty_err(path.parent().unwrap(), fs::create_dir_all(path.parent().unwrap()));
+        pretty_err(&path, fs::write(&path, format!("contract {contract} {{}}\n")));
+    }
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"@scope/pkg/=lib/pkg/\", \"@scope/=lib/scope/\", \"src/=lib/src/\", \"test/=lib/test/\", \"script/=lib/script/\"]\n",
+        ),
+    );
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("src/Dep.sol"),
+            "import {Pkg} from \"@scope/pkg/Pkg.sol\"; import {Other} from \"@scope/Other.sol\"; import {SrcAlias} from \"src/SrcAlias.sol\"; import {TestAlias} from \"test/TestAlias.sol\"; import {ScriptAlias} from \"script/ScriptAlias.sol\"; contract Dep is Pkg, Other, SrcAlias, TestAlias, ScriptAlias {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        "import {Dep} from \"dep/Dep.sol\"; contract UsesDep is Dep {}\n",
+    );
+
+    cmd.arg("build").assert_success();
+});
+
 forgetest!(dependency_context_does_not_match_sibling_prefix, |prj, cmd| {
     let shared = prj.paths().libraries[0].join("shared/src");
     pretty_err(&shared, fs::create_dir_all(&shared));
