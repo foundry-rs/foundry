@@ -13,7 +13,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-fn parse_configured_remapping(remapping: &str) -> Result<RelativeRemapping, String> {
+fn parse_configured_remapping(remapping: &str) -> Result<Remapping, String> {
     let (key, path) = remapping
         .split_once('=')
         .ok_or_else(|| format!("invalid remapping format: {remapping}"))?;
@@ -33,15 +33,12 @@ fn parse_configured_remapping(remapping: &str) -> Result<RelativeRemapping, Stri
             context: Some(key[..delimiter].to_string()),
             name: name.to_string(),
             path: path.to_string(),
-        }
-        .into());
+        });
     }
-    remapping.parse::<Remapping>().map(Into::into).map_err(|err| err.to_string())
+    remapping.parse::<Remapping>().map_err(|err| err.to_string())
 }
 
-pub(crate) fn deserialize_relative_remappings<'de, D>(
-    deserializer: D,
-) -> Result<Vec<RelativeRemapping>, D::Error>
+fn deserialize_configured_remappings<'de, D>(deserializer: D) -> Result<Vec<Remapping>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -51,10 +48,22 @@ where
         .collect()
 }
 
+pub(crate) fn deserialize_relative_remappings<'de, D>(
+    deserializer: D,
+) -> Result<Vec<RelativeRemapping>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(deserialize_configured_remappings(deserializer)?
+        .into_iter()
+        .map(RelativeRemapping::from)
+        .collect())
+}
+
 #[derive(Deserialize)]
 #[serde(transparent)]
 struct ConfiguredRemappings(
-    #[serde(deserialize_with = "deserialize_relative_remappings")] Vec<RelativeRemapping>,
+    #[serde(deserialize_with = "deserialize_configured_remappings")] Vec<Remapping>,
 );
 
 fn remapping_names_overlap(a: &str, b: &str) -> bool {
@@ -122,9 +131,7 @@ impl Remappings {
 
     /// Extract configured remappings without corrupting absolute Windows contexts.
     pub fn from_figment(figment: &Figment) -> Result<Vec<Remapping>, Error> {
-        figment
-            .extract_inner::<ConfiguredRemappings>("remappings")
-            .map(|remappings| remappings.0.into_iter().map(Remapping::from).collect::<Vec<_>>())
+        figment.extract_inner::<ConfiguredRemappings>("remappings").map(|remappings| remappings.0)
     }
 
     /// Extract project paths that cannot be remapped by dependencies.
