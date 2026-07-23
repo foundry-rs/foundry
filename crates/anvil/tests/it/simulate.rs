@@ -1026,6 +1026,365 @@ async fn test_simulate_create_calls_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_trace_transfer_response_logs_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let payload = json!({
+        "blockStateCalls": [{
+            "stateOverrides": {
+                "0xc000000000000000000000000000000000000000": {"balance": "0x2"},
+                "0xc100000000000000000000000000000000000000": {
+                    "code": "0x5f5f5f5f600173c2000000000000000000000000000000000000005af15000"
+                }
+            },
+            "calls": [{
+                "from": "0xc000000000000000000000000000000000000000",
+                "to": "0xc100000000000000000000000000000000000000",
+                "value": "0x2"
+            }]
+        }],
+        "traceTransfers": true
+    });
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([payload.clone(), "latest"])).await;
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["logsBloom"], format!("0x{}", "00".repeat(256)));
+    let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 2);
+    assert_eq!(
+        logs.iter()
+            .map(|log| {
+                json!({
+                    "address": log["address"],
+                    "from": log["topics"][1],
+                    "to": log["topics"][2],
+                    "value": log["data"],
+                    "logIndex": log["logIndex"],
+                })
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            json!({
+                "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "from": "0x000000000000000000000000c000000000000000000000000000000000000000",
+                "to": "0x000000000000000000000000c100000000000000000000000000000000000000",
+                "value": "0x0000000000000000000000000000000000000000000000000000000000000002",
+                "logIndex": "0x0",
+            }),
+            json!({
+                "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "from": "0x000000000000000000000000c100000000000000000000000000000000000000",
+                "to": "0x000000000000000000000000c200000000000000000000000000000000000000",
+                "value": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "logIndex": "0x1",
+            }),
+        ]
+    );
+
+    let mut payload = payload;
+    payload["traceTransfers"] = json!(false);
+    let response = rpc_request(&endpoint, "eth_simulateV1", json!([payload, "latest"])).await;
+    assert_eq!(response["result"][0]["calls"][0]["logs"], json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_preserves_amsterdam_transfer_logs_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc000000000000000000000000000000000000000": {"balance": "0x1"}
+                },
+                "calls": [{
+                    "from": "0xc000000000000000000000000000000000000000",
+                    "to": "0xc100000000000000000000000000000000000000",
+                    "value": "0x1"
+                }]
+            }],
+            "traceTransfers": false
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_ne!(response["result"][0]["logsBloom"], format!("0x{}", "00".repeat(256)));
+    let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["address"], "0xfffffffffffffffffffffffffffffffffffffffe");
+    assert_eq!(logs[0]["logIndex"], "0x0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_trace_transfer_excludes_callcode_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc100000000000000000000000000000000000000": {
+                        "balance": "0x1",
+                        "code": "0x5f5f5f5f600173c2000000000000000000000000000000000000005af200"
+                    }
+                },
+                "calls": [{"to": "0xc100000000000000000000000000000000000000"}]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["calls"][0]["status"], "0x1");
+    assert_eq!(response["result"][0]["calls"][0]["logs"], json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_trace_transfer_create_nonce_overflow_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc100000000000000000000000000000000000000": {
+                        "balance": "0x1",
+                        "nonce": "0xffffffffffffffff",
+                        "code": "0x600060006001f0505f5fa000"
+                    }
+                },
+                "calls": [{"to": "0xc100000000000000000000000000000000000000"}]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["calls"][0]["status"], "0x1");
+    let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["address"], "0xc100000000000000000000000000000000000000");
+    assert_eq!(logs[0]["logIndex"], "0x1");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_trace_create_and_selfdestruct_transfers_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc100000000000000000000000000000000000000": {
+                        "balance": "0x1",
+                        "code": "0x600060006001f000"
+                    },
+                    "0xc200000000000000000000000000000000000000": {
+                        "balance": "0x1",
+                        "code": "0x6000600060006001f500"
+                    },
+                    "0xc300000000000000000000000000000000000000": {
+                        "balance": "0x2",
+                        "code": "0x73c400000000000000000000000000000000000000ff"
+                    }
+                },
+                "calls": [
+                    {"to": "0xc100000000000000000000000000000000000000"},
+                    {"to": "0xc200000000000000000000000000000000000000"},
+                    {"to": "0xc300000000000000000000000000000000000000"}
+                ]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+    let calls = response["result"][0]["calls"].as_array().unwrap();
+    assert!(calls.iter().all(|call| call["status"] == "0x1"));
+    for (index, sender) in [
+        "0x000000000000000000000000c100000000000000000000000000000000000000",
+        "0x000000000000000000000000c200000000000000000000000000000000000000",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let logs = calls[index]["logs"].as_array().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0]["topics"][1], sender);
+        assert_ne!(
+            logs[0]["topics"][2],
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            logs[0]["data"],
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        );
+    }
+    let selfdestruct = &calls[2]["logs"][0];
+    assert_eq!(
+        json!({
+            "from": selfdestruct["topics"][1],
+            "to": selfdestruct["topics"][2],
+            "value": selfdestruct["data"],
+        }),
+        json!({
+            "from": "0x000000000000000000000000c300000000000000000000000000000000000000",
+            "to": "0x000000000000000000000000c400000000000000000000000000000000000000",
+            "value": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_trace_transfer_reverts_and_log_order_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc200000000000000000000000000000000000000": {
+                        "balance": "0x2",
+                        "code": "0x730000000000000000000000000000000000000000ff"
+                    },
+                    "0xc400000000000000000000000000000000000000": {
+                        "code": "0x5f5fa05f5f5f5f5f73c2000000000000000000000000000000000000005af1505f5fa000"
+                    }
+                },
+                "calls": [{"to": "0xc400000000000000000000000000000000000000"}]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+    let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
+    assert_eq!(
+        logs.iter()
+            .map(|log| json!({"address": log["address"], "logIndex": log["logIndex"]}))
+            .collect::<Vec<_>>(),
+        vec![
+            json!({
+                "address": "0xc400000000000000000000000000000000000000",
+                "logIndex": "0x0"
+            }),
+            json!({
+                "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "logIndex": "0x1"
+            }),
+            json!({
+                "address": "0xc400000000000000000000000000000000000000",
+                "logIndex": "0x2"
+            }),
+        ]
+    );
+
+    let reverted_log_payload = json!({
+        "blockStateCalls": [{
+            "stateOverrides": {
+                "0xc300000000000000000000000000000000000000": {
+                    "code": "0x5f5fa05f5ffd"
+                },
+                "0xc400000000000000000000000000000000000000": {
+                    "code": "0x5f5fa05f5f5f5f5f73c3000000000000000000000000000000000000005af1505f5fa000"
+                }
+            },
+            "calls": [{"to": "0xc400000000000000000000000000000000000000"}]
+        }],
+        "traceTransfers": true
+    });
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([reverted_log_payload.clone(), "latest"]))
+            .await;
+    assert!(response.get("error").is_none(), "{response}");
+    let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
+    assert_eq!(
+        logs.iter()
+            .map(|log| json!({"address": log["address"], "logIndex": log["logIndex"]}))
+            .collect::<Vec<_>>(),
+        vec![
+            json!({
+                "address": "0xc400000000000000000000000000000000000000",
+                "logIndex": "0x0"
+            }),
+            json!({
+                "address": "0xc400000000000000000000000000000000000000",
+                "logIndex": "0x2"
+            }),
+        ]
+    );
+
+    let mut reverted_log_payload = reverted_log_payload;
+    reverted_log_payload["traceTransfers"] = json!(false);
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([reverted_log_payload, "latest"])).await;
+    let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
+    assert_eq!(
+        logs.iter().map(|log| log["logIndex"].clone()).collect::<Vec<_>>(),
+        vec![json!("0x0"), json!("0x2")]
+    );
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc000000000000000000000000000000000000000": {"balance": "0x2"},
+                    "0xc100000000000000000000000000000000000000": {"code": "0x6000"}
+                },
+                "calls": [
+                    {
+                        "from": "0xc000000000000000000000000000000000000000",
+                        "to": "0xc100000000000000000000000000000000000000",
+                        "value": "0x1",
+                        "gas": "0x5208"
+                    },
+                    {
+                        "from": "0xc000000000000000000000000000000000000000",
+                        "to": "0xc100000000000000000000000000000000000000",
+                        "value": "0x1"
+                    }
+                ]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+    let calls = response["result"][0]["calls"].as_array().unwrap();
+    assert_eq!(calls[0]["status"], "0x0");
+    assert_eq!(calls[0]["logs"], json!([]));
+    assert_eq!(calls[1]["logs"][0]["logIndex"], "0x1");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_validation_defaults_base_fee_to_zero() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let response = rpc_request(

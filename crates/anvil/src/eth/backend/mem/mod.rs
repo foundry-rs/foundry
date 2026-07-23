@@ -5332,9 +5332,7 @@ impl Backend<FoundryNetwork> {
                     let mut inspector = self.build_inspector();
 
                     // transact
-                    if trace_transfers {
-                        inspector = inspector.with_transfers();
-                    }
+                    inspector = inspector.with_simulation_logs(trace_transfers);
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
                     let execution_result = if precompile_overrides.moves.is_empty() {
                         self.transact_with_inspector_ref(
@@ -5368,6 +5366,10 @@ impl Backend<FoundryNetwork> {
                     }
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
+                    let canonical_logs = result.clone().into_logs();
+                    let (response_logs, attempted_log_count) = inspector
+                        .take_simulation_logs(&canonical_logs)
+                        .expect("simulation log collector is installed");
                     inspector.print_logs();
                     if self.print_traces {
                         inspector.into_print_traces(self.call_trace_decoder.clone());
@@ -5443,17 +5445,14 @@ impl Backend<FoundryNetwork> {
                                 data: None,
                             }),
                         },
-                        logs: result
-                            .clone()
-                            .into_logs()
+                        logs: response_logs
                             .into_iter()
-                            .enumerate()
                             .map(|(idx, log)| Log {
                                 inner: log,
                                 block_number: Some(block_env.number.saturating_to()),
                                 block_timestamp: Some(block_env.timestamp.saturating_to()),
                                 transaction_index: Some(req_idx as u64),
-                                log_index: Some((idx + log_index) as u64),
+                                log_index: Some(idx + log_index),
                                 removed: false,
 
                                 block_hash: None,
@@ -5461,8 +5460,8 @@ impl Backend<FoundryNetwork> {
                             })
                             .collect(),
                     };
-                    logs.extend(sim_res.logs.iter().map(|log| log.inner.clone()));
-                    log_index += sim_res.logs.len();
+                    logs.extend(canonical_logs);
+                    log_index += attempted_log_count;
                     call_res.push(sim_res);
                 }
 
