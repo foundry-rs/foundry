@@ -344,6 +344,7 @@ foundry-fork-db = { version = "0.27.0", features = ["zstd"] }
 imbl = "7"
 solar = { package = "solar-compiler", version = "=0.2.0", default-features = false }
 solar-cli = { version = "=0.2.0", default-features = false }
+solar-lsp = { version = "=0.2.0", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
 ] }
