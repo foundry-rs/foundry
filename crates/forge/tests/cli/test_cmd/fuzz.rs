@@ -1571,6 +1571,194 @@ contract ForgeFuzzCminInvariantTargetTest is Test {
     assert_eq!(regular_file_count(&prj.root().join("min-invariant-corpus")), 2);
 });
 
+forgetest_init!(forge_fuzz_cmin_minimizes_broken_invariant_corpus, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminBrokenInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzCminBrokenInvariantTest is Test {
+    bool broken;
+    uint256 left;
+    uint256 right;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = this.breakInvariant.selector;
+        selectors[1] = this.laterBranch.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function breakInvariant(uint256) external {
+        broken = true;
+    }
+
+    function laterBranch(uint256 input) external {
+        if (input == 1) {
+            left = 1;
+        } else {
+            right = 1;
+        }
+    }
+
+    function invariant_canary() public view {
+        assertFalse(broken);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminBrokenInvariant.t.sol/ForgeFuzzCminBrokenInvariantTest.json",
+    );
+    let break_invariant = calldata_for(&abi, "breakInvariant", 0);
+    let one = calldata_for(&abi, "laterBranch", 1);
+    let two = calldata_for(&abi, "laterBranch", 2);
+    let corpus = prj.root().join("broken-invariant-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_sequence_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        &[&break_invariant, &one],
+    );
+    write_corpus_sequence_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000002-2.json",
+        &[&break_invariant, &one],
+    );
+    write_corpus_sequence_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000003-3.json",
+        &[&break_invariant, &two],
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ForgeFuzzCminBrokenInvariantTest",
+            "--mt",
+            "invariant_canary",
+            "--showmap-out",
+            "showmap-before-broken-invariant-cmin",
+            "--showmap-corpus-dir",
+            "broken-invariant-corpus",
+            "--showmap-trial",
+            "t",
+        ])
+        .assert_success();
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminBrokenInvariantTest",
+            "--mt",
+            "invariant_canary",
+            "broken-invariant-corpus",
+            "--corpus-out",
+            "min-broken-invariant-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("minimized corpus: kept 2/3 entries in min-broken-invariant-corpus"),
+        "{stdout}"
+    );
+    assert_eq!(regular_file_count(&prj.root().join("min-broken-invariant-corpus")), 2);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ForgeFuzzCminBrokenInvariantTest",
+            "--mt",
+            "invariant_canary",
+            "--showmap-out",
+            "showmap-after-broken-invariant-cmin",
+            "--showmap-corpus-dir",
+            "min-broken-invariant-corpus",
+            "--showmap-trial",
+            "t",
+        ])
+        .assert_success();
+    assert_eq!(
+        showmap_edge_ids(&prj.root().join("showmap-before-broken-invariant-cmin")),
+        showmap_edge_ids(&prj.root().join("showmap-after-broken-invariant-cmin"))
+    );
+});
+
+forgetest_init!(forge_fuzz_cmin_rejects_masked_handler_failure, |prj, cmd| {
+    prj.update_config(|config| config.invariant.check_interval = 0);
+    prj.add_test(
+        "ForgeFuzzCminMaskedHandler.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzCminMaskedHandlerTest is Test {
+    bool broken;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = this.breakInvariant.selector;
+        selectors[1] = this.assertHandler.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function breakInvariant(uint256) external {
+        broken = true;
+    }
+
+    function assertHandler(uint256) external {
+        assertTrue(false);
+    }
+
+    function invariant_canary() public view {
+        assertFalse(broken);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminMaskedHandler.t.sol/ForgeFuzzCminMaskedHandlerTest.json",
+    );
+    let break_invariant = calldata_for(&abi, "breakInvariant", 0);
+    let assert_handler = calldata_for(&abi, "assertHandler", 0);
+    let corpus = prj.root().join("masked-handler-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_sequence_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        &[&break_invariant, &assert_handler],
+    );
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminMaskedHandlerTest",
+            "--mt",
+            "invariant_canary",
+            "masked-handler-corpus",
+            "--corpus-out",
+            "min-masked-handler-corpus",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("1 corpus entries failed during replay"), "{stderr}");
+});
+
 forgetest_init!(forge_fuzz_tmin_removes_redundant_transactions, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzTminRemoveTarget.t.sol",
