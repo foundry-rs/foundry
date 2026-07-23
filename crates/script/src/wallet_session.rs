@@ -9,6 +9,7 @@ use alloy_primitives::Address;
 use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::TEMPO_SESSION_ID_ENV, utils::LoadConfig};
+use foundry_config::Config;
 use std::{
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
@@ -257,6 +258,7 @@ impl ScriptArgs {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
         let session = &self.wallet_session;
         let mut args = vec![OsString::from("wallet"), OsString::from("session")];
+        push_arg(&mut args, "--profile", Config::selected_profile().to_string());
 
         // The outer `cast` process creates and later revokes the temporary access key, so it needs
         // the session policy, RPC transport settings, and root signer configuration itself.
@@ -482,7 +484,6 @@ fn quote_arg(arg: &OsString) -> Result<String> {
 mod tests {
     use super::*;
     use clap::Parser;
-    use foundry_config::Config;
     use std::{borrow::Cow, fs};
     use tempfile::tempdir;
 
@@ -651,6 +652,8 @@ mod tests {
         let command_args = command_args(&command);
         assert_eq!(command_args[0], "wallet");
         assert_eq!(command_args[1], "session");
+        let selected_profile = Config::selected_profile().to_string();
+        assert_eq!(option_value(&command_args, "--profile"), Some(selected_profile.as_str()));
         assert!(command_args.contains(&"--root".into()));
         assert!(command_args.contains(&root.to_string().into()));
         assert!(command_args.contains(&"--from".into()));
