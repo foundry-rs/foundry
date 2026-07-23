@@ -566,8 +566,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
         {
             record_replay_failure(&mut observation, failure);
-        } else if last_accepted_handlers_succeeded
-            && target.invariant_replay.call_after_invariant
+        } else if target.invariant_replay.call_after_invariant
             && let Some(failure) = broken_after_invariant(&executor, address)?
         {
             record_replay_failure(&mut observation, failure);
