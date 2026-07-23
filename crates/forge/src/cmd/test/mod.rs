@@ -79,7 +79,7 @@ use rand::Rng;
 use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc::channel},
@@ -1973,6 +1973,10 @@ impl TestArgs {
         let override_networks =
             execution.inline_config.referenced_override_networks(&config.profile);
 
+        // Internal/deprecated cheatcode warnings are suite-level and re-derived by every network
+        // pass; track the (suite, warning) pairs already printed so each is emitted only once.
+        let mut printed_suite_warnings = HashSet::new();
+
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
             execution.decode_internal = decode_internal;
@@ -1984,6 +1988,7 @@ impl TestArgs {
                 output,
                 &mut filter,
                 execution.clone(),
+                &mut printed_suite_warnings,
             )
             .await?
         } else {
@@ -2007,6 +2012,7 @@ impl TestArgs {
                         },
                         ..execution.clone()
                     },
+                    &mut printed_suite_warnings,
                 )
                 .await?;
 
@@ -2029,6 +2035,7 @@ impl TestArgs {
                             },
                             ..execution.clone()
                         },
+                        &mut printed_suite_warnings,
                     )
                     .await?;
                 merge_outcomes(&mut outcome, pass_outcome);
@@ -2485,6 +2492,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
+        printed_suite_warnings: &mut HashSet<(String, String)>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork_block) =
@@ -2512,7 +2520,9 @@ impl TestArgs {
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
-        let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
+        let outcome = self
+            .run_tests_inner(runner, config, verbosity, filter, output, printed_suite_warnings)
+            .await?;
         Ok((libraries, outcome))
     }
 
@@ -2542,6 +2552,7 @@ impl TestArgs {
     }
 
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
+    #[expect(clippy::too_many_arguments)]
     async fn dispatch_network(
         &self,
         dispatch_opts: &EvmOpts,
@@ -2550,24 +2561,40 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
+        printed_suite_warnings: &mut HashSet<(String, String)>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         match network_dispatch_kind(dispatch_opts) {
             NetworkDispatchKind::Tempo => {
                 self.build_and_run_tests::<TempoEvmNetwork>(
-                    config, evm_opts, output, filter, execution,
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    printed_suite_warnings,
                 )
                 .await
             }
             #[cfg(feature = "optimism")]
             NetworkDispatchKind::Optimism => {
                 self.build_and_run_tests::<OpEvmNetwork>(
-                    config, evm_opts, output, filter, execution,
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    printed_suite_warnings,
                 )
                 .await
             }
             NetworkDispatchKind::Eth => {
                 self.build_and_run_tests::<EthEvmNetwork>(
-                    config, evm_opts, output, filter, execution,
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    printed_suite_warnings,
                 )
                 .await
             }
@@ -2618,6 +2645,7 @@ impl TestArgs {
         verbosity: u8,
         filter: &mut ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
+        printed_suite_warnings: &mut HashSet<(String, String)>,
     ) -> eyre::Result<TestOutcome> {
         let fuzz_seed = config.fuzz.seed;
         if self.list {
@@ -2885,8 +2913,13 @@ impl TestArgs {
             // Print suite header.
             if !silent {
                 sh_println!()?;
+                // A suite's internal/deprecated cheatcode warnings are re-derived by every
+                // network pass; emit each (suite, warning) only once across passes so a shared
+                // warning is not repeated once per pass.
                 for warning in &suite_result.warnings {
-                    sh_warn!("{warning}")?;
+                    if printed_suite_warnings.insert((contract_name.clone(), warning.clone())) {
+                        sh_warn!("{warning}")?;
+                    }
                 }
                 if has_tests {
                     let tests = if len > 1 { "tests" } else { "test" };
@@ -3749,6 +3782,10 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
                 let base_suite = e.get_mut();
                 base_suite.test_results.extend(other_suite.test_results);
                 base_suite.warnings.extend(other_suite.warnings);
+                // Suite-level warnings (deprecated or internal cheatcodes) are re-emitted by
+                // every pass; drop exact duplicates while preserving the original order.
+                let mut seen = std::collections::HashSet::new();
+                base_suite.warnings.retain(|warning| seen.insert(warning.clone()));
                 base_suite.duration = base_suite.duration.max(other_suite.duration);
             }
         }

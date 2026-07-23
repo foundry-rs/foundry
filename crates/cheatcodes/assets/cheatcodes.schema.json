@@ -322,7 +322,7 @@
           "const": "stable"
         },
         {
-          "description": "The cheatcode is unstable, meaning it may contain bugs and may break its API on any\nrelease.\n\nUse of experimental cheatcodes will result in a warning.",
+          "description": "The cheatcode is unstable, meaning it may contain bugs and may break its API on any\nrelease.\n\nThis status currently has no runtime effect.",
           "type": "string",
           "const": "experimental"
         },

@@ -1424,6 +1424,144 @@ contract GasLimitTest is Test {
     }
 );
 
+forgetest_init!(test_internal_cheatcode_suite_collector, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 128;
+        config.fuzz.seed = Some(U256::from(100));
+        config.invariant.runs = 2;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "InternalCheatcode.t.sol",
+        r#"
+        import "forge-std/Test.sol";
+        import {Vm} from "forge-std/Vm.sol";
+
+        interface VmInternal {
+            function _expectCheatcodeRevert() external;
+        }
+
+        abstract contract InternalCheatcodeBase is Test {
+            function useInternalCheatcode() internal {
+                VmInternal(address(vm))._expectCheatcodeRevert();
+                vm.parseJsonUint("invalid json", ".value");
+            }
+        }
+
+        contract InternalUnitTest is InternalCheatcodeBase {
+            function test_internal() public {
+                useInternalCheatcode();
+            }
+        }
+
+        contract InternalMultiworkerFuzzTest is InternalCheatcodeBase {
+            function test_internal(uint256) public {
+                useInternalCheatcode();
+            }
+        }
+
+        contract InternalSkippedInvariantTest is InternalCheatcodeBase {
+            function invariant_internal() public {
+                useInternalCheatcode();
+                vm.skip(true);
+            }
+        }
+
+        contract Handler {
+            function act() public {}
+        }
+
+        contract InternalInvariantConfigTest {
+            Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+            address internal handler;
+
+            function useInternalCheatcode() internal {
+                VmInternal(address(vm))._expectCheatcodeRevert();
+                vm.parseJsonUint("invalid json", ".value");
+            }
+
+            function setUp() public {
+                handler = address(new Handler());
+            }
+
+            function targetContracts() public returns (address[] memory targets) {
+                useInternalCheatcode();
+                targets = new address[](1);
+                targets[0] = handler;
+            }
+
+            function invariant_internal() public pure {}
+        }
+
+        contract InternalAfterInvariantTest is InternalCheatcodeBase {
+            function setUp() public {
+                targetContract(address(new Handler()));
+            }
+
+            function invariant_internal() public pure {}
+
+            function afterInvariant() public {
+                useInternalCheatcode();
+            }
+        }
+
+        contract InternalConstructorFailureTest is InternalCheatcodeBase {
+            constructor() {
+                useInternalCheatcode();
+                assert(false);
+            }
+
+            function test_never_runs() public pure {}
+        }
+        "#,
+    );
+
+    let warning = str![[r#"
+Warning: the following cheatcode(s) are intended for internal use and may change or be removed:
+  _expectCheatcodeRevert()
+
+"#]];
+
+    cmd.args(["test", "--mc", "InternalUnitTest"]).assert_success().stderr_eq(warning.clone());
+    cmd.forge_fuse();
+    cmd.env("RAYON_NUM_THREADS", "2");
+    cmd.args(["test", "--mc", "InternalMultiworkerFuzzTest"])
+        .assert_success()
+        .stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args(["test", "--mc", "InternalSkippedInvariantTest"])
+        .assert_success()
+        .stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args(["test", "--mc", "InternalInvariantConfigTest"])
+        .assert_success()
+        .stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args(["test", "--mc", "InternalAfterInvariantTest"])
+        .assert_success()
+        .stderr_eq(warning.clone());
+    cmd.forge_fuse()
+        .args(["test", "--mc", "InternalConstructorFailureTest"])
+        .assert_failure()
+        .stderr_eq(warning);
+
+    let output =
+        cmd.forge_fuse().args(["test", "--mc", "InternalUnitTest", "--json"]).assert_success();
+    assert!(output.get_output().stderr.is_empty());
+    let output: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let suite = output.as_object().unwrap().values().next().unwrap();
+    assert_eq!(
+        suite["warnings"][0],
+        "the following cheatcode(s) are intended for internal use and may change or be removed:\n  \
+         _expectCheatcodeRevert()"
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "InternalUnitTest", "--quiet"])
+        .assert_success()
+        .stderr_eq(str![""]);
+});
+
 forgetest!(test_match_path, |prj, cmd| {
     prj.add_source(
         "dummy",

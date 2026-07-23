@@ -1,4 +1,5 @@
 use super::*;
+use foundry_cheatcodes_spec::{StatusAction, cheatcode_by_selector};
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -773,6 +774,22 @@ impl SymbolicExecutor {
                 }
                 if !self.assume_expr_at_least(state, &in_size_word, min_size)? {
                     return Ok(StepOutcome::AssumeRejected);
+                }
+            }
+
+            if to == CHEATCODE_ADDRESS
+                && let Some(cheatcode) = cheatcode_by_selector(selector)
+            {
+                match cheatcode.status.action() {
+                    StatusAction::Continue => {}
+                    StatusAction::RecordInternal => {
+                        if let Some(cheatcodes) = &executor.inspector().cheatcodes {
+                            cheatcodes.record_internal_cheatcode(cheatcode.func.signature);
+                        }
+                    }
+                    StatusAction::RejectRemoved => {
+                        return Err(SymbolicError::Unsupported("removed cheatcode"));
+                    }
                 }
             }
 
