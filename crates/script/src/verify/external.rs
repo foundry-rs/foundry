@@ -4,6 +4,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Constructor;
 use alloy_primitives::{Address, Bytes, keccak256};
 use eyre::{Result, bail, eyre};
+use forge_verify::sourcify::SOURCIFY_URL;
 use foundry_compilers::{artifacts::CompilerOutput, solc::Solc};
 use foundry_config::{Chain, NamedChain};
 use futures::StreamExt;
@@ -28,9 +29,11 @@ const MAX_COMPILER_VERSIONS: usize = 8;
 const MAX_COMPILATIONS: usize = 32;
 const MAX_CANDIDATES: usize = 512;
 const MAX_CREATION_BYTECODE: usize = 64 * 1024 * 1024;
-const MAX_CANDIDATE_METADATA: usize = 8 * 1024 * 1024;
+const MAX_RETAINED_METADATA: usize = 8 * 1024 * 1024;
 const MAX_RETAINED_SOURCE_INPUT: usize = 64 * 1024 * 1024;
 const MAX_SOURCE_PATH: usize = 4096;
+const MAX_COMPILER_VERSION: usize = 256;
+const MAX_CACHED_ERROR_CHARS: usize = 512;
 const MAX_STDOUT: usize = 32 * 1024 * 1024;
 const MAX_STDERR: usize = 1024 * 1024;
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -39,14 +42,22 @@ pub(super) const MAX_PROVENANCE_ADDRESSES: usize = 16;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum SourceProvider {
     Etherscan { endpoint: String },
-    Sourcify,
+    Sourcify { endpoint: String },
+}
+
+impl SourceProvider {
+    const fn metadata_len(&self) -> usize {
+        match self {
+            Self::Etherscan { endpoint } | Self::Sourcify { endpoint } => endpoint.len(),
+        }
+    }
 }
 
 impl std::fmt::Display for SourceProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Etherscan { .. } => f.write_str("Etherscan"),
-            Self::Sourcify => f.write_str("Sourcify"),
+            Self::Sourcify { .. } => f.write_str("Sourcify"),
         }
     }
 }
@@ -103,7 +114,7 @@ pub(super) struct ExternalResolver {
     compilations: usize,
     retained_source_input: usize,
     retained_candidates: usize,
-    retained_candidate_metadata: usize,
+    retained_metadata: usize,
     retained_creation_bytecode: usize,
 }
 
@@ -122,7 +133,7 @@ impl ExternalResolver {
             compilations: 0,
             retained_source_input: 0,
             retained_candidates: 0,
-            retained_candidate_metadata: 0,
+            retained_metadata: 0,
             retained_creation_bytecode: 0,
         })
     }
@@ -164,30 +175,31 @@ impl ExternalResolver {
                 return Err("Etherscan response exceeds 10 MiB".to_string());
             }
             let body = read_capped_body(response, MAX_INPUT_SIZE, "Etherscan").await?;
-            let (input, compiler_version) = parse_etherscan_response(&body)?;
-            let version = parse_compiler_version(&compiler_version).map_err(|e| e.to_string())?;
+            let (input, version) = parse_etherscan_response(&body)?;
             Ok(Some(ExternalSource { input: Arc::new(input), version, provider }))
         }
         .await;
-        let result = self.charge_source_result(result);
-        self.fetch_cache.insert(key, result.clone());
-        result
+        self.cache_source_result(key, result)
     }
 
     pub(super) async fn resolve_sourcify(
         &mut self,
         chain: Chain,
         address: Address,
+        endpoint: Option<&str>,
     ) -> Result<Option<ExternalSource>, String> {
+        let Some(endpoint) = endpoint else { return Ok(None) };
         // Canonical Sourcify cannot observe ephemeral local chains. Avoid a guaranteed external
         // request so local external-verification workflows remain hermetic.
-        if matches!(
-            chain.named(),
-            Some(NamedChain::Dev | NamedChain::AnvilHardhat | NamedChain::Cannon)
-        ) {
+        if endpoint == SOURCIFY_URL
+            && matches!(
+                chain.named(),
+                Some(NamedChain::Dev | NamedChain::AnvilHardhat | NamedChain::Cannon)
+            )
+        {
             return Ok(None);
         }
-        let provider = SourceProvider::Sourcify;
+        let provider = SourceProvider::Sourcify { endpoint: endpoint.to_string() };
         let key = FetchKey { chain: chain.id(), provider: provider.clone(), address };
         if let Some(cached) = self.fetch_cache.get(&key) {
             return cached.clone();
@@ -196,8 +208,9 @@ impl ExternalResolver {
             return Err("external source fetch limit exceeded".to_string());
         }
         let result = async {
+            let endpoint = endpoint.trim_end_matches('/');
             let url = format!(
-                "https://sourcify.dev/server/v2/contract/{}/{address}?fields=stdJsonInput,compilation.compilerVersion",
+                "{endpoint}/v2/contract/{}/{address}?fields=stdJsonInput,compilation.compilerVersion",
                 chain.id()
             );
             let response = self.http.get(url).send().await.map_err(|_| "Sourcify request failed".to_string())?;
@@ -223,9 +236,7 @@ impl ExternalResolver {
             }))
         }
         .await;
-        let result = self.charge_source_result(result);
-        self.fetch_cache.insert(key, result.clone());
-        result
+        self.cache_source_result(key, result)
     }
 
     pub(super) async fn compile(
@@ -240,15 +251,30 @@ impl ExternalResolver {
         if self.compilations >= MAX_COMPILATIONS {
             return Err("external compilation limit exceeded".to_string());
         }
-        if !self.compiler_versions.contains(&source.version)
-            && self.compiler_versions.len() >= MAX_COMPILER_VERSIONS
-        {
+        let new_version = !self.compiler_versions.contains(&source.version);
+        if new_version && self.compiler_versions.len() >= MAX_COMPILER_VERSIONS {
             return Err("external compiler version limit exceeded".to_string());
         }
+        let version_len = source.version.to_string().len();
+        let cache_metadata = key
+            .1
+            .len()
+            .saturating_add(version_len)
+            .saturating_add(if new_version { version_len } else { 0 });
         self.compilations += 1;
+        let result = match compile_source(source).await {
+            Ok(candidates) => self.charge_candidates(candidates, cache_metadata),
+            Err(err) => Err(err),
+        };
+        let result = match result {
+            Ok(candidates) => Ok(candidates),
+            Err(err) => {
+                let err = bound_cached_error(err);
+                self.charge_metadata(cache_metadata.saturating_add(err.len()))?;
+                Err(err)
+            }
+        };
         self.compiler_versions.insert(source.version.clone());
-        let result =
-            compile_source(source).await.and_then(|candidates| self.charge_candidates(candidates));
         self.compile_cache.insert(key, result.clone());
         result
     }
@@ -256,47 +282,86 @@ impl ExternalResolver {
     fn charge_candidates(
         &mut self,
         candidates: Vec<Candidate>,
+        cache_metadata: usize,
     ) -> Result<Arc<[Candidate]>, String> {
         let bytes = candidates.iter().fold(0usize, |total, candidate| {
             total.saturating_add(candidate.creation_bytecode.len())
         });
-        let metadata = candidates.iter().fold(0usize, |total, candidate| {
+        let metadata = candidates.iter().try_fold(cache_metadata, |total, candidate| {
             let constructor = candidate
                 .constructor
                 .as_ref()
-                .and_then(|constructor| serde_json::to_vec(constructor).ok())
+                .map(serde_json::to_vec)
+                .transpose()
+                .map_err(|_| "failed to measure candidate constructor".to_string())?
                 .map_or(0, |constructor| constructor.len());
-            total.saturating_add(candidate.fqn.len()).saturating_add(constructor)
-        });
+            Ok::<_, String>(
+                total
+                    .saturating_add(candidate.fqn.len())
+                    .saturating_add(candidate.fingerprint.len())
+                    .saturating_add(candidate.version.to_string().len())
+                    .saturating_add(constructor),
+            )
+        })?;
         if self.retained_candidates.saturating_add(candidates.len()) > MAX_CANDIDATES {
             return Err("external cumulative candidate limit exceeded".to_string());
         }
-        if self.retained_candidate_metadata.saturating_add(metadata) > MAX_CANDIDATE_METADATA {
-            return Err("external cumulative candidate metadata limit exceeded".to_string());
+        if self.retained_metadata.saturating_add(metadata) > MAX_RETAINED_METADATA {
+            return Err("external cumulative metadata limit exceeded".to_string());
         }
         if self.retained_creation_bytecode.saturating_add(bytes) > MAX_CREATION_BYTECODE {
             return Err("external cumulative creation bytecode limit exceeded".to_string());
         }
         self.retained_candidates += candidates.len();
-        self.retained_candidate_metadata += metadata;
+        self.retained_metadata += metadata;
         self.retained_creation_bytecode += bytes;
         Ok(Arc::from(candidates))
     }
 
-    fn charge_source_result(
+    fn cache_source_result(
         &mut self,
+        key: FetchKey,
         result: Result<Option<ExternalSource>, String>,
     ) -> Result<Option<ExternalSource>, String> {
-        let Some(source) = result? else { return Ok(None) };
-        let bytes = serde_json::to_vec(&source.input)
-            .map_err(|_| "failed to measure Standard JSON input".to_string())?
-            .len();
-        if self.retained_source_input.saturating_add(bytes) > MAX_RETAINED_SOURCE_INPUT {
+        let result = result.map_err(bound_cached_error);
+        let source_bytes = match &result {
+            Ok(Some(source)) => serde_json::to_vec(&source.input)
+                .map_err(|_| "failed to measure Standard JSON input".to_string())?
+                .len(),
+            Ok(None) | Err(_) => 0,
+        };
+        let retained = key.provider.metadata_len().saturating_add(match &result {
+            Ok(Some(source)) => {
+                source.provider.metadata_len().saturating_add(source.version.to_string().len())
+            }
+            Ok(None) => 0,
+            Err(err) => err.len(),
+        });
+        if self.retained_source_input.saturating_add(source_bytes) > MAX_RETAINED_SOURCE_INPUT {
             return Err("external cumulative source input limit exceeded".to_string());
         }
-        self.retained_source_input += bytes;
-        Ok(Some(source))
+        if self.retained_metadata.saturating_add(retained) > MAX_RETAINED_METADATA {
+            return Err("external cumulative metadata limit exceeded".to_string());
+        }
+        self.retained_source_input += source_bytes;
+        self.retained_metadata += retained;
+        self.fetch_cache.insert(key, result.clone());
+        result
     }
+
+    fn charge_metadata(&mut self, bytes: usize) -> Result<(), String> {
+        if self.retained_metadata.saturating_add(bytes) > MAX_RETAINED_METADATA {
+            return Err("external cumulative metadata limit exceeded".to_string());
+        }
+        self.retained_metadata += bytes;
+        Ok(())
+    }
+}
+
+fn bound_cached_error(error: String) -> String {
+    let mut chars = error.chars();
+    let error = chars.by_ref().take(MAX_CACHED_ERROR_CHARS).collect::<String>();
+    if chars.next().is_some() { format!("{error}…") } else { error }
 }
 
 async fn read_capped_body(
@@ -323,7 +388,7 @@ fn append_capped(output: &mut Vec<u8>, chunk: &[u8], limit: usize) -> bool {
     true
 }
 
-fn parse_etherscan_response(body: &[u8]) -> Result<(Value, String), String> {
+fn parse_etherscan_response(body: &[u8]) -> Result<(Value, Version), String> {
     let response: Value =
         serde_json::from_slice(body).map_err(|e| format!("invalid Etherscan response: {e}"))?;
     if response.get("status").and_then(Value::as_str) != Some("1") {
@@ -339,8 +404,9 @@ fn parse_etherscan_response(body: &[u8]) -> Result<(Value, String), String> {
     let compiler_version = item
         .get("CompilerVersion")
         .and_then(Value::as_str)
-        .ok_or_else(|| "Etherscan compiler version is missing".to_string())?
-        .to_string();
+        .ok_or_else(|| "Etherscan compiler version is missing".to_string())?;
+    let compiler_version =
+        parse_compiler_version(compiler_version).map_err(|err| err.to_string())?;
     let source =
         item.get("SourceCode").ok_or_else(|| "Etherscan source code is missing".to_string())?;
     let input = match source {
@@ -371,6 +437,9 @@ struct SourcifyCompilation {
 }
 
 fn parse_compiler_version(version: &str) -> Result<Version> {
+    if version.len() > MAX_COMPILER_VERSION {
+        bail!("compiler version exceeds {MAX_COMPILER_VERSION} bytes");
+    }
     Version::parse(version.trim_start_matches('v')).map_err(Into::into)
 }
 
@@ -564,6 +633,11 @@ async fn run_bounded_command(
     stderr_limit: usize,
     timeout: Duration,
 ) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), String> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    // Reserve part of the caller's timeout for cancelling I/O, terminating, and reaping. This
+    // keeps the complete subprocess lifecycle within one absolute deadline.
+    let cleanup_window = std::cmp::min(timeout / 10, Duration::from_secs(1));
+    let execution_deadline = deadline - cleanup_window;
     command
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
@@ -574,7 +648,7 @@ async fn run_bounded_command(
         child.stdout.take().ok_or_else(|| "failed to open subprocess stdout".to_string())?;
     let stderr =
         child.stderr.take().ok_or_else(|| "failed to open subprocess stderr".to_string())?;
-    let input_task = input.map(|input| {
+    let mut input_task = input.map(|input| {
         let mut stdin = child.stdin.take().expect("piped stdin");
         tokio::spawn(async move {
             stdin.write_all(&input).await?;
@@ -584,45 +658,70 @@ async fn run_bounded_command(
     let mut output_task = tokio::spawn(async move {
         tokio::try_join!(read_capped(stdout, stdout_limit), read_capped(stderr, stderr_limit))
     });
-    let mut completed_output = None;
-    let deadline = tokio::time::sleep(timeout);
-    tokio::pin!(deadline);
-    let status = tokio::select! {
-        result = child.wait() => result.map_err(|_| "failed to wait for subprocess".to_string())?,
-        output = &mut output_task => {
-            match output {
-                Ok(Err(err)) => {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    return Err(err)
-                }
-                Err(_) => {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    return Err("subprocess output task failed".to_string())
-                }
-                Ok(Ok(output)) => {
-                    completed_output = Some(output);
-                    child.wait().await.map_err(|_| "failed to wait for subprocess".to_string())?
+    let mut input_joined = false;
+    let mut output_joined = false;
+    let lifecycle = async {
+        let mut completed_output = None;
+        let status = tokio::select! {
+            result = child.wait() => {
+                result.map_err(|_| "failed to wait for subprocess".to_string())?
+            }
+            output = &mut output_task => {
+                output_joined = true;
+                match output {
+                    Ok(Ok(output)) => {
+                        completed_output = Some(output);
+                        child.wait().await.map_err(|_| "failed to wait for subprocess".to_string())?
+                    }
+                    Ok(Err(err)) => return Err(err),
+                    Err(_) => return Err("subprocess output task failed".to_string()),
                 }
             }
+        };
+        if let Some(task) = input_task.as_mut() {
+            let input = task.await;
+            input_joined = true;
+            input
+                .map_err(|_| "subprocess input task failed".to_string())?
+                .map_err(|_| "failed to write subprocess input".to_string())?;
         }
-        _ = &mut deadline => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            return Err("subprocess timed out".to_string())
-        }
+        let (stdout, stderr) = match completed_output {
+            Some(output) => output,
+            None => {
+                let output = (&mut output_task).await;
+                output_joined = true;
+                output.map_err(|_| "subprocess output task failed".to_string())??
+            }
+        };
+        Ok((stdout, stderr, status))
     };
-    if let Some(task) = input_task {
-        task.await
-            .map_err(|_| "subprocess input task failed".to_string())?
-            .map_err(|_| "failed to write subprocess input".to_string())?;
+    let result = match tokio::time::timeout_at(execution_deadline, lifecycle).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err("subprocess timed out".to_string()),
+    };
+    if result.is_ok() {
+        return result;
     }
-    let (stdout, stderr) = match completed_output {
-        Some(output) => output,
-        None => output_task.await.map_err(|_| "subprocess output task failed".to_string())??,
+
+    if let Some(task) = &input_task {
+        task.abort();
+    }
+    output_task.abort();
+    let _ = child.start_kill();
+    let cleanup = async {
+        if !input_joined && let Some(task) = input_task {
+            let _ = task.await;
+        }
+        if !output_joined {
+            let _ = output_task.await;
+        }
+        let _ = child.wait().await;
     };
-    Ok((stdout, stderr, status))
+    // If the OS does not complete cleanup in its reserved window, dropping the child retains
+    // `kill_on_drop` as a final best-effort safeguard while preserving the caller's deadline.
+    let _ = tokio::time::timeout_at(deadline, cleanup).await;
+    result
 }
 
 async fn read_capped(mut reader: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>, String> {
@@ -752,34 +851,173 @@ mod tests {
         let source = ExternalSource {
             input: Arc::new(input()),
             version: Version::new(0, 8, 30),
-            provider: SourceProvider::Sourcify,
+            provider: SourceProvider::Sourcify { endpoint: SOURCIFY_URL.into() },
         };
-        let charged = resolver.charge_source_result(Ok(Some(source.clone()))).unwrap();
+        let key = FetchKey { chain: 1, provider: source.provider.clone(), address: Address::ZERO };
+        let charged = resolver.cache_source_result(key.clone(), Ok(Some(source))).unwrap();
         assert!(charged.is_some());
         let charged_bytes = resolver.retained_source_input;
         // A cache hit returns the retained value directly and never invokes accounting again.
-        let key = FetchKey { chain: 1, provider: SourceProvider::Sourcify, address: Address::ZERO };
-        resolver.fetch_cache.insert(key.clone(), Ok(Some(source)));
         assert!(resolver.fetch_cache.get(&key).unwrap().is_ok());
         assert_eq!(resolver.retained_source_input, charged_bytes);
 
         resolver.retained_source_input = MAX_RETAINED_SOURCE_INPUT;
-        assert!(resolver.charge_source_result(Ok(charged)).unwrap_err().contains("cumulative"));
+        let rejected_key = FetchKey { address: Address::with_last_byte(1), ..key };
+        assert!(
+            resolver
+                .cache_source_result(rejected_key.clone(), Ok(charged))
+                .unwrap_err()
+                .contains("cumulative")
+        );
+        assert!(!resolver.fetch_cache.contains_key(&rejected_key));
     }
 
     #[test]
     fn cumulative_candidate_metadata_budget_is_enforced() {
         let mut resolver = ExternalResolver::new().unwrap();
-        resolver.charge_candidates(vec![candidate("A.sol:A", JsonAbi::default())]).unwrap();
-        assert_eq!(resolver.retained_candidate_metadata, "A.sol:A".len());
+        let retained_candidate = candidate("A.sol:A", JsonAbi::default());
+        let expected = retained_candidate.fqn.len()
+            + retained_candidate.fingerprint.len()
+            + retained_candidate.version.to_string().len();
+        resolver.charge_candidates(vec![retained_candidate], 0).unwrap();
+        assert_eq!(resolver.retained_metadata, expected);
 
         let mut resolver = ExternalResolver::new().unwrap();
-        resolver.retained_candidate_metadata = MAX_CANDIDATE_METADATA;
-        let error =
-            resolver.charge_candidates(vec![candidate("A.sol:A", JsonAbi::default())]).unwrap_err();
+        resolver.retained_metadata = MAX_RETAINED_METADATA;
+        let error = resolver
+            .charge_candidates(vec![candidate("A.sol:A", JsonAbi::default())], 0)
+            .unwrap_err();
         assert!(error.contains("metadata"));
+        assert_eq!(resolver.retained_metadata, MAX_RETAINED_METADATA);
         assert_eq!(resolver.retained_candidates, 0);
         assert_eq!(resolver.retained_creation_bytecode, 0);
+
+        let mut resolver = ExternalResolver::new().unwrap();
+        resolver.retained_creation_bytecode = MAX_CREATION_BYTECODE;
+        let error = resolver
+            .charge_candidates(vec![candidate("A.sol:A", JsonAbi::default())], 0)
+            .unwrap_err();
+        assert!(error.contains("bytecode"));
+        assert_eq!(resolver.retained_metadata, 0);
+        assert_eq!(resolver.retained_candidates, 0);
+        assert_eq!(resolver.retained_creation_bytecode, MAX_CREATION_BYTECODE);
+    }
+
+    #[test]
+    fn candidate_constructor_metadata_is_charged() {
+        let abi: JsonAbi = serde_json::from_value(json!([{
+            "type": "constructor", "inputs": [{"name":"n", "type":"uint256"}]
+        }]))
+        .unwrap();
+        let candidate = candidate("A.sol:A", abi);
+        let constructor_bytes =
+            serde_json::to_vec(candidate.constructor.as_ref().unwrap()).unwrap();
+        let mut resolver = ExternalResolver::new().unwrap();
+        resolver.charge_candidates(vec![candidate], 0).unwrap();
+        assert!(resolver.retained_metadata >= constructor_bytes.len());
+    }
+
+    #[tokio::test]
+    async fn sourcify_source_discovery_uses_selected_endpoint_on_dev_chain() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/private", listener.local_addr().unwrap());
+        let response = json!({
+            "stdJsonInput": input(),
+            "compilation": { "compilerVersion": "0.8.30+commit.73712a01" }
+        })
+        .to_string();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let bytes_read = socket.read(&mut request).await.unwrap();
+            let request = std::str::from_utf8(&request[..bytes_read]).unwrap();
+            assert!(request.starts_with("GET /private/v2/contract/31337/"), "{request}");
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                        response.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let source = ExternalResolver::new()
+            .unwrap()
+            .resolve_sourcify(Chain::from(31337), Address::ZERO, Some(&endpoint))
+            .await
+            .unwrap()
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(source.provider, SourceProvider::Sourcify { endpoint: endpoint.clone() });
+        assert_ne!(source.provider, SourceProvider::Sourcify { endpoint: SOURCIFY_URL.into() });
+    }
+
+    #[tokio::test]
+    async fn sourcify_cache_identity_includes_selected_endpoint() {
+        let mut resolver = ExternalResolver::new().unwrap();
+        for _ in 0..2 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}/private", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                assert!(socket.read(&mut request).await.unwrap() > 0);
+                socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+            });
+            assert!(
+                resolver
+                    .resolve_sourcify(Chain::from(31337), Address::ZERO, Some(&endpoint))
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            server.await.unwrap();
+        }
+        assert_eq!(resolver.fetch_cache.len(), 2);
+    }
+
+    #[test]
+    fn remote_versions_and_cached_errors_are_bounded_and_accounted() {
+        let long_version = format!("0.8.30+{}", "a".repeat(MAX_COMPILER_VERSION));
+        assert!(Version::parse(&long_version).is_ok());
+        assert!(parse_compiler_version(&long_version).is_err());
+
+        let mut resolver = ExternalResolver::new().unwrap();
+        let endpoint = "https://explorer.invalid/api";
+        let key = FetchKey {
+            chain: 1,
+            provider: SourceProvider::Etherscan { endpoint: endpoint.into() },
+            address: Address::ZERO,
+        };
+        let error = resolver
+            .cache_source_result(key, Err("x".repeat(MAX_CACHED_ERROR_CHARS * 2)))
+            .unwrap_err();
+        assert_eq!(error.chars().count(), MAX_CACHED_ERROR_CHARS + 1);
+        assert_eq!(resolver.retained_metadata, endpoint.len() + error.len());
+
+        let mut resolver = ExternalResolver::new().unwrap();
+        resolver.retained_metadata = MAX_RETAINED_METADATA;
+        let key = FetchKey {
+            chain: 1,
+            provider: SourceProvider::Sourcify { endpoint: SOURCIFY_URL.into() },
+            address: Address::ZERO,
+        };
+        let source = ExternalSource {
+            input: Arc::new(input()),
+            version: Version::new(0, 8, 30),
+            provider: key.provider.clone(),
+        };
+        assert!(resolver.cache_source_result(key, Ok(Some(source))).is_err());
+        assert_eq!(resolver.retained_source_input, 0);
+        assert_eq!(resolver.retained_metadata, MAX_RETAINED_METADATA);
     }
 
     #[tokio::test]
@@ -838,7 +1076,7 @@ mod tests {
             let (parsed, version) =
                 parse_etherscan_response(&serde_json::to_vec(&response).unwrap()).unwrap();
             assert_eq!(parsed, expected);
-            assert_eq!(version, "v0.8.30+commit.73712a01");
+            assert_eq!(version, Version::parse("0.8.30+commit.73712a01").unwrap());
         }
 
         let flat = json!({
@@ -861,7 +1099,7 @@ mod tests {
         let source_a = ExternalSource {
             input: Arc::new(first),
             version: Version::new(1, 2, 3),
-            provider: SourceProvider::Sourcify,
+            provider: SourceProvider::Sourcify { endpoint: SOURCIFY_URL.into() },
         };
         let source_b = ExternalSource {
             provider: SourceProvider::Etherscan { endpoint: "other".into() },
@@ -901,8 +1139,18 @@ mod tests {
     async fn bounded_process_times_out_and_caps_output() {
         let mut sleep = Command::new("sh");
         sleep.args(["-c", "sleep 2"]);
+        let started = tokio::time::Instant::now();
+        let error =
+            run_bounded_command(sleep, None, 16, 16, Duration::from_millis(20)).await.unwrap_err();
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_millis(500));
+
+        // Output closes before the process exits, so the output-task branch wins first. Waiting
+        // for the process must remain subject to the original deadline.
+        let mut closed_output = Command::new("sh");
+        closed_output.args(["-c", "exec 1>&- 2>&-; sleep 2"]);
         assert!(
-            run_bounded_command(sleep, None, 16, 16, Duration::from_millis(20))
+            run_bounded_command(closed_output, None, 16, 16, Duration::from_millis(20))
                 .await
                 .unwrap_err()
                 .contains("timed out")
@@ -915,6 +1163,34 @@ mod tests {
                 .await
                 .unwrap_err()
                 .contains("output limit")
+        );
+
+        // The shell exits immediately, but its child retains the output pipe. The same absolute
+        // deadline must still cover draining output after `child.wait()` completes.
+        let mut inherited_output = Command::new("sh");
+        inherited_output.args(["-c", "sleep 2 &"]);
+        assert!(
+            run_bounded_command(inherited_output, None, 16, 16, Duration::from_millis(20))
+                .await
+                .unwrap_err()
+                .contains("timed out")
+        );
+
+        // The direct child exits while a descendant retains stdin without reading it. Awaiting a
+        // blocked writer must also remain subject to the same deadline.
+        let mut inherited_input = Command::new("sh");
+        inherited_input.args(["-c", "exec 3<&0; sleep 2 >/dev/null 2>&1 &"]);
+        assert!(
+            run_bounded_command(
+                inherited_input,
+                Some(vec![0; 1024 * 1024]),
+                16,
+                16,
+                Duration::from_millis(20)
+            )
+            .await
+            .unwrap_err()
+            .contains("timed out")
         );
     }
 

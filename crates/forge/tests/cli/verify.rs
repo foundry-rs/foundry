@@ -949,10 +949,9 @@ contract Deploy is Script {{
     );
     assert_eq!(submission["compilerversion"], compiler_version);
     assert_eq!(submission["constructorArguements"], format!("{:064x}", 42));
-    let broadcast =
-        std::fs::read_to_string(prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json"))
-            .unwrap();
-    let sequence: ScriptSequence<Ethereum> = serde_json::from_str(&broadcast).unwrap();
+    let broadcast_path = prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json");
+    let broadcast = std::fs::read_to_string(&broadcast_path).unwrap();
+    let mut sequence: ScriptSequence<Ethereum> = serde_json::from_str(&broadcast).unwrap();
     let child_address = submission["contractaddress"].parse::<Address>().unwrap();
     let child = sequence
         .transactions
@@ -980,6 +979,46 @@ contract Deploy is Script {{
         .await
         .unwrap();
     assert_eq!(value["result"].as_str().unwrap().parse::<U256>().unwrap(), U256::from(42));
+
+    // Old broadcast logs do not contain creator provenance. An explicitly requested external
+    // verification must report that skipped attempt as a failure rather than `All (0)` success.
+    sequence
+        .transactions
+        .iter_mut()
+        .flat_map(|transaction| &mut transaction.additional_contracts)
+        .find(|contract| contract.address == child_address)
+        .unwrap()
+        .creator_code_addresses
+        .clear();
+    std::fs::write(&broadcast_path, serde_json::to_vec_pretty(&sequence).unwrap()).unwrap();
+
+    let failed = prj
+        .forge_command()
+        .forge_fuse()
+        .args([
+            "script",
+            "script/Deploy.s.sol:Deploy",
+            "--broadcast",
+            "--resume",
+            "--verify",
+            "--verify-external",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            SUBMISSION_KEY,
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            private_key.as_str(),
+        ])
+        .execute();
+    assert!(!failed.status.success(), "resume unexpectedly succeeded: {}", failed.stderr_lossy());
+    let stderr = failed.stderr_lossy();
+    assert!(stderr.contains("creator provenance is unavailable"), "{stderr}");
+    assert!(stderr.contains("Not all (0 / 1) contracts were verified"), "{stderr}");
+    assert!(!stderr.contains("All (0) contracts were verified"), "{stderr}");
 });
 
 // Tests that the preflight check passes (does not block deploy) when the verifier responds

@@ -10,6 +10,8 @@ use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{
     RetryArgs, VerifierArgs, VerifyArgs,
     provider::{ExternalVerificationContext, VerificationProviderType},
+    sourcify::SOURCIFY_URL,
+    verify::sourcify_api_url,
 };
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
@@ -66,8 +68,9 @@ pub struct VerifyBundle {
     pub verifier: VerifierArgs,
     pub via_ir: bool,
     pub verify_external: bool,
-    source_api_url: Option<String>,
-    source_api_key: Option<String>,
+    source_etherscan_url: Option<String>,
+    source_etherscan_key: Option<String>,
+    source_sourcify_url: Option<String>,
 }
 
 impl VerifyBundle {
@@ -106,8 +109,9 @@ impl VerifyBundle {
             verifier,
             via_ir,
             verify_external,
-            source_api_url: None,
-            source_api_key: None,
+            source_etherscan_url: None,
+            source_etherscan_key: None,
+            source_sourcify_url: None,
         }
     }
 
@@ -122,21 +126,33 @@ impl VerifyBundle {
         // A selected Etherscan-compatible verifier is both the source and submission endpoint.
         // Sourcify credentials must not be sent to the independent Etherscan discovery fallback.
         if provider.is_sourcify() {
+            self.source_sourcify_url = Some(
+                self.verifier
+                    .verifier_url
+                    .clone()
+                    .or_else(|| sourcify_api_url(chain))
+                    .unwrap_or_else(|| SOURCIFY_URL.to_string()),
+            );
             // Etherscan is optional when Sourcify is selected, so an invalid fallback must not
             // prevent verification through the selected provider.
-            self.source_api_url = config
+            self.source_etherscan_url = config
                 .get_etherscan_config_with_chain(Some(chain))
                 .ok()
                 .flatten()
                 .map(|config| config.api_url);
-            self.source_api_key = config_key;
+            self.source_etherscan_key = config_key;
         } else if let Some(url) = &self.verifier.verifier_url {
-            self.source_api_url = Some(url.clone());
-            self.source_api_key = resolved_key.clone();
+            // An explicit non-Sourcify endpoint may be private. Do not disclose provenance to the
+            // public Sourcify service as an implicit fallback.
+            self.source_sourcify_url = None;
+            self.source_etherscan_url = Some(url.clone());
+            self.source_etherscan_key = resolved_key.clone();
         } else {
-            self.source_api_url =
+            self.source_sourcify_url =
+                Some(sourcify_api_url(chain).unwrap_or_else(|| SOURCIFY_URL.to_string()));
+            self.source_etherscan_url =
                 config.get_etherscan_config_with_chain(Some(chain))?.map(|config| config.api_url);
-            self.source_api_key = resolved_key.clone();
+            self.source_etherscan_key = resolved_key.clone();
         }
         self.etherscan.key = resolved_key;
         self.etherscan.chain = Some(chain);
@@ -259,15 +275,20 @@ async fn external_job(
 
     for &creator in creators.iter().take(MAX_PROVENANCE_ADDRESSES) {
         let sources = [
-            ("Sourcify", resolver.resolve_sourcify(chain, creator).await),
+            (
+                "Sourcify",
+                resolver
+                    .resolve_sourcify(chain, creator, verify.source_sourcify_url.as_deref())
+                    .await,
+            ),
             (
                 "Etherscan",
                 resolver
                     .resolve_etherscan(
                         chain,
                         creator,
-                        verify.source_api_url.as_deref(),
-                        verify.source_api_key.as_deref(),
+                        verify.source_etherscan_url.as_deref(),
+                        verify.source_etherscan_key.as_deref(),
                     )
                     .await,
             ),
@@ -390,6 +411,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
         let mut unverifiable_contracts = vec![];
         let mut resolver = None;
         let mut external_jobs = 0;
+        let mut skipped_external = 0;
         let mut warned_offline = false;
         let mut consumed_receipts = vec![false; sequence.receipts.len()];
 
@@ -447,6 +469,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                     Some(args) => verification_jobs.push(VerificationJob::Local(args)),
                     None if !verify.verify_external => unverifiable_contracts.push(*address),
                     None if config.offline => {
+                        skipped_external += 1;
                         if !warned_offline {
                             let _ = sh_warn!(
                                 "Skipping external contract verification because offline mode is enabled."
@@ -455,11 +478,13 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                         }
                     }
                     None if creator_code_addresses.is_empty() => {
+                        skipped_external += 1;
                         let _ = sh_warn!(
                             "Skipping external verification for {address}: creator provenance is unavailable (old broadcast logs or skipped simulation)."
                         );
                     }
                     None if external_jobs >= MAX_EXTERNAL_JOBS => {
+                        skipped_external += 1;
                         let _ = sh_warn!(
                             "Skipping external verification for {address}: external job limit exceeded."
                         );
@@ -480,6 +505,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                         {
                             Ok(job) => verification_jobs.push(job),
                             Err(reason) => {
+                                skipped_external += 1;
                                 let _ = sh_warn!(
                                     "Skipping external verification for {address}: {reason}"
                                 );
@@ -495,8 +521,9 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
         check_unverified(sequence, unverifiable_contracts, verify);
 
         let num_verifications = verification_jobs.len();
+        let num_requested = num_verifications + skipped_external;
         let mut num_of_successful_verifications = 0;
-        sh_status!("##\nStart verification for ({num_verifications}) contracts")?;
+        sh_status!("##\nStart verification for ({num_requested}) contracts")?;
         for verification in verification_jobs {
             match verification.run().await {
                 Ok(_) => {
@@ -508,15 +535,34 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
             }
         }
 
-        if num_of_successful_verifications < num_verifications {
-            return Err(eyre!(
-                "Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"
-            ));
-        }
+        ensure_verification_complete(
+            num_of_successful_verifications,
+            num_verifications,
+            skipped_external,
+        )?;
 
-        sh_status!("All ({num_verifications}) contracts were verified!")?;
+        sh_status!("All ({num_requested}) contracts were verified!")?;
     }
 
+    Ok(())
+}
+
+fn ensure_verification_complete(
+    successful: usize,
+    submitted: usize,
+    skipped_external: usize,
+) -> Result<()> {
+    let requested = submitted + skipped_external;
+    if successful < requested {
+        let skipped = if skipped_external == 0 {
+            String::new()
+        } else {
+            format!("; {skipped_external} external verification(s) were skipped")
+        };
+        return Err(eyre!(
+            "Not all ({successful} / {requested}) contracts were verified{skipped}!"
+        ));
+    }
     Ok(())
 }
 
@@ -551,9 +597,25 @@ fn check_unverified<N: Network>(
 
 #[cfg(test)]
 mod tests {
-    use super::{concise, source_api_key, take_matching_index};
+    use super::{
+        ContractsByArtifact, RetryArgs, SOURCIFY_URL, VerificationProviderType, VerifierArgs,
+        VerifyBundle, concise, ensure_verification_complete, source_api_key, sourcify_api_url,
+        take_matching_index,
+    };
     use alloy_chains::Chain;
     use foundry_config::Config;
+
+    fn bundle(config: &Config, verifier: VerifierArgs) -> VerifyBundle {
+        let project = config.project().unwrap();
+        VerifyBundle::new(
+            &project,
+            config,
+            ContractsByArtifact::default(),
+            RetryArgs::default(),
+            verifier,
+            true,
+        )
+    }
 
     #[test]
     fn receipt_matching_is_hash_based_and_consumes_duplicate_hashes_in_order() {
@@ -577,6 +639,47 @@ mod tests {
         assert_eq!(source_api_key(&config, Chain::mainnet()).as_deref(), Some("source"));
         config.etherscan_api_key = None;
         assert!(source_api_key(&config, Chain::mainnet()).is_none());
+    }
+
+    #[test]
+    fn source_endpoints_follow_selected_provider_privacy() {
+        let tempo = Chain::from(4217u64);
+        let config = Config { etherscan_api_key: Some("ambient".into()), ..Default::default() };
+        let mut verify = bundle(&config, VerifierArgs::default());
+        verify.set_chain(&config, tempo).unwrap();
+        assert_eq!(verify.source_sourcify_url, sourcify_api_url(tempo));
+        assert_ne!(verify.source_sourcify_url.as_deref(), Some(SOURCIFY_URL));
+
+        let config = Config::default();
+        let mut verify = bundle(
+            &config,
+            VerifierArgs {
+                verifier: Some(VerificationProviderType::Custom),
+                verifier_api_key: Some("private-key".into()),
+                verifier_url: Some("https://private.example/api".into()),
+            },
+        );
+        verify.set_chain(&config, Chain::mainnet()).unwrap();
+        assert!(verify.source_sourcify_url.is_none());
+        assert_eq!(verify.source_etherscan_url.as_deref(), Some("https://private.example/api"));
+
+        let mut verify = bundle(
+            &config,
+            VerifierArgs {
+                verifier: Some(VerificationProviderType::Etherscan),
+                ..Default::default()
+            },
+        );
+        verify.set_chain(&config, Chain::mainnet()).unwrap();
+        assert_eq!(verify.source_sourcify_url.as_deref(), Some(SOURCIFY_URL));
+    }
+
+    #[test]
+    fn skipped_external_verifications_make_the_summary_fail() {
+        let err = ensure_verification_complete(0, 0, 1).unwrap_err().to_string();
+        assert!(err.contains("0 / 1"));
+        assert!(err.contains("1 external verification(s) were skipped"));
+        ensure_verification_complete(1, 1, 0).unwrap();
     }
 
     #[test]
