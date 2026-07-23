@@ -121,6 +121,17 @@ contract ReentrancyNoEth {
         balances[msg.sender] = 0;
     }
 
+    function recursiveEntryPoint(uint256 depth, address target) public {
+        if (depth != 0) {
+            uint256 snapshot = locked;
+            recursiveEntryPoint(depth - 1, target);
+            locked = snapshot;
+        } else {
+            (bool ok,) = target.call(""); //~WARN: external call can be reentered before `locked` is updated
+            require(ok, "call failed");
+        }
+    }
+
     constructor(IHook hook) {
         uint256 amount = balances[msg.sender];
         hook.notify(amount);

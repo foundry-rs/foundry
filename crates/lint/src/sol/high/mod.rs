@@ -23,7 +23,7 @@ use function_selector_collision::FUNCTION_SELECTOR_COLLISION;
 use incorrect_exp::INCORRECT_EXP;
 use incorrect_shift::INCORRECT_SHIFT;
 use protected_vars::PROTECTED_VARS;
-use reentrancy::{REENTRANCY_ETH, REENTRANCY_NO_ETH};
+use reentrancy::{REENTRANCY_BALANCE, REENTRANCY_ETH, REENTRANCY_NO_ETH};
 use rtlo::RTLO;
 use unchecked_calls::{ERC20_UNCHECKED_TRANSFER, UNCHECKED_CALL};
 use unprotected_initializer::UNPROTECTED_INITIALIZER;
@@ -38,7 +38,7 @@ register_lints!(
     (IncorrectExp, late, (INCORRECT_EXP)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
     (ProtectedVars, late, (PROTECTED_VARS)),
-    (ReentrancyEth, late, (REENTRANCY_ETH, REENTRANCY_NO_ETH)),
+    (ReentrancyEth, late, (REENTRANCY_BALANCE, REENTRANCY_ETH, REENTRANCY_NO_ETH)),
     (UncheckedCall, early, (UNCHECKED_CALL)),
     (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER)),
     (UnprotectedInitializer, late, (UNPROTECTED_INITIALIZER)),

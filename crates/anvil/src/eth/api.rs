@@ -4338,7 +4338,7 @@ impl EthApi<FoundryNetwork> {
         let transaction_type = request.transaction_type;
         let mut request: FoundryTransactionRequest =
             request.try_into().map_err(|_| BlockchainError::FailedToDecodeTransaction)?;
-        if matches!(&request, FoundryTransactionRequest::Tempo(_))
+        if request.is_tempo()
             && self.backend.is_tempo()
             && transaction_type.is_some_and(|ty| ty != TEMPO_TX_TYPE_ID)
         {
@@ -4367,7 +4367,7 @@ impl EthApi<FoundryNetwork> {
                     block_gas_limit
                 }
             };
-            let estimated_gas = if matches!(&request, FoundryTransactionRequest::Tempo(_)) {
+            let estimated_gas = if request.is_tempo() {
                 fallback_gas_limit
             } else {
                 self.do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())

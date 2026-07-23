@@ -5,7 +5,9 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
-use alloy_serde::{OtherFields, WithOtherFields};
+#[cfg(any(test, feature = "optimism"))]
+use alloy_serde::OtherFields;
+use alloy_serde::WithOtherFields;
 use core::num::NonZeroU64;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit};
@@ -56,6 +58,22 @@ const TEMPO_REQUEST_FIELDS: &[&str] = &[
 ];
 
 impl FoundryTransactionRequest {
+    /// Returns `true` if this is an Ethereum transaction request.
+    pub const fn is_ethereum(&self) -> bool {
+        matches!(self, Self::Ethereum(_))
+    }
+
+    /// Returns `true` if this is an OP stack transaction request.
+    #[cfg(feature = "optimism")]
+    pub const fn is_op(&self) -> bool {
+        matches!(self, Self::Op(_))
+    }
+
+    /// Returns `true` if this is a Tempo transaction request.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo(_))
+    }
+
     /// Create a new [`FoundryTransactionRequest`] from given
     /// [`WithOtherFields<TransactionRequest>`].
     #[inline]
@@ -649,11 +667,30 @@ mod tests {
     }
 
     #[test]
+    fn request_predicates() {
+        let ethereum = FoundryTransactionRequest::default();
+        assert!(ethereum.is_ethereum());
+        assert!(!ethereum.is_tempo());
+
+        let tempo = FoundryTransactionRequest::Tempo(Box::default());
+        assert!(tempo.is_tempo());
+        assert!(!tempo.is_ethereum());
+
+        #[cfg(feature = "optimism")]
+        {
+            let op = FoundryTransactionRequest::Op(WithOtherFields::default());
+            assert!(op.is_op());
+            assert!(!op.is_ethereum());
+            assert!(!op.is_tempo());
+        }
+    }
+
+    #[test]
     fn test_routing_ethereum_default() {
         let tx = default_tx_req();
         let req: FoundryTransactionRequest = WithOtherFields::new(tx).try_into().unwrap();
 
-        assert!(matches!(req, FoundryTransactionRequest::Ethereum(_)));
+        assert!(req.is_ethereum());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
     }
 
@@ -666,7 +703,7 @@ mod tests {
         let req: FoundryTransactionRequest =
             WithOtherFields { inner: tx, other }.try_into().unwrap();
 
-        assert!(matches!(req, FoundryTransactionRequest::Tempo(_)));
+        assert!(req.is_tempo());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
     }
 
@@ -682,7 +719,7 @@ mod tests {
         let req: FoundryTransactionRequest =
             WithOtherFields { inner: tx, other }.try_into().unwrap();
 
-        assert!(matches!(req, FoundryTransactionRequest::Op(_)));
+        assert!(req.is_op());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Deposit(_))));
     }
 
@@ -697,7 +734,7 @@ mod tests {
         let req: FoundryTransactionRequest =
             WithOtherFields { inner: tx, other }.try_into().unwrap();
 
-        assert!(matches!(req, FoundryTransactionRequest::Ethereum(_)));
+        assert!(req.is_ethereum());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
     }
 
@@ -710,7 +747,7 @@ mod tests {
         let req: FoundryTransactionRequest =
             WithOtherFields { inner: tx, other }.try_into().unwrap();
 
-        assert!(matches!(req, FoundryTransactionRequest::Ethereum(_)));
+        assert!(req.is_ethereum());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
     }
 
@@ -722,7 +759,7 @@ mod tests {
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
 
-        assert!(matches!(deserialized, FoundryTransactionRequest::Ethereum(_)));
+        assert!(deserialized.is_ethereum());
     }
 
     #[test]
@@ -740,7 +777,7 @@ mod tests {
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
 
-        assert!(matches!(deserialized, FoundryTransactionRequest::Op(_)));
+        assert!(deserialized.is_op());
     }
 
     #[test]
@@ -756,7 +793,7 @@ mod tests {
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
 
-        assert!(matches!(deserialized, FoundryTransactionRequest::Tempo(_)));
+        assert!(deserialized.is_tempo());
     }
 
     #[test]
@@ -878,7 +915,7 @@ mod tests {
 
         let req: FoundryTransactionRequest = FoundryTypedTx::Deposit(deposit_tx.clone()).into();
 
-        assert!(matches!(req, FoundryTransactionRequest::Op(_)));
+        assert!(req.is_op());
 
         let parts = req.get_deposit_tx_parts().expect("should parse deposit parts");
         assert_eq!(parts.source_hash, deposit_tx.source_hash);
