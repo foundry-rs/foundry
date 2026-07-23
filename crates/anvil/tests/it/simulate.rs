@@ -100,7 +100,7 @@ async fn test_simulate_v1_preserves_precompile_warming_rpc() {
     let destination = "0x0000000000000000000000000000000000123456";
     let helper = "0x0000000000000000000000000000000000001000";
     let helper_code = format!(
-        "0x5a73{}31505a035f525a73{}31505a036020525a73{}31505a0360405260605ff3",
+        "0x5a73{}31505a90035f525a73{}31505a90036020525a73{}31505a900360405260605ff3",
         &source[2..],
         &destination[2..],
         &destination[2..],
@@ -122,7 +122,13 @@ async fn test_simulate_v1_preserves_precompile_warming_rpc() {
 
     let return_data = response["result"][0]["calls"][0]["returnData"].as_str().unwrap();
     let return_data = alloy_primitives::hex::decode(&return_data[2..]).unwrap();
-    let access_costs = return_data.chunks_exact(32).map(U256::from_be_slice).collect::<Vec<_>>();
+    let access_costs = return_data
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .copied()
+        .map(U256::from_be_bytes)
+        .collect::<Vec<_>>();
 
     // The measured delta includes PUSH20, POP, and the second GAS opcode (7 gas total).
     assert_eq!(access_costs, [U256::from(107), U256::from(2_607), U256::from(107)]);
@@ -198,7 +204,7 @@ impl PrecompileFactory for LookupOnlyPrecompileFactory {
 
     fn install(&self, precompiles: &mut PrecompilesMap) {
         let lookup_address = self.0;
-        precompiles.set_precompile_lookup(move |address| {
+        precompiles.set_precompile_lookup(move |address: &Address| {
             (*address == lookup_address).then(|| {
                 DynPrecompile::from(|input: PrecompileInput<'_>| {
                     Ok(PrecompileOutput {
@@ -225,7 +231,7 @@ async fn test_simulate_v1_rejects_lookup_only_precompile_move_rpc() {
         &handle.http_endpoint(),
         "eth_simulateV1",
         json!([{"blockStateCalls": [{"stateOverrides": {
-            (source): {
+            (source.to_string()): {
                 "movePrecompileToAddress": "0x0000000000000000000000000000000000123456"
             }
         }}]}, "latest"]),
