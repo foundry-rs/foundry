@@ -193,13 +193,14 @@ impl<'a> From<&'a BuildOpts> for Figment {
         } else {
             args.project_paths.project_root()
         };
-        let mut figment = Config::figment_with_root(root);
+        let mut figment = Config::figment_with_root(&root);
 
         // remappings should stack
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
             .with_figment(&figment);
-        remappings.extend_explicit(
+        remappings.extend_explicit_with_precedence(
             figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default(),
+            &root,
         );
         figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
 

@@ -12,6 +12,48 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+fn remapping_names_overlap(a: &str, b: &str) -> bool {
+    let is_prefix = |prefix: &str, name: &str| {
+        if prefix == name {
+            return true;
+        }
+        let mut prefix = prefix.to_string();
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        name.starts_with(&prefix)
+    };
+    is_prefix(a, b) || is_prefix(b, a)
+}
+
+fn normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
+}
+
+fn remapping_context_covers(root: &Path, explicit: &Remapping, generated: &Remapping) -> bool {
+    let Some(generated) = generated.context.as_deref() else { return false };
+    let Some(explicit) = explicit.context.as_deref() else { return true };
+    let absolute = |context: &str| {
+        let context = Path::new(context);
+        let context =
+            if context.is_absolute() { context.to_path_buf() } else { root.join(context) };
+        normalize(&context)
+    };
+    absolute(generated).starts_with(absolute(explicit))
+}
+
 /// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
 #[derive(Clone, Debug, Default)]
 pub struct Remappings {
@@ -67,25 +109,6 @@ impl Remappings {
             return;
         }
 
-        // Root remappings remain authoritative over dependency remappings, including single-file
-        // remappings which use different duplicate handling below.
-        if remapping.context.is_some()
-            && self.remappings.iter().any(|existing| {
-                if existing.context.is_some() {
-                    return false;
-                }
-                let mut existing_name_path = existing.name.clone();
-                if !existing_name_path.ends_with('/') {
-                    existing_name_path.push('/');
-                }
-                existing.name == remapping.name
-                    || remapping.name.starts_with(&existing_name_path)
-                    || existing.name.starts_with(&remapping.name)
-            })
-        {
-            return;
-        }
-
         // Ignore global remappings of root project src, test or script dir.
         // See <https://github.com/foundry-rs/foundry/issues/3440>.
         if remapping.context.is_none()
@@ -102,6 +125,17 @@ impl Remappings {
 
     /// Push an auto-detected remapping, but only if it's not already present.
     fn push(&mut self, remapping: Remapping) {
+        // Root remappings remain authoritative over dependency remappings, including single-file
+        // remappings which use different duplicate handling below.
+        if remapping.context.is_some()
+            && self.remappings.iter().any(|existing| {
+                existing.context.is_none()
+                    && remapping_names_overlap(&existing.name, &remapping.name)
+            })
+        {
+            return;
+        }
+
         if self.remappings.iter().any(|existing| {
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
@@ -145,6 +179,20 @@ impl Remappings {
     pub fn extend_explicit(&mut self, remappings: Vec<Remapping>) {
         for remapping in remappings {
             self.push_explicit(remapping);
+        }
+    }
+
+    /// Extend with lower-precedence explicit remappings while preserving overlaps within the
+    /// incoming batch.
+    pub fn extend_explicit_with_precedence(&mut self, remappings: Vec<Remapping>, root: &Path) {
+        let authoritative = self.remappings.clone();
+        for remapping in remappings {
+            if !authoritative.iter().any(|existing| {
+                remapping_context_covers(root, existing, &remapping)
+                    && remapping_names_overlap(&existing.name, &remapping.name)
+            }) {
+                self.push_explicit(remapping);
+            }
         }
     }
 }
@@ -249,7 +297,10 @@ impl RemappingsProvider<'_> {
             // sibling imports.
             let (dependency_remappings, package_remappings): (Vec<_>, Vec<_>) =
                 nested_foundry_remappings.partition(|remapping| remapping.context.is_some());
-            all_remappings.extend_explicit(dependency_remappings);
+            // Explicit project remappings are authoritative over generated dependency mappings.
+            // Remove generated overlaps covered by an explicit context so the compiler's
+            // first-match behavior and Solar's most-specific-match behavior resolve identically.
+            all_remappings.extend_explicit_with_precedence(dependency_remappings, self.root);
 
             let mut lib_remappings = BTreeMap::new();
             for r in auto_detected_remappings {
@@ -681,6 +732,24 @@ mod tests {
             remappings.extend_explicit(names.map(remapping).into());
             assert_eq!(remappings.into_inner().len(), 2);
         }
+
+        let mut remappings = Remappings::new();
+        remappings.extend_explicit_with_precedence(
+            vec![
+                Remapping {
+                    context: None,
+                    name: "alias/".to_string(),
+                    path: "global/".to_string(),
+                },
+                Remapping {
+                    context: Some("lib/dep/".to_string()),
+                    name: "alias/".to_string(),
+                    path: "specific/".to_string(),
+                },
+            ],
+            Path::new("."),
+        );
+        assert_eq!(remappings.into_inner().len(), 2);
     }
 
     #[test]
