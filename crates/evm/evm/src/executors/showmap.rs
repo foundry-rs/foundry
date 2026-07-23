@@ -40,6 +40,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
+    borrow::Cow,
     collections::{BTreeSet, HashMap},
     fmt,
     fs::File,
@@ -460,6 +461,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     let mut created = Vec::new();
     let mut accepted = 0usize;
     let mut last_accepted_checked_invariant = false;
+    let mut last_accepted_handlers_succeeded = false;
     for tx in input.sequence {
         if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
             observation.unmatched += 1;
@@ -497,6 +499,8 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         if target.fuzzed_contracts.is_some() {
             accepted += 1;
             last_accepted_checked_invariant = false;
+            last_accepted_handlers_succeeded =
+                invariant_handlers_succeeded(&executor, &target, &call_result);
             if let Some(failure) = invariant_handler_failure(
                 target_addr,
                 selector,
@@ -516,7 +520,8 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 accepted,
                 target.invariant_replay.check_interval,
                 target.invariant_replay.is_optimization,
-            ) {
+            ) && last_accepted_handlers_succeeded
+            {
                 last_accepted_checked_invariant = true;
                 if !target.invariant_replay.is_optimization
                     && let Some(address) = target.invariant_address
@@ -551,7 +556,10 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         && target.fuzzed_contracts.is_some()
         && let Some(address) = target.invariant_address
     {
-        if !target.invariant_replay.is_optimization && !last_accepted_checked_invariant {
+        if !target.invariant_replay.is_optimization
+            && last_accepted_handlers_succeeded
+            && !last_accepted_checked_invariant
+        {
             for failure in newly_broken_invariants(
                 &executor,
                 address,
@@ -571,6 +579,37 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
 
     rollback_replay_created(target.fuzzed_contracts, created);
     Ok(observation)
+}
+
+/// Whether the just-executed handler call passed the campaign's success gate.
+fn invariant_handlers_succeeded<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    target: &ShowmapReplayTarget<'_>,
+    call_result: &crate::executors::RawCallResult<FEN>,
+) -> bool {
+    if call_result.reverted {
+        return false;
+    }
+
+    if !executor.legacy_assertions() {
+        return target.invariant_address.is_some_and(|address| {
+            executor.is_success_handler_gate(
+                address,
+                false,
+                Cow::Borrowed(&call_result.state_changeset),
+            )
+        });
+    }
+
+    target.fuzzed_contracts.is_some_and(|contracts| {
+        contracts.targets().keys().all(|address| {
+            executor.is_success_handler_gate(
+                *address,
+                false,
+                Cow::Borrowed(&call_result.state_changeset),
+            )
+        })
+    })
 }
 
 fn replay_failure_report(replay_failures: &[String], failed_entries: usize) -> String {
