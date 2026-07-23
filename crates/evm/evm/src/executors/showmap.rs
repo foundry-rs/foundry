@@ -41,6 +41,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     collections::{BTreeSet, HashMap},
     fmt,
     fs::File,
@@ -136,13 +137,13 @@ pub struct InvariantReplayOptions {
 }
 
 /// A structured identity for a failure observed during corpus replay.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug)]
 pub enum ReplayFailure {
     /// A stateless fuzz test call failed. Keyed by selector, code-path fingerprint, and output.
     Fuzz { selector: Selector, fingerprint: Option<B256>, output: B256 },
-    /// An invariant handler call hit an assertion or a `fail_on_revert` revert.
-    /// Keyed by `(target, selector)` site and code-path fingerprint, mirroring the
-    /// campaign's handler-bug deduplication.
+    /// An invariant handler call hit an assertion.
+    /// Keyed by `(target, selector, terminal, invariant)`. The fingerprint is retained
+    /// as replay metadata but does not distinguish failure identities.
     Handler {
         target: Address,
         selector: Selector,
@@ -154,6 +155,68 @@ pub enum ReplayFailure {
     Invariant { name: String },
     /// The `afterInvariant` hook reverted.
     AfterInvariant,
+}
+
+impl PartialEq for ReplayFailure {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for ReplayFailure {}
+
+impl PartialOrd for ReplayFailure {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ReplayFailure {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (
+                Self::Fuzz { selector, fingerprint, output },
+                Self::Fuzz {
+                    selector: other_selector,
+                    fingerprint: other_fingerprint,
+                    output: other_output,
+                },
+            ) => (selector, fingerprint, output).cmp(&(
+                other_selector,
+                other_fingerprint,
+                other_output,
+            )),
+            (
+                Self::Handler { target, selector, terminal, invariant, .. },
+                Self::Handler {
+                    target: other_target,
+                    selector: other_selector,
+                    terminal: other_terminal,
+                    invariant: other_invariant,
+                    ..
+                },
+            ) => (target, selector, terminal, invariant).cmp(&(
+                other_target,
+                other_selector,
+                other_terminal,
+                other_invariant,
+            )),
+            (Self::Invariant { name }, Self::Invariant { name: other_name }) => {
+                name.cmp(other_name)
+            }
+            (Self::AfterInvariant, Self::AfterInvariant) => Ordering::Equal,
+            _ => replay_failure_rank(self).cmp(&replay_failure_rank(other)),
+        }
+    }
+}
+
+const fn replay_failure_rank(failure: &ReplayFailure) -> u8 {
+    match failure {
+        ReplayFailure::Fuzz { .. } => 0,
+        ReplayFailure::Handler { .. } => 1,
+        ReplayFailure::Invariant { .. } => 2,
+        ReplayFailure::AfterInvariant => 3,
+    }
 }
 
 impl fmt::Display for ReplayFailure {
@@ -321,7 +384,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                 accepted += 1;
                 last_accepted_checked_invariant = false;
                 if !opts.emit_files
-                    && let Some(failure) = invariant_handler_failure(
+                    && let Some(failure) = invariant_replay_failures(
                         target_addr,
                         selector,
                         did_fail_on_assert(&call_result, &call_result.state_changeset),
@@ -329,6 +392,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                         &call_result,
                         fingerprint,
                     )
+                    .into_iter()
+                    .next()
                 {
                     entry_failure = Some(failure);
                     break;
@@ -501,7 +566,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             last_accepted_checked_invariant = false;
             last_accepted_handlers_succeeded =
                 invariant_handlers_succeeded(&executor, &target, &call_result);
-            if let Some(failure) = invariant_handler_failure(
+            for failure in invariant_replay_failures(
                 target_addr,
                 selector,
                 did_fail_on_assert(&call_result, &call_result.state_changeset),
@@ -509,13 +574,12 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 &call_result,
                 fingerprint,
             ) {
-                let terminal = failure.is_terminal();
                 observation.failures.insert(failure);
-                if terminal {
-                    break;
-                }
             }
             executor.commit(&mut call_result);
+            if all_invariants_broken(&observation.failures, target.invariant_fns) {
+                break;
+            }
             if should_check_invariant(
                 accepted,
                 target.invariant_replay.check_interval,
@@ -533,6 +597,9 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                         &observation.failures,
                     )? {
                         observation.failures.insert(failure);
+                    }
+                    if all_invariants_broken(&observation.failures, target.invariant_fns) {
+                        break;
                     }
                 }
             }
@@ -624,31 +691,34 @@ fn replay_failure_report(replay_failures: &[String], failed_entries: usize) -> S
     report
 }
 
-/// Returns a [`ReplayFailure::Handler`] if a handler call should be treated as a
-/// bug, mirroring the campaign: assertion failures always count, plain reverts only
-/// count under `fail_on_revert` and are never counted for `vm.assume` rejects.
-fn invariant_handler_failure<FEN: FoundryEvmNetwork>(
+/// Returns replay failures produced directly by a handler call, mirroring the campaign:
+/// assertions are keyed by handler site, while a non-assertion revert breaks every invariant
+/// configured with `fail_on_revert`.
+fn invariant_replay_failures<FEN: FoundryEvmNetwork>(
     target: Address,
     selector: Selector,
     assertion_failure: bool,
     invariant_fns: &[(&Function, bool)],
     call_result: &crate::executors::RawCallResult<FEN>,
     fingerprint: Option<B256>,
-) -> Option<ReplayFailure> {
-    let fail_on_revert_invariant = invariant_fns
+) -> Vec<ReplayFailure> {
+    if assertion_failure {
+        return vec![ReplayFailure::Handler {
+            target,
+            selector,
+            fingerprint,
+            terminal: false,
+            invariant: None,
+        }];
+    }
+    if !call_result.reverted || call_result.result.as_ref() == MAGIC_ASSUME {
+        return Vec::new();
+    }
+    invariant_fns
         .iter()
-        .find_map(|(invariant, fail_on_revert)| (*fail_on_revert).then_some(invariant));
-    let fail_on_revert_failure = fail_on_revert_invariant.is_some()
-        && call_result.reverted
-        && call_result.result.as_ref() != MAGIC_ASSUME;
-    let failed = assertion_failure || fail_on_revert_failure;
-    failed.then_some(ReplayFailure::Handler {
-        target,
-        selector,
-        fingerprint,
-        terminal: fail_on_revert_failure && !assertion_failure,
-        invariant: fail_on_revert_failure.then(|| fail_on_revert_invariant.unwrap().name.clone()),
-    })
+        .filter(|(_, fail_on_revert)| *fail_on_revert)
+        .map(|(invariant, _)| ReplayFailure::Invariant { name: invariant.name.clone() })
+        .collect()
 }
 
 fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
@@ -713,6 +783,15 @@ fn has_replay_invariant_failure(failures: &BTreeSet<ReplayFailure>, name: &str) 
     failures.iter().any(|failure| {
         matches!(failure, ReplayFailure::Invariant { name: observed } if observed == name)
     })
+}
+
+fn all_invariants_broken(
+    failures: &BTreeSet<ReplayFailure>,
+    invariant_fns: &[(&Function, bool)],
+) -> bool {
+    invariant_fns
+        .iter()
+        .all(|(invariant, _)| has_replay_invariant_failure(failures, &invariant.name))
 }
 
 fn broken_after_invariant<FEN: FoundryEvmNetwork>(
@@ -931,6 +1010,39 @@ mod tests {
     }
 
     #[test]
+    fn handler_failure_identity_ignores_only_path_fingerprint() {
+        let target = Address::with_last_byte(1);
+        let selector = Selector::from([0xaa, 0xbb, 0xcc, 0xdd]);
+        let failures = BTreeSet::from([
+            ReplayFailure::Handler {
+                target,
+                selector,
+                fingerprint: Some(B256::with_last_byte(1)),
+                terminal: false,
+                invariant: None,
+            },
+            ReplayFailure::Handler {
+                target,
+                selector,
+                fingerprint: Some(B256::with_last_byte(2)),
+                terminal: false,
+                invariant: None,
+            },
+            ReplayFailure::Handler {
+                target,
+                selector,
+                fingerprint: Some(B256::with_last_byte(3)),
+                terminal: true,
+                invariant: Some("invariant_ok".to_string()),
+            },
+        ]);
+
+        let observation = ReplayObservation { failures, ..ReplayObservation::default() };
+        assert_eq!(observation.failures.len(), 2);
+        assert!(observation.has_terminal_non_predicate_failure());
+    }
+
+    #[test]
     fn has_replay_invariant_failure_matches_only_observed_predicate() {
         let failures = BTreeSet::from([
             ReplayFailure::Invariant { name: "invariant_first".to_string() },
@@ -959,13 +1071,13 @@ mod tests {
     }
 
     #[test]
-    fn invariant_handler_failure_ignores_plain_revert() {
+    fn invariant_replay_failures_ignore_plain_revert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
             exit_reason: Some(InstructionResult::Revert),
             ..Default::default()
         };
-        let failure = invariant_handler_failure(
+        let failures = invariant_replay_failures(
             Address::with_last_byte(1),
             Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
             did_fail_on_assert(&call_result, &call_result.state_changeset),
@@ -973,11 +1085,59 @@ mod tests {
             &call_result,
             None,
         );
-        assert_eq!(failure, None);
+        assert!(failures.is_empty());
     }
 
     #[test]
-    fn invariant_handler_failure_reports_fail_on_revert() {
+    fn invariant_replay_failures_report_every_fail_on_revert_invariant() {
+        let call_result = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
+            exit_reason: Some(InstructionResult::Revert),
+            ..Default::default()
+        };
+        let first = serde_json::from_value::<Function>(serde_json::json!({
+            "type": "function",
+            "name": "invariant_first",
+            "inputs": [],
+            "outputs": [],
+            "stateMutability": "view"
+        }))
+        .unwrap();
+        let second = serde_json::from_value::<Function>(serde_json::json!({
+            "type": "function",
+            "name": "invariant_second",
+            "inputs": [],
+            "outputs": [],
+            "stateMutability": "view"
+        }))
+        .unwrap();
+        let ignored = serde_json::from_value::<Function>(serde_json::json!({
+            "type": "function",
+            "name": "invariant_ignored",
+            "inputs": [],
+            "outputs": [],
+            "stateMutability": "view"
+        }))
+        .unwrap();
+        let failures = invariant_replay_failures(
+            Address::with_last_byte(1),
+            Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
+            did_fail_on_assert(&call_result, &call_result.state_changeset),
+            &[(&first, true), (&second, true), (&ignored, false)],
+            &call_result,
+            None,
+        );
+        assert_eq!(
+            failures,
+            [
+                ReplayFailure::Invariant { name: "invariant_first".to_string() },
+                ReplayFailure::Invariant { name: "invariant_second".to_string() },
+            ]
+        );
+    }
+
+    #[test]
+    fn invariant_replay_failures_prefer_assertion_over_fail_on_revert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
             exit_reason: Some(InstructionResult::Revert),
@@ -991,21 +1151,17 @@ mod tests {
             "stateMutability": "view"
         }))
         .unwrap();
-        let failure = invariant_handler_failure(
+        let failures = invariant_replay_failures(
             Address::with_last_byte(1),
             Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
-            did_fail_on_assert(&call_result, &call_result.state_changeset),
+            true,
             &[(&invariant, true)],
             &call_result,
             None,
         );
         assert!(matches!(
-            failure,
-            Some(ReplayFailure::Handler {
-                terminal: true,
-                invariant: Some(name),
-                ..
-            }) if name == "invariant_ok"
+            failures.as_slice(),
+            [ReplayFailure::Handler { terminal: false, invariant: None, .. }]
         ));
     }
 
