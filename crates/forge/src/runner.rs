@@ -5,8 +5,8 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{
-        FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig,
-        is_generated_symbolic_regression_contract,
+        FuzzMinimizeObservation, LibraryDeployment, TestContract, TestFunctionMatcher,
+        TestRunnerConfig, is_generated_symbolic_regression_contract,
     },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
@@ -36,7 +36,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
-    core::evm::FoundryEvmNetwork,
+    core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
@@ -735,43 +735,114 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         let mut result = TestSetup::default();
         let mut pending_account_diffs = Vec::new();
-        for (nonce, code) in self.mcr.libs_to_deploy.iter().enumerate() {
-            // Libraries are linked from nonce zero in the same order they are deployed.
-            let expected_address = LIBRARY_DEPLOYER.create(nonce as u64);
-            let recording_library_deployment =
-                self.contract.library_addresses.contains(&expected_address)
-                    && self
-                        .executor
-                        .inspector_mut()
-                        .cheatcodes
-                        .as_deref_mut()
-                        .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
-            let deploy_result = self.executor.deploy(
-                LIBRARY_DEPLOYER,
-                code.clone(),
-                U256::ZERO,
-                Some(&self.mcr.revert_decoder),
-            );
-            let recorded_account_diffs = if recording_library_deployment {
-                self.finish_library_deployment_recording()
-            } else {
-                Vec::new()
-            };
+        match self.mcr.library_deployment {
+            LibraryDeployment::Nonce => {
+                for (nonce, code) in self.mcr.libs_to_deploy.iter().enumerate() {
+                    // Libraries are linked from nonce zero in the same order they are deployed.
+                    let expected_address = LIBRARY_DEPLOYER.create(nonce as u64);
+                    let recording_library_deployment =
+                        self.contract.library_addresses.contains(&expected_address)
+                            && self
+                                .executor
+                                .inspector_mut()
+                                .cheatcodes
+                                .as_deref_mut()
+                                .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
+                    let deploy_result = self.executor.deploy(
+                        LIBRARY_DEPLOYER,
+                        code.clone(),
+                        U256::ZERO,
+                        Some(&self.mcr.revert_decoder),
+                    );
+                    let recorded_account_diffs = if recording_library_deployment {
+                        self.finish_library_deployment_recording()
+                    } else {
+                        Vec::new()
+                    };
 
-            // Record deployed library address.
-            if let Ok(deployed) = &deploy_result {
-                result.deployed_libs.push(deployed.address);
-                if self.contract.library_addresses.contains(&deployed.address) {
-                    pending_account_diffs.extend(recorded_account_diffs);
+                    if let Ok(deployed) = &deploy_result {
+                        result.deployed_libs.push(deployed.address);
+                        if self.contract.library_addresses.contains(&deployed.address) {
+                            pending_account_diffs.extend(recorded_account_diffs);
+                        }
+                    }
+
+                    let (raw, reason) =
+                        RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
+                    result.extend(raw, TraceKind::Deployment);
+                    if reason.is_some() {
+                        debug!(?reason, "deployment of library failed");
+                        result.reason = reason;
+                        return Ok(result);
+                    }
                 }
             }
+            LibraryDeployment::Create2 { deployer, salt } => {
+                // Foundry only knows how to install the canonical factory locally. A custom
+                // factory is usable only when it already exists in fork state. Tempo also
+                // provides the factory as a predeploy, which must not be deployed again.
+                if deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
+                    && !self.evm_opts.networks.is_tempo()
+                {
+                    self.executor.deploy_create2_deployer()?;
+                }
+                for code in &self.mcr.libs_to_deploy {
+                    let address = deployer.create2_from_code(salt, code);
+                    if self.executor.is_empty_code(address)? {
+                        let recording_library_deployment = self
+                            .contract
+                            .library_addresses
+                            .contains(&address)
+                            && self
+                                .executor
+                                .inspector_mut()
+                                .cheatcodes
+                                .as_deref_mut()
+                                .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
+                        let calldata = [salt.as_slice(), code.as_ref()].concat().into();
+                        let raw = self.executor.transact_raw(
+                            LIBRARY_DEPLOYER,
+                            deployer,
+                            calldata,
+                            U256::ZERO,
+                        );
+                        let recorded_account_diffs = if recording_library_deployment {
+                            self.finish_library_deployment_recording()
+                        } else {
+                            Vec::new()
+                        };
+                        let raw = raw?;
+                        let (raw, reason) = if raw.reverted {
+                            RawCallResult::from_evm_result(Err(
+                                raw.into_evm_error(Some(&self.mcr.revert_decoder))
+                            ))?
+                        } else {
+                            (raw, None)
+                        };
+                        result.extend(raw, TraceKind::Deployment);
+                        if reason.is_some() {
+                            debug!(?reason, "CREATE2 deployment of library failed");
+                            result.reason = reason;
+                            return Ok(result);
+                        }
+                        if self.executor.is_empty_code(address)? {
+                            result.reason = Some(format!(
+                                "CREATE2 library deployment succeeded but no code was found at {address}"
+                            ));
+                            return Ok(result);
+                        }
+                        pending_account_diffs.extend(recorded_account_diffs);
+                    }
+                    self.executor.backend_mut().add_persistent_account(address);
+                    result.deployed_libs.push(address);
+                }
 
-            let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-            result.extend(raw, TraceKind::Deployment);
-            if reason.is_some() {
-                debug!(?reason, "deployment of library failed");
-                result.reason = reason;
-                return Ok(result);
+                // Factory calls are test harness setup and must not be observable through the
+                // last-call gas cheatcodes.
+                if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
+                    cheats.gas_metering.last_call_gas = None;
+                    cheats.gas_metering.last_frame_gas = None;
+                }
             }
         }
         if !pending_account_diffs.is_empty()
@@ -779,6 +850,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         {
             cheats.set_pending_account_diffs(pending_account_diffs);
         }
+
+        // Configured libraries may already exist and are not present in `libs_to_deploy`.
+        for &address in &self.mcr.library_addresses {
+            if !self.executor.is_empty_code(address)? {
+                result.deployed_libs.push(address);
+            }
+        }
+        result.deployed_libs.sort_unstable();
+        result.deployed_libs.dedup();
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
         result.address = address;
@@ -813,7 +893,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(CALLER, self.initial_balance())?;
         self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance())?;
 
-        self.executor.deploy_create2_deployer()?;
+        if matches!(self.mcr.library_deployment, LibraryDeployment::Nonce)
+            && !self.evm_opts.networks.is_tempo()
+        {
+            self.executor.deploy_create2_deployer()?;
+        }
 
         // Optionally call the `setUp` function
         if call_setup {
