@@ -308,13 +308,9 @@ impl RemappingsProvider<'_> {
                 );
             }
 
-            // If the configured _src_ directory is set to something that `Remapping::find_many`
-            // doesn't classify as a src directory, manually add a remapping for every lexical
-            // alias while loading the target config only once.
-            if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
-                .contains(&src.as_path())
-                && let Some(name) = entry.path.file_name().and_then(|name| name.to_str())
-            {
+            // Synthesize the declared source remapping for every lexical alias. The source
+            // directory may not exist yet, so `Remapping::find_many` cannot always detect it.
+            if let Some(name) = entry.path.file_name().and_then(|name| name.to_str()) {
                 let mut remapping = Remapping {
                     context: None,
                     name: format!("{name}/"),
