@@ -318,7 +318,7 @@ pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedT
         }
     }
 
-    SparsedTraceArena { arena, ignored: Default::default() }
+    SparsedTraceArena { arena, ignored: Default::default(), diagnostics: Default::default() }
 }
 
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
@@ -703,7 +703,11 @@ mod tests {
         let root = &mut arena.nodes_mut()[0];
         root.children = vec![1, 3];
         root.ordering = vec![TraceMemberOrder::Call(0), TraceMemberOrder::Call(1)];
-        let arena = SparsedTraceArena { arena, ignored: Default::default() };
+        let arena = SparsedTraceArena {
+            arena,
+            ignored: Default::default(),
+            diagnostics: Default::default(),
+        };
 
         let arena = trace_arena_at_depth(&arena, 1);
 
