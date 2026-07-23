@@ -7,13 +7,12 @@
 //! This module provides a storage provider adapter for Anvil's `Db` trait and
 //! uses the shared initialization logic from `foundry-evm-core`.
 
-use alloy_primitives::{Address, B256, U256, address};
+use alloy_primitives::{Address, U256, address};
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     initialize_tempo_genesis_at_hardfork,
 };
 use revm::{
-    DatabaseRef,
     context::{BlockEnv, journaled_state::JournalCheckpoint},
     state::{AccountInfo, Bytecode},
 };
@@ -112,6 +111,7 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<(), TempoPrecompileError> {
+        use revm::DatabaseRef;
         if let Some(info) =
             self.db.basic_ref(address).map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
         {
@@ -122,29 +122,13 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         }
     }
 
-    fn account_code(&mut self, address: Address) -> Result<(B256, Bytecode), TempoPrecompileError> {
-        let Some(info) =
-            self.db.basic_ref(address).map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
-        else {
-            return Ok((B256::ZERO, Bytecode::default()));
-        };
-        let code_hash = info.code_hash;
-        let code = if let Some(code) = info.code {
-            code
-        } else {
-            self.db
-                .code_by_hash_ref(code_hash)
-                .map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
-        };
-        Ok((code_hash, code))
-    }
-
     fn sstore(
         &mut self,
         address: Address,
         key: U256,
         value: U256,
     ) -> Result<(), TempoPrecompileError> {
+        use alloy_primitives::B256;
         self.db
             .set_storage_at(address, B256::from(key), B256::from(value))
             .map_err(|e| TempoPrecompileError::Fatal(e.to_string()))
