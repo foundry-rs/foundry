@@ -40,6 +40,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt,
     fs::File,
@@ -189,10 +190,11 @@ impl ReplayFailure {
 
 /// Records `failure` as the representative failure for an observation, preferring
 /// terminal failures over non-terminal handler bugs and keeping the first of each class.
-fn record_replay_failure(slot: &mut Option<ReplayFailure>, failure: ReplayFailure) {
-    match slot {
-        None => *slot = Some(failure),
-        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *slot = Some(failure),
+fn record_replay_failure(observation: &mut ReplayObservation, failure: ReplayFailure) {
+    observation.has_non_predicate_failure |= !failure.is_predicate();
+    match &mut observation.failure {
+        slot @ None => *slot = Some(failure),
+        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *existing = failure,
         Some(_) => {}
     }
 }
@@ -206,6 +208,8 @@ pub struct ReplayObservation {
     pub sancov_edges: Vec<u8>,
     /// Comparable failure identity, if replaying this candidate fails.
     pub failure: Option<ReplayFailure>,
+    /// Whether replay observed a stateless fuzz or invariant handler failure.
+    pub has_non_predicate_failure: bool,
     /// Number of replayable transactions executed.
     pub replayed: usize,
     /// Number of transactions that do not target this fuzz/invariant context.
@@ -454,6 +458,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     let mut created = Vec::new();
     let mut accepted = 0usize;
     let mut last_accepted_checked_invariant = false;
+    let mut last_accepted_handlers_succeeded = false;
     for tx in input.sequence {
         if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
             observation.unmatched += 1;
@@ -491,6 +496,8 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         if target.fuzzed_contracts.is_some() {
             accepted += 1;
             last_accepted_checked_invariant = false;
+            last_accepted_handlers_succeeded =
+                invariant_handlers_succeeded(&executor, &target, &call_result);
             if let Some(failure) = invariant_handler_failure(
                 target_addr,
                 selector,
@@ -500,7 +507,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 fingerprint,
             ) {
                 let terminal = failure.is_terminal();
-                record_replay_failure(&mut observation.failure, failure);
+                record_replay_failure(&mut observation, failure);
                 if terminal {
                     break;
                 }
@@ -510,7 +517,8 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 accepted,
                 target.invariant_replay.check_interval,
                 target.invariant_replay.is_optimization,
-            ) {
+            ) && last_accepted_handlers_succeeded
+            {
                 last_accepted_checked_invariant = true;
                 if !target.invariant_replay.is_optimization
                     && !observation.failure.as_ref().is_some_and(ReplayFailure::is_predicate)
@@ -518,7 +526,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                     && let Some(failure) =
                         broken_invariant(&executor, address, target.invariant_fns)?
                 {
-                    record_replay_failure(&mut observation.failure, failure);
+                    record_replay_failure(&mut observation, failure);
                 }
             }
         } else if !fuzz_replay_call_succeeded(
@@ -528,7 +536,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             target.fuzz_fail_on_revert,
         ) {
             record_replay_failure(
-                &mut observation.failure,
+                &mut observation,
                 ReplayFailure::Fuzz {
                     selector,
                     fingerprint,
@@ -538,7 +546,11 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             break;
         }
 
-        if observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal) {
+        if observation
+            .failure
+            .as_ref()
+            .is_some_and(|failure| failure.is_terminal() && !failure.is_predicate())
+        {
             break;
         }
     }
@@ -549,19 +561,51 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         && let Some(address) = target.invariant_address
     {
         if !target.invariant_replay.is_optimization
+            && last_accepted_handlers_succeeded
             && !last_accepted_checked_invariant
             && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
         {
-            record_replay_failure(&mut observation.failure, failure);
+            record_replay_failure(&mut observation, failure);
         } else if target.invariant_replay.call_after_invariant
             && let Some(failure) = broken_after_invariant(&executor, address)?
         {
-            record_replay_failure(&mut observation.failure, failure);
+            record_replay_failure(&mut observation, failure);
         }
     }
 
     rollback_replay_created(target.fuzzed_contracts, created);
     Ok(observation)
+}
+
+/// Whether the just-executed handler call passed the campaign's success gate.
+fn invariant_handlers_succeeded<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    target: &ShowmapReplayTarget<'_>,
+    call_result: &crate::executors::RawCallResult<FEN>,
+) -> bool {
+    if call_result.reverted {
+        return false;
+    }
+
+    if !executor.legacy_assertions() {
+        return target.invariant_address.is_some_and(|address| {
+            executor.is_success_handler_gate(
+                address,
+                false,
+                Cow::Borrowed(&call_result.state_changeset),
+            )
+        });
+    }
+
+    target.fuzzed_contracts.is_some_and(|contracts| {
+        contracts.targets().keys().all(|address| {
+            executor.is_success_handler_gate(
+                *address,
+                false,
+                Cow::Borrowed(&call_result.state_changeset),
+            )
+        })
+    })
 }
 
 fn replay_failure_report(replay_failures: &[String], failed_entries: usize) -> String {

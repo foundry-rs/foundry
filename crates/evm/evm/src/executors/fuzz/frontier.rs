@@ -1,11 +1,11 @@
 use crate::inspectors::CmpOperands;
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, Bytes, I256, U256,
+    Address, I256, U256,
     map::{Entry, HashMap},
 };
 use foundry_common::fs;
-use foundry_evm_fuzz::{BasicTxDetails, CallDetails, FuzzRunMetadata};
+use foundry_evm_fuzz::{BasicTxDetails, FuzzRunMetadata};
 use revm::bytecode::opcode;
 use serde::{Serialize, Serializer};
 use std::{
@@ -132,9 +132,7 @@ impl FuzzFrontierRecorder {
     pub(super) fn capture_stateless_call(
         &mut self,
         run: Option<&FuzzRunMetadata>,
-        sender: Address,
-        target: Address,
-        calldata: &Bytes,
+        tx: &BasicTxDetails,
         cmp_values: &[CmpOperands],
         new_coverage: Option<bool>,
     ) {
@@ -144,15 +142,8 @@ impl FuzzFrontierRecorder {
 
         let mut sequence = None;
         let mut new_frontier = |cmp: &CmpOperands, result, operand_delta| {
-            let sequence = sequence.get_or_insert_with(|| {
-                let call = BasicTxDetails {
-                    warp: None,
-                    roll: None,
-                    sender,
-                    call_details: CallDetails { target, calldata: calldata.clone(), value: None },
-                };
-                Arc::from(Vec::from([call]).into_boxed_slice())
-            });
+            let sequence = sequence
+                .get_or_insert_with(|| Arc::from(Vec::from([tx.clone()]).into_boxed_slice()));
             FuzzBranchFrontier::new(
                 run,
                 Arc::clone(sequence),
@@ -343,6 +334,40 @@ const fn opcode_name(op: u8) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::Bytes;
+    use foundry_evm_fuzz::CallDetails;
+
+    #[test]
+    fn stateless_frontier_preserves_concrete_transaction() {
+        let tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::with_last_byte(1),
+            call_details: CallDetails {
+                target: Address::with_last_byte(2),
+                calldata: Bytes::from_static(&[1, 2, 3, 4]),
+                value: Some(U256::from(7)),
+            },
+        };
+        let cmp = CmpOperands {
+            op1: U256::ZERO,
+            op2: U256::from(1),
+            pc: 1,
+            address: tx.call_details.target,
+            opcode: opcode::LT,
+        };
+        let mut recorder = FuzzFrontierRecorder::new(1);
+
+        recorder.capture_stateless_call(None, &tx, &[cmp], Some(true));
+
+        let frontier = recorder.into_frontiers().pop().unwrap();
+        assert_eq!(frontier.sequence.len(), 1);
+        let recorded = &frontier.sequence[0];
+        assert_eq!(recorded.sender, tx.sender);
+        assert_eq!(recorded.call_details.target, tx.call_details.target);
+        assert_eq!(recorded.call_details.calldata, tx.call_details.calldata);
+        assert_eq!(recorded.call_details.value, tx.call_details.value);
+    }
 
     #[test]
     fn operand_delta_uses_signed_distance_for_signed_comparisons() {
