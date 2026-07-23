@@ -79,15 +79,10 @@ impl BuildData {
         script_config: &ScriptConfig<FEN>,
     ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
-        let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
-            let provider = ProviderBuilder::<AnyNetwork>::new(fork_url).build()?;
-            let deployer_code = provider.get_code_at(create2_deployer).await?;
-
-            !deployer_code.is_empty()
-        } else {
-            // If --fork-url is not provided, we are just simulating the script.
-            true
-        };
+        let can_use_create2 = script_config
+            .evm_opts
+            .can_use_create2_deployer(script_config.evm_opts.fork_block_number)
+            .await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
 
@@ -98,7 +93,7 @@ impl BuildData {
                         known_libraries.clone(),
                         create2_deployer,
                         script_config.config.create2_library_salt,
-                        &self.target,
+                        [&self.target],
                     )
                     .ok()
             })

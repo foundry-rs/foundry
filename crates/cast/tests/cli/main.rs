@@ -72,6 +72,9 @@ Options:
 ...
           [alias: --jobs]
 
+      --profile <PROFILE>
+          The configuration profile to use
+
   -V, --version
           Print version
 
@@ -4053,8 +4056,20 @@ forgetest_async!(cast_run_debug_trace_transaction, |prj, cmd| {
     let endpoint = handle.http_endpoint();
     let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
 
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
     let assert = cmd
-        .cast_fuse()
         .args([
             "run",
             "--debug-trace-transaction",
@@ -4071,6 +4086,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
     assert!(
@@ -4481,10 +4500,23 @@ Transaction successfully executed.
 // `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
 // (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
 // targets the identity precompile so the test needs no deployed contract.
-casttest!(cast_call_debug_trace_call, async |_prj, cmd| {
+casttest!(cast_call_debug_trace_call, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    cmd.cast_fuse()
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd
         .args([
             "call",
             "0x0000000000000000000000000000000000000004",
@@ -4503,6 +4535,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
 });

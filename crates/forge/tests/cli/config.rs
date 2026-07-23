@@ -9,7 +9,7 @@ use foundry_compilers::{
 use foundry_config::{
     CompilationRestrictions, Config, Eip1559FeeEstimatePreset, FsPermissions, FuzzConfig,
     FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq, SymbolicConfig,
-    SymbolicExplorationOrder, SymbolicStorageLayout,
+    SymbolicExplorationOrder, SymbolicStorageLayout, TracingConfig,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -287,7 +287,11 @@ skip_files = []
 include_operators = []
 exclude_operators = []
 
-[labels]
+[tracing]
+verbosity = 0
+disable_labels = false
+compact_labels = false
+decode_internal = false
 
 [vyper]
 
@@ -404,6 +408,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         coverage: Default::default(),
         mutation: Default::default(),
+        tracing: TracingConfig { verbosity: 2, compact_labels: true, ..Default::default() },
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,
@@ -503,6 +508,27 @@ forgetest!(can_show_config, |prj, cmd| {
         Config::load_with_root(prj.root()).unwrap().to_string_pretty().unwrap().trim().to_string();
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
+});
+
+forgetest!(can_select_profile_with_cli, |prj, cmd| {
+    prj.create_file(
+        Config::FILE_NAME,
+        r#"
+[profile.default]
+optimizer = false
+optimizer_runs = 200
+
+[profile.ci]
+optimizer = true
+optimizer_runs = 1
+"#,
+    );
+    cmd.env("foundry_profile", "default");
+
+    let config = cmd.args(["--profile", "ci"]).config();
+
+    assert_eq!(config.optimizer, Some(true));
+    assert_eq!(config.optimizer_runs, Some(1));
 });
 
 // checks that config works
@@ -1597,6 +1623,12 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "optimizer_runs": null,
     "via_ir": null
   },
+  "tracing": {
+    "verbosity": 0,
+    "disable_labels": false,
+    "compact_labels": false,
+    "decode_internal": false
+  },
   "ffi": false,
   "live_logs": false,
   "allow_internal_expect_revert": false,
@@ -1704,7 +1736,6 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "isolate": true,
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
-  "labels": {},
   "unchecked_cheatcode_artifacts": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
@@ -2285,6 +2316,23 @@ forgetest!(config_deny_warnings_is_deprecated, |prj, cmd| {
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
 Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
+
+"#]]);
+});
+
+forgetest!(config_labels_is_deprecated, |prj, cmd| {
+    cmd.git_init();
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[labels]
+0x0000000000000000000000000000000000000001 = "Alice"
+"#,
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
 });

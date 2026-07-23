@@ -9,6 +9,9 @@ use dangerous_unary_operator::DANGEROUS_UNARY_OPERATOR;
 mod div_mul;
 use div_mul::DIVIDE_BEFORE_MULTIPLY;
 
+mod ecrecover;
+use ecrecover::ECRECOVER;
+
 mod incorrect_erc20_interface;
 use incorrect_erc20_interface::INCORRECT_ERC20_INTERFACE;
 
@@ -29,6 +32,9 @@ use uninitialized_local::UNINITIALIZED_LOCAL;
 
 mod uninitialized_state_variables;
 use uninitialized_state_variables::UNINITIALIZED_STATE_VARIABLES;
+
+mod unsafe_oz_erc721_mint;
+use unsafe_oz_erc721_mint::UNSAFE_OZ_ERC721_MINT;
 
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
@@ -55,6 +61,7 @@ register_lints!(
     (AssertStateChange, late, (ASSERT_STATE_CHANGE)),
     (DangerousUnaryOperator, early, (DANGEROUS_UNARY_OPERATOR)),
     (DivideBeforeMultiply, late, (DIVIDE_BEFORE_MULTIPLY)),
+    (Ecrecover, late, (ECRECOVER)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (IncorrectStrictEquality, late, (INCORRECT_STRICT_EQUALITY)),
@@ -62,6 +69,7 @@ register_lints!(
     (TxOrigin, early, (TX_ORIGIN)),
     (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
     (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
+    (UnsafeOzErc721Mint, late, (UNSAFE_OZ_ERC721_MINT)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
     (LockedEther, late, (LOCKED_ETHER)),

@@ -189,10 +189,11 @@ impl ReplayFailure {
 
 /// Records `failure` as the representative failure for an observation, preferring
 /// terminal failures over non-terminal handler bugs and keeping the first of each class.
-fn record_replay_failure(slot: &mut Option<ReplayFailure>, failure: ReplayFailure) {
-    match slot {
-        None => *slot = Some(failure),
-        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *slot = Some(failure),
+fn record_replay_failure(observation: &mut ReplayObservation, failure: ReplayFailure) {
+    observation.has_non_predicate_failure |= !failure.is_predicate();
+    match &mut observation.failure {
+        slot @ None => *slot = Some(failure),
+        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *existing = failure,
         Some(_) => {}
     }
 }
@@ -206,6 +207,8 @@ pub struct ReplayObservation {
     pub sancov_edges: Vec<u8>,
     /// Comparable failure identity, if replaying this candidate fails.
     pub failure: Option<ReplayFailure>,
+    /// Whether replay observed a stateless fuzz or invariant handler failure.
+    pub has_non_predicate_failure: bool,
     /// Number of replayable transactions executed.
     pub replayed: usize,
     /// Number of transactions that do not target this fuzz/invariant context.
@@ -500,7 +503,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 fingerprint,
             ) {
                 let terminal = failure.is_terminal();
-                record_replay_failure(&mut observation.failure, failure);
+                record_replay_failure(&mut observation, failure);
                 if terminal {
                     break;
                 }
@@ -518,7 +521,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                     && let Some(failure) =
                         broken_invariant(&executor, address, target.invariant_fns)?
                 {
-                    record_replay_failure(&mut observation.failure, failure);
+                    record_replay_failure(&mut observation, failure);
                 }
             }
         } else if !fuzz_replay_call_succeeded(
@@ -528,7 +531,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             target.fuzz_fail_on_revert,
         ) {
             record_replay_failure(
-                &mut observation.failure,
+                &mut observation,
                 ReplayFailure::Fuzz {
                     selector,
                     fingerprint,
@@ -538,7 +541,11 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             break;
         }
 
-        if observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal) {
+        if observation
+            .failure
+            .as_ref()
+            .is_some_and(|failure| failure.is_terminal() && !failure.is_predicate())
+        {
             break;
         }
     }
@@ -552,11 +559,11 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             && !last_accepted_checked_invariant
             && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
         {
-            record_replay_failure(&mut observation.failure, failure);
+            record_replay_failure(&mut observation, failure);
         } else if target.invariant_replay.call_after_invariant
             && let Some(failure) = broken_after_invariant(&executor, address)?
         {
-            record_replay_failure(&mut observation.failure, failure);
+            record_replay_failure(&mut observation, failure);
         }
     }
 

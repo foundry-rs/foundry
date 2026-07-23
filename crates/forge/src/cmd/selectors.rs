@@ -232,6 +232,7 @@ impl SelectorsSubcommands {
                         second_contract.name,
                     ]);
                     for method in &colliding_methods {
+                        #[allow(clippy::tuple_array_conversions)]
                         table.add_row(<[_; 3]>::from(*method));
                     }
                     sh_println!("{} collisions found:", colliding_methods.len())?;

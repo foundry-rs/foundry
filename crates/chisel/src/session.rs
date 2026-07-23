@@ -70,6 +70,16 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         Ok(())
     }
 
+    /// Removes a cached session if it exists.
+    pub fn remove_cached_session(id: &str) -> Result<()> {
+        let cache_file = format!("{}chisel-{id}.json", Self::cache_dir()?);
+        match std::fs::remove_file(cache_file) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Writes the ChiselSession to a file by serializing it to a JSON string
     ///
     /// ### Returns

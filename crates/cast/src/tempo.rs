@@ -4,13 +4,27 @@ use crate::tx::fill_transaction_gas_fees;
 use alloy_network::{Network, TransactionBuilder};
 use alloy_provider::Provider;
 use eyre::Result;
-use foundry_cli::opts::TempoOpts;
-use foundry_common::FoundryTransactionBuilder;
+use foundry_cli::{json::print_json_success, opts::TempoOpts};
+use foundry_common::{FoundryTransactionBuilder, shell};
 use foundry_config::{Chain, Eip1559FeeEstimatePreset};
 use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
+use serde_json::Value;
 use tempo_alloy::TempoNetwork;
 
 pub use foundry_common::tempo::{TempoSponsor, TempoSponsorPreview, resolve_tempo_sponsor_signer};
+
+/// Prints a command result: the raw payload in JSON mode, the human rendering otherwise.
+pub(crate) fn print_payload<F>(payload: Value, human: F) -> Result<()>
+where
+    F: FnOnce(&Value) -> Result<()>,
+{
+    if shell::is_json() {
+        print_json_success(payload)?;
+    } else {
+        human(&payload)?;
+    }
+    Ok(())
+}
 
 pub(crate) fn print_expires(expires_at: Option<u64>) -> Result<()> {
     if let Some(ts) = expires_at {
