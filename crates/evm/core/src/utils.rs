@@ -6,7 +6,7 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{B256, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use foundry_config::NamedChain;
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum::is_arbitrum_chain};
 use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
@@ -48,6 +48,18 @@ pub fn apply_chain_and_block_specific_env_changes<
 ) {
     use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
 
+    if is_arbitrum_chain(evm_env.cfg_env.chain_id) {
+        // On Arbitrum `block.number` is the L1 block which is included in the
+        // `l1BlockNumber` field.
+        if let Some(l1_block_number) = block
+            .other_fields()
+            .and_then(|other| other.get("l1BlockNumber").cloned())
+            .and_then(|l1_block_number| serde_json::from_value::<U256>(l1_block_number).ok())
+        {
+            evm_env.block_env.set_number(l1_block_number);
+        }
+    }
+
     if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
         let block_number = block.header().number();
 
@@ -71,19 +83,6 @@ pub fn apply_chain_and_block_specific_env_changes<
                 // failure.
                 evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
                 return;
-            }
-            c if c.is_arbitrum() => {
-                // on arbitrum `block.number` is the L1 block which is included in the
-                // `l1BlockNumber` field
-                if let Some(l1_block_number) = block
-                    .other_fields()
-                    .and_then(|other| other.get("l1BlockNumber").cloned())
-                    .and_then(|l1_block_number| {
-                        serde_json::from_value::<U256>(l1_block_number).ok()
-                    })
-                {
-                    evm_env.block_env.set_number(l1_block_number);
-                }
             }
             _ => {}
         }

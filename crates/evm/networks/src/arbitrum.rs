@@ -10,6 +10,12 @@ use revm::precompile::{PrecompileHalt, PrecompileId, PrecompileOutput, Precompil
 /// ArbSys system contract address.
 pub const ARB_SYS_ADDRESS: Address = address!("0000000000000000000000000000000000000064");
 
+/// Robinhood Chain mainnet chain ID.
+pub const ROBINHOOD_MAINNET_CHAIN_ID: u64 = 4663;
+
+/// Robinhood Chain testnet chain ID.
+pub const ROBINHOOD_TESTNET_CHAIN_ID: u64 = 46630;
+
 /// `ArbSys.arbBlockNumber()` selector.
 pub const ARB_BLOCK_NUMBER_SELECTOR: [u8; 4] = hex!("a3b1b31d");
 
@@ -22,6 +28,7 @@ pub static PRECOMPILE_ID_ARB_SYS: PrecompileId = PrecompileId::Custom(Cow::Borro
 /// Returns whether `chain_id` is an Arbitrum chain.
 pub fn is_arbitrum_chain(chain_id: u64) -> bool {
     Chain::from_id(chain_id).is_arbitrum()
+        || matches!(chain_id, ROBINHOOD_MAINNET_CHAIN_ID | ROBINHOOD_TESTNET_CHAIN_ID)
 }
 
 /// Returns the ABI-encoded result for `ArbSys.arbBlockNumber()`.
@@ -55,4 +62,15 @@ fn arb_sys_precompile_call(input: PrecompileInput<'_>, block_number: u64) -> Pre
     };
 
     Ok(PrecompileOutput::new(gas_cost, output, input.reservoir))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifies_robinhood_as_arbitrum() {
+        assert!(is_arbitrum_chain(ROBINHOOD_MAINNET_CHAIN_ID));
+        assert!(is_arbitrum_chain(ROBINHOOD_TESTNET_CHAIN_ID));
+    }
 }
