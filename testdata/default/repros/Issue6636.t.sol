@@ -18,6 +18,7 @@ contract Issue6636Reverter is Test {
 
 abstract contract Issue6636Assertions is Test {
     address internal constant LIBRARY_DEPLOYER = 0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353;
+    address internal constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     function recordLibraryCall(uint256 value) internal returns (Vm.AccountAccess[] memory accesses) {
         vm.startStateDiffRecording();
@@ -31,9 +32,18 @@ abstract contract Issue6636Assertions is Test {
     function assertLibraryDeployment(Vm.AccountAccess[] memory accesses) internal {
         assertGt(accesses.length, 1);
 
-        Vm.AccountAccess memory deployment = accesses[0];
+        Vm.AccountAccess memory deployment;
+        bool deploymentFound;
+        for (uint256 i; i < accesses.length; ++i) {
+            if (accesses[i].kind == Vm.AccountAccessKind.Create) {
+                deployment = accesses[i];
+                deploymentFound = true;
+                break;
+            }
+        }
+        assertTrue(deploymentFound);
+
         assertEq(uint256(deployment.kind), uint256(Vm.AccountAccessKind.Create));
-        assertEq(deployment.accessor, LIBRARY_DEPLOYER);
         assertEq(deployment.chainInfo.forkId, 0);
         assertEq(deployment.chainInfo.chainId, block.chainid);
         assertTrue(deployment.initialized);
@@ -42,15 +52,19 @@ abstract contract Issue6636Assertions is Test {
         assertEq(deployment.value, 0);
         assertTrue(!deployment.reverted);
         assertEq(deployment.storageAccesses.length, 0);
-        assertEq(deployment.depth, 0);
-        assertEq(deployment.oldNonce, 0);
-        assertEq(deployment.newNonce, 1);
-        assertEq(keccak256(deployment.data), keccak256(type(Issue6636Lib).creationCode));
+        if (deployment.accessor == LIBRARY_DEPLOYER) {
+            assertEq(deployment.depth, 0);
+            assertEq(deployment.oldNonce, 0);
+            assertEq(deployment.newNonce, 1);
+            assertEq(keccak256(deployment.data), keccak256(type(Issue6636Lib).creationCode));
+        } else {
+            assertEq(deployment.accessor, CREATE2_FACTORY);
+        }
         assertGt(deployment.deployedCode.length, 0);
         assertEq(keccak256(deployment.deployedCode), deployment.account.codehash);
 
         bool libraryCallRecorded;
-        for (uint256 i = 1; i < accesses.length; ++i) {
+        for (uint256 i; i < accesses.length; ++i) {
             if (accesses[i].kind == Vm.AccountAccessKind.DelegateCall && accesses[i].account == deployment.account) {
                 libraryCallRecorded = true;
                 break;

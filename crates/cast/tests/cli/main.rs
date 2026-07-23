@@ -72,6 +72,9 @@ Options:
 ...
           [alias: --jobs]
 
+      --profile <PROFILE>
+          The configuration profile to use
+
   -V, --version
           Print version
 
