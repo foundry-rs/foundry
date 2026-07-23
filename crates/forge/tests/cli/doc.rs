@@ -435,6 +435,7 @@ pragma solidity ^0.8.0;
 contract InlineSpan {
     /// @notice See `example:
     /// import fromInlineSpan from "e"` for details
+    /// export const outsideInlineSpan = 1
     function f() external {}
 }
 "#,
@@ -445,6 +446,7 @@ contract InlineSpan {
         fs::read_to_string(prj.root().join("docs/src/pages/src/contract.InlineSpan.mdx")).unwrap();
     assert!(rendered.contains("import fromInlineSpan from \"e\""), "{rendered}");
     assert!(!rendered.contains("&#105;mport fromInlineSpan"), "{rendered}");
+    assert!(rendered.contains("&#101;xport const outsideInlineSpan = 1"), "{rendered}");
 });
 
 // A block-comment fence closed by an indented (>=4 space) marker: MDX (no indented code) closes
