@@ -1074,6 +1074,54 @@ forgetest!(nested_config_remappings_are_dependency_scoped, |prj, cmd| {
     cmd.arg("build").assert_success();
 });
 
+forgetest!(explicit_ancestor_context_overrides_generated_descendant, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("dep");
+    for path in [prj.root().join("src/authoritative"), dep.join("generated"), dep.join("fallback")]
+    {
+        pretty_err(&path, fs::create_dir_all(&path));
+    }
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("lib/dep/:alias/=src/authoritative/").unwrap().into()];
+    });
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nsrc = \"generated\"\nremappings = [\"generated/:alias/=fallback/\"]\n",
+        ),
+    );
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/authoritative/Value.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(&dep, fs::write(dep.join("fallback/Value.sol"), "contract Shadow {}\n"));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("generated/Parent.sol"),
+            "import {Selected} from \"alias/Value.sol\"; contract Parent is Selected {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesParent.sol",
+        "import {Parent} from \"dep/generated/Parent.sol\"; contract UsesParent is Parent {}\n",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+lib/dep/:alias/=src/authoritative/
+dep/=lib/dep/
+
+"#]]);
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| config.remappings.clear());
+    let cli_remapping = ["--remappings", "lib/dep/:alias/=src/authoritative/"];
+    cmd.forge_fuse().args(["build", "--no-lint", "--force"]).args(cli_remapping).assert_success();
+    cmd.forge_fuse().arg("lint").args(cli_remapping).assert_success();
+});
+
 forgetest!(missing_dependency_context_is_preserved, |prj, cmd| {
     let dep = prj.paths().libraries[0].join("dep");
     pretty_err(&dep, fs::create_dir_all(dep.join("src")));
