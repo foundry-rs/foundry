@@ -1,4 +1,5 @@
 use crate::utils::generate_large_init_contract;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
 use std::fs;
@@ -182,6 +183,27 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
     "init_size": 50125,
     "runtime_margin": 63938,
     "init_margin": 77875
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+forgetest!(build_sizes_respects_amsterdam_code_size_limits, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Amsterdam;
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 32706,
+    "init_margin": 15411
   }
 }
 "#]]
