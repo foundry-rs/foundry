@@ -14,6 +14,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     executors::ExecutorBuilder,
     inspectors::CheatsConfig,
+    opts::resolve_execution_spec,
     traces::TraceRequirements,
 };
 use solar::{
@@ -193,8 +194,16 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
+        let (mut evm_env, tx_env, fork_block) =
             self.config.evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        self.config.resolved_hardfork = resolve_execution_spec(
+            &self.config.foundry_config,
+            self.config.evm_opts.networks,
+            &mut evm_env,
+            self.config.evm_opts.fork_url.is_some(),
+            None,
+            None,
+        );
 
         let backend = match self.config.backend.clone() {
             Some(backend) => backend,
@@ -229,7 +238,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec_id(self.config.foundry_config.evm_spec_id::<SpecFor<FEN>>())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(evm_env, tx_env, backend);
 

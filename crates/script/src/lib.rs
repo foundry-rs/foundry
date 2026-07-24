@@ -39,7 +39,7 @@ use foundry_common::{
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
-    Config, Eip1559FeeEstimatePreset, figment,
+    Config, Eip1559FeeEstimatePreset, FoundryHardfork, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
@@ -61,7 +61,7 @@ use foundry_evm::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
-    opts::EvmOpts,
+    opts::{EvmOpts, resolve_execution_spec},
     revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
@@ -805,6 +805,8 @@ struct JsonResult<'a, N: Network> {
 pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
+    /// Exact network hardfork selected for script execution.
+    pub hardfork: Option<FoundryHardfork>,
     pub sender_nonce: u64,
     sender_nonce_override: Option<u64>,
     /// Maps a rpc url to a backend
@@ -838,6 +840,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(Self {
             config,
             evm_opts,
+            hardfork: None,
             sender_nonce,
             sender_nonce_override,
             backends: HashMap::default(),
@@ -892,7 +895,16 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         debug: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (evm_env, mut tx_env, fork_block) = self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
+        let (mut evm_env, mut tx_env, fork_block) =
+            self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
+        self.hardfork = resolve_execution_spec(
+            &self.config,
+            self.evm_opts.networks,
+            &mut evm_env,
+            self.evm_opts.fork_url.is_some(),
+            None,
+            None,
+        );
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
@@ -921,7 +933,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
-            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 

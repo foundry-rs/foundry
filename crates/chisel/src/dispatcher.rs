@@ -11,21 +11,17 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
-#[cfg(feature = "monad")]
-use foundry_config::NamedChain;
-use foundry_config::{Config, RpcEndpointUrl};
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
+use foundry_config::{Chain, Config, FoundryHardfork, RpcEndpointUrl};
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    hardforks::TempoHardfork,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena,
     },
 };
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use reqwest::Url;
 use solar::{
     parse::lexer::token::{RawLiteralKind, RawTokenKind},
@@ -167,13 +163,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let chain_id = session_config.evm_opts.get_remote_chain_id().await;
-        let is_tempo = session_config.evm_opts.networks.is_tempo()
-            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
-        #[cfg(feature = "monad")]
-        let is_monad = session_config.evm_opts.networks.is_monad()
-            || chain_id.as_ref().is_some_and(|chain| {
-                matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
-            });
+        let resolved_hardfork = session_config.resolved_hardfork;
 
         #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
         let mut builder = CallTraceDecoderBuilder::new()
@@ -182,14 +172,19 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
                 &session_config.foundry_config,
             )?)
             .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(
-                is_tempo.then(|| session_config.foundry_config.evm_spec_id::<TempoHardfork>()),
-            );
+            .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+                _ => None,
+            }));
         #[cfg(feature = "monad")]
         {
-            builder = builder.with_monad_hardfork(
-                is_monad.then(|| session_config.foundry_config.evm_spec_id::<MonadHardfork>()),
-            );
+            builder =
+                builder.with_monad_hardfork(resolved_hardfork.and_then(
+                    |hardfork| match hardfork {
+                        FoundryHardfork::Monad(hardfork) => Some(hardfork),
+                        _ => None,
+                    },
+                ));
         }
         let mut decoder = builder.build();
 
@@ -275,7 +270,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             ChiselCommand::ListSessions => self.list_sessions(),
             ChiselCommand::Source => self.show_source(),
             ChiselCommand::ClearCache => self.clear_cache(),
-            ChiselCommand::Fork { url } => self.set_fork(url),
+            ChiselCommand::Fork { url } => self.set_fork(url).await,
             ChiselCommand::Traces => self.toggle_traces(),
             ChiselCommand::Calldata { data } => self.set_calldata(data.as_deref()),
             ChiselCommand::MemDump => self.show_mem_dump().await,
@@ -336,7 +331,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             sh_println!("{}", "Saved current session!".green())?;
         }
 
-        let new_session = match id {
+        let mut new_session = match id {
             "latest" => ChiselSession::<FEN>::latest(),
             id => ChiselSession::<FEN>::load(id),
         }
@@ -347,6 +342,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             &new_session.source.config.foundry_config,
             id,
         )?;
+        new_session.source.config.initialize_local_context();
         new_session.source.build()?;
         self.session = new_session;
         sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
@@ -380,11 +376,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         sh_println!("Cleared chisel cache!")
     }
 
-    pub(crate) fn set_fork(&mut self, url: Option<String>) -> Result<()> {
+    pub(crate) async fn set_fork(&mut self, url: Option<String>) -> Result<()> {
+        self.source_mut().config.initialize_local_context();
+
         let Some(url) = url else {
-            self.source_mut().config.evm_opts.fork_url = None;
-            sh_println!("Now using local environment.")?;
-            return Ok(());
+            return self.clear_fork();
         };
 
         // If the argument is an RPC alias designated in the
@@ -403,14 +399,47 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             eyre::bail!("invalid fork URL: {e}");
         }
 
-        sh_println!("Set fork URL to {}", fork_url.yellow())?;
+        let mut fork_opts = self.source().config.evm_opts.clone();
+        fork_opts.fork_url = Some(fork_url.clone());
+        fork_opts.networks = NetworkConfigs::default();
+        fork_opts.env.chain_id = None;
+        let (chain_id, target) = fork_opts.fork_network().await?;
+        let current = network_variant(self.source().config.evm_opts.networks);
+        ensure_fork_network_matches(current, target)?;
 
-        self.source_mut().config.evm_opts.fork_url = Some(fork_url);
+        let networks = self.source().config.evm_opts.networks.with_chain_id(chain_id);
+        let source = self.source_mut();
+        source.config.evm_opts.fork_url = Some(fork_url.clone());
+        source.config.evm_opts.networks = networks;
+        source.config.evm_opts.env.chain_id = Some(chain_id);
+        source.config.foundry_config.networks = networks;
+        source.config.foundry_config.chain = Some(Chain::from(chain_id));
+        source.config.resolved_hardfork = None;
         // Clear the backend so that it is re-instantiated with the new fork
         // upon the next execution of the session source.
-        self.source_mut().config.backend = None;
+        source.config.backend = None;
+
+        sh_println!("Set fork URL to {}", fork_url.yellow())?;
 
         Ok(())
+    }
+
+    fn clear_fork(&mut self) -> Result<()> {
+        let current = network_variant(self.source().config.evm_opts.networks);
+        let local_networks =
+            self.source().config.local_networks.unwrap_or(self.source().config.evm_opts.networks);
+        let target = network_variant(local_networks);
+        ensure_fork_network_matches(current, target)?;
+
+        let source = self.source_mut();
+        source.config.evm_opts.fork_url = None;
+        source.config.evm_opts.networks = local_networks;
+        source.config.evm_opts.env.chain_id = source.config.local_chain_id;
+        source.config.foundry_config.networks = local_networks;
+        source.config.foundry_config.chain = source.config.local_chain_id.map(Chain::from);
+        source.config.resolved_hardfork = None;
+        source.config.backend = None;
+        sh_println!("Now using local environment.")
     }
 
     pub(crate) fn toggle_traces(&mut self) -> Result<()> {
@@ -560,6 +589,20 @@ fn config_network_name(config: &Config) -> &'static str {
     config.networks.active_network_name().unwrap_or("ethereum")
 }
 
+fn network_variant(networks: NetworkConfigs) -> NetworkVariant {
+    networks.resolved_network().unwrap_or_default()
+}
+
+fn ensure_fork_network_matches(current: NetworkVariant, target: NetworkVariant) -> Result<()> {
+    if current != target {
+        eyre::bail!(
+            "cannot switch this Chisel session from network `{current}` to `{target}`. Restart \
+             Chisel with `--network {target}` or a fork URL for that network.",
+        );
+    }
+    Ok(())
+}
+
 fn ensure_loaded_session_network_matches(
     current: &Config,
     loaded: &Config,
@@ -605,6 +648,15 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "monad")]
+    use foundry_config::SolcReq;
+    #[cfg(feature = "monad")]
+    use foundry_evm::{
+        core::evm::MonadEvmNetwork,
+        opts::{Env, EvmOpts},
+    };
+    #[cfg(feature = "monad")]
+    use semver::Version;
 
     fn config_with_network(network: Option<&str>) -> Config {
         let mut config = Config::default();
@@ -622,6 +674,58 @@ mod tests {
     #[test]
     fn config_network_name_defaults_to_ethereum() {
         assert_eq!(config_network_name(&Config::default()), "ethereum");
+    }
+
+    #[test]
+    fn ensure_fork_network_matches_accepts_same_family() {
+        ensure_fork_network_matches(NetworkVariant::Ethereum, NetworkVariant::Ethereum).unwrap();
+        ensure_fork_network_matches(NetworkVariant::Tempo, NetworkVariant::Tempo).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn ensure_fork_network_matches_rejects_cross_family_change() {
+        let err = ensure_fork_network_matches(NetworkVariant::Ethereum, NetworkVariant::Monad)
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "cannot switch this Chisel session from network `ethereum` to `monad`. Restart Chisel \
+             with `--network monad` or a fork URL for that network."
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn clearing_startup_fork_preserves_inferred_monad_context() {
+        let networks = NetworkConfigs::with_monad();
+        let evm_opts = EvmOpts {
+            fork_url: Some("http://localhost:8545".to_string()),
+            networks,
+            env: Env { chain_id: Some(143), ..Default::default() },
+            ..Default::default()
+        };
+        let config = SessionSourceConfig::<MonadEvmNetwork> {
+            foundry_config: Config {
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                networks,
+                chain: Some(Chain::from(143u64)),
+                ..Default::default()
+            },
+            evm_opts,
+            local_networks: Some(networks),
+            local_chain_id: Some(143),
+            ..Default::default()
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+
+        dispatcher.clear_fork().unwrap();
+
+        let config = &dispatcher.source().config;
+        assert!(config.evm_opts.fork_url.is_none());
+        assert!(config.evm_opts.networks.is_monad());
+        assert_eq!(config.evm_opts.env.chain_id, Some(143));
+        assert!(config.foundry_config.networks.is_monad());
+        assert_eq!(config.foundry_config.chain.map(|chain| chain.id()), Some(143));
     }
 
     #[test]

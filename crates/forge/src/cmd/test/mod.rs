@@ -50,7 +50,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
+    Config, FoundryHardfork, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -63,15 +63,12 @@ use foundry_debugger::{Debugger, DebuggerLayout};
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::ShowmapDomain,
     fuzz::{BasicTxDetails, CounterExample},
-    hardforks::TempoHardfork,
     opts::EvmOpts,
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
@@ -2824,9 +2821,7 @@ impl TestArgs {
         // In multi-pass mode the per-pass summary is suppressed; the merged summary is
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
-        let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
-        #[cfg(feature = "monad")]
-        let is_monad_network = runner.tcfg.evm_opts.networks.is_monad();
+        let resolved_hardfork = runner.tcfg.hardfork;
         let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
         // Run tests in a streaming fashion.
@@ -2853,15 +2848,19 @@ impl TestArgs {
             .with_tracing_config(tracing)
             .with_known_contracts(&known_contracts)
             .with_chain_id(remote_chain.map(|c| c.id()))
-            .with_tempo_hardfork(
-                (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
-                    .then(|| config.evm_spec_id::<TempoHardfork>()),
-            );
+            .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+                _ => None,
+            }));
         #[cfg(feature = "monad")]
         {
-            builder = builder.with_monad_hardfork(
-                is_monad_network.then(|| config.evm_spec_id::<MonadHardfork>()),
-            );
+            builder =
+                builder.with_monad_hardfork(resolved_hardfork.and_then(
+                    |hardfork| match hardfork {
+                        FoundryHardfork::Monad(hardfork) => Some(hardfork),
+                        _ => None,
+                    },
+                ));
         }
         // Signatures are of no value for gas reports.
         if !self.gas_report {

@@ -11,6 +11,8 @@ use anvil::{NodeConfig, spawn};
 #[cfg(feature = "monad")]
 use axum::{Json, Router, routing::post};
 use foundry_compilers::artifacts::EvmVersion;
+#[cfg(feature = "monad")]
+use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 #[cfg(feature = "monad")]
@@ -409,6 +411,68 @@ contract MonadEvmVersionTest is Test {
     );
 
     cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
+});
+
+#[cfg(feature = "monad")]
+forgetest_async!(fork_resolves_monad_hardfork_from_timestamp, |prj, cmd| {
+    let activation = MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+    prj.add_test(
+        "MonadForkHardfork.t.sol",
+        r#"
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+}
+
+contract MonadForkHardforkTest {
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function test_monad_eight() public {
+        require(
+            keccak256(bytes(evm.getEvmVersion())) == keccak256("monadeight"),
+            "expected MonadEight"
+        );
+    }
+
+    function test_monad_nine() public {
+        require(
+            keccak256(bytes(evm.getEvmVersion())) == keccak256("monadnine"),
+            "expected MonadNine"
+        );
+    }
+}
+   "#,
+    );
+
+    let (_api, before) = spawn(
+        NodeConfig::test().with_chain_id(Some(143u64)).with_genesis_timestamp(Some(activation - 1)),
+    )
+    .await;
+    cmd.args([
+        "test",
+        "--network",
+        "monad",
+        "--fork-url",
+        &before.http_endpoint(),
+        "--mt",
+        "test_monad_eight",
+    ])
+    .assert_success();
+
+    let (_api, after) = spawn(
+        NodeConfig::test().with_chain_id(Some(143u64)).with_genesis_timestamp(Some(activation)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &after.http_endpoint(),
+            "--mt",
+            "test_monad_nine",
+        ])
+        .assert_success();
 });
 
 #[cfg(feature = "monad")]
@@ -933,6 +997,25 @@ contract MonadProtocolSystemTargetTest {
         _assertRewardReplay();
     }
 
+    function test_gas_paying_system_sender_target_fork_is_rejected() public {
+        vm.createSelectFork("<origin_rpc>", TARGET_HASH);
+        uint256 systemBalanceBefore = SYSTEM.balance;
+        uint256 stakingBalanceBefore = address(STAKING).balance;
+        uint64 nonceBefore = vm.getNonce(SYSTEM);
+
+        bool reverted;
+        try vm.transact(TARGET_HASH) {
+            reverted = false;
+        } catch {
+            reverted = true;
+        }
+
+        require(reverted, "noncanonical system envelope was replayed");
+        require(SYSTEM.balance == systemBalanceBefore, "protocol caller balance changed");
+        require(address(STAKING).balance == stakingBalanceBefore, "staking balance changed");
+        require(vm.getNonce(SYSTEM) == nonceBefore, "protocol caller nonce changed");
+    }
+
     function _assertRewardReplay() internal {
         uint256 systemBalanceBefore = SYSTEM.balance;
         uint256 stakingBalanceBefore = address(STAKING).balance;
@@ -986,6 +1069,7 @@ contract MonadProtocolSystemTargetTest {
 }
 "#
     .replace("<rpc>", &endpoint)
+    .replace("<origin_rpc>", &handle.http_endpoint())
     .replace("<tx_hash>", &target_hash.to_string())
     .replace("<parent_block>", &parent_block.to_string());
     prj.add_test("MonadProtocolSystemTarget.t.sol", &source);

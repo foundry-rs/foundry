@@ -21,14 +21,11 @@ use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
-use foundry_config::NamedChain;
+use foundry_config::{FoundryHardfork, NamedChain};
 use foundry_debugger::Debugger;
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    hardforks::TempoHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
@@ -346,13 +343,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         known_contracts: &ContractsByArtifact,
     ) -> Result<CallTraceDecoder> {
         let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
-        let is_tempo = self.script_config.evm_opts.networks.is_tempo()
-            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
-        #[cfg(feature = "monad")]
-        let is_monad = self.script_config.evm_opts.networks.is_monad()
-            || chain_id.as_ref().is_some_and(|chain| {
-                matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
-            });
+        let resolved_hardfork = self.script_config.hardfork;
 
         let mut tracing = self.script_config.config.tracing.clone();
         tracing.labels.extend(self.execution_result.labeled_addresses.clone());
@@ -365,14 +356,19 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 &self.script_config.config,
             )?)
             .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(
-                is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
-            );
+            .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+                _ => None,
+            }));
         #[cfg(feature = "monad")]
         {
-            builder = builder.with_monad_hardfork(
-                is_monad.then(|| self.script_config.config.evm_spec_id::<MonadHardfork>()),
-            );
+            builder =
+                builder.with_monad_hardfork(resolved_hardfork.and_then(
+                    |hardfork| match hardfork {
+                        FoundryHardfork::Monad(hardfork) => Some(hardfork),
+                        _ => None,
+                    },
+                ));
         }
         let mut decoder = builder.build();
 

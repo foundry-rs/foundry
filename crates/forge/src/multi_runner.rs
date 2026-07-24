@@ -22,7 +22,7 @@ use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
 };
-use foundry_config::{Config, InlineConfig};
+use foundry_config::{Config, FoundryHardfork, InlineConfig};
 use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
@@ -34,7 +34,7 @@ use foundry_evm::{
         strategies::{EnumBounds, LiteralsDictionary},
     },
     inspectors::{CheatsConfig, EdgeIndexMap},
-    opts::EvmOpts,
+    opts::{EvmOpts, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
@@ -481,6 +481,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub tx_env: TxEnvFor<FEN>,
     /// EVM version.
     pub spec_id: SpecFor<FEN>,
+    /// Exact network hardfork selected for the execution environment.
+    pub hardfork: Option<FoundryHardfork>,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
@@ -520,9 +522,17 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
+        self.hardfork = resolve_execution_spec(
+            &config,
+            self.evm_opts.networks,
+            &mut self.evm_env,
+            self.evm_opts.fork_url.is_some(),
+            None,
+            None,
+        );
+        self.spec_id = self.evm_env.cfg_env.spec;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
@@ -770,7 +780,7 @@ impl MultiContractRunnerBuilder {
     pub fn build<FEN: FoundryEvmNetwork, C: Compiler<CompilerContract = Contract>>(
         self,
         output: &ProjectCompileOutput,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner<FEN>> {
@@ -914,6 +924,16 @@ impl MultiContractRunnerBuilder {
             )
         };
 
+        let hardfork = resolve_execution_spec(
+            &self.config,
+            evm_opts.networks,
+            &mut evm_env,
+            self.fork.is_some() || evm_opts.fork_url.is_some(),
+            None,
+            None,
+        );
+        let spec_id = evm_env.cfg_env.spec;
+
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             revert_decoder,
@@ -931,7 +951,8 @@ impl MultiContractRunnerBuilder {
                 evm_opts,
                 evm_env,
                 tx_env,
-                spec_id: self.config.evm_spec_id(),
+                spec_id,
+                hardfork,
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,
