@@ -20,6 +20,8 @@ use std::{
 pub struct CheatsConfig {
     /// Whether the FFI cheatcode is enabled.
     pub ffi: bool,
+    /// Cheatcode selectors rejected before dispatch for restricted executions.
+    pub blocked_cheatcodes: Vec<[u8; 4]>,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
     /// Rewrite plain CREATE to CREATE2 for `forge script --batch`.
@@ -85,6 +87,7 @@ impl CheatsConfig {
 
         Self {
             ffi: evm_opts.ffi,
+            blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             batch_rewrite_creates,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
@@ -110,14 +113,16 @@ impl CheatsConfig {
 
     /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
     pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
-        Self::new(
+        let mut cloned = Self::new(
             config,
             evm_opts,
             self.available_artifacts.clone(),
             self.running_artifact.clone(),
             self.fee_token,
             self.batch_rewrite_creates,
-        )
+        );
+        cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
+        cloned
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -228,6 +233,7 @@ impl Default for CheatsConfig {
     fn default() -> Self {
         Self {
             ffi: false,
+            blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: false,
             batch_rewrite_creates: false,
             prompt_timeout: Duration::from_secs(120),

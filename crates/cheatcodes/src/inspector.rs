@@ -3191,7 +3191,11 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
             }
         };
     }
-    let mut result = vm_calls!(dispatch);
+    let mut result = if ccx.state.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
+        Err(fmt_err!("disabled during restricted execution"))
+    } else {
+        vm_calls!(dispatch)
+    };
 
     // Format the error message to include the cheatcode name.
     if let Err(e) = &mut result

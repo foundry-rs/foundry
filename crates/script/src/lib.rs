@@ -71,6 +71,7 @@ use std::path::PathBuf;
 mod broadcast;
 mod build;
 mod execute;
+mod library_deployments;
 mod multi_sequence;
 mod progress;
 mod providers;
@@ -417,6 +418,8 @@ impl ScriptArgs {
                 .execute()
                 .await?
                 .prepare_simulation()
+                .await?
+                .optimize_library_deployments()
                 .await?;
 
             if pre_simulation.args.debug {
@@ -854,7 +857,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     async fn get_runner(&mut self) -> Result<ScriptRunner<FEN>> {
-        self._get_runner(None, false).await
+        self._get_runner(None, false, false).await
     }
 
     async fn get_runner_with_cheatcodes(
@@ -863,17 +866,22 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         script_wallets: Wallets,
         debug: bool,
         target: ArtifactId,
+        restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
-        self._get_runner(Some((known_contracts, script_wallets, target)), debug).await
+        self._get_runner(Some((known_contracts, script_wallets, target)), debug, restricted).await
     }
 
     async fn _get_runner(
         &mut self,
         cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
+        restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
         let (evm_env, mut tx_env, fork_block) = self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
+        if self.evm_opts.fork_url.is_some() && self.evm_opts.fork_block_number.is_none() {
+            self.evm_opts.fork_block_number = fork_block;
+        }
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
@@ -908,18 +916,20 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         if let Some((known_contracts, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
+                let mut cheats_config = CheatsConfig::new(
+                    &self.config,
+                    self.evm_opts.clone(),
+                    Some(known_contracts),
+                    Some(target),
+                    self.tempo.fee_token,
+                    self.batch,
+                );
+                if restricted {
+                    cheats_config.blocked_cheatcodes =
+                        library_deployments::rerun_unsafe_cheatcode_selectors();
+                }
                 stack
-                    .cheatcodes(
-                        CheatsConfig::new(
-                            &self.config,
-                            self.evm_opts.clone(),
-                            Some(known_contracts),
-                            Some(target),
-                            self.tempo.fee_token,
-                            self.batch,
-                        )
-                        .into(),
-                    )
+                    .cheatcodes(cheats_config.into())
                     .wallets(script_wallets)
                     .enable_isolation(self.evm_opts.isolate)
             });

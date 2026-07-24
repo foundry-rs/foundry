@@ -519,6 +519,14 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
 
         let commit = get_commit_hash(&self.script_config.config.root);
 
+        let local_addresses = match &self.build_data.predeploy_libraries {
+            crate::build::ScriptPredeployLibraries::Default { local, .. }
+            | crate::build::ScriptPredeployLibraries::Create2 { local, .. } => local.as_slice(),
+        };
+        let local_addresses = local_addresses
+            .iter()
+            .map(|library| library.address.to_checksum(None))
+            .collect::<Vec<_>>();
         let libraries = self
             .build_data
             .libraries
@@ -526,6 +534,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             .iter()
             .flat_map(|(file, libs)| {
                 libs.iter()
+                    .filter(|(_, address)| !local_addresses.contains(address))
                     .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
             })
             .collect();
