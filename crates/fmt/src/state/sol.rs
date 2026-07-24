@@ -1413,7 +1413,16 @@ impl<'ast> State<'_, 'ast> {
                         } else {
                             s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
                         }
-                        if has_mixed_comment || s.member_suffix_emits_break(expr, member_expr) {
+                        let keep_inline = s.chained_named_call.is_some_and(|call| {
+                            call.keep_inline && call.callee.contains(expr.span)
+                        });
+                        if has_mixed_comment {
+                            s.zerobreak();
+                        } else if !keep_inline
+                            && s.call_has_overlong_named_call_arg(&member_expr.kind)
+                        {
+                            s.hardbreak_if_not_bol();
+                        } else if s.member_suffix_emits_break(expr, member_expr) {
                             s.zerobreak();
                         }
                         s.word(".");
@@ -2881,6 +2890,17 @@ impl<'ast> State<'_, 'ast> {
             {
                 Some(1)
             }
+            ast::ExprKind::Lit(lit, None) => match lit.kind {
+                ast::LitKind::Bool(true) => Some(4),
+                ast::LitKind::Bool(false) => Some(5),
+                _ => None,
+            },
+            ast::ExprKind::Binary(lhs, op, rhs) => Some(
+                self.estimate_call_chain_size(lhs)?
+                    + op.to_string().len()
+                    + self.estimate_call_chain_size(rhs)?
+                    + 2,
+            ),
             ast::ExprKind::Member(expr, ident) => {
                 Some(self.estimate_call_chain_size(expr)? + ident.to_string().len() + 1)
             }
@@ -2889,6 +2909,28 @@ impl<'ast> State<'_, 'ast> {
             }
             _ => None,
         }
+    }
+
+    fn estimate_named_call_size(&self, expr: &ast::Expr<'_>) -> Option<usize> {
+        let ast::ExprKind::Call(callee, args) = &expr.kind else { return None };
+        let ast::CallArgsKind::Named(args) = &args.kind else { return None };
+        let args_size = args.iter().try_fold(0usize, |size, arg| {
+            Some(size + arg.name.as_str().len() + 2 + self.estimate_call_chain_size(arg.value)?)
+        })?;
+        Some(
+            self.estimate_call_chain_size(callee)?
+                + args_size
+                + args.len().saturating_sub(1) * 2
+                + 4,
+        )
+    }
+
+    fn call_has_overlong_named_call_arg(&self, expr_kind: &ast::ExprKind<'_>) -> bool {
+        let ast::ExprKind::Call(_, args) = expr_kind else { return false };
+        let ast::CallArgsKind::Unnamed(args) = &args.kind else { return false };
+        args.iter().any(|arg| {
+            self.estimate_named_call_size(arg).is_some_and(|size| size > self.config.line_length)
+        })
     }
 
     fn has_comments_between_elements<I>(&self, limits: Span, elements: I) -> bool
