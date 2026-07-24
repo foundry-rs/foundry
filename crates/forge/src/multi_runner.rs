@@ -433,12 +433,23 @@ pub struct ShowmapConfig {
 
 pub type FuzzMinimizeEdgeIndices = Arc<Mutex<BTreeMap<String, Arc<Mutex<EdgeIndexMap>>>>>;
 
+/// Replay behavior required by a fuzz minimization command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FuzzMinimizeMode {
+    /// Replay complete entries so corpus minimization observes all coverage and failures.
+    Cmin,
+    /// Stop at the campaign boundary so transaction minimization ignores unreachable suffixes.
+    Tmin,
+}
+
 /// CLI-only options that switch fuzz/invariant tests into single-entry replay
 /// mode for corpus minimization.
 #[derive(Clone, Debug)]
 pub struct FuzzMinimizeConfig {
     /// Entry to replay.
     pub input: Arc<[BasicTxDetails]>,
+    /// Whether replay serves corpus or transaction minimization.
+    pub mode: FuzzMinimizeMode,
     /// Shared edge-index assignments for all candidate replays in this minimization invocation,
     /// namespaced by matched target.
     pub evm_edge_indices: FuzzMinimizeEdgeIndices,
