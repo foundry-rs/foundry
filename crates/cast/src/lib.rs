@@ -2024,14 +2024,12 @@ impl SimpleCast {
         for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
                 let ty = DynSolType::parse(&input.ty)?;
-                if matches!(
-                    ty,
-                    DynSolType::String
-                        | DynSolType::Bytes
-                        | DynSolType::Array(_)
-                        | DynSolType::Tuple(_)
-                ) {
-                    // For dynamic types, hash the encoded value
+                if matches!(ty, DynSolType::String | DynSolType::Bytes) {
+                    // For indexed `string`/`bytes`, the EVM stores the keccak256 hash of the
+                    // raw (unpadded) contents as the topic, not the hash of the ABI encoding.
+                    topics.push(keccak256(token.abi_encode_packed()));
+                } else if matches!(ty, DynSolType::Array(_) | DynSolType::Tuple(_)) {
+                    // Preserve the existing encoding behavior for arrays/tuples.
                     let encoded = token.abi_encode();
                     let hash = keccak256(encoded);
                     topics.push(hash);
