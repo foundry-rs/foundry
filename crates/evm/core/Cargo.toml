@@ -50,6 +50,7 @@ revm = { workspace = true, features = [
     "optional_eip3607",
     "optional_block_gas_limit",
     "optional_no_base_fee",
+    "optional_priority_fee_check",
     "arbitrary",
     "c-kzg",
     "blst",

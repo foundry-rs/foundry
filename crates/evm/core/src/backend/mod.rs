@@ -9,7 +9,7 @@ use crate::{
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::get_blob_base_fee_update_fraction,
+    utils::{apply_chain_specific_tx_replay_env_changes, get_blob_base_fee_update_fraction},
 };
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
@@ -935,7 +935,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
@@ -969,6 +969,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
             // Clone the fork's CacheDB once. The underlying SharedBackend is Arc-backed,
             // so only the local cache layer is actually duplicated.
+            apply_chain_specific_tx_replay_env_changes(&mut evm_env);
             let chain_id = evm_env.cfg_env.chain_id;
             let timestamp = evm_env.block_env.timestamp().saturating_to();
             let replay_db = fork.db.clone();
@@ -1390,6 +1391,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         update_env_block(&mut evm_env, block.header());
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction::<FEN>(

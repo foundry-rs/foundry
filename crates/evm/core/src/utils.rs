@@ -30,6 +30,14 @@ pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockH
     block
 }
 
+/// Applies chain-specific changes required to replay transactions accepted on-chain.
+pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut EvmEnv<SPEC, BLOCK>) {
+    if NamedChain::try_from(evm_env.cfg_env.chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
+        // Arbitrum does not enforce the EIP-1559 priority fee ordering constraint.
+        evm_env.cfg_env.disable_priority_fee_check = true;
+    }
+}
+
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// - checks for prevrandao mixhash after merge
