@@ -226,6 +226,7 @@ pub struct Config {
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
     /// Remappings to use for this repo
+    #[serde(deserialize_with = "crate::deserialize_relative_remappings")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
@@ -822,6 +823,20 @@ impl Config {
         Self::from_figment_fallback(Figment::from(figment))
     }
 
+    /// Loads a dependency's local config without global providers or recursive remapping
+    /// autodetection.
+    #[track_caller]
+    pub(crate) fn load_with_root_and_fallback_without_auto_detected_remappings(
+        root: impl AsRef<Path>,
+    ) -> Result<Self, ExtractConfigError> {
+        let figment = Self::with_root(root.as_ref()).to_figment_inner(
+            FigmentProviders::All,
+            Some(false),
+            false,
+        );
+        Self::from_figment_fallback(Figment::from(figment))
+    }
+
     /// Attempts to extract a `Config` from `provider`, returning the result.
     ///
     /// # Example
@@ -961,6 +976,15 @@ impl Config {
     /// This will merge various providers, such as env,toml,remappings into the figment if
     /// requested.
     pub fn to_figment(&self, providers: FigmentProviders) -> Figment {
+        self.to_figment_inner(providers, None, true)
+    }
+
+    fn to_figment_inner(
+        &self,
+        providers: FigmentProviders,
+        auto_detect_remappings: Option<bool>,
+        include_global_providers: bool,
+    ) -> Figment {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
@@ -972,53 +996,65 @@ impl Config {
         let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
 
         // merge global foundry.toml file
-        if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
+        if include_global_providers
+            && let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists())
+        {
             figment = Self::merge_toml_provider(
                 figment,
                 TomlFileProvider::new(None, global_toml),
                 profile.clone(),
+                true,
             );
         }
         // merge local foundry.toml file
+        let local_toml = TomlFileProvider::new(
+            include_global_providers.then_some("FOUNDRY_CONFIG"),
+            root.join(Self::FILE_NAME),
+        );
+        let local_toml =
+            if include_global_providers { local_toml } else { local_toml.with_profile_fallback() };
         figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)),
+            local_toml,
             profile.clone(),
+            include_global_providers,
         );
 
         // merge environment variables
-        figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(
-                Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(DappEnvCompatProvider)
-            .merge(EtherscanEnvProvider::default())
-            .merge(
-                Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else {
-                            key.into()
-                        }
-                    })
-                    .global()
-                    .legacy_labels(),
-            )
-            .select(profile.clone());
+        if include_global_providers {
+            figment = figment
+                .merge(
+                    Env::prefixed("DAPP_")
+                        .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(
+                    Env::prefixed("DAPP_TEST_")
+                        .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(DappEnvCompatProvider)
+                .merge(EtherscanEnvProvider::default())
+                .merge(
+                    Env::prefixed("FOUNDRY_")
+                        .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        .map(|key| {
+                            let key = key.as_str();
+                            if Self::STANDALONE_SECTIONS.iter().any(|section| {
+                                key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                            }) {
+                                key.replacen('_', ".", 1).into()
+                            } else {
+                                key.into()
+                            }
+                        })
+                        .global()
+                        .legacy_labels(),
+                );
+        }
+        figment = figment.select(profile.clone());
 
         // only resolve remappings if all providers are requested
         if providers.is_all() {
@@ -1026,15 +1062,16 @@ impl Config {
             // redundant fs lookups to determine the default remappings that are eventually updated
             // by other providers, like the toml file
             let remappings = RemappingsProvider {
-                auto_detect_remappings: figment
-                    .extract_inner::<bool>("auto_detect_remappings")
-                    .unwrap_or(true),
+                auto_detect_remappings: auto_detect_remappings.unwrap_or_else(|| {
+                    figment.extract_inner::<bool>("auto_detect_remappings").unwrap_or(true)
+                }),
+                include_env_remappings: include_global_providers,
                 lib_paths: figment
                     .extract_inner::<Vec<PathBuf>>("libs")
                     .map(Cow::Owned)
                     .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
                 root,
-                remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+                remappings: Remappings::from_figment(&figment),
             };
             figment = figment.merge(remappings);
         }
@@ -1114,8 +1151,21 @@ impl Config {
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
 
-        self.remappings =
-            self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
+        self.remappings = self
+            .remappings
+            .into_iter()
+            .map(|r| {
+                let has_boundary = r.context.as_ref().is_some_and(|context| context.ends_with('/'));
+                let mut r = RelativeRemapping::new(r.into(), &root);
+                if has_boundary
+                    && let Some(context) = &mut r.context
+                    && !context.ends_with('/')
+                {
+                    context.push('/');
+                }
+                r
+            })
+            .collect();
 
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
@@ -2505,6 +2555,7 @@ impl Config {
         mut figment: Figment,
         toml_provider: impl Provider,
         profile: Profile,
+        include_compat_env: bool,
     ) -> Figment {
         figment = figment.select(profile.clone());
 
@@ -2522,7 +2573,7 @@ impl Config {
         // Apply key fixes before selecting profiles, while standalone sections and profile names
         // are still distinguishable.
         let provider = ForcedSnakeCaseData(toml_provider).strict_select(profiles);
-        let provider = &BackwardsCompatTomlProvider(provider);
+        let provider = &BackwardsCompatTomlProvider::new(provider, include_compat_env);
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
@@ -2732,6 +2783,7 @@ pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
         Figment::new(),
         Toml::string(s).nested(),
         Config::DEFAULT_PROFILE,
+        true,
     );
     if figment.profiles().any(|p| p == Config::DEFAULT_PROFILE) {
         Ok(Some((Config::DEFAULT_PROFILE, figment.select(Config::DEFAULT_PROFILE).extract()?)))
@@ -3004,7 +3056,11 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "crate::deserialize_relative_remappings"
+    )]
     pub remappings: Vec<RelativeRemapping>,
     /// The active non-Ethereum network (e.g. `"tempo"`).
     #[serde(skip)]
@@ -5998,11 +6054,13 @@ mod tests {
                 Figment::from(Config::default()),
                 Toml::string(global).nested(),
                 Config::DEFAULT_PROFILE,
+                true,
             );
             Config::merge_toml_provider(
                 figment,
                 Toml::string(local).nested(),
                 Config::DEFAULT_PROFILE,
+                true,
             )
         };
 
@@ -8361,6 +8419,62 @@ mod tests {
                 .expect("lib config should load with fallback");
             assert_eq!(config.profile, Config::DEFAULT_PROFILE);
             assert_eq!(config.src.as_os_str(), "contracts");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn nested_lib_profile_fallback_applies_extends() {
+        figment::Jail::expect_with(|jail| {
+            let lib_path = jail.directory().join("lib/mylib");
+            std::fs::create_dir_all(&lib_path).unwrap();
+            jail.create_file(
+                "lib/mylib/base.toml",
+                r#"
+                [profile.default]
+                remappings = ["base/=lib/base/src/"]
+                "#,
+            )?;
+            jail.create_file(
+                "lib/mylib/foundry.toml",
+                r#"
+                [profile.default]
+                extends = "base.toml"
+                "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let config =
+                Config::load_with_root_and_fallback_without_auto_detected_remappings(&lib_path)
+                    .expect("lib config should apply default profile inheritance");
+            assert_eq!(config.profile, Config::DEFAULT_PROFILE);
+            assert_eq!(config.remappings.len(), 1);
+            assert_eq!(config.remappings[0].name, "base/");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn nested_lib_config_ignores_compat_solc_env() {
+        figment::Jail::expect_with(|jail| {
+            let lib_path = jail.directory().join("lib/mylib");
+            std::fs::create_dir_all(&lib_path).unwrap();
+            jail.create_file(
+                "lib/mylib/foundry.toml",
+                r#"
+                [profile.default]
+                solc_version = "0.8.12"
+                "#,
+            )?;
+            jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
+            jail.set_env("DAPP_SOLC_VERSION", "0.7.6");
+
+            let config =
+                Config::load_with_root_and_fallback_without_auto_detected_remappings(&lib_path)
+                    .expect("lib config should ignore process solc settings");
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             Ok(())
         });

@@ -298,11 +298,40 @@ fn configure_pcx_from_solc_cli(
     pcx.file_resolver
         .set_current_dir(cli_settings.base_path.as_ref().unwrap_or(&project_paths.root));
     for remapping in &project_paths.remappings {
-        pcx.file_resolver.add_import_remapping(solar::sema::interface::config::ImportRemapping {
-            context: remapping.context.clone().unwrap_or_default(),
-            prefix: remapping.name.clone(),
-            path: remapping.path.clone(),
-        });
+        let contexts = remapping.context.as_ref().map_or_else(
+            || vec![String::new()],
+            |context| {
+                // Compile output can contain root-relative or canonical source names. Register
+                // both forms while preserving user-defined file and source-prefix contexts.
+                let has_boundary = context.ends_with('/');
+                let mut absolute = project_paths.root.join(context).to_string_lossy().into_owned();
+                if has_boundary && !absolute.ends_with('/') {
+                    absolute.push('/');
+                }
+                let mut contexts = vec![context.clone(), absolute];
+                if std::path::MAIN_SEPARATOR != '/' {
+                    let separator = std::path::MAIN_SEPARATOR.to_string();
+                    contexts.extend(
+                        contexts
+                            .clone()
+                            .into_iter()
+                            .map(|context| context.replace('/', &separator)),
+                    );
+                }
+                let mut seen = HashSet::new();
+                contexts.retain(|context| seen.insert(context.clone()));
+                contexts
+            },
+        );
+        for context in contexts {
+            pcx.file_resolver.add_import_remapping(
+                solar::sema::interface::config::ImportRemapping {
+                    context,
+                    prefix: remapping.name.clone(),
+                    path: remapping.path.clone(),
+                },
+            );
+        }
     }
     pcx.file_resolver.add_include_paths(cli_settings.include_paths.iter().cloned());
 }
