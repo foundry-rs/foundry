@@ -16,6 +16,8 @@ use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 #[cfg(feature = "monad")]
 use foundry_evm::hardfork::MonadHardfork;
+#[cfg(feature = "monad")]
+use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -5636,9 +5638,26 @@ casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
     assert!(receipt.status());
 
     let endpoint = handle.http_endpoint();
-    let tx_hash = receipt.transaction_hash.to_string();
+    let tx_hash = receipt.transaction_hash;
+    let tx_hash_string = tx_hash.to_string();
+    let original =
+        cmd.args(["run", &tx_hash_string, "--rpc-url", &endpoint, "--quick"]).assert_failure();
+    let original = original.get_output();
+    assert!(
+        original.stderr_lossy().contains("invalid Monad protocol system transaction"),
+        "{}",
+        original.stderr_lossy()
+    );
+    assert!(
+        !original.stdout_lossy().contains("Staking::syscallSnapshot()"),
+        "{}",
+        original.stdout_lossy()
+    );
+
+    let canonical_endpoint = spawn_canonical_monad_system_rpc(endpoint, tx_hash).await;
     let output = cmd
-        .args(["run", &tx_hash, "--rpc-url", &endpoint, "--quick"])
+        .cast_fuse()
+        .args(["run", &tx_hash_string, "--rpc-url", &canonical_endpoint, "--quick"])
         .assert_success()
         .get_output()
         .stdout_lossy();

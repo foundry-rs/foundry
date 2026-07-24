@@ -8,116 +8,15 @@ use alloy_primitives::{Address, B256, TxKind, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 #[cfg(feature = "monad")]
 use anvil::{NodeConfig, spawn};
-#[cfg(feature = "monad")]
-use axum::{Json, Router, routing::post};
 use foundry_compilers::artifacts::EvmVersion;
 #[cfg(feature = "monad")]
 use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
+#[cfg(feature = "monad")]
+use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 #[cfg(feature = "monad")]
 use serde_json::{Value, json};
-
-#[cfg(feature = "monad")]
-fn canonicalize_monad_reward_transaction(transaction: &mut Value, target_hash: &str) {
-    let Some(transaction) = transaction.as_object_mut() else { return };
-    if !transaction
-        .get("hash")
-        .and_then(Value::as_str)
-        .is_some_and(|hash| hash.eq_ignore_ascii_case(target_hash))
-    {
-        return;
-    }
-
-    transaction.insert("gas".to_string(), json!("0x0"));
-    transaction.insert("gasPrice".to_string(), json!("0x0"));
-    transaction.insert("r".to_string(), json!("0x0"));
-    transaction.insert("s".to_string(), json!("0x0"));
-    transaction.insert("type".to_string(), json!("0x0"));
-    transaction.insert("v".to_string(), json!("0x0"));
-    transaction.remove("accessList");
-    transaction.remove("maxFeePerGas");
-    transaction.remove("maxPriorityFeePerGas");
-    transaction.remove("yParity");
-}
-
-#[cfg(feature = "monad")]
-fn canonicalize_monad_reward_receipt(receipt: &mut Value, target_hash: &str) {
-    let Some(receipt) = receipt.as_object_mut() else { return };
-    if !receipt
-        .get("transactionHash")
-        .and_then(Value::as_str)
-        .is_some_and(|hash| hash.eq_ignore_ascii_case(target_hash))
-    {
-        return;
-    }
-
-    receipt.insert("cumulativeGasUsed".to_string(), json!("0x0"));
-    receipt.insert("effectiveGasPrice".to_string(), json!("0x0"));
-    receipt.insert("gasUsed".to_string(), json!("0x0"));
-    receipt.insert("type".to_string(), json!("0x0"));
-}
-
-#[cfg(feature = "monad")]
-async fn spawn_canonical_monad_reward_rpc(endpoint: String, target_hash: B256) -> String {
-    let target_hash = target_hash.to_string();
-    let router = Router::new().route(
-        "/",
-        post(move |Json(request): Json<Value>| {
-            let endpoint = endpoint.clone();
-            let target_hash = target_hash.clone();
-            async move {
-                let method = request["method"].as_str().unwrap();
-                let mut response = reqwest::Client::new()
-                    .post(endpoint)
-                    .json(&request)
-                    .send()
-                    .await
-                    .unwrap()
-                    .json::<Value>()
-                    .await
-                    .unwrap();
-
-                match method {
-                    "eth_getTransactionByHash"
-                    | "eth_getTransactionByBlockHashAndIndex"
-                    | "eth_getTransactionByBlockNumberAndIndex" => {
-                        canonicalize_monad_reward_transaction(
-                            &mut response["result"],
-                            &target_hash,
-                        );
-                    }
-                    "eth_getBlockByHash" | "eth_getBlockByNumber" => {
-                        if let Some(transactions) =
-                            response["result"]["transactions"].as_array_mut()
-                        {
-                            for transaction in transactions {
-                                canonicalize_monad_reward_transaction(transaction, &target_hash);
-                            }
-                        }
-                    }
-                    "eth_getTransactionReceipt" => {
-                        canonicalize_monad_reward_receipt(&mut response["result"], &target_hash);
-                    }
-                    "eth_getBlockReceipts" => {
-                        if let Some(receipts) = response["result"].as_array_mut() {
-                            for receipt in receipts {
-                                canonicalize_monad_reward_receipt(receipt, &target_hash);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-
-                Json(response)
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    format!("http://{address}")
-}
 
 #[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
@@ -364,11 +263,30 @@ interface EvmVm {
     function setEvmVersion(string calldata evm) external;
 }
 
+contract ModexpGasProbe {
+    function measure() external view returns (uint256) {
+        bytes memory input = abi.encodePacked(
+            bytes32(uint256(32)),
+            bytes32(uint256(32)),
+            bytes32(uint256(32)),
+            bytes32(type(uint256).max),
+            bytes32(type(uint256).max),
+            bytes32(type(uint256).max)
+        );
+        uint256 gasBefore = gasleft();
+        (bool ok,) = address(5).staticcall(input);
+        uint256 gasUsed = gasBefore - gasleft();
+        require(ok, "MODEXP probe should succeed");
+        return gasUsed;
+    }
+}
+
 contract MonadEvmVersionTest is Test {
     EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
     address constant CLZ_TARGET = address(uint160(0x0c17));
     address constant MEMORY_TARGET = address(uint160(0x3e3));
     address constant RESERVE_TARGET = address(uint160(0x1001));
+    ModexpGasProbe immutable modexpGasProbe = new ModexpGasProbe();
 
     function test_set_monad_evm_version() public {
         evm.setEvmVersion("MonadEight");
@@ -376,7 +294,7 @@ contract MonadEvmVersionTest is Test {
 
         assertEq(evm.getEvmVersion(), "monadeight");
         assertEq(memoryExpansionGasDelta(), 897, "MonadEight should use Ethereum memory pricing");
-        uint256 monadEightModexpGas = modexpGas();
+        uint256 monadEightModexpGas = modexpGasProbe.measure();
         assertFalse(reservePrecompileActive(), "MonadEight should not expose the reserve precompile");
         (bool ok,) = CLZ_TARGET.staticcall(hex"");
         assertFalse(ok, "CLZ should be unavailable on MonadEight");
@@ -384,7 +302,7 @@ contract MonadEvmVersionTest is Test {
         evm.setEvmVersion("MonadNine");
         assertEq(evm.getEvmVersion(), "monadnine");
         assertEq(memoryExpansionGasDelta(), 128, "MonadNine should use MIP-3 memory pricing");
-        uint256 monadNineModexpGas = modexpGas();
+        uint256 monadNineModexpGas = modexpGasProbe.measure();
         assertGt(monadNineModexpGas, monadEightModexpGas, "MonadNine should use MIP-3 MODEXP pricing");
         assertTrue(reservePrecompileActive(), "MonadNine should expose the reserve precompile");
         bytes memory output;
@@ -395,7 +313,11 @@ contract MonadEvmVersionTest is Test {
         evm.setEvmVersion("monad:MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
         assertEq(memoryExpansionGasDelta(), 897, "MonadEight memory pricing should be restored");
-        assertLt(modexpGas(), monadNineModexpGas, "MonadEight MODEXP pricing should be restored");
+        assertEq(
+            modexpGasProbe.measure(),
+            monadEightModexpGas,
+            "MonadEight MODEXP pricing should be restored exactly"
+        );
         assertFalse(
             reservePrecompileActive(), "MonadEight should remove the reserve precompile again"
         );
@@ -415,22 +337,6 @@ contract MonadEvmVersionTest is Test {
         (bool ok, bytes memory output) = MEMORY_TARGET.staticcall(hex"");
         assertTrue(ok, "memory gas probe should succeed");
         return abi.decode(output, (uint256));
-    }
-
-    function modexpGas() internal view returns (uint256) {
-        bytes memory input = abi.encodePacked(
-            bytes32(uint256(32)),
-            bytes32(uint256(32)),
-            bytes32(uint256(32)),
-            bytes32(type(uint256).max),
-            bytes32(type(uint256).max),
-            bytes32(type(uint256).max)
-        );
-        uint256 gasBefore = gasleft();
-        (bool ok,) = address(5).staticcall(input);
-        uint256 gasUsed = gasBefore - gasleft();
-        assertTrue(ok, "MODEXP probe should succeed");
-        return gasUsed;
     }
 
     function reservePrecompileActive() internal returns (bool) {
@@ -462,6 +368,7 @@ contract MonadForkHardforkTest {
     EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
 
     function test_monad_eight() public {
+        require(block.chainid == 1, "expected CHAINID override");
         require(
             keccak256(bytes(evm.getEvmVersion())) == keccak256("monadeight"),
             "expected MonadEight"
@@ -469,6 +376,7 @@ contract MonadForkHardforkTest {
     }
 
     function test_monad_nine() public {
+        require(block.chainid == 1, "expected CHAINID override");
         require(
             keccak256(bytes(evm.getEvmVersion())) == keccak256("monadnine"),
             "expected MonadNine"
@@ -488,6 +396,8 @@ contract MonadForkHardforkTest {
         "monad",
         "--fork-url",
         &before.http_endpoint(),
+        "--chain-id",
+        "1",
         "--mt",
         "test_monad_eight",
     ])
@@ -504,6 +414,8 @@ contract MonadForkHardforkTest {
             "monad",
             "--fork-url",
             &after.http_endpoint(),
+            "--chain-id",
+            "1",
             "--mt",
             "test_monad_nine",
         ])
@@ -961,7 +873,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     assert_eq!(receipt.block_number(), Some(parent_block + 1));
 
     let target_hash = receipt.transaction_hash;
-    let endpoint = spawn_canonical_monad_reward_rpc(handle.http_endpoint(), target_hash).await;
+    let endpoint = spawn_canonical_monad_system_rpc(handle.http_endpoint(), target_hash).await;
     let transaction =
         rpc_request(&endpoint, "eth_getTransactionByHash", json!([target_hash])).await;
     assert_eq!(transaction["result"]["gas"], "0x0");

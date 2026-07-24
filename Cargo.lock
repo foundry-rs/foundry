@@ -6017,6 +6017,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives",
  "alloy-provider",
+ "axum",
  "eyre",
  "fd-lock",
  "foundry-block-explorers",

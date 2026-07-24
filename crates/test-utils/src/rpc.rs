@@ -1,5 +1,7 @@
-//! RPC API keys utilities.
+//! RPC testing utilities.
 
+use alloy_primitives::B256;
+use axum::{Json, Router, routing::post};
 use foundry_config::{
     NamedChain::{
         self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
@@ -7,6 +9,7 @@ use foundry_config::{
     RpcEndpointUrl, RpcEndpoints,
 };
 use rand::seq::SliceRandom;
+use serde_json::{Value, json};
 use std::{
     env,
     sync::{
@@ -231,6 +234,116 @@ fn debug_url(url: &str) -> impl std::fmt::Display + '_ {
         host = url.host_str().unwrap(),
         path = url.path().get(..8).unwrap_or(url.path()),
     )
+}
+
+/// Spawns an RPC proxy that presents one transaction as a canonical Monad protocol envelope.
+pub async fn spawn_canonical_monad_system_rpc(endpoint: String, target_hash: B256) -> String {
+    let target_hash = target_hash.to_string();
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let target_hash = target_hash.clone();
+            async move {
+                let method = request["method"].as_str().unwrap();
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+
+                match method {
+                    "eth_getTransactionByHash"
+                    | "eth_getTransactionByBlockHashAndIndex"
+                    | "eth_getTransactionByBlockNumberAndIndex" => {
+                        canonicalize_monad_system_transaction(
+                            &mut response["result"],
+                            &target_hash,
+                        );
+                    }
+                    "eth_getBlockByHash" | "eth_getBlockByNumber" => {
+                        if let Some(transactions) =
+                            response["result"]["transactions"].as_array_mut()
+                        {
+                            for transaction in transactions {
+                                canonicalize_monad_system_transaction(transaction, &target_hash);
+                            }
+                        }
+                    }
+                    "eth_getTransactionReceipt" => {
+                        canonicalize_monad_system_receipt(&mut response["result"], &target_hash);
+                    }
+                    "eth_getBlockReceipts" => {
+                        if let Some(receipts) = response["result"].as_array_mut() {
+                            for receipt in receipts {
+                                canonicalize_monad_system_receipt(receipt, &target_hash);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+fn canonicalize_monad_system_transaction(transaction: &mut Value, target_hash: &str) {
+    let Some(transaction) = transaction.as_object_mut() else { return };
+    if !transaction
+        .get("hash")
+        .and_then(Value::as_str)
+        .is_some_and(|hash| hash.eq_ignore_ascii_case(target_hash))
+    {
+        return;
+    }
+
+    transaction.insert("gas".to_string(), json!("0x0"));
+    transaction.insert("gasPrice".to_string(), json!("0x0"));
+    transaction.insert("r".to_string(), json!("0x0"));
+    transaction.insert("s".to_string(), json!("0x0"));
+    transaction.insert("type".to_string(), json!("0x0"));
+    transaction.insert("v".to_string(), json!("0x0"));
+    for field in [
+        "accessList",
+        "authorizationList",
+        "blobVersionedHashes",
+        "maxFeePerBlobGas",
+        "maxFeePerGas",
+        "maxPriorityFeePerGas",
+        "yParity",
+    ] {
+        transaction.remove(field);
+    }
+}
+
+fn canonicalize_monad_system_receipt(receipt: &mut Value, target_hash: &str) {
+    let Some(receipt) = receipt.as_object_mut() else { return };
+    if !receipt
+        .get("transactionHash")
+        .and_then(Value::as_str)
+        .is_some_and(|hash| hash.eq_ignore_ascii_case(target_hash))
+    {
+        return;
+    }
+
+    receipt.insert("cumulativeGasUsed".to_string(), json!("0x0"));
+    receipt.insert("effectiveGasPrice".to_string(), json!("0x0"));
+    receipt.insert("gasUsed".to_string(), json!("0x0"));
+    receipt.insert("type".to_string(), json!("0x0"));
+    receipt.remove("blobGasPrice");
+    receipt.remove("blobGasUsed");
 }
 
 #[cfg(test)]
