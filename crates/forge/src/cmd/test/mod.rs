@@ -4,8 +4,8 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
-        FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, MultiNetworkConfig,
-        ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
+        FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode, FuzzMinimizeObservation,
+        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
         is_generated_symbolic_regression_contract,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
@@ -163,10 +163,12 @@ impl FuzzMinimizeReplaySession {
         &self,
         sequence: Vec<BasicTxDetails>,
         evm_edge_indices: FuzzMinimizeEdgeIndices,
+        mode: FuzzMinimizeMode,
     ) -> Result<Vec<FuzzMinimizeObservation>> {
         let observations = Arc::new(Mutex::new(Vec::new()));
         let fuzz_minimize = FuzzMinimizeConfig {
             input: sequence.into(),
+            mode,
             evm_edge_indices,
             observations: observations.clone(),
         };

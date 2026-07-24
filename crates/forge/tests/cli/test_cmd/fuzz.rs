@@ -3152,6 +3152,23 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
         .assert_success();
     let stdout = String::from_utf8(showmap.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[PASS] invariant_ok() (replay: 1 entries"), "{stdout}");
+
+    let cmin = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzInvariantFailOnRevertReplayTest",
+            "--mt",
+            "invariant_ok",
+            "invariant_corpus",
+            "--corpus-out",
+            "min-invariant-fail-on-revert-corpus",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(cmin.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("1 corpus entries failed during replay"), "{stderr}");
 });
 
 forgetest_init!(forge_fuzz_replay_invariant_sequence_checks, |prj, cmd| {
