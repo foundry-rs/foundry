@@ -1499,6 +1499,7 @@ forgetest!(scoped_dependency_config_remappings_are_discovered, |prj, cmd| {
     cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
 node_modules/@scope/pkg/:@scope/pkg/=node_modules/@scope/pkg/contracts/
 @scope/pkg/=node_modules/@scope/pkg/contracts/
+@scope/=node_modules/@scope/
 
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
@@ -1538,6 +1539,54 @@ zzalias/=lib/foo/vendor/
 
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
+});
+
+#[cfg(unix)]
+forgetest!(symlinked_transitive_dependency_uses_each_lexical_path, |prj, cmd| {
+    let temp = tempfile::tempdir().unwrap();
+    let child = temp.path().join("child");
+    pretty_err(&child, fs::create_dir_all(child.join("src")));
+    pretty_err(&child, fs::create_dir_all(child.join("vendor")));
+    pretty_err(
+        &child,
+        fs::write(
+            child.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"zzalias/=vendor/\"]\n",
+        ),
+    );
+    pretty_err(&child, fs::write(child.join("vendor/Z.sol"), "contract Z {}\n"));
+    pretty_err(
+        &child,
+        fs::write(
+            child.join("src/Child.sol"),
+            "import {Z} from \"zzalias/Z.sol\"; contract Child is Z {}\n",
+        ),
+    );
+
+    for side in ["left", "right"] {
+        let parent = prj.paths().libraries[0].join(side);
+        pretty_err(&parent, fs::create_dir_all(parent.join("src")));
+        pretty_err(&parent, fs::create_dir_all(parent.join("lib")));
+        pretty_err(&parent, fs::write(parent.join("foundry.toml"), "[profile.default]\n"));
+        let child_name = format!("child-{side}");
+        pretty_err(&child, symlink(&child, parent.join("lib").join(&child_name)));
+        let contract = if side == "left" { "Left" } else { "Right" };
+        pretty_err(
+            &parent,
+            fs::write(
+                parent.join("src/Parent.sol"),
+                format!(
+                    "import {{Child}} from \"{child_name}/Child.sol\"; contract {contract} is Child {{}}\n"
+                ),
+            ),
+        );
+    }
+    prj.add_source(
+        "UsesParents.sol",
+        "import {Left} from \"left/Parent.sol\"; import {Right} from \"right/Parent.sol\"; contract UsesParents is Left, Right {}\n",
+    );
+
+    cmd.args(["build", "--no-lint"]).assert_success();
 });
 
 forgetest!(configured_lib_order_breaks_equal_remapping_ties, |prj, cmd| {

@@ -6,7 +6,6 @@ use figment::value::Value;
 use foundry_compilers::artifacts::remappings::{Remapping, RemappingError};
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
-    collections::HashSet,
     fs, io,
     path::{Path, PathBuf},
     str::FromStr,
@@ -164,11 +163,10 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
     }
     candidates.sort();
 
-    let mut seen = HashSet::new();
     candidates
         .into_iter()
         .filter(|path| path.join(Config::FILE_NAME).is_file())
-        .filter(|path| dunce::canonicalize(path).is_ok_and(|path| seen.insert(path)))
+        .filter(|path| dunce::canonicalize(path).is_ok())
         .collect()
 }
 

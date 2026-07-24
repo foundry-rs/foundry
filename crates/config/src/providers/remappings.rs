@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, de};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashSet, VecDeque, btree_map::Entry},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque, btree_map::Entry},
     fs,
     path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
@@ -435,30 +435,44 @@ impl RemappingsProvider<'_> {
         let mut pending = lib_paths
             .into_iter()
             .flat_map(foundry_toml_dirs)
-            .map(|lib| (lib, true))
+            .map(|lib| (lib, true, HashSet::new()))
             .collect::<VecDeque<_>>();
-        let mut seen = HashSet::new();
+        let mut configs = HashMap::new();
+        let mut emitted = HashSet::new();
         let mut remappings = NestedRemappings::default();
 
-        while let Some((lib, direct)) = pending.pop_front() {
+        while let Some((lib, direct, ancestors)) = pending.pop_front() {
+            let lib = normalize(&lib);
             let Ok(canonical_lib) = dunce::canonicalize(&lib) else { continue };
-            if !seen.insert(canonical_lib.clone()) {
+            if ancestors.contains(&canonical_lib)
+                || !emitted.insert((canonical_lib.clone(), lib.clone()))
+            {
                 continue;
             }
 
             trace!(?lib, ?canonical_lib, "find all remappings of nested foundry.toml");
-            if let Some((nested_remappings, nested_libs)) =
-                self.nested_foundry_remappings(&lib, &canonical_lib, direct)
-            {
-                remappings.dependency.extend(nested_remappings.dependency);
-                remappings
-                    .configured_package_entries
-                    .extend(nested_remappings.configured_package_entries);
-                remappings.package_fallbacks.extend(nested_remappings.package_fallbacks);
-                pending.extend(
-                    nested_libs.into_iter().flat_map(foundry_toml_dirs).map(|lib| (lib, false)),
-                );
-            }
+            let config = configs.entry(canonical_lib.clone()).or_insert_with(|| {
+                Config::load_with_root_and_fallback_without_auto_detected_remappings(&canonical_lib)
+                    .ok()
+                    .map(Config::sanitized)
+            });
+            let Some(config) = config.as_ref() else { continue };
+            let (nested_remappings, nested_libs) =
+                self.nested_foundry_remappings(&lib, &canonical_lib, config, direct);
+            remappings.dependency.extend(nested_remappings.dependency);
+            remappings
+                .configured_package_entries
+                .extend(nested_remappings.configured_package_entries);
+            remappings.package_fallbacks.extend(nested_remappings.package_fallbacks);
+
+            let mut ancestors = ancestors;
+            ancestors.insert(canonical_lib);
+            pending.extend(
+                nested_libs
+                    .into_iter()
+                    .flat_map(foundry_toml_dirs)
+                    .map(|lib| (lib, false, ancestors.clone())),
+            );
         }
 
         // Import resolution uses the first applicable remapping. Prefer deeper dependency contexts
@@ -480,16 +494,9 @@ impl RemappingsProvider<'_> {
         &self,
         lib: &Path,
         canonical_lib: &Path,
+        config: &Config,
         direct: bool,
-    ) -> Option<(NestedRemappings, Vec<PathBuf>)> {
-        // load config of the nested lib if it exists, using fallback mode since libs may not
-        // define all profiles the main project uses
-        let Ok(config) =
-            Config::load_with_root_and_fallback_without_auto_detected_remappings(canonical_lib)
-        else {
-            return None;
-        };
-        let config = config.sanitized();
+    ) -> (NestedRemappings, Vec<PathBuf>) {
         let lexicalize = |path: &Path| {
             path.strip_prefix(canonical_lib)
                 .map(|path| lib.join(path))
@@ -524,7 +531,7 @@ impl RemappingsProvider<'_> {
         });
 
         let mut configured =
-            config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
+            config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<Remapping>>();
         for remapping in &mut configured {
             remapping.path = lexicalize(Path::new(&remapping.path)).to_string_lossy().into_owned();
         }
@@ -556,14 +563,14 @@ impl RemappingsProvider<'_> {
             .filter_map(|remapping| Self::with_dependency_context(remapping, lib, canonical_lib))
             .collect();
         configured_package_remappings.extend(src_remapping);
-        Some((
+        (
             NestedRemappings {
                 dependency,
                 configured_package_entries,
                 package_fallbacks: configured_package_remappings,
             },
             nested_libs,
-        ))
+        )
     }
 
     fn with_dependency_context(
