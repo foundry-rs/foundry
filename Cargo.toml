@@ -532,11 +532,11 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "bcade9c228
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "bcade9c228d52d0f6215580809fca8929a13649f" }
 
 # Monad
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", rev = "b4996df9d8d4c599c4c06e62f3edf7b05e7f381b", default-features = false, features = [
+alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", rev = "ca49e121ab9e12a929ed44d5dad23eeeaa3e36fe", default-features = false, features = [
     "std",
     "memory_limit",
 ] }
-monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "271964742b4d0cb6e4c7256e39979587470fc2a2", default-features = false, features = [
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "5a3abf2e8c4bb343e0f57bf3166bddc794e2e26a", default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
@@ -553,7 +553,7 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "271964742b4d0cb6e4c7256e39979587470fc2a2" }
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "5a3abf2e8c4bb343e0f57bf3166bddc794e2e26a" }
 
 ## foundry-core
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
