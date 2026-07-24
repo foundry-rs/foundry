@@ -225,9 +225,16 @@ impl AnvilInspector {
     pub fn take_simulation_logs(
         &mut self,
         canonical_logs: &[Log],
+        success: bool,
     ) -> Option<(Vec<(u64, Log)>, u64)> {
         self.simulation_logs.take().map(|mut collector| {
-            collector.append_remaining_canonical_logs(canonical_logs);
+            if success {
+                collector.append_remaining_canonical_logs(canonical_logs);
+            } else {
+                // A top-level revert can discard logs without producing an enclosing call frame
+                // callback. Preserve the attempted count for subsequent log indices.
+                collector.logs.clear();
+            }
             (
                 collector.logs.into_iter().map(|log| (log.index, log.log)).collect(),
                 collector.next_index,

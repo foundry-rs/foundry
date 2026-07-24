@@ -5798,7 +5798,7 @@ impl Backend<FoundryNetwork> {
 
                     let canonical_logs = result.clone().into_logs();
                     let (response_logs, attempted_log_count) = inspector
-                        .take_simulation_logs(&canonical_logs)
+                        .take_simulation_logs(&canonical_logs, result.is_success())
                         .expect("simulation log collector is installed");
                     inspector.print_logs();
                     if self.print_traces {

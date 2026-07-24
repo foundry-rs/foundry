@@ -2557,6 +2557,32 @@ async fn test_tempo_simulate_executes_and_returns_the_same_batch() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_reverted_batch_discards_logs() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let balance = IERC20::new(PATH_USD, &provider).balanceOf(from).call().await.unwrap();
+    let reverted = tempo_call_request(
+        from,
+        [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))],
+    );
+    let succeeds = tempo_call_request(from, [tempo_transfer(recipient, U256::from(1))]);
+    let payload = serde_json::json!({
+        "blockStateCalls": [{"calls": [reverted, succeeds]}],
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["calls"][0]["status"], "0x0");
+    assert_eq!(response[0]["calls"][0]["logs"], serde_json::json!([]));
+    assert_eq!(response[0]["calls"][1]["status"], "0x1");
+    assert_eq!(response[0]["calls"][1]["logs"][0]["logIndex"], "0x1");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_simulate_uses_default_response_signature_for_key_type_hints() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
