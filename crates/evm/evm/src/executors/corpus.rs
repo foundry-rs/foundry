@@ -101,7 +101,9 @@ fn weighted_mutation_type(rng: &mut impl Rng, distribution: &WeightedIndex<u32>)
         4 => MutationType::Suffix,
         5 => MutationType::Abi,
         6 => MutationType::Cmp,
-        _ => unreachable!("mutation distribution only has seven entries"),
+        7 => MutationType::CrossoverInsert,
+        8 => MutationType::CrossoverReplace,
+        _ => unreachable!("mutation distribution only has nine entries"),
     }
 }
 
@@ -138,6 +140,10 @@ enum MutationType {
     /// Replace input bytes using comparison operands observed for a corpus entry
     /// (input-to-state, LibAFL-style).
     Cmp,
+    /// Insert a transaction loaded from the persisted corpus into this sequence.
+    CrossoverInsert,
+    /// Replace a transaction in this sequence with one loaded from the persisted corpus.
+    CrossoverReplace,
 }
 
 /// Persisted optimization state: the best value found and the sequence that produced it.
@@ -849,6 +855,8 @@ impl WorkerCorpus {
             mutation_weights.mutation_weight_suffix,
             mutation_weights.mutation_weight_abi,
             mutation_weights.mutation_weight_cmp,
+            mutation_weights.mutation_weight_crossover_insert,
+            mutation_weights.mutation_weight_crossover_replace,
         ])
         .map_err(|err| eyre!("invalid corpus mutation weights: {err}"))?;
         let arg_mutation_distribution = if mutation_weights.mutation_weight_abi == 0
@@ -1294,6 +1302,38 @@ impl WorkerCorpus {
                         }
                     }
                 }
+                MutationType::CrossoverInsert => {
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
+                    trace!(target: "corpus", "crossover insert into {}", corpus.uuid);
+
+                    self.current_mutated_index = Some(corpus_index);
+
+                    new_seq = corpus.tx_seq.clone();
+                    if let Some(tx) = self.load_random_disk_tx(rng) {
+                        let idx = rng.random_range(0..=new_seq.len());
+                        new_seq.insert(idx, tx);
+                    }
+                }
+                MutationType::CrossoverReplace => {
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
+                    trace!(target: "corpus", "crossover replace in {}", corpus.uuid);
+
+                    self.current_mutated_index = Some(corpus_index);
+
+                    new_seq = corpus.tx_seq.clone();
+                    if let Some(tx) = self.load_random_disk_tx(rng) {
+                        let idx = rng.random_range(0..new_seq.len());
+                        new_seq[idx] = tx;
+                    }
+                }
             }
         }
 
@@ -1374,6 +1414,36 @@ impl WorkerCorpus {
             .new_tree(test_runner)
             .map_err(|_| eyre!("Could not generate case"))?
             .current())
+    }
+
+    fn load_random_disk_tx(&self, rng: &mut impl Rng) -> Option<BasicTxDetails> {
+        let worker_dir = self.worker_dir.as_ref()?;
+        let corpus_dir = worker_dir.join(CORPUS_DIR);
+        let entries: Vec<CorpusDirEntry> = read_corpus_dir(&corpus_dir).collect();
+        if entries.is_empty() {
+            return None;
+        }
+
+        let entry_idx = rng.random_range(0..entries.len());
+        let entry = &entries[entry_idx];
+        let tx_seq = match entry.read_tx_seq() {
+            Ok(seq) => seq,
+            Err(err) => {
+                debug!(
+                    target: "corpus",
+                    %err,
+                    "failed to load on-disk corpus entry {:?}",
+                    entry.path
+                );
+                return None;
+            }
+        };
+        if tx_seq.is_empty() {
+            return None;
+        }
+
+        let tx_idx = rng.random_range(0..tx_seq.len());
+        tx_seq.into_iter().nth(tx_idx)
     }
 
     /// Converts replayable observed sub-calls into one normal multi-transaction corpus entry.
@@ -2259,6 +2329,8 @@ mod tests {
             mutation_weight_suffix: 1,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
         };
         let generated = basic_tx_with_calldata(vec![0x44]);
         let seed = WorkerCorpusSeed {
@@ -2301,6 +2373,8 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
         };
 
         let err = WorkerCorpus::from_seed(
@@ -2333,6 +2407,8 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 1,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
         };
         let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
         let mut runner = TestRunner::default();
@@ -2409,6 +2485,90 @@ mod tests {
             }
         }
         assert_eq!((ok, err), (1, 1), "the corrupt file must read as Err, the valid one as Ok");
+    }
+
+    fn empty_targeted_contracts() -> FuzzRunIdentifiedContracts {
+        FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false)
+    }
+
+    #[test]
+    fn invariant_crossover_insert_loads_tx_from_persisted_corpus() {
+        let corpus_root = temp_corpus_dir();
+        let mut config = corpus_config(corpus_root.clone());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 1,
+            mutation_weight_crossover_replace: 0,
+        };
+
+        let base = basic_tx_with_calldata(vec![0xaa]);
+        let donor = basic_tx_with_calldata(vec![0xbb]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![base.clone()])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let worker_corpus_dir = corpus_root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+        CorpusEntry::new(vec![donor.clone()]).write_to_disk_in(&worker_corpus_dir, false).unwrap();
+
+        let mut runner = TestRunner::default();
+        let sequence = manager
+            .new_inputs(
+                &mut runner,
+                &empty_fuzz_state().into_invariant(),
+                &empty_targeted_contracts(),
+            )
+            .unwrap();
+
+        assert_eq!(sequence.len(), 2);
+        assert!(sequence.iter().any(|tx| tx.call_details.calldata == base.call_details.calldata));
+        assert!(sequence.iter().any(|tx| tx.call_details.calldata == donor.call_details.calldata));
+        assert_eq!(manager.current_mutated_index, Some(0));
+    }
+
+    #[test]
+    fn invariant_crossover_replace_loads_tx_from_persisted_corpus() {
+        let corpus_root = temp_corpus_dir();
+        let mut config = corpus_config(corpus_root.clone());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 1,
+        };
+
+        let donor = basic_tx_with_calldata(vec![0xcc]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0xdd])])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let worker_corpus_dir = corpus_root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+        CorpusEntry::new(vec![donor.clone()]).write_to_disk_in(&worker_corpus_dir, false).unwrap();
+
+        let mut runner = TestRunner::default();
+        let sequence = manager
+            .new_inputs(
+                &mut runner,
+                &empty_fuzz_state().into_invariant(),
+                &empty_targeted_contracts(),
+            )
+            .unwrap();
+
+        assert_eq!(sequence.len(), 1);
+        assert_eq!(sequence[0].call_details.calldata, donor.call_details.calldata);
+        assert_eq!(manager.current_mutated_index, Some(0));
     }
 
     #[test]
