@@ -5,7 +5,7 @@ use crate::{
     state::sol::BinOpGroup,
 };
 use foundry_common::{
-    comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
+    comments::{Comment, CommentStyle, Comments, line_with_tabs},
     iter::IterDelimited,
 };
 use foundry_config::fmt::{DocCommentStyle, IndentStyle};
@@ -36,20 +36,17 @@ pub(super) struct CallContext {
     /// The kind call.
     pub(super) kind: CallContextKind,
 
-    /// The size of the callee's head, excluding its arguments.
-    pub(super) size: usize,
-
     /// Whether this chain context added its own indentation box.
     pub(super) has_indent: bool,
 }
 
 impl CallContext {
-    pub(super) const fn nested(size: usize) -> Self {
-        Self { kind: CallContextKind::Nested, size, has_indent: false }
+    pub(super) const fn nested() -> Self {
+        Self { kind: CallContextKind::Nested, has_indent: false }
     }
 
-    pub(super) const fn chained(size: usize, has_indent: bool) -> Self {
-        Self { kind: CallContextKind::Chained, size, has_indent }
+    pub(super) const fn chained(has_indent: bool) -> Self {
+        Self { kind: CallContextKind::Chained, has_indent }
     }
 
     pub(super) const fn is_nested(&self) -> bool {
@@ -82,10 +79,6 @@ impl CallStack {
         self.stack.pop()
     }
 
-    pub(crate) fn is_nested(&self) -> bool {
-        self.last().is_some_and(|call| call.is_nested())
-    }
-
     /// Returns true if the direct parent chain has its own indentation.
     /// Used to determine if commasep should skip its own indentation (to avoid double indent).
     pub(crate) const fn has_indented_parent_chain(&self) -> bool {
@@ -99,7 +92,6 @@ impl CallStack {
 #[derive(Clone, Copy)]
 struct ChainedNamedCall {
     callee: Span,
-    keep_inline: bool,
 }
 
 pub(super) struct State<'sess, 'ast> {
@@ -119,7 +111,6 @@ pub(super) struct State<'sess, 'ast> {
     // The current contract being formatted, if inside a contract definition.
     contract: Option<&'ast ast::ItemContract<'ast>>,
     // Current block nesting depth (incremented for each `{...}` block entered).
-    block_depth: usize,
     // Stack tracking nested and chained function calls.
     call_stack: CallStack,
 
@@ -184,6 +175,7 @@ impl SourcePos {
 pub(super) enum Separator {
     Nbsp,
     Space,
+    SpaceOffset(isize),
     Hardbreak,
     SpaceOrNbsp(bool),
 }
@@ -193,6 +185,7 @@ impl Separator {
         match self {
             Self::Nbsp => p.nbsp(),
             Self::Space => p.space(),
+            Self::SpaceOffset(offset) => p.break_offset(1, *offset),
             Self::Hardbreak => p.hardbreak(),
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
@@ -213,6 +206,7 @@ impl<'sess> State<'sess, '_> {
             s: pp::Printer::new(
                 config.line_length,
                 matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
+                config.tab_width,
             ),
             ind: config.tab_width as isize,
             sm,
@@ -230,7 +224,6 @@ impl<'sess> State<'sess, '_> {
             return_bin_expr: false,
             emit_or_revert: false,
             var_init: false,
-            block_depth: 0,
             call_stack: CallStack::default(),
         }
     }
@@ -252,19 +245,6 @@ impl<'sess> State<'sess, '_> {
     /// The check is only meaningful if `self.has_crlf` is true.
     fn is_at_crlf(&self) -> bool {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
-    }
-
-    /// Computes the space left, bounded by the max space left.
-    fn space_left(&self) -> usize {
-        std::cmp::min(self.s.space_left(), self.max_space_left(0))
-    }
-
-    /// Computes the maximum space left given the context information available:
-    /// `block_depth`, `tab_width`, and a user-defined unavailable size `prefix_len`.
-    fn max_space_left(&self, prefix_len: usize) -> usize {
-        self.config
-            .line_length
-            .saturating_sub(self.block_depth * self.config.tab_width + prefix_len)
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
@@ -403,60 +383,6 @@ impl State<'_, '_> {
         self.print_word("(");
         f(self);
         self.print_word(")");
-    }
-
-    fn estimate_size(&self, span: Span) -> usize {
-        if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let (mut size, mut first, mut prev_needs_space) = (0, true, false);
-
-            for line in snip.lines() {
-                let line = line.trim();
-
-                if prev_needs_space {
-                    size += 1;
-                } else if !first && let Some(char) = line.chars().next() {
-                    // A line break or a space are required if this line:
-                    // - starts with an operator.
-                    // - starts with one of the ternary operators
-                    // - starts with a bracket and fmt config forces bracket spacing.
-                    match char {
-                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
-                        | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
-                        _ => (),
-                    }
-                }
-                first = false;
-
-                // trim spaces before and after mixed comments
-                let mut search = line;
-                loop {
-                    if let Some((lhs, comment)) = search.split_once(r#"/*"#) {
-                        size += lhs.trim_end().len() + 2;
-                        search = comment;
-                    } else if let Some((comment, rhs)) = search.split_once(r#"*/"#) {
-                        size += comment.len() + 2;
-                        search = rhs;
-                    } else {
-                        size += search.trim().len();
-                        break;
-                    }
-                }
-
-                // Next line requires a line break if this one:
-                // - ends with a bracket and fmt config forces bracket spacing.
-                // - ends with ',' a line break or a space are required.
-                // - ends with ';' a line break is required.
-                prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
-                    Some(',' | ';') => true,
-                    _ => false,
-                };
-            }
-            return size;
-        }
-
-        span.to_range().len()
     }
 
     fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
@@ -606,10 +532,14 @@ impl<'sess> State<'sess, '_> {
         prefix: &'static str,
         break_offset: isize,
         is_doc: bool,
-    ) {
+        continuation: Option<pp::GroupId>,
+        normalize_heading: bool,
+    ) -> pp::GroupId {
+        let group = self.s.ibox_with_id(0);
         if !line.starts_with(prefix) {
             self.word(line.to_owned());
-            return;
+            self.end();
+            return group;
         }
 
         fn post_break_prefix(prefix: &'static str, has_content: bool) -> &'static str {
@@ -625,10 +555,21 @@ impl<'sess> State<'sess, '_> {
             }
         }
 
-        self.ibox(0);
-        self.word(prefix);
+        let raw_content = &line[prefix.len()..];
+        let leading_ws_len = raw_content
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_whitespace())
+            .last()
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        if let Some(previous) = continuation {
+            let flat_prefix = format!("{prefix}{}", &raw_content[..leading_ws_len]);
+            self.s.if_break(previous, |_| {}, |p| p.word(flat_prefix));
+        } else {
+            self.word(prefix);
+        }
 
-        let content = &line[prefix.len()..];
+        let content =
+            if continuation.is_some() { &raw_content[leading_ws_len..] } else { raw_content };
         let content = if is_doc {
             // Doc comments preserve leading whitespaces (right after the prefix) as nbps.
             let ws_len = content
@@ -641,8 +582,12 @@ impl<'sess> State<'sess, '_> {
                 self.word(leading_ws.to_owned());
             }
             rest
+        } else if prefix == "//" && normalize_heading && content.len() != content.trim_start().len()
+        {
+            self.nbsp();
+            content.trim_start()
         } else {
-            // Non-doc comments: replace first whitespace with nbsp, rest of content continues
+            // Non-doc comments replace one whitespace with nbsp and preserve the rest.
             if let Some(first_char) = content.chars().next() {
                 if first_char.is_whitespace() {
                     self.nbsp();
@@ -690,63 +635,45 @@ impl<'sess> State<'sess, '_> {
         }
 
         self.end();
+        group
     }
 
-    /// Merges consecutive line comments to avoid orphan words.
-    fn merge_comment_lines(&self, lines: &[String], prefix: &str) -> Vec<String> {
-        // Do not apply smart merging to block comments
-        if lines.is_empty() || lines.len() < 2 || !prefix.starts_with("//") {
-            return lines.to_vec();
+    fn can_join_wrapped_comment_lines(current: &str, next: &str, prefix: &str) -> bool {
+        let Some(next_content) = next.strip_prefix(prefix) else { return false };
+        let next_content = next_content.trim_start();
+        prefix.starts_with("//")
+            && !current.trim().is_empty()
+            && current.starts_with(prefix)
+            && !next.trim().is_empty()
+            && !next_content.starts_with('@')
+            && next_content.split_whitespace().nth(1).is_some()
+    }
+
+    fn is_decorative_comment_heading(lines: &[String], index: usize, prefix: &str) -> bool {
+        fn content<'a>(line: &'a str, prefix: &str) -> &'a str {
+            line.strip_prefix(prefix).unwrap_or(line).trim()
         }
 
-        let mut result = Vec::new();
-        let mut i = 0;
+        let Some(previous) = index.checked_sub(1).and_then(|index| lines.get(index)) else {
+            return false;
+        };
+        let Some(current) = lines.get(index) else { return false };
+        let Some(next) = lines.get(index + 1) else { return false };
+        let current = content(current, prefix);
+        current.chars().any(char::is_alphabetic)
+            && current.chars().all(|ch| !ch.is_alphabetic() || ch.is_uppercase())
+            && [previous, next].into_iter().all(|line| {
+                let line = content(line, prefix);
+                !line.is_empty() && line.chars().all(|ch| !ch.is_alphanumeric())
+            })
+    }
 
-        while i < lines.len() {
-            let current_line = &lines[i];
-
-            // Keep empty lines, and non-prefixed lines, untouched
-            if current_line.trim().is_empty() || !current_line.starts_with(prefix) {
-                result.push(current_line.clone());
-                i += 1;
-                continue;
-            }
-
-            if i + 1 < lines.len() {
-                let next_line = &lines[i + 1];
-
-                // Check if next line has the same prefix and is not empty.
-                if next_line.starts_with(prefix) && !next_line.trim().is_empty() {
-                    let next_content = next_line[prefix.len()..].trim_start();
-
-                    // Keep each NatSpec tag on its own doc-comment line. Merging a wrapped
-                    // `@dev`/`@param` line with the following tag changes the tag boundary.
-                    if next_content.starts_with('@') {
-                        result.push(current_line.clone());
-                        i += 1;
-                        continue;
-                    }
-
-                    // Only merge if the current line doesn't fit within available width
-                    if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
-                    {
-                        // Merge the lines and let the wrapper handle breaking if needed
-                        let merged_line = format!("{current_line} {next_content}");
-                        result.push(merged_line);
-
-                        // Skip both lines since they are merged
-                        i += 2;
-                        continue;
-                    }
-                }
-            }
-
-            // No merge possible, keep the line as-is
-            result.push(current_line.clone());
-            i += 1;
+    fn print_wrapped_comment_boundary(&mut self, group: pp::GroupId, joins: bool) {
+        if joins {
+            self.s.if_break(group, |p| p.nbsp(), |p| p.hardbreak());
+        } else {
+            self.hardbreak();
         }
-
-        result
     }
 
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
@@ -769,12 +696,22 @@ impl<'sess> State<'sess, '_> {
                     };
                 }
                 if self.config.wrap_comments {
-                    // Merge and wrap comments
-                    let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
-                    for (pos, line) in merged_lines.into_iter().delimited() {
-                        self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
-                        if !pos.is_last {
-                            self.hardbreak();
+                    let mut continuation = None;
+                    for (index, line) in cmnt.lines.iter().enumerate() {
+                        let normalize_heading =
+                            Self::is_decorative_comment_heading(&cmnt.lines, index, prefix);
+                        let group = self.print_wrapped_line(
+                            line,
+                            prefix,
+                            0,
+                            cmnt.is_doc,
+                            continuation.take(),
+                            normalize_heading,
+                        );
+                        if let Some(next) = cmnt.lines.get(index + 1) {
+                            let joins = Self::can_join_wrapped_comment_lines(line, next, prefix);
+                            self.print_wrapped_comment_boundary(group, joins);
+                            continuation = joins.then_some(group);
                         }
                     }
                 } else {
@@ -801,38 +738,51 @@ impl<'sess> State<'sess, '_> {
                 }
 
                 if self.config.wrap_comments {
-                    // Merge and wrap comments
-                    let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
-                    for (pos, line) in merged_lines.into_iter().delimited() {
+                    let mut continuation = None;
+                    for (index, line) in cmnt.lines.iter().enumerate() {
+                        let is_first = index == 0;
+                        let is_last = index + 1 == cmnt.lines.len();
                         let hb = |this: &mut Self| {
                             this.hardbreak();
-                            if pos.is_last {
+                            if is_last {
                                 this.cursor.next_line(this.is_at_crlf());
                             }
                         };
                         if line.is_empty() {
                             hb(self);
+                            continuation = None;
                             continue;
                         }
-                        if pos.is_first {
+                        if is_first {
                             self.ibox(config.offset);
                             if cmnt.is_doc && matches!(prefix, "/**") {
                                 self.word(prefix);
                                 hb(self);
                                 prefix = " * ";
+                                continuation = None;
                                 continue;
                             }
                         }
 
-                        self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
+                        let group = self.print_wrapped_line(
+                            line,
+                            prefix,
+                            0,
+                            cmnt.is_doc,
+                            continuation.take(),
+                            Self::is_decorative_comment_heading(&cmnt.lines, index, prefix),
+                        );
 
-                        if pos.is_last {
+                        if is_last {
                             self.end();
                             if !config.iso_no_break {
                                 hb(self);
                             }
                         } else {
-                            hb(self);
+                            let next = &cmnt.lines[index + 1];
+                            let joins = Self::can_join_wrapped_comment_lines(line, next, prefix);
+                            self.print_wrapped_comment_boundary(group, joins);
+                            continuation = joins.then_some(group);
                         }
                     }
                 } else {
@@ -888,7 +838,14 @@ impl<'sess> State<'sess, '_> {
                     }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
-                            self.print_wrapped_line(&line, prefix, config.offset, cmnt.is_doc);
+                            self.print_wrapped_line(
+                                &line,
+                                prefix,
+                                config.offset,
+                                cmnt.is_doc,
+                                None,
+                                false,
+                            );
                         }
                         if !lpos.is_last {
                             config.hardbreak(&mut self.s);
