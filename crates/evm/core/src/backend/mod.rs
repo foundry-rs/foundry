@@ -75,13 +75,47 @@ struct TransactionInputs<FEN: FoundryEvmNetwork> {
     context_aux: ContextAuxFor<FEN>,
 }
 
-/// Canonical chain position represented by a fork's database state.
+/// Canonical chain position used to reconstruct network-specific transaction context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ForkPosition {
     /// The database contains all transactions through the fork's current block.
     AfterBlock { block_number: u64 },
     /// The database contains the transactions before `transaction_index` in `block_number`.
     BeforeTransaction { block_number: u64, transaction_index: usize },
+}
+
+impl ForkPosition {
+    /// Returns the canonical position after committing `transaction_index`, if it immediately
+    /// follows this position.
+    fn after_transaction(
+        self,
+        block_number: u64,
+        transaction_index: usize,
+        transaction_count: usize,
+    ) -> Option<Self> {
+        let is_next = match self {
+            Self::AfterBlock { block_number: previous_block } => {
+                transaction_index == 0 && previous_block.checked_add(1) == Some(block_number)
+            }
+            Self::BeforeTransaction {
+                block_number: current_block,
+                transaction_index: current_index,
+            } => current_block == block_number && current_index == transaction_index,
+        };
+        if !is_next {
+            return None;
+        }
+        let next_index = transaction_index.checked_add(1)?;
+        if next_index > transaction_count {
+            return None;
+        }
+
+        Some(if next_index == transaction_count {
+            Self::AfterBlock { block_number }
+        } else {
+            Self::BeforeTransaction { block_number, transaction_index: next_index }
+        })
+    }
 }
 
 /// All accounts that will have persistent storage across fork swaps.
@@ -1610,20 +1644,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             inspector,
         )?;
         if let Some((current_tx_index, transaction_count)) = current_tx_position
-            && fork.position
-                == (ForkPosition::BeforeTransaction {
-                    block_number: block.header().number(),
-                    transaction_index: current_tx_index,
-                })
+            && let Some(position) = fork.position.after_transaction(
+                block.header().number(),
+                current_tx_index,
+                transaction_count,
+            )
         {
-            fork.position = if current_tx_index + 1 == transaction_count {
-                ForkPosition::AfterBlock { block_number: block.header().number() }
-            } else {
-                ForkPosition::BeforeTransaction {
-                    block_number: block.header().number(),
-                    transaction_index: current_tx_index + 1,
-                }
-            };
+            fork.position = position;
         }
         Ok(())
     }
@@ -2525,6 +2552,45 @@ mod tests {
             let monad = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
             assert!(monad.inner.persistent_accounts.contains(&MONAD_CHEATCODE_ADDRESS));
         }
+    }
+
+    #[test]
+    fn fork_position_advances_from_exact_transaction_predecessor() {
+        let parent = ForkPosition::AfterBlock { block_number: 10 };
+        assert_eq!(
+            parent.after_transaction(11, 0, 2),
+            Some(ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 1 })
+        );
+        assert_eq!(
+            parent.after_transaction(11, 0, 1),
+            Some(ForkPosition::AfterBlock { block_number: 11 })
+        );
+
+        let before_first =
+            ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 0 };
+        assert_eq!(
+            before_first.after_transaction(11, 0, 2),
+            Some(ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 1 })
+        );
+
+        let before_second =
+            ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 1 };
+        assert_eq!(
+            before_second.after_transaction(11, 1, 3),
+            Some(ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 2 })
+        );
+        assert_eq!(
+            before_second.after_transaction(11, 1, 2),
+            Some(ForkPosition::AfterBlock { block_number: 11 })
+        );
+
+        assert_eq!(parent.after_transaction(11, 1, 2), None);
+        assert_eq!(parent.after_transaction(12, 0, 1), None);
+        assert_eq!(before_second.after_transaction(11, 0, 3), None);
+        assert_eq!(before_second.after_transaction(11, 2, 3), None);
+        assert_eq!(before_second.after_transaction(12, 1, 3), None);
+        assert_eq!(before_second.after_transaction(11, 1, 1), None);
+        assert_eq!(parent.after_transaction(11, 0, 0), None);
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -598,15 +598,19 @@ forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd|
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let target_sender = wallets[3].address();
     let future_sender = wallets[0].address();
     let probe = Address::with_last_byte(0x21);
+    let target_recipient = Address::with_last_byte(0x22);
+    let future_recipient = Address::with_last_byte(0x23);
+    let parent_block = provider.get_block_number().await.unwrap();
 
     let mut target_tx = TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 2_000_000_000,
-        to: TxKind::Call(wallets[4].address()),
+        to: TxKind::Call(target_recipient),
         value: U256::ONE,
         ..Default::default()
     };
@@ -619,7 +623,7 @@ forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd|
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(wallets[5].address()),
+        to: TxKind::Call(future_recipient),
         value: U256::ONE,
         ..Default::default()
     };
@@ -640,22 +644,57 @@ forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd|
     let mut future_probe_raw = Vec::new();
     future_probe.into_signed(signature).eip2718_encode(&mut future_probe_raw);
 
+    let mut target_probe = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 1,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(probe),
+        value: U256::from(3_000_000_000_000_000_000u128),
+        ..Default::default()
+    };
+    let signature = wallets[3].sign_transaction_sync(&mut target_probe).unwrap();
+    let mut target_probe_raw = Vec::new();
+    target_probe.into_signed(signature).eip2718_encode(&mut target_probe_raw);
+
+    let mut replayed_future_probe = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 1,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(probe),
+        value: U256::from(3_000_000_000_000_000_000u128),
+        ..Default::default()
+    };
+    let signature = wallets[0].sign_transaction_sync(&mut replayed_future_probe).unwrap();
+    let mut replayed_future_probe_raw = Vec::new();
+    replayed_future_probe.into_signed(signature).eip2718_encode(&mut replayed_future_probe_raw);
+
     api.anvil_set_auto_mine(false).await.unwrap();
     let target_pending = provider.send_raw_transaction(&target_raw).await.unwrap();
     let target_hash = *target_pending.tx_hash();
     let future_pending = provider.send_raw_transaction(&future_marker_raw).await.unwrap();
+    let future_hash = *future_pending.tx_hash();
     api.mine_one().await;
     let target_receipt = target_pending.get_receipt().await.unwrap();
     let future_receipt = future_pending.get_receipt().await.unwrap();
     assert_eq!(target_receipt.block_number(), future_receipt.block_number());
-    assert!(target_receipt.transaction_index() < future_receipt.transaction_index());
+    assert_eq!(target_receipt.block_number(), Some(parent_block + 1));
+    assert_eq!(target_receipt.transaction_index(), Some(0));
+    assert_eq!(future_receipt.transaction_index(), Some(1));
 
     let source = r#"
 interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256 forkId);
     function createSelectFork(string calldata url, bytes32 transaction) external returns (uint256);
     function deal(address account, uint256 newBalance) external;
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+    function getNonce(address account) external view returns (uint64 nonce);
+    function rollFork(uint256 forkId, uint256 blockNumber) external;
+    function transact(uint256 forkId, bytes32 txHash) external;
 }
 
 interface IReserveBalance {
@@ -664,11 +703,17 @@ interface IReserveBalance {
 
 contract TransactionForkMonadContextTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET_SENDER = <target_sender>;
     address constant FUTURE_SENDER = <future_sender>;
     address constant PROBE = <probe>;
+    address constant TARGET_RECIPIENT = <target_recipient>;
+    address constant FUTURE_RECIPIENT = <future_recipient>;
+    bytes32 constant TARGET_HASH = <target_hash>;
+    bytes32 constant FUTURE_HASH = <future_hash>;
+    uint256 constant PARENT_BLOCK = <parent_block>;
 
     function test_future_transaction_is_not_an_ancestor() public {
-        vm.createSelectFork("<rpc>", <target_hash>);
+        vm.createSelectFork("<rpc>", TARGET_HASH);
         vm.deal(FUTURE_SENDER, 12 ether);
 
         // Calls dippedIntoReserve() after receiving value, then returns the result.
@@ -677,13 +722,69 @@ contract TransactionForkMonadContextTest {
         require(!abi.decode(result, (bool)), "future sender must be allowed to dip");
         require(FUTURE_SENDER.balance == 9 ether, "unexpected future sender balance");
     }
+
+    function test_parent_block_transact_advances_to_next_transaction() public {
+        uint256 forkId = vm.createSelectFork("<rpc>");
+        vm.rollFork(forkId, PARENT_BLOCK);
+        uint64 targetNonce = vm.getNonce(TARGET_SENDER);
+        uint256 targetRecipientBalance = TARGET_RECIPIENT.balance;
+        uint256 futureRecipientBalance = FUTURE_RECIPIENT.balance;
+
+        vm.transact(forkId, TARGET_HASH);
+
+        require(vm.getNonce(TARGET_SENDER) == targetNonce + 1, "target nonce was not advanced");
+        require(TARGET_RECIPIENT.balance == targetRecipientBalance + 1, "target was not committed");
+        require(FUTURE_RECIPIENT.balance == futureRecipientBalance, "future tx was committed");
+
+        vm.deal(TARGET_SENDER, 12 ether);
+        vm.deal(FUTURE_SENDER, 12 ether);
+        vm.etch(PROBE, hex"633a61584e5f5260205f6004601c5f6110015af15060205ff3");
+
+        bytes memory targetResult = vm.executeTransaction(hex"<target_probe_raw>");
+        require(abi.decode(targetResult, (bool)), "replayed sender was treated as fresh");
+        require(TARGET_SENDER.balance == 9 ether, "unexpected replayed sender balance");
+
+        bytes memory futureResult = vm.executeTransaction(hex"<future_probe_raw>");
+        require(!abi.decode(futureResult, (bool)), "future sender became an ancestor");
+        require(FUTURE_SENDER.balance == 9 ether, "unexpected future sender balance");
+    }
+
+    function test_sequential_transacts_advance_past_block() public {
+        uint256 forkId = vm.createSelectFork("<rpc>");
+        vm.rollFork(forkId, PARENT_BLOCK);
+        uint64 targetNonce = vm.getNonce(TARGET_SENDER);
+        uint64 futureNonce = vm.getNonce(FUTURE_SENDER);
+        uint256 targetRecipientBalance = TARGET_RECIPIENT.balance;
+        uint256 futureRecipientBalance = FUTURE_RECIPIENT.balance;
+
+        vm.transact(forkId, TARGET_HASH);
+        vm.transact(forkId, FUTURE_HASH);
+
+        require(vm.getNonce(TARGET_SENDER) == targetNonce + 1, "target nonce was not advanced");
+        require(vm.getNonce(FUTURE_SENDER) == futureNonce + 1, "future nonce was not advanced");
+        require(TARGET_RECIPIENT.balance == targetRecipientBalance + 1, "target was not committed");
+        require(FUTURE_RECIPIENT.balance == futureRecipientBalance + 1, "future was not committed");
+
+        vm.deal(FUTURE_SENDER, 12 ether);
+        vm.etch(PROBE, hex"633a61584e5f5260205f6004601c5f6110015af15060205ff3");
+        bytes memory result = vm.executeTransaction(hex"<replayed_future_probe_raw>");
+        require(abi.decode(result, (bool)), "last replayed sender was treated as fresh");
+        require(FUTURE_SENDER.balance == 9 ether, "unexpected last sender balance");
+    }
 }
 "#
+    .replace("<target_sender>", &target_sender.to_string())
     .replace("<future_sender>", &future_sender.to_string())
     .replace("<probe>", &probe.to_string())
+    .replace("<target_recipient>", &target_recipient.to_string())
+    .replace("<future_recipient>", &future_recipient.to_string())
     .replace("<rpc>", &handle.http_endpoint())
     .replace("<target_hash>", &target_hash.to_string())
-    .replace("<future_probe_raw>", &hex::encode(future_probe_raw));
+    .replace("<future_hash>", &future_hash.to_string())
+    .replace("<parent_block>", &parent_block.to_string())
+    .replace("<future_probe_raw>", &hex::encode(future_probe_raw))
+    .replace("<target_probe_raw>", &hex::encode(target_probe_raw))
+    .replace("<replayed_future_probe_raw>", &hex::encode(replayed_future_probe_raw));
     prj.add_test("TransactionForkMonadContext.t.sol", &source);
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
@@ -694,7 +795,7 @@ contract TransactionForkMonadContextTest {
 });
 
 #[cfg(feature = "monad")]
-forgetest_async!(transact_replays_monad_protocol_system_target, |prj, cmd| {
+forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd| {
     const SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
     const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
     const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
