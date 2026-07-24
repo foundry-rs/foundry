@@ -903,7 +903,7 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj,
     cmd.env("TEMPO_HOME", tempo_home.path());
     cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
-    let assertion = cmd
+    let stdout = cmd
         .args([
             "wallet",
             "session",
@@ -922,13 +922,12 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj,
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure();
-    let stdout = assertion.get_output().stdout_lossy();
-    let stderr = assertion.get_output().stderr_lossy();
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
     assert_async_tx_hash(&stdout, "child cast send");
-    assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "revoking");
+    assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj, cmd| {
@@ -957,7 +956,7 @@ test -n "${{TEMPO_SESSION_ID:-}}"
     cmd.env("TEMPO_HOME", tempo_home.path());
     cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
-    let assertion = cmd
+    let stdout = cmd
         .args([
             "wallet",
             "session",
@@ -976,13 +975,12 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure();
-    let stdout = assertion.get_output().stdout_lossy();
-    let stderr = assertion.get_output().stderr_lossy();
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
     assert_async_tx_hash(&stdout, "child cast batch-send");
-    assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "revoking");
+    assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_run_for_forge_script_submits_with_session_key, async |prj, cmd| {
@@ -1782,7 +1780,7 @@ sh "$1"
     cmd.env("TEMPO_HOME", tempo_home.path());
     cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
-    let assertion = cmd
+    let stdout = cmd
         .args([
             "wallet",
             "session",
@@ -1801,13 +1799,12 @@ sh "$1"
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure();
-    let stdout = assertion.get_output().stdout_lossy();
-    let stderr = assertion.get_output().stderr_lossy();
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
     assert_async_tx_hash(&stdout, "grandchild cast send");
-    assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "revoking");
+    assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
 casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
