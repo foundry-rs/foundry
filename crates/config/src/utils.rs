@@ -6,7 +6,8 @@ use figment::value::Value;
 use foundry_compilers::artifacts::remappings::{Remapping, RemappingError};
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
-    io,
+    collections::HashSet,
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -140,16 +141,35 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
 ///     ├── foundry.toml
 /// ```
 pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
-    let mut dirs = walkdir::WalkDir::new(root)
-        .max_depth(1)
+    let root = root.as_ref();
+    let mut candidates = vec![root.to_path_buf()];
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            candidates.push(path.clone());
+            if entry.file_name().to_string_lossy().starts_with('@')
+                && let Ok(packages) = fs::read_dir(path)
+            {
+                candidates.extend(
+                    packages
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|p| p.is_dir()),
+                );
+            }
+        }
+    }
+    candidates.sort();
+
+    let mut seen = HashSet::new();
+    candidates
         .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_dir())
-        .filter_map(|e| dunce::canonicalize(e.path()).ok())
-        .filter(|p| p.join(Config::FILE_NAME).exists())
-        .collect::<Vec<_>>();
-    dirs.sort();
-    dirs
+        .filter(|path| path.join(Config::FILE_NAME).is_file())
+        .filter(|path| dunce::canonicalize(path).is_ok_and(|path| seen.insert(path)))
+        .collect()
 }
 
 /// Returns a remapping for the given dir

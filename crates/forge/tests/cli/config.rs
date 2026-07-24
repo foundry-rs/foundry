@@ -23,6 +23,8 @@ use path_slash::PathBufExt;
 use semver::VersionReq;
 use serde_json::Value;
 use similar_asserts::assert_eq;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -1057,8 +1059,8 @@ forgetest!(nested_config_remappings_override_auto_detected, |prj, cmd| {
 lib/outer/:@scope/outer/=lib/outer/src/
 lib/outer/:inner/=lib/outer/lib/inner/contracts/
 lib/outer/:outer/=lib/outer/src/
-inner/=lib/outer/lib/inner/
 outer/=lib/outer/src/
+inner/=lib/outer/lib/inner/
 @scope/outer/=lib/outer/src/
 
 "#]]);
@@ -1311,7 +1313,8 @@ outer/=lib/outer/src/
 });
 
 forgetest!(direct_dependency_keeps_configured_package_alias, |prj, cmd| {
-    let dep = prj.paths().libraries[0].join("foo-1.2.0");
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+    let dep = prj.root().join("node_modules/foo");
     pretty_err(&dep, fs::create_dir_all(dep.join("contracts")));
     pretty_err(
         &dep,
@@ -1327,6 +1330,101 @@ forgetest!(direct_dependency_keeps_configured_package_alias, |prj, cmd| {
     );
 
     cmd.arg("build").assert_success();
+});
+
+forgetest!(narrow_root_remapping_preserves_broad_dependency_fallback, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src/pkg")));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/local")));
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("pkg/sub/=src/local/").unwrap().into()];
+    });
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"pkg/=src/pkg/\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("src/pkg/Other.sol"), "contract Other {}\n"));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("src/Parent.sol"),
+            "import {Other} from \"pkg/Other.sol\"; contract Parent is Other {}\n",
+        ),
+    );
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/local/Local.sol"), "contract Local {}\n"),
+    );
+    prj.add_source(
+        "UsesParent.sol",
+        "import {Parent} from \"dep/Parent.sol\"; import {Local} from \"pkg/sub/Local.sol\"; contract UsesParent is Parent, Local {}\n",
+    );
+
+    cmd.arg("build").assert_success();
+});
+
+forgetest!(scoped_dependency_config_remappings_are_discovered, |prj, cmd| {
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+    let dep = prj.root().join("node_modules/@scope/pkg");
+    pretty_err(&dep, fs::create_dir_all(dep.join("contracts")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"@scope/pkg/=contracts/\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("contracts/Foo.sol"), "contract Foo {}\n"));
+    prj.add_source(
+        "UsesFoo.sol",
+        "import {Foo} from \"@scope/pkg/Foo.sol\"; contract UsesFoo is Foo {}\n",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+node_modules/@scope/pkg/:@scope/pkg/=node_modules/@scope/pkg/contracts/
+@scope/pkg/=node_modules/@scope/pkg/contracts/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+});
+
+#[cfg(unix)]
+forgetest!(symlinked_dependency_config_uses_lexical_path, |prj, cmd| {
+    let temp = tempfile::tempdir().unwrap();
+    let dep = temp.path().join("foo");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    pretty_err(&dep, fs::create_dir_all(dep.join("vendor")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"zzalias/=vendor/\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("vendor/Z.sol"), "contract Z {}\n"));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("src/Parent.sol"),
+            "import {Z} from \"zzalias/Z.sol\"; contract Parent is Z {}\n",
+        ),
+    );
+    pretty_err(&dep, symlink(&dep, prj.paths().libraries[0].join("foo")));
+    prj.add_source(
+        "UsesParent.sol",
+        "import {Parent} from \"foo/Parent.sol\"; contract UsesParent is Parent {}\n",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+lib/foo/:zzalias/=lib/foo/vendor/
+foo/=lib/foo/src/
+zzalias/=lib/foo/vendor/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
 });
 
 forgetest!(configured_lib_order_breaks_equal_remapping_ties, |prj, cmd| {
