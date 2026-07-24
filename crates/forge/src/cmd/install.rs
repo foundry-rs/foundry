@@ -88,11 +88,23 @@ pub struct DependencyInstallOpts {
     /// Create a commit after installing the dependencies.
     #[arg(long)]
     pub commit: bool,
+
+    #[arg(skip)]
+    output_to_stderr: bool,
 }
 
 impl DependencyInstallOpts {
-    pub fn git(self, config: &Config) -> Git<'_> {
+    pub const fn output_to_stderr(mut self, yes: bool) -> Self {
+        self.output_to_stderr = yes;
+        self
+    }
+
+    pub fn git<'a>(&self, config: &'a Config) -> Git<'a> {
         Git::from_config(config).shallow(self.shallow)
+    }
+
+    fn println(&self, message: impl std::fmt::Display) -> Result<()> {
+        if self.output_to_stderr { sh_eprintln!("{message}") } else { sh_println!("{message}") }
     }
 
     /// Installs all missing dependencies.
@@ -101,25 +113,40 @@ impl DependencyInstallOpts {
     ///
     /// Returns true if any dependency was installed.
     pub async fn install_missing_dependencies(self, config: &mut Config) -> bool {
-        let lib = config.install_lib_dir();
-        if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
-            let _ = sh_status!("Missing dependencies found. Installing now...");
-
-            if self.install(config, Vec::new()).await.is_err() {
+        match self.try_install_missing_dependencies(config).await {
+            Ok(installed) => installed,
+            Err(_) => {
                 let _ =
                     sh_warn!("Your project has missing dependencies that could not be installed.");
+                true
             }
-            true
+        }
+    }
+
+    /// Installs all missing dependencies.
+    ///
+    /// See also [`Self::install`].
+    ///
+    /// Returns true if any dependency was installed.
+    pub async fn try_install_missing_dependencies(self, config: &mut Config) -> Result<bool> {
+        let lib = config.install_lib_dir();
+        if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
+            // The extra newline is needed, otherwise the compiler output will overwrite the message
+            let _ = self.println("Missing dependencies found. Installing now...\n");
+
+            self.install(config, Vec::new()).await?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
     /// Installs all dependencies
     pub async fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
-        let Self { no_git, commit, .. } = self;
+        let Self { shallow, no_git, commit, output_to_stderr } = self;
+        let output = Self { shallow, no_git, commit, output_to_stderr };
 
-        let git = self.git(config);
+        let git = output.git(config);
 
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
@@ -144,7 +171,7 @@ impl DependencyInstallOpts {
             let root = Git::root_of(git.root)?;
             match git.has_submodules(Some(&root)) {
                 Ok(true) => {
-                    sh_status!("Updating dependencies in {}", libs.display())?;
+                    output.println(format_args!("Updating dependencies in {}", libs.display()))?;
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
@@ -182,13 +209,13 @@ impl DependencyInstallOpts {
             let rel_path = path
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
-            sh_status!(
+            output.println(format_args!(
                 "Installing {} in {} (url: {}, tag: {})",
                 dep.name,
                 path.display(),
                 dep.url.as_deref().unwrap_or("None"),
                 dep.tag.as_deref().unwrap_or("None")
-            )?;
+            ))?;
 
             // this tracks the actual installed tag
             let installed_tag;
@@ -277,10 +304,10 @@ impl DependencyInstallOpts {
                     msg.push_str(tag.as_str());
                 }
             }
-            sh_status!("{msg}")?;
+            output.println(msg)?;
 
             // Check if the dependency has soldeer.lock and install soldeer dependencies
-            if let Err(e) = install_soldeer_deps_if_needed(&path).await {
+            if let Err(e) = install_soldeer_deps_if_needed(&path, output_to_stderr).await {
                 sh_warn!("Failed to install soldeer dependencies for {}: {e}", dep.name)?;
             }
         }
@@ -299,12 +326,30 @@ pub async fn install_missing_dependencies(config: &mut Config) -> bool {
     DependencyInstallOpts::default().install_missing_dependencies(config).await
 }
 
+pub async fn try_install_missing_dependencies(config: &mut Config) -> Result<bool> {
+    DependencyInstallOpts::default().try_install_missing_dependencies(config).await
+}
+
+pub async fn try_install_missing_dependencies_to_stderr(
+    config: &mut Config,
+    output_to_stderr: bool,
+) -> Result<bool> {
+    DependencyInstallOpts::default()
+        .output_to_stderr(output_to_stderr)
+        .try_install_missing_dependencies(config)
+        .await
+}
+
 /// Checks if a dependency has soldeer.lock and installs soldeer dependencies if needed.
-async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
+async fn install_soldeer_deps_if_needed(dep_path: &Path, output_to_stderr: bool) -> Result<()> {
     let soldeer_lock = dep_path.join("soldeer.lock");
 
     if soldeer_lock.exists() {
-        sh_status!("    Found soldeer.lock, installing soldeer dependencies...")?;
+        if output_to_stderr {
+            sh_eprintln!("    Found soldeer.lock, installing soldeer dependencies...")?;
+        } else {
+            sh_println!("    Found soldeer.lock, installing soldeer dependencies...")?;
+        }
 
         // Change to the dependency directory and run soldeer install
         let original_dir = std::env::current_dir()?;
@@ -323,7 +368,11 @@ async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
         std::env::set_current_dir(original_dir)?;
 
         result.map_err(|e| eyre::eyre!("Failed to run soldeer install: {e}"))?;
-        sh_status!("    Soldeer dependencies installed successfully")?;
+        if output_to_stderr {
+            sh_eprintln!("    Soldeer dependencies installed successfully")?;
+        } else {
+            sh_println!("    Soldeer dependencies installed successfully")?;
+        }
     }
 
     Ok(())
