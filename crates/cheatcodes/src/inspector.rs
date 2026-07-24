@@ -864,14 +864,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .unwrap_or_default()
     }
 
-    /// Returns successfully created accounts for the active fork in execution order.
-    pub(crate) fn created_accounts(
-        &self,
-        fork_id: Option<LocalForkId>,
-    ) -> impl Iterator<Item = &Address> {
-        self.created_accounts.iter().filter_map(move |(created_fork_id, address)| {
-            (*created_fork_id == fork_id).then_some(address)
-        })
+    /// Returns successfully created accounts and their originating forks in execution order.
+    pub(crate) fn created_accounts(&self) -> impl Iterator<Item = &(Option<LocalForkId>, Address)> {
+        self.created_accounts.iter()
     }
 
     /// Records a successfully created account.

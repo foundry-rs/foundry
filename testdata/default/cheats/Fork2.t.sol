@@ -146,6 +146,28 @@ contract ForkTest is Test {
         assertEq(dummy.val(), expectedValue);
     }
 
+    function testForkDumpStatePreservesPersistentDeploymentOrder() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_persistent_deployment_order.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        vm.makePersistent(address(first));
+
+        vm.selectFork(optimismFork);
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
     /// forge-config: default.allow_internal_expect_revert = true
     function testNonExistingContractRevert() public {
         vm.selectFork(mainnetFork);

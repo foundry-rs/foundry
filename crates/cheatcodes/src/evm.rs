@@ -377,7 +377,14 @@ impl Cheatcode for dumpStateCall {
         let path = Path::new(pathToStateJson);
 
         let fork_id = ccx.ecx.db().active_fork_id();
-        let created_accounts = ccx.state.created_accounts(fork_id).copied().collect::<Vec<_>>();
+        let created_accounts = ccx
+            .state
+            .created_accounts()
+            .filter_map(|(created_fork_id, address)| {
+                (*created_fork_id == fork_id || ccx.ecx.db().is_persistent(address))
+                    .then_some(*address)
+            })
+            .collect::<Vec<_>>();
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
