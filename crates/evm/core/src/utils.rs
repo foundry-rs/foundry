@@ -46,9 +46,28 @@ pub fn apply_chain_and_block_specific_env_changes<
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
+    let chain_id = evm_env.cfg_env.chain_id;
+    apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
+        evm_env, block, chain_id, configs,
+    );
+}
+
+/// Applies block normalization for the provided source chain.
+///
+/// This keeps fork-specific header handling independent from an execution `CHAINID` override.
+pub fn apply_chain_and_block_specific_env_changes_for_chain<
+    N: Network,
+    SPEC: Into<SpecId> + Copy,
+    BLOCK: FoundryBlock,
+>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+    block: &N::BlockResponse,
+    source_chain_id: ChainId,
+    configs: NetworkConfigs,
+) {
     use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
 
-    if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
+    if let Ok(chain) = NamedChain::try_from(source_chain_id) {
         let block_number = block.header().number();
 
         match chain {
@@ -89,9 +108,7 @@ pub fn apply_chain_and_block_specific_env_changes<
         }
     }
 
-    if configs.bypass_prevrandao(evm_env.cfg_env.chain_id)
-        && evm_env.block_env.prevrandao().is_none()
-    {
+    if configs.bypass_prevrandao(source_chain_id) && evm_env.block_env.prevrandao().is_none() {
         // <https://github.com/foundry-rs/foundry/issues/4232>
         evm_env.block_env.set_prevrandao(Some(B256::random()));
     }
@@ -165,6 +182,39 @@ pub fn get_function<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
+    use alloy_rpc_types::{Block, BlockTransactions};
+    use revm::context::{BlockEnv, CfgEnv};
+
+    #[test]
+    fn block_normalization_uses_source_chain() {
+        let header = AnyHeader { number: 500, ..Default::default() };
+        let mut block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x64"));
+
+        let mut cfg_env = CfgEnv::<SpecId>::default();
+        cfg_env.chain_id = NamedChain::Mainnet as u64;
+        let mut evm_env = EvmEnv {
+            cfg_env,
+            block_env: BlockEnv { number: U256::from(500), ..Default::default() },
+        };
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Arbitrum as u64,
+            NetworkConfigs::default(),
+        );
+
+        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
+        assert_eq!(evm_env.block_env.number, U256::from(100));
+    }
 
     #[test]
     fn blob_params_by_spec_id_tracks_latest_known_blob_schedule() {

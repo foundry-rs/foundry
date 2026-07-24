@@ -2,7 +2,7 @@ use crate::{
     EvmEnv, FoundryBlock, FoundryTransaction,
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::CreateFork,
-    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
@@ -383,7 +383,12 @@ impl EvmOpts {
             block_env: block_env_from_header(block.header()),
         };
 
-        apply_chain_and_block_specific_env_changes::<N, _, _>(&mut evm_env, &block, self.networks);
+        apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
+            &mut evm_env,
+            &block,
+            source_chain_id,
+            self.networks,
+        );
 
         Ok((evm_env, ForkContext { source_chain_id, block_number }))
     }

@@ -4,7 +4,7 @@ use crate::{
         call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
     },
     traces::TraceKind,
-    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
@@ -366,9 +366,10 @@ impl RunArgs {
                 // TODO: add glamsterdam header field checks in the future
                 evm_version = Some(EvmVersion::Cancun);
             }
-            apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
+            apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
                 &mut evm_env,
                 block,
+                chain.id(),
                 config.networks,
             );
         }

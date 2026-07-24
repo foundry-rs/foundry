@@ -33,7 +33,7 @@ use foundry_evm::{
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::TraceRequirements,
-    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
@@ -317,7 +317,7 @@ where
 
     evm_env.block_env.set_number(U256::from(execution_blk_num));
     if let Some(block) = execution_block {
-        configure_env_block::<FEN>(&mut evm_env, block, networks);
+        configure_env_block::<FEN>(&mut evm_env, block, chain.id(), networks);
     }
     resolve_runtime_spec::<FEN>(fork_config, networks, chain.id(), &mut evm_env);
 
@@ -349,6 +349,7 @@ where
 pub fn configure_env_block<FEN>(
     evm_env: &mut EvmEnvFor<FEN>,
     block: &BlockResponseFor<FEN>,
+    source_chain_id: ChainId,
     config: NetworkConfigs,
 ) where
     FEN: FoundryEvmNetwork,
@@ -356,7 +357,12 @@ pub fn configure_env_block<FEN>(
     let number = evm_env.block_env.number();
     evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
     evm_env.block_env.set_number(number);
-    apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(evm_env, block, config);
+    apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
+        evm_env,
+        block,
+        source_chain_id,
+        config,
+    );
 }
 
 pub fn deploy_contract<FEN>(
