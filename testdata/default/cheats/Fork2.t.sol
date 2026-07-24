@@ -282,9 +282,36 @@ contract ForkTest is Test {
         vm.removeFile(path);
     }
 
+    function testForkDumpStatePreservesOrderAfterRevertedRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_reverted_roll.json");
+
+        vm.selectFork(mainnetFork);
+        address first =
+            vm.computeCreate2Address(bytes32(uint256(1)), keccak256(type(DummyContract).creationCode), address(this));
+        try this.createRollAndRevert(block.number) {} catch {}
+
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
     function createSwitchAndRevert(uint256 forkId) external {
         createdBeforeSwitch = address(new DummyContract());
         vm.selectFork(forkId);
+        revert();
+    }
+
+    function createRollAndRevert(uint256 blockNumber) external {
+        new DummyContract{salt: bytes32(uint256(1))}();
+        vm.rollFork(blockNumber);
         revert();
     }
 

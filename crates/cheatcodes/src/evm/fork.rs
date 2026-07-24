@@ -75,9 +75,11 @@ impl Cheatcode for rollFork_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blockNumber } = self;
         persist_caller(ccx);
-        fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
+        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
             db.roll_fork(None, (*blockNumber).to(), evm_env, inner)
-        })
+        })?;
+        record_fork_roll(ccx, None);
+        Ok(result)
     }
 }
 
@@ -85,9 +87,11 @@ impl Cheatcode for rollFork_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { txHash } = self;
         persist_caller(ccx);
-        fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
+        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
             db.roll_fork_to_transaction(None, *txHash, evm_env, inner)
-        })
+        })?;
+        record_fork_roll(ccx, None);
+        Ok(result)
     }
 }
 
@@ -95,9 +99,11 @@ impl Cheatcode for rollFork_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { forkId, blockNumber } = self;
         persist_caller(ccx);
-        fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
+        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
             db.roll_fork(Some(*forkId), (*blockNumber).to(), evm_env, inner)
-        })
+        })?;
+        record_fork_roll(ccx, Some(*forkId));
+        Ok(result)
     }
 }
 
@@ -105,9 +111,11 @@ impl Cheatcode for rollFork_3Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { forkId, txHash } = self;
         persist_caller(ccx);
-        fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
+        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
             db.roll_fork_to_transaction(Some(*forkId), *txHash, evm_env, inner)
-        })
+        })?;
+        record_fork_roll(ccx, Some(*forkId));
+        Ok(result)
     }
 }
 
@@ -451,6 +459,16 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
+}
+
+fn record_fork_roll<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    target_fork_id: Option<LocalForkId>,
+) {
+    let active_fork_id = ccx.ecx.db().active_fork_id();
+    if target_fork_id.is_none() || target_fork_id == active_fork_id {
+        ccx.state.commit_created_account_changes(active_fork_id);
+    }
 }
 
 fn check_broadcast<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>) -> Result<()> {
