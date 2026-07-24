@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2026-05-02 21:53:46 UTC
+**Generated at**: 2026-07-02 14:44:51 UTC
 
 ## Forge Test
 
@@ -10,26 +10,29 @@
 2. [vectorized/solady](https://github.com/vectorized/solady)
 3. [uniswap/v4-core](https://github.com/uniswap/v4-core)
 4. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)
+5. [aave/aave-v4](https://github.com/aave/aave-v4)
 ### Foundry Versions
 
-- **v1.5.1**: forge Version: 1.5.1-v1.5.1 (b0a9dd9 2025-12-19)
-- **v1.7.0**: forge Version: 1.6.0-v1.7.0 (f83bad9 2026-04-28)
+- **v1.7.1**: forge Version: 1.7.1 (4072e48 2026-05-08)
+- **v1.8.0**: forge Version: 1.7.2-dev (b491df2 2026-07-02)
 
-| Repository | v1.5.1 | v1.7.0 |
+| Repository | v1.7.1 | v1.8.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 2.78 s | 0.965 s |
-| vectorized-solady | 0.995 s | 0.645 s |
-| uniswap-v4-core | 5.97 s | 1.51 s |
-| sparkdotfi-spark-psm | 19.98 s | 10.20 s |
+| ithacaxyz-account | 1.42 s | 1.33 s |
+| vectorized-solady | 1.29 s | 0.999 s |
+| uniswap-v4-core | 3.09 s | 3.04 s |
+| sparkdotfi-spark-psm | 22.46 s | 10.71 s |
+| aave-aave-v4 | 3m 40.9s | 2m 34.5s |
 
 ## Forge Fuzz Test
 
-| Repository | v1.5.1 | v1.7.0 |
+| Repository | v1.7.1 | v1.8.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 2.54 s | 0.923 s |
-| vectorized-solady | 0.929 s | 0.617 s |
-| uniswap-v4-core | 6.44 s | 1.40 s |
-| sparkdotfi-spark-psm | 2.25 s | 2.03 s |
+| ithacaxyz-account | 1.41 s | 1.33 s |
+| vectorized-solady | 1.26 s | 0.998 s |
+| uniswap-v4-core | 2.81 s | 2.78 s |
+| sparkdotfi-spark-psm | 1.85 s | 1.68 s |
+| aave-aave-v4 | 3m 18.1s | 2m 30.5s |
 
 ## Forge Test (Isolated)
 
@@ -39,17 +42,19 @@
 2. [vectorized/solady](https://github.com/vectorized/solady)
 3. [uniswap/v4-core](https://github.com/uniswap/v4-core)
 4. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)
+5. [aave/aave-v4](https://github.com/aave/aave-v4)
 ### Foundry Versions
 
-- **v1.5.1**: forge Version: 1.5.1-v1.5.1 (b0a9dd9 2025-12-19)
-- **v1.7.0**: forge Version: 1.6.0-v1.7.0 (f83bad9 2026-04-28)
+- **v1.7.1**: forge Version: 1.7.1 (4072e48 2026-05-08)
+- **v1.8.0**: forge Version: 1.7.2-dev (b491df2 2026-07-02)
 
-| Repository | v1.5.1 | v1.7.0 |
+| Repository | v1.7.1 | v1.8.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 3.05 s | 1.02 s |
-| vectorized-solady | 0.871 s | 0.741 s |
-| uniswap-v4-core | 6.81 s | 1.68 s |
-| sparkdotfi-spark-psm | 21.96 s | 11.26 s |
+| ithacaxyz-account | 1.46 s | 1.38 s |
+| vectorized-solady | 1.39 s | 1.15 s |
+| uniswap-v4-core | 3.30 s | 3.38 s |
+| sparkdotfi-spark-psm | 25.31 s | 11.54 s |
+| aave-aave-v4 | 4m 52.1s | 4m 51.6s |
 
 ## Forge Build
 
@@ -59,28 +64,30 @@
 2. [vectorized/solady](https://github.com/vectorized/solady)
 3. [uniswap/v4-core](https://github.com/uniswap/v4-core)
 4. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)
+5. [aave/aave-v4](https://github.com/aave/aave-v4)
 ### Foundry Versions
 
-- **v1.5.1**: forge Version: 1.5.1-v1.5.1 (b0a9dd9 2025-12-19)
-- **v1.7.0**: forge Version: 1.6.0-v1.7.0 (f83bad9 2026-04-28)
+- **v1.7.1**: forge Version: 1.7.1 (4072e48 2026-05-08)
+- **v1.8.0**: forge Version: 1.7.2-dev (b491df2 2026-07-02)
 
 ### No Cache
 
-| Repository | v1.5.1 | v1.7.0 |
+| Repository | v1.7.1 | v1.8.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 34.58 s | 33.29 s |
-| vectorized-solady | 14.40 s | 14.41 s |
-| uniswap-v4-core | 2m 17.6s | 2m 17.7s |
-| sparkdotfi-spark-psm | 12.62 s | 12.61 s |
+| ithacaxyz-account | 40.43 s | 24.76 s |
+| vectorized-solady | 13.62 s | 14.00 s |
+| uniswap-v4-core | 1m 55.5s | 1m 50.5s |
+| sparkdotfi-spark-psm | 11.98 s | 11.72 s |
+| aave-aave-v4 | 5m 22.0s | 5m 21.5s |
 
 ### With Cache
-
-| Repository | v1.5.1 | v1.7.0 |
+| Repository | v1.7.1 | v1.8.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 0.083 s | 0.089 s |
-| vectorized-solady | 0.062 s | 0.064 s |
-| uniswap-v4-core | 0.071 s | 0.074 s |
-| sparkdotfi-spark-psm | 0.066 s | 0.068 s |
+| ithacaxyz-account | 0.250 s | 0.244 s |
+| vectorized-solady | 0.100 s | 0.110 s |
+| uniswap-v4-core | 0.148 s | 0.141 s |
+| sparkdotfi-spark-psm | 0.151 s | 0.149 s |
+| aave-aave-v4 | 0.253 s | 0.252 s |
 
 ## Forge Coverage
 
@@ -89,20 +96,22 @@
 1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
 2. [uniswap/v4-core](https://github.com/uniswap/v4-core)
 3. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)
+4. [aave/aave-v4](https://github.com/aave/aave-v4)
 ### Foundry Versions
 
-- **v1.5.1**: forge Version: 1.5.1-v1.5.1 (b0a9dd9 2025-12-19)
-- **v1.7.0**: forge Version: 1.6.0-v1.7.0 (f83bad9 2026-04-28)
+- **v1.7.1**: forge Version: 1.7.1 (4072e48 2026-05-08)
+- **v1.8.0**: forge Version: 1.7.2-dev (b491df2 2026-07-02)
 
-| Repository | v1.5.1 | v1.7.0 |
+| Repository | v1.7.1 | v1.8.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 29.35 s | 18.69 s |
-| uniswap-v4-core | 1m 26.8s | 1m 4.1s |
-| sparkdotfi-spark-psm | 2m 1.6s | 1m 28.4s |
+| ithacaxyz-account | 1m 22.6s | 1m 19.73 s |
+| uniswap-v4-core | 1m 4.2s | 1m 4.1s |
+| sparkdotfi-spark-psm | 2m 9.7s | 1m 39.0s |
+| aave-aave-v4 | 14m 2.1s | 13m 42.1s |
 
 ## System Information
 
 
-- **OS**: linux
-- **CPU**: 32
-- **Rustc**: rustc 1.95.0 (59807616e 2026-04-14)
+- **OS**: macos
+- **CPU**: 12
+- **Rustc**: rustc 1.96.1 (31fca3adb 2026-06-26)
