@@ -977,6 +977,29 @@ contract BlobForkTest is Test {
     cmd.args(["test", "-vvvv"]).assert_success();
 });
 
+// https://github.com/foundry-rs/foundry/issues/10689
+forgetest_init!(flaky_roll_fork_arbitrum_priority_fee_above_max_fee, |prj, cmd| {
+    let endpoint = "https://arb-mainnet.g.alchemy.com/public";
+
+    prj.add_test(
+        "ArbitrumFork.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ArbitrumForkTest is Test {
+    function test_rollFork() public {
+        vm.createSelectFork("<url>");
+        bytes32 txHash = 0x2e43e9ececcbb9cd08ce061edc3b4d39ca2b0ba480034e5f4650ba0065bf6b62;
+        vm.rollFork(txHash);
+    }
+}
+    "#
+        .replace("<url>", endpoint),
+    );
+
+    cmd.arg("test").assert_success();
+});
+
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
     prj.add_test(
