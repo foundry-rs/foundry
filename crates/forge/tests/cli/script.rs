@@ -17,7 +17,17 @@ use foundry_test_utils::{
 };
 use regex::Regex;
 use serde_json::Value;
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
+fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
+    let path = foundry_common::fs::json_files(&root.join("broadcast"))
+        .find(|path| path.ends_with("dry-run/run-latest.json"))
+        .unwrap();
+    foundry_common::fs::read_json_file(&path).unwrap()
+}
 
 // Tests that fork cheat codes can be used in script
 forgetest_init!(
@@ -3076,6 +3086,164 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 
 "#]]);
+});
+
+forgetest_async!(unused_libraries_conditional_6215, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "UnusedLibraries",
+        r#"
+import "forge-std/Script.sol";
+library Lib1 { function value() external pure returns (uint256) { return 1; } }
+library Lib2 { function value() external pure returns (uint256) { return 2; } }
+contract ContractUsingLib1 { function value() external view returns (uint256) { return Lib1.value(); } }
+contract ContractUsingLib2 { function value() external view returns (uint256) { return Lib2.value(); } }
+contract UnusedLibraries is Script {
+    function run(uint256 which) external {
+        vm.startBroadcast();
+        if (which == 1) new ContractUsingLib1();
+        else new ContractUsingLib2();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.arg("script")
+        .args(["UnusedLibraries", "--sig", "run(uint256)", "1", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .assert_success();
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["Lib1", "ContractUsingLib1"]);
+    assert_eq!(sequence.libraries.len(), 1);
+    assert!(sequence.libraries[0].contains(":Lib1:"));
+});
+
+forgetest_async!(wallet_signing_skips_library_optimization, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "WalletSigningLibraries",
+        r#"
+import "forge-std/Script.sol";
+library SignLib1 { function value() external pure returns (uint256) { return 1; } }
+library SignLib2 { function value() external pure returns (uint256) { return 2; } }
+contract UsesSignLib1 { function value() external view returns (uint256) { return SignLib1.value(); } }
+contract UsesSignLib2 { function value() external view returns (uint256) { return SignLib2.value(); } }
+contract WalletSigningLibraries is Script {
+    function run(uint256 overload) external {
+        bytes32 digest = keccak256("digest");
+        address signer = vm.rememberKey(1);
+        bytes32 r;
+        if (overload == 0) (, r,) = vm.sign(digest);
+        else if (overload == 1) (, r,) = vm.sign(signer, digest);
+        else if (overload == 2) (r,) = vm.signCompact(digest);
+        else (r,) = vm.signCompact(signer, digest);
+        require(r != bytes32(0));
+
+        vm.startBroadcast(1);
+        if (overload < 4) new UsesSignLib1();
+        else new UsesSignLib2();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    for overload in 0..4 {
+        cmd.forge_fuse()
+            .arg("script")
+            .args(["WalletSigningLibraries", "--sig", "run(uint256)"])
+            .arg(overload.to_string())
+            .args([
+                "--rpc-url",
+                handle.http_endpoint().as_str(),
+                "--sender",
+                "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            ])
+            .assert_success();
+        let sequence = latest_dry_run_sequence(prj.root());
+        let names = sequence
+            .transactions
+            .iter()
+            .filter_map(|tx| tx.contract_name.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["SignLib1", "SignLib2", "UsesSignLib1"], "overload {overload}");
+    }
+});
+
+forgetest_async!(library_optimization_skips_changed_fork_block, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ChangedForkLibraries",
+        r#"
+import "forge-std/Script.sol";
+library ForkLib1 { function value() external pure returns (uint256) { return 1; } }
+library ForkLib2 { function value() external pure returns (uint256) { return 2; } }
+contract UsesForkLib1 { function value() external view returns (uint256) { return ForkLib1.value(); } }
+contract UsesForkLib2 { function value() external view returns (uint256) { return ForkLib2.value(); } }
+contract ChangedForkLibraries is Script {
+    function run(uint256 which) external {
+        vm.rollFork(block.number);
+        vm.startBroadcast();
+        if (which == 1) new UsesForkLib1();
+        else new UsesForkLib2();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.arg("script")
+        .args(["ChangedForkLibraries", "--sig", "run(uint256)", "1", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .assert_success();
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["ForkLib1", "ForkLib2", "UsesForkLib1"]);
+});
+
+forgetest_async!(unused_library_called_locally_before_direct_create, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "OutsideLibrary",
+        r#"
+import "forge-std/Script.sol";
+library OutsideLib { function value() external pure returns (uint256) { return 1; } }
+library RequiredLib { function value() external pure returns (uint256) { return 2; } }
+contract UsesRequiredLib { function value() external view returns (uint256) { return RequiredLib.value(); } }
+contract OutsideLibrary is Script {
+    function run() external {
+        OutsideLib.value();
+        vm.startBroadcast();
+        new UsesRequiredLib();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.arg("script")
+        .args(["OutsideLibrary", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .assert_success();
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["RequiredLib", "UsesRequiredLib"]);
+    assert_eq!(sequence.libraries.len(), 1);
+    assert!(sequence.libraries[0].contains(":RequiredLib:"));
 });
 
 // Tests warn when artifact source file no longer exists.
