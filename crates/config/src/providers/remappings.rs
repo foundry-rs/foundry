@@ -79,22 +79,19 @@ impl Remappings {
                     && existing.path == remapping.path;
             }
 
-            // What we're doing here is filtering for ambiguous paths. For example, if we have
-            // @prb/math/=node_modules/@prb/math/src/ as existing, and
-            // @prb/=node_modules/@prb/ as the one being checked,
-            // we want to keep the already existing one, which is the first one. This way we avoid
-            // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
-            // Remappings are added from root of the project down to libraries, so
-            // we also want to exclude any conflicting remappings added from libraries. For example,
-            // if we have `@utils/=src/` added in project remappings and `@utils/libraries/=src/`
-            // added in a dependency, we don't want to add the new one as it conflicts with project
-            // existing remapping.
+            // Autodetected remappings are added from the root project down through its libraries,
+            // so an existing root alias remains authoritative over an equal or more specific
+            // dependency alias. For example, an existing `@utils/=src/` suppresses an incoming
+            // `@utils/libraries/=lib/utils/`, preventing a dependency from overriding part of the
+            // root namespace. The reverse direction is intentional: an existing
+            // `@prb/math/=src/math/` can coexist with an incoming `@prb/=lib/prb/`; the root alias
+            // resolves its subtree while the dependency alias acts as a fallback for the rest of
+            // the namespace.
             let mut existing_name_path = existing.name.clone();
             if !existing_name_path.ends_with('/') {
                 existing_name_path.push('/')
             }
-            let is_conflicting = remapping.name.starts_with(&existing_name_path)
-                || existing.name.starts_with(&remapping.name);
+            let is_conflicting = remapping.name.starts_with(&existing_name_path);
             is_conflicting && existing.context == remapping.context
         }) {
             return;
@@ -474,6 +471,90 @@ mod tests {
             result
                 .iter()
                 .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol")
+        );
+    }
+
+    #[test]
+    fn test_root_remapping_prefix_precedence_is_directional() {
+        let remapping = |name: &str, path: &str| Remapping {
+            context: None,
+            name: name.to_string(),
+            path: path.to_string(),
+        };
+
+        let mut narrow_root =
+            Remappings::new_with_remappings(vec![remapping("pkg/sub/", "src/local/")]);
+        narrow_root.extend(vec![remapping("pkg/", "lib/pkg/src/")]);
+        assert_eq!(
+            narrow_root.into_inner(),
+            vec![remapping("pkg/sub/", "src/local/"), remapping("pkg/", "lib/pkg/src/")]
+        );
+
+        let mut broad_root = Remappings::new_with_remappings(vec![remapping("pkg/", "src/local/")]);
+        broad_root.extend(vec![
+            remapping("pkg/sub/", "lib/pkg/src/sub/"),
+            remapping("pkg-other/", "lib/pkg-other/src/"),
+        ]);
+        assert_eq!(
+            broad_root.into_inner(),
+            vec![remapping("pkg/", "src/local/"), remapping("pkg-other/", "lib/pkg-other/src/")]
+        );
+
+        let mut duplicate = Remappings::new_with_remappings(vec![remapping("pkg/", "src/local/")]);
+        duplicate.extend(vec![remapping("pkg/", "lib/pkg/src/")]);
+        assert_eq!(duplicate.remappings, vec![remapping("pkg/", "src/local/")]);
+
+        let contextual_remapping = |context: &str, name: &str, path: &str| Remapping {
+            context: Some(context.to_string()),
+            name: name.to_string(),
+            path: path.to_string(),
+        };
+        let mut same_context = Remappings::new_with_remappings(vec![contextual_remapping(
+            "src/",
+            "pkg/",
+            "src/local/",
+        )]);
+        same_context.extend(vec![contextual_remapping("src/", "pkg/sub/", "lib/pkg/src/sub/")]);
+        assert_eq!(
+            same_context.remappings,
+            vec![contextual_remapping("src/", "pkg/", "src/local/")]
+        );
+
+        let mut different_context = Remappings::new_with_remappings(vec![contextual_remapping(
+            "src/",
+            "pkg/",
+            "src/local/",
+        )]);
+        different_context.extend(vec![contextual_remapping(
+            "test/",
+            "pkg/sub/",
+            "lib/pkg/src/sub/",
+        )]);
+        assert_eq!(
+            different_context.remappings,
+            vec![
+                contextual_remapping("src/", "pkg/", "src/local/"),
+                contextual_remapping("test/", "pkg/sub/", "lib/pkg/src/sub/"),
+            ]
+        );
+
+        let mut narrow_root_without_slash =
+            Remappings::new_with_remappings(vec![remapping("pkg/sub", "src/local/")]);
+        narrow_root_without_slash.extend(vec![remapping("pkg", "lib/pkg/src/")]);
+        assert_eq!(
+            narrow_root_without_slash.remappings,
+            vec![remapping("pkg/sub", "src/local/"), remapping("pkg", "lib/pkg/src/")]
+        );
+
+        let mut broad_root_without_slash =
+            Remappings::new_with_remappings(vec![remapping("pkg", "src/local/")]);
+        broad_root_without_slash.extend(vec![
+            remapping("pkg/sub", "lib/pkg/src/sub/"),
+            remapping("pkg-other", "lib/pkg-other/src/"),
+        ]);
+        assert_eq!(
+            broad_root_without_slash.remappings,
+            vec![remapping("pkg", "src/local/"), remapping("pkg-other", "lib/pkg-other/src/")]
         );
     }
 }

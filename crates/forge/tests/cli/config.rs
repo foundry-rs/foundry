@@ -1099,6 +1099,106 @@ Global:
 "#]]);
 });
 
+forgetest!(narrow_project_remapping_preserves_broad_dependency_fallback, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("pkg/sub/=src/local/").unwrap().into()];
+    });
+    prj.add_source(
+        "Root.sol",
+        r#"
+import {Dep} from "pkg/Dep.sol";
+import {Local} from "pkg/sub/Local.sol";
+
+contract Root is Dep, Local {}
+"#,
+    );
+    prj.add_source(
+        "local/Local.sol",
+        r#"
+contract Local {
+    function localValue() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    let dependency = prj.root().join("lib/pkg/src");
+    pretty_err(&dependency, fs::create_dir_all(&dependency));
+    pretty_err(
+        dependency.join("Dep.sol"),
+        fs::write(
+            dependency.join("Dep.sol"),
+            r#"
+contract Dep {
+    function dependencyValue() public pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+        ),
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+pkg/sub/=src/local/
+pkg/=lib/pkg/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build"]).assert_success();
+    // Forge lint resolves imports through Solar independently of the solc build.
+    cmd.forge_fuse().args(["lint"]).assert_success();
+});
+
+forgetest!(broad_project_remapping_suppresses_narrow_dependency_override, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("pkg/=src/local/").unwrap().into()];
+    });
+    prj.add_source(
+        "Root.sol",
+        r#"
+import {Selected} from "pkg/sub/Selected.sol";
+
+contract Root is Selected {}
+"#,
+    );
+    prj.add_source(
+        "local/sub/Selected.sol",
+        r#"
+contract Selected {
+    function selectedValue() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    let dependency = prj.root().join("lib/dep1");
+    pretty_err(dependency.join("src/decoy"), fs::create_dir_all(dependency.join("src/decoy")));
+    let mut dependency_config = Config::load_with_root(&dependency).unwrap();
+    dependency_config.remappings = vec![Remapping::from_str("pkg/sub/=src/decoy/").unwrap().into()];
+    pretty_err(
+        dependency.join("foundry.toml"),
+        fs::write(dependency.join("foundry.toml"), dependency_config.to_string_pretty().unwrap()),
+    );
+    pretty_err(
+        dependency.join("src/decoy/Selected.sol"),
+        fs::write(
+            dependency.join("src/decoy/Selected.sol"),
+            r#"
+contract DependencyDecoy {}
+"#,
+        ),
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+pkg/=src/local/
+dep1/=lib/dep1/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build"]).assert_success();
+    // Solar prefers the longest matching prefix, so this fails if the dependency override leaks.
+    cmd.forge_fuse().args(["lint"]).assert_success();
+});
+
 // Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
 // identical stdout, even when remappings have contexts. The context prefix is part of the
 // machine-readable value and must survive `--pretty` mode.
