@@ -112,7 +112,6 @@ impl LintArgs {
             .with_lint_specific(&config.lint.lint_specific);
 
         let mut opts = solar::interface::config::CompileOpts::default();
-        opts.unstable.typeck = true;
         if format_json {
             opts.error_format = solar::interface::config::ErrorFormat::RustcJson;
         }
@@ -121,9 +120,12 @@ impl LintArgs {
             if format_json { session.build() } else { session.with_stderr_emitter().build() };
         if format_json {
             let writer = Box::new(std::io::BufWriter::new(std::io::stdout()));
-            let emitter =
-                solar::interface::diagnostics::JsonEmitter::new(writer, session.clone_source_map())
-                    .rustc_like(true);
+            let emitter = solar::interface::diagnostics::JsonEmitter::new(
+                writer,
+                session.clone_source_map(),
+                solar::interface::ColorChoice::Never,
+            )
+            .rustc_like(true);
             session.dcx.set_emitter(Box::new(emitter));
         }
         let mut compiler = solar::sema::Compiler::new(session);

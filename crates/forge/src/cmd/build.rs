@@ -221,8 +221,7 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            let mut opts = CompileOpts::default();
-            opts.unstable.typeck = true;
+            let opts = CompileOpts::default();
             let mut compiler =
                 Compiler::new(Session::builder().opts(opts).with_stderr_emitter().build());
 

@@ -2,7 +2,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     uint256 Variablemixedcase;
-   │             ━━━━━━━━━━━━━━━━━ help: consider using: `variablemixedcase`
+   │             ━━━━━━━━━━━━━━━━━ help: consider using (notice the capitalization): `variablemixedcase`
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
@@ -18,7 +18,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     uint256 VariableMixedCase;
-   │             ━━━━━━━━━━━━━━━━━ help: consider using: `variableMixedCase`
+   │             ━━━━━━━━━━━━━━━━━ help: consider using (notice the capitalization): `variableMixedCase`
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
@@ -50,7 +50,7 @@ note[mixed-case-function]: function names should use mixedCase
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function Functionmixedcase() public {}
-   │              ━━━━━━━━━━━━━━━━━ help: consider using: `functionmixedcase`
+   │              ━━━━━━━━━━━━━━━━━ help: consider using (notice the capitalization): `functionmixedcase`
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
@@ -66,7 +66,7 @@ note[mixed-case-function]: function names should use mixedCase
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function FunctionMixedCase() public {}
-   │              ━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCase`
+   │              ━━━━━━━━━━━━━━━━━ help: consider using (notice the capitalization): `functionMixedCase`
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
