@@ -51,3 +51,4 @@ serde_json.workspace = true
 default = ["optimism"]
 monad = ["dep:monad-revm", "foundry-evm-hardforks/monad"]
 optimism = ["dep:alloy-op-hardforks", "foundry-evm-hardforks/optimism"]
+base = ["foundry-evm-hardforks/base"]

@@ -109,6 +109,8 @@ const BACKWARD_COMPATIBLE_KEYS: &[&str] = &[
     "optimism",
     #[cfg(feature = "monad")]
     "monad",
+    #[cfg(feature = "base")]
+    "base",
 ];
 
 const LABELS_KEY: &str = "labels";

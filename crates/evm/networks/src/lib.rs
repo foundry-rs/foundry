@@ -165,6 +165,8 @@ pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) 
 pub enum NetworkVariant {
     #[default]
     Ethereum,
+    #[cfg(feature = "base")]
+    Base,
     #[cfg(feature = "optimism")]
     Optimism,
     Tempo,
@@ -187,6 +189,8 @@ impl std::str::FromStr for NetworkVariant {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "ethereum" => Ok(Self::Ethereum),
+            #[cfg(feature = "base")]
+            "base" => Ok(Self::Base),
             #[cfg(feature = "optimism")]
             "optimism" => Ok(Self::Optimism),
             "tempo" => Ok(Self::Tempo),
@@ -211,6 +215,12 @@ impl NetworkVariant {
         if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
             return Ok(Some(Self::Ethereum));
         }
+        if matches!(chain.named(), Some(NamedChain::Base | NamedChain::BaseSepolia)) {
+            #[cfg(feature = "base")]
+            return Ok(Some(Self::Base));
+            #[cfg(not(feature = "base"))]
+            return Err("network family `base` is not enabled in this build".to_string());
+        }
         if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
             #[cfg(feature = "monad")]
             return Ok(Some(Self::Monad));
@@ -230,6 +240,10 @@ impl NetworkVariant {
     pub fn from_node_info_name(network: &str) -> Result<Self, String> {
         match network {
             "ethereum" => Ok(Self::Ethereum),
+            #[cfg(feature = "base")]
+            "base" => Ok(Self::Base),
+            #[cfg(not(feature = "base"))]
+            "base" => Err("network family `base` is not enabled in this build".to_string()),
             #[cfg(feature = "optimism")]
             "optimism" => Ok(Self::Optimism),
             #[cfg(not(feature = "optimism"))]
@@ -288,6 +302,12 @@ impl NetworkVariant {
         matches!(self, Self::Ethereum)
     }
 
+    /// Returns `true` if this is the Base network variant.
+    #[cfg(feature = "base")]
+    pub const fn is_base(&self) -> bool {
+        matches!(self, Self::Base)
+    }
+
     /// Returns `true` if this is the Optimism network variant.
     #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
@@ -315,6 +335,8 @@ impl NetworkVariant {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Ethereum => "ethereum",
+            #[cfg(feature = "base")]
+            Self::Base => "base",
             #[cfg(feature = "optimism")]
             Self::Optimism => "optimism",
             Self::Tempo => "tempo",
@@ -327,6 +349,8 @@ impl NetworkVariant {
     pub const fn hardfork_namespace(&self) -> Option<&'static str> {
         match self {
             Self::Ethereum => None,
+            #[cfg(feature = "base")]
+            Self::Base => Some("base"),
             #[cfg(feature = "optimism")]
             Self::Optimism => Some("optimism"),
             Self::Tempo => Some("tempo"),
@@ -354,17 +378,20 @@ pub struct NetworkConfigs {
     #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
+    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     #[serde(default)]
     pub(crate) network: Option<NetworkVariant>,
     /// Enable Celo network features.
     #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
+    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     celo: bool,
     /// Enable Optimism network features (deprecated: use --network optimism).
     #[cfg(feature = "optimism")]
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
+    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
     // canonical form is `network = "optimism"`.
     #[serde(default)]
@@ -373,6 +400,7 @@ pub struct NetworkConfigs {
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
+    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
     // canonical form is `network = "tempo"`.
     #[serde(default)]
@@ -381,10 +409,20 @@ pub struct NetworkConfigs {
     #[cfg(feature = "monad")]
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
+    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized - the
     // canonical form is `network = "monad"`.
     #[serde(default)]
     monad: bool,
+    /// Enable Base network features (deprecated: use --network base).
+    #[cfg(feature = "base")]
+    #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
+    #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
+    #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
+    // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
+    // canonical form is `network = "base"`.
+    #[serde(default)]
+    base: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
     #[serde(default)]
@@ -392,9 +430,8 @@ pub struct NetworkConfigs {
 }
 
 // Custom `Serialize` impl: always emits the *resolved* network as the canonical
-// `network = "..."` field, and never emits the legacy `tempo` / `optimism` / `monad` aliases.
-// This avoids confusing output like `network = "monad"` next to `monad = false`, and ensures
-// legacy aliases in foundry.toml round-trip as canonical network values.
+// `network = "..."` field, and never emits legacy network aliases. This avoids contradictory
+// canonical and legacy selectors, and ensures old foundry.toml keys round-trip canonically.
 impl Serialize for NetworkConfigs {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -430,6 +467,10 @@ impl NetworkConfigs {
         if self.monad {
             selectors.push(("monad", "monad = true".to_string()));
         }
+        #[cfg(feature = "base")]
+        if self.base {
+            selectors.push(("base", "base = true".to_string()));
+        }
 
         if let Some((family, selector)) = selectors.first()
             && let Some((_, conflicting)) =
@@ -461,6 +502,11 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Monad), monad: true, ..Default::default() }
     }
 
+    #[cfg(feature = "base")]
+    pub fn with_base() -> Self {
+        Self { network: Some(NetworkVariant::Base), base: true, ..Default::default() }
+    }
+
     pub const fn is_tempo(&self) -> bool {
         if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
     }
@@ -475,6 +521,16 @@ impl NetworkConfigs {
         false
     }
 
+    #[cfg(feature = "base")]
+    pub const fn is_base(&self) -> bool {
+        matches!(self.resolved_network(), Some(NetworkVariant::Base))
+    }
+
+    #[cfg(not(feature = "base"))]
+    pub const fn is_base(&self) -> bool {
+        false
+    }
+
     pub const fn is_celo(&self) -> bool {
         self.celo
     }
@@ -483,6 +539,10 @@ impl NetworkConfigs {
     pub const fn resolved_network(&self) -> Option<NetworkVariant> {
         if let Some(n) = self.network {
             return Some(n);
+        }
+        #[cfg(feature = "base")]
+        if self.base {
+            return Some(NetworkVariant::Base);
         }
         #[cfg(feature = "optimism")]
         if self.optimism {
@@ -532,10 +592,9 @@ impl NetworkConfigs {
     /// Returns whether this execution configuration can use `source` as a fork state source
     /// without rebuilding the instantiated EVM.
     ///
-    /// Monad uses a distinct EVM factory and instruction provider, so forks cannot cross the
-    /// Monad boundary. Existing non-Monad fork-source compatibility remains unchanged.
+    /// Base and Monad use distinct EVM factories, so forks cannot cross either boundary.
     pub const fn supports_fork_source(&self, source: &Self) -> bool {
-        self.is_monad() == source.is_monad()
+        self.is_monad() == source.is_monad() && self.is_base() == source.is_base()
     }
 
     /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
@@ -712,6 +771,8 @@ impl NetworkConfigs {
         let network = match hardfork {
             FoundryHardfork::Ethereum(_) => self,
             FoundryHardfork::Tempo(_) => Self::with_tempo(),
+            #[cfg(feature = "base")]
+            FoundryHardfork::Base(_) => Self::with_base(),
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(_) => Self::with_optimism(),
             #[cfg(feature = "monad")]
@@ -844,6 +905,10 @@ impl From<NetworkVariant> for NetworkConfigs {
             NetworkVariant::Monad => {
                 Self { network: Some(network), monad: true, ..Default::default() }
             }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                Self { network: Some(network), base: true, ..Default::default() }
+            }
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
                 Self { network: Some(network), optimism: true, ..Default::default() }
@@ -888,6 +953,13 @@ mod tests {
             assert!(!NetworkVariant::Optimism.is_monad());
         }
 
+        #[cfg(feature = "base")]
+        {
+            assert!(NetworkVariant::Base.is_base());
+            assert!(!NetworkVariant::Base.is_ethereum());
+            assert!(!NetworkVariant::Base.is_tempo());
+        }
+
         #[cfg(all(feature = "optimism", feature = "monad"))]
         assert!(!NetworkVariant::Monad.is_optimism());
     }
@@ -912,6 +984,27 @@ mod tests {
             assert!(!NetworkConfigs::with_monad().supports_fork_source(execution));
         }
         assert!(NetworkConfigs::with_monad().supports_fork_source(&NetworkConfigs::with_monad()));
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn fork_sources_isolate_base() {
+        let mut non_base = vec![
+            NetworkConfigs::default(),
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_celo(),
+            NetworkConfigs::with_tempo(),
+        ];
+        #[cfg(feature = "optimism")]
+        non_base.push(NetworkConfigs::with_optimism());
+        #[cfg(feature = "monad")]
+        non_base.push(NetworkConfigs::with_monad());
+
+        for source in &non_base {
+            assert!(!NetworkConfigs::with_base().supports_fork_source(source));
+            assert!(!source.supports_fork_source(&NetworkConfigs::with_base()));
+        }
+        assert!(NetworkConfigs::with_base().supports_fork_source(&NetworkConfigs::with_base()));
     }
 
     #[test]
@@ -1554,6 +1647,74 @@ mod tests {
         assert_eq!(NetworkVariant::from(10143), NetworkVariant::Monad);
 
         assert!(NetworkConfigs::default().try_with_chain_id(143).unwrap().is_monad());
+    }
+
+    #[cfg(feature = "base")]
+    mod base {
+        use super::*;
+        use foundry_evm_hardforks::BaseUpgrade;
+
+        #[test]
+        fn new_base_flag_equivalent_to_legacy() {
+            let via_new =
+                NetworkConfigs { network: Some(NetworkVariant::Base), ..Default::default() };
+            let via_old = NetworkConfigs { base: true, ..Default::default() };
+            assert_eq!(via_new.is_base(), via_old.is_base());
+            assert_eq!(via_new.is_tempo(), via_old.is_tempo());
+            assert_eq!(via_new.active_network_name(), via_old.active_network_name());
+        }
+
+        #[test]
+        fn new_flag_wins_over_legacy_when_both_set() {
+            // --network base --tempo: network field wins
+            let cfg = NetworkConfigs {
+                network: Some(NetworkVariant::Base),
+                tempo: true,
+                ..Default::default()
+            };
+            assert!(cfg.is_base());
+            assert!(!cfg.is_tempo());
+        }
+
+        #[test]
+        fn active_network_name_base() {
+            let cfg = NetworkConfigs::with_base();
+            assert_eq!(cfg.active_network_name(), Some("base"));
+        }
+
+        #[test]
+        fn serde_roundtrip_base() {
+            let original = NetworkConfigs::with_base();
+            let json = serde_json::to_string(&original).unwrap();
+            let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
+            assert!(restored.is_base());
+            assert!(!restored.is_tempo());
+        }
+
+        #[test]
+        fn serde_base_field_deserialized() {
+            let json_base = r#"{"network": "base", "celo": false, "bypass_prevrandao": false}"#;
+            let cfg_base: NetworkConfigs = serde_json::from_str(json_base).unwrap();
+            assert!(cfg_base.is_base());
+        }
+
+        #[test]
+        fn chain_id_detects_base_networks() {
+            assert_eq!(NetworkVariant::from(8453), NetworkVariant::Base);
+            assert_eq!(NetworkVariant::from(84532), NetworkVariant::Base);
+            assert!(NetworkConfigs::default().try_with_chain_id(8453).unwrap().is_base());
+        }
+
+        #[test]
+        fn hardfork_infers_base_network() {
+            assert_eq!(
+                NetworkConfigs::default()
+                    .normalize_for_hardfork(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                    .unwrap()
+                    .resolved_network(),
+                Some(NetworkVariant::Base)
+            );
+        }
     }
 
     #[cfg(feature = "optimism")]

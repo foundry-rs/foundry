@@ -3277,6 +3277,8 @@ mod tests {
     };
     #[cfg(feature = "monad")]
     use foundry_evm_hardforks::MonadHardfork;
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
@@ -5755,6 +5757,26 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.hardfork, Some(FoundryHardfork::Tempo(TempoHardfork::T3)));
             assert!(config.networks.is_tempo());
+
+            Ok(())
+        });
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_upgrade_infers_base_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "base:Beryl"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Base(BaseUpgrade::Beryl)));
+            assert!(config.networks.is_base());
 
             Ok(())
         });
