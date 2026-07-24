@@ -5849,8 +5849,8 @@ impl Backend<FoundryNetwork> {
                     receipts.push(FoundryReceiptBuilder::build_simulated_receipt(
                         tx.as_ref().tx_type(),
                         &result,
+                        canonical_logs.clone(),
                         cumulative_gas_used,
-                        trace_transfers,
                         deposit_nonce,
                         deposit_receipt_version,
                     ));
@@ -5910,7 +5910,6 @@ impl Backend<FoundryNetwork> {
                             })
                             .collect(),
                     };
-                    logs.extend(canonical_logs);
                     log_index += attempted_log_count;
                     call_res.push(sim_res);
                 }

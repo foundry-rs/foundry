@@ -1437,6 +1437,42 @@ async fn test_simulate_transfer_traces_do_not_change_header_bloom() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_preserves_canonical_transfer_emitter_log() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let mut payload = json!({
+        "blockStateCalls": [{
+            "stateOverrides": {
+                "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+                    "code": concat!(
+                        "0x7f",
+                        "ddf252ad1be2c89b69c2b068fc378daa",
+                        "952ba7f163c4a11628f55a4df523b3ef",
+                        "5f5fa100"
+                    )
+                }
+            },
+            "calls": [{
+                "to": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }]
+        }],
+        "traceTransfers": true
+    });
+    let traced = rpc_request(&endpoint, "eth_simulateV1", json!([payload.clone(), "latest"])).await;
+    assert!(traced.get("error").is_none(), "{traced}");
+    assert_eq!(traced["result"][0]["calls"][0]["logs"].as_array().unwrap().len(), 1);
+    assert_ne!(
+        serde_json::from_value::<Bloom>(traced["result"][0]["logsBloom"].clone()).unwrap(),
+        Bloom::ZERO
+    );
+
+    payload["traceTransfers"] = json!(false);
+    let untraced = rpc_request(&endpoint, "eth_simulateV1", json!([payload, "latest"])).await;
+    assert_eq!(traced["result"][0]["logsBloom"], untraced["result"][0]["logsBloom"]);
+    assert_eq!(traced["result"][0]["receiptsRoot"], untraced["result"][0]["receiptsRoot"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_resolves_nonces_from_state() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();

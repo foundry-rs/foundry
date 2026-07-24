@@ -24,7 +24,7 @@ use alloy_evm::{
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
     },
 };
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, Log, U256};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -38,7 +38,6 @@ use revm::{
     primitives::hardfork::SpecId,
     state::AccountInfo,
 };
-use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER};
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
 /// Receipt builder for Foundry/Anvil that handles all transaction types
@@ -71,21 +70,11 @@ impl FoundryReceiptBuilder {
     pub(crate) fn build_simulated_receipt(
         tx_type: FoundryTxType,
         result: &ExecutionResult,
+        logs: Vec<Log>,
         cumulative_gas_used: u64,
-        trace_transfers: bool,
         deposit_nonce: Option<u64>,
         deposit_receipt_version: Option<u64>,
     ) -> FoundryReceiptEnvelope {
-        let logs = result
-            .clone()
-            .into_logs()
-            .into_iter()
-            .filter(|log| {
-                !trace_transfers
-                    || log.address != TRANSFER_LOG_EMITTER
-                    || log.topics().first() != Some(&TRANSFER_EVENT_TOPIC)
-            })
-            .collect();
         let receipt =
             Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
                 .with_bloom();
