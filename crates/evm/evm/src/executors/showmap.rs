@@ -147,7 +147,7 @@ pub enum ReplayFailure {
     Handler { target: Address, selector: Selector, fingerprint: Option<B256> },
     /// A handler reverted for an invariant configured with `fail_on_revert`.
     /// Keyed by invariant name; the handler site is retained for diagnostics.
-    InvariantRevert { name: String, target: Address, selector: Selector },
+    HandlerRevert { name: String, target: Address, selector: Selector },
     /// A broken invariant predicate. Keyed by the invariant function name.
     Invariant { name: String },
     /// The `afterInvariant` hook reverted.
@@ -187,10 +187,9 @@ impl Ord for ReplayFailure {
                 Self::Handler { target, selector, .. },
                 Self::Handler { target: other_target, selector: other_selector, .. },
             ) => (target, selector).cmp(&(other_target, other_selector)),
-            (
-                Self::InvariantRevert { name, .. },
-                Self::InvariantRevert { name: other_name, .. },
-            ) => name.cmp(other_name),
+            (Self::HandlerRevert { name, .. }, Self::HandlerRevert { name: other_name, .. }) => {
+                name.cmp(other_name)
+            }
             (Self::Invariant { name }, Self::Invariant { name: other_name }) => {
                 name.cmp(other_name)
             }
@@ -204,7 +203,7 @@ const fn replay_failure_rank(failure: &ReplayFailure) -> u8 {
     match failure {
         ReplayFailure::Fuzz { .. } => 0,
         ReplayFailure::Handler { .. } => 1,
-        ReplayFailure::InvariantRevert { .. } => 2,
+        ReplayFailure::HandlerRevert { .. } => 2,
         ReplayFailure::Invariant { .. } => 3,
         ReplayFailure::AfterInvariant => 4,
     }
@@ -217,7 +216,7 @@ impl fmt::Display for ReplayFailure {
             Self::Handler { target, selector, .. } => {
                 write!(f, "handler {selector:?} on {target:?} failed")
             }
-            Self::InvariantRevert { name, target, selector } => {
+            Self::HandlerRevert { name, target, selector } => {
                 write!(f, "invariant `{name}` failed on handler {selector:?} on {target:?}")
             }
             Self::Invariant { name } => write!(f, "invariant `{name}` broken"),
@@ -258,10 +257,7 @@ impl ReplayObservation {
 
     fn has_invariant_failure(&self) -> bool {
         self.failures.iter().any(|failure| {
-            matches!(
-                failure,
-                ReplayFailure::InvariantRevert { .. } | ReplayFailure::Invariant { .. }
-            )
+            matches!(failure, ReplayFailure::HandlerRevert { .. } | ReplayFailure::Invariant { .. })
         })
     }
 }
@@ -700,7 +696,7 @@ fn invariant_replay_failures<FEN: FoundryEvmNetwork>(
     invariant_fns
         .iter()
         .filter(|(_, fail_on_revert)| *fail_on_revert)
-        .map(|(invariant, _)| ReplayFailure::InvariantRevert {
+        .map(|(invariant, _)| ReplayFailure::HandlerRevert {
             name: invariant.name.clone(),
             target,
             selector,
@@ -770,7 +766,7 @@ fn has_replay_invariant_failure(failures: &BTreeSet<ReplayFailure>, name: &str) 
     failures.iter().any(|failure| {
         matches!(
             failure,
-            ReplayFailure::InvariantRevert { name: observed, .. }
+            ReplayFailure::HandlerRevert { name: observed, .. }
                 | ReplayFailure::Invariant { name: observed }
                 if observed == name
         )
@@ -1011,14 +1007,14 @@ mod tests {
     }
 
     #[test]
-    fn invariant_revert_identity_ignores_handler_site() {
+    fn handler_revert_identity_ignores_handler_site() {
         let failures = BTreeSet::from([
-            ReplayFailure::InvariantRevert {
+            ReplayFailure::HandlerRevert {
                 name: "invariant_ok".to_string(),
                 target: Address::with_last_byte(1),
                 selector: Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
             },
-            ReplayFailure::InvariantRevert {
+            ReplayFailure::HandlerRevert {
                 name: "invariant_ok".to_string(),
                 target: Address::with_last_byte(2),
                 selector: Selector::from([0x11, 0x22, 0x33, 0x44]),
@@ -1034,7 +1030,7 @@ mod tests {
     #[test]
     fn has_replay_invariant_failure_matches_only_observed_predicate() {
         let failures = BTreeSet::from([
-            ReplayFailure::InvariantRevert {
+            ReplayFailure::HandlerRevert {
                 name: "invariant_revert".to_string(),
                 target: Address::with_last_byte(1),
                 selector: Selector::ZERO,
@@ -1125,12 +1121,12 @@ mod tests {
         assert_eq!(
             failures,
             [
-                ReplayFailure::InvariantRevert {
+                ReplayFailure::HandlerRevert {
                     name: "invariant_first".to_string(),
                     target: Address::with_last_byte(1),
                     selector: Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
                 },
-                ReplayFailure::InvariantRevert {
+                ReplayFailure::HandlerRevert {
                     name: "invariant_second".to_string(),
                     target: Address::with_last_byte(1),
                     selector: Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
