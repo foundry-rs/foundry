@@ -82,9 +82,9 @@ pub(super) struct Candidate {
 #[derive(Clone, Debug)]
 pub(super) struct ExternalMatch {
     pub input: Arc<Value>,
-    pub fingerprint: String,
     pub version: Version,
     pub fqn: String,
+    pub creation_bytecode: Bytes,
     pub constructor_args: Bytes,
 }
 
@@ -102,7 +102,7 @@ struct FetchKey {
     address: Address,
 }
 
-type CompiledCandidates = Result<Arc<[Candidate]>, String>;
+type CompiledCandidates = Result<(Arc<[Candidate]>, bool), String>;
 
 /// Per-script-run state. Both caches deliberately retain failures, preventing repeated network or
 /// compiler work for the same provenance.
@@ -242,7 +242,7 @@ impl ExternalResolver {
     pub(super) async fn compile(
         &mut self,
         source: &ExternalSource,
-    ) -> Result<Arc<[Candidate]>, String> {
+    ) -> Result<(Arc<[Candidate]>, bool), String> {
         let fingerprint = fingerprint(&source.input).map_err(|e| e.to_string())?;
         let key = (source.version.clone(), fingerprint);
         if let Some(cached) = self.compile_cache.get(&key) {
@@ -263,7 +263,9 @@ impl ExternalResolver {
             .saturating_add(if new_version { version_len } else { 0 });
         self.compilations += 1;
         let result = match compile_source(source).await {
-            Ok(candidates) => self.charge_candidates(candidates, cache_metadata),
+            Ok((candidates, has_unresolved_links)) => self
+                .charge_candidates(candidates, cache_metadata)
+                .map(|candidates| (candidates, has_unresolved_links)),
             Err(err) => Err(err),
         };
         let result = match result {
@@ -524,7 +526,7 @@ fn compiler_identity(version: &Version) -> String {
     format!("{}.{}.{}-{}+{build}", version.major, version.minor, version.patch, version.pre)
 }
 
-async fn compile_source(source: &ExternalSource) -> Result<Vec<Candidate>, String> {
+async fn compile_source(source: &ExternalSource) -> Result<(Vec<Candidate>, bool), String> {
     let input = compilation_input(&source.input).map_err(|e| e.to_string())?;
     let svm_version =
         Version::new(source.version.major, source.version.minor, source.version.patch);
@@ -574,14 +576,23 @@ async fn compile_source(source: &ExternalSource) -> Result<Vec<Candidate>, Strin
     if output.has_error() {
         return Err("solc compilation failed".to_string());
     }
+    candidates_from_output(source, output)
+}
+
+fn candidates_from_output(
+    source: &ExternalSource,
+    output: CompilerOutput,
+) -> Result<(Vec<Candidate>, bool), String> {
     let fingerprint = fingerprint(&source.input).map_err(|e| e.to_string())?;
     let mut candidates = Vec::new();
     let mut creation_bytecode_bytes = 0usize;
+    let mut has_unresolved_links = false;
     for (path, contracts) in output.contracts {
         for (name, contract) in contracts {
             let Some(abi) = contract.abi else { continue };
             let Some(bytecode) = contract.evm.and_then(|evm| evm.bytecode) else { continue };
             if !bytecode.link_references.is_empty() || bytecode.object.is_unlinked() {
+                has_unresolved_links = true;
                 continue;
             }
             let Some(bytes) = bytecode.object.into_bytes() else { continue };
@@ -608,7 +619,7 @@ async fn compile_source(source: &ExternalSource) -> Result<Vec<Candidate>, Strin
             });
         }
     }
-    Ok(candidates)
+    Ok((candidates, has_unresolved_links))
 }
 
 fn parse_solc_version_output(output: &[u8]) -> Result<Version, String> {
@@ -772,16 +783,17 @@ pub(super) fn match_candidates<'a>(
         };
         if valid
             && !matches.iter().any(|item: &ExternalMatch| {
-                item.fingerprint == candidate.fingerprint
-                    && item.fqn == candidate.fqn
+                item.fqn == candidate.fqn
                     && compiler_identity(&item.version) == compiler_identity(&candidate.version)
+                    && item.creation_bytecode == candidate.creation_bytecode
+                    && item.constructor_args.as_ref() == suffix
             })
         {
             matches.push(ExternalMatch {
                 input: candidate.input.clone(),
-                fingerprint: candidate.fingerprint.clone(),
                 version: candidate.version.clone(),
                 fqn: candidate.fqn.clone(),
+                creation_bytecode: candidate.creation_bytecode.clone(),
                 constructor_args: Bytes::copy_from_slice(suffix),
             });
         }
@@ -1231,25 +1243,85 @@ mod tests {
     }
 
     #[test]
-    fn ambiguity_collapses_identical_fingerprint_and_fqn() {
+    fn ambiguity_collapses_equivalent_deployments_from_different_inputs() {
         let a = candidate("A.sol:A", JsonAbi::default());
+        let first_input = a.input.clone();
         let mut duplicate = a.clone();
+        duplicate.fingerprint = "different-provider-input".into();
+        duplicate.input = Arc::new(json!({ "providerSpecific": true }));
         duplicate.version = Version::parse("0.8.30+commit.73712a01.Linux.gcc").unwrap();
-        assert!(matches!(
-            match_candidates(&[0x60, 0x00], &[a.clone(), duplicate]),
-            MatchResult::Unique(_)
-        ));
+        let MatchResult::Unique(matched) = match_candidates(&[0x60, 0x00], &[a.clone(), duplicate])
+        else {
+            panic!("equivalent deployments should be deduplicated")
+        };
+        assert!(Arc::ptr_eq(&matched.input, &first_input));
         let mut other_commit = a.clone();
         other_commit.version = Version::parse("0.8.30+commit.deadbeef").unwrap();
         assert!(matches!(
             match_candidates(&[0x60, 0x00], &[a.clone(), other_commit]),
             MatchResult::Ambiguous(_)
         ));
+
+        let constructor: JsonAbi = serde_json::from_value(json!([{
+            "type": "constructor", "inputs": [{"name":"n", "type":"uint256"}]
+        }]))
+        .unwrap();
+        let prefixed = candidate("A.sol:A", constructor);
+        let mut observed = prefixed.creation_bytecode.to_vec();
+        observed.extend([0; 32]);
+        let exact = Candidate {
+            constructor: None,
+            creation_bytecode: Bytes::copy_from_slice(&observed),
+            ..prefixed.clone()
+        };
+        assert!(matches!(
+            match_candidates(&observed, &[prefixed, exact]),
+            MatchResult::Ambiguous(_)
+        ));
+
         let b = candidate("B.sol:B", JsonAbi::default());
         let MatchResult::Ambiguous(matches) = match_candidates(&[0x60, 0x00], &[a, b]) else {
             panic!("expected ambiguity")
         };
         assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn unresolved_library_links_are_flagged_without_dropping_other_candidates() {
+        let placeholder = format!("__${}$__", "0".repeat(34));
+        let output = serde_json::from_value(json!({
+            "contracts": {
+                "A.sol": {
+                    "Linked": {
+                        "abi": [],
+                        "evm": { "bytecode": {
+                            "object": "6000",
+                            "linkReferences": {
+                                "Lib.sol": { "Lib": [{ "start": 0, "length": 20 }] }
+                            }
+                        }}
+                    },
+                    "Placeholder": {
+                        "abi": [],
+                        "evm": { "bytecode": { "object": placeholder } }
+                    },
+                    "Plain": {
+                        "abi": [],
+                        "evm": { "bytecode": { "object": "6001" } }
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let source = ExternalSource {
+            input: Arc::new(input()),
+            version: Version::new(0, 8, 30),
+            provider: SourceProvider::Sourcify { endpoint: SOURCIFY_URL.into() },
+        };
+        let (candidates, has_unresolved_links) = candidates_from_output(&source, output).unwrap();
+        assert!(has_unresolved_links);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].fqn, "A.sol:Plain");
     }
 
     #[test]

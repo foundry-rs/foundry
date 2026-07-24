@@ -296,7 +296,15 @@ async fn external_job(
         for (provider, source) in sources {
             match source {
                 Ok(Some(source)) => match resolver.compile(&source).await {
-                    Ok(compiled) => candidate_sets.push(compiled),
+                    Ok((compiled, has_unresolved_links)) => {
+                        if has_unresolved_links {
+                            reasons.push(format!(
+                                "{} {creator}: contracts with unresolved library links are unsupported",
+                                source.provider
+                            ));
+                        }
+                        candidate_sets.push(compiled);
+                    }
                     Err(err) => reasons.push(format!(
                         "{} {creator}: compile failed ({})",
                         source.provider,
