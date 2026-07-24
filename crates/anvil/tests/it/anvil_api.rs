@@ -7,6 +7,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_eips::eip2718::Decodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -15,19 +16,26 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
+    trace::parity::TraceType,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::api::CLIENT_VERSION, spawn};
+use anvil::{
+    NodeConfig,
+    eth::{api::CLIENT_VERSION, pool::transactions::PoolTransaction},
+    spawn,
+};
 use anvil_core::{
-    eth::EthRequest,
+    eth::{EthRequest, transaction::PendingTransaction},
     types::{ReorgOptions, TransactionData},
 };
 use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
+use foundry_primitives::FoundryTxEnvelope;
 use tempo_hardfork::TempoHardfork;
 
 use std::{
     str::FromStr,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -899,6 +907,7 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
     };
     let signature = accounts[0].sign_transaction_sync(&mut tx).unwrap();
     let tx = tx.into_signed(signature);
+    let tx_hash = *tx.hash();
     let mut encoded = vec![];
     tx.eip2718_encode(&mut encoded);
 
@@ -912,6 +921,12 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
     let balance_after = provider.get_balance(recipient).await.unwrap();
 
     assert_eq!(balance_after, balance_before + value);
+
+    let trace = api
+        .trace_replay_transaction(tx_hash, [TraceType::Trace].into_iter().collect())
+        .await
+        .unwrap();
+    assert!(!trace.trace.is_empty());
 
     let mut tx = TxEip1559 {
         chain_id: api.chain_id(),
@@ -929,6 +944,37 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
 
     let err = provider.send_raw_transaction(&encoded).await.unwrap_err();
     assert!(err.to_string().contains("max priority fee per gas higher than max fee per gas"));
+
+    let pending =
+        PendingTransaction::new(FoundryTxEnvelope::decode_2718(&mut encoded.as_slice()).unwrap())
+            .unwrap();
+    let ordinary_hash = *pending.hash();
+    let ordinary = Arc::new(PoolTransaction::new(pending));
+
+    let mut tx = TxEip1559 {
+        chain_id: api.chain_id(),
+        to: TxKind::Call(accounts[2].address()),
+        value: U256::from(1),
+        max_priority_fee_per_gas: 3_000_000_000,
+        max_fee_per_gas: 2_000_000_000,
+        gas_limit: 21_000,
+        ..Default::default()
+    };
+    let signature = accounts[1].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let replay_hash = *tx.hash();
+    let mut encoded = vec![];
+    tx.eip2718_encode(&mut encoded);
+    let pending =
+        PendingTransaction::new(FoundryTxEnvelope::decode_2718(&mut encoded.as_slice()).unwrap())
+            .unwrap();
+
+    let replay = Arc::new(PoolTransaction::new(pending).with_replay());
+    let outcome = api.backend.mine_block(vec![replay, ordinary]).await;
+    assert_eq!(outcome.included.len(), 1);
+    assert_eq!(outcome.included[0].hash(), replay_hash);
+    assert_eq!(outcome.invalid.len(), 1);
+    assert_eq!(outcome.invalid[0].hash(), ordinary_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1657,7 +1657,9 @@ async fn derive_block_and_transactions(
             // Convert the transactions to PoolTransactions
             let force_transactions = filtered_transactions
                 .iter()
-                .map(|&transaction| PoolTransaction::try_from(transaction.clone()))
+                .map(|&transaction| {
+                    PoolTransaction::try_from(transaction.clone()).map(PoolTransaction::with_replay)
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| eyre::eyre!("Err converting to pool transactions {e}"))?;
             Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))

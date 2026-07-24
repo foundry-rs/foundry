@@ -988,9 +988,9 @@ import {Test} from "forge-std/Test.sol";
 
 contract ArbitrumForkTest is Test {
     function test_rollFork() public {
-        vm.createSelectFork("<url>");
+        uint256 forkId = vm.createFork("<url>");
         bytes32 txHash = 0x2e43e9ececcbb9cd08ce061edc3b4d39ca2b0ba480034e5f4650ba0065bf6b62;
-        vm.rollFork(txHash);
+        vm.rollFork(forkId, txHash);
     }
 }
     "#

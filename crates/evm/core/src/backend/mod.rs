@@ -929,6 +929,22 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
     }
 
+    /// Applies replay changes using the targeted fork's chain rather than the active environment.
+    fn apply_fork_tx_replay_env_changes(
+        &self,
+        id: LocalForkId,
+        evm_env: &mut EvmEnvFor<FEN>,
+    ) -> eyre::Result<()> {
+        let fork_id = self.inner.ensure_fork_id(id).cloned()?;
+        let fork_evm_env = self
+            .forks
+            .get_evm_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{id}` does not exist"))?;
+        evm_env.cfg_env.chain_id = fork_evm_env.cfg_env.chain_id;
+        apply_chain_specific_tx_replay_env_changes(evm_env);
+        Ok(())
+    }
+
     /// Replays all the transactions at the forks current block that were mined before the `tx`
     ///
     /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
@@ -942,6 +958,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
@@ -969,7 +986,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
             // Clone the fork's CacheDB once. The underlying SharedBackend is Arc-backed,
             // so only the local cache layer is actually duplicated.
-            apply_chain_specific_tx_replay_env_changes(&mut evm_env);
             let chain_id = evm_env.cfg_env.chain_id;
             let timestamp = evm_env.block_env.timestamp().saturating_to();
             let replay_db = fork.db.clone();
@@ -1391,7 +1407,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         update_env_block(&mut evm_env, block.header());
-        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction::<FEN>(
