@@ -18,6 +18,48 @@ struct EligibleTransactions {
     baseline_count: usize,
 }
 
+const RERUN_UNSAFE_CHEATCODE_SIGNATURES: &[&str] = &[
+    "setEnv(string,string)",
+    "sign(bytes32)",
+    "sign(address,bytes32)",
+    "signCompact(bytes32)",
+    "signCompact(address,bytes32)",
+    "rpc(string,string)",
+    "rpc(string,string,string)",
+    "rpcJson(string,string)",
+    "rpcJson(string,string,string)",
+    "sleep(uint256)",
+    "prompt(string)",
+    "promptSecret(string)",
+    "promptSecretUint(string)",
+    "promptAddress(string)",
+    "promptUint(string)",
+    "dumpState(string)",
+    "createFork(string)",
+    "createFork(string,uint256)",
+    "createFork(string,bytes32)",
+    "createSelectFork(string)",
+    "createSelectFork(string,uint256)",
+    "createSelectFork(string,bytes32)",
+    "rollFork(uint256)",
+    "rollFork(bytes32)",
+    "rollFork(uint256,uint256)",
+    "rollFork(uint256,bytes32)",
+    "selectFork(uint256)",
+    "transact(bytes32)",
+    "transact(uint256,bytes32)",
+];
+
+pub(crate) fn rerun_unsafe_cheatcode_selectors() -> Vec<[u8; 4]> {
+    RERUN_UNSAFE_CHEATCODE_SIGNATURES
+        .iter()
+        .map(|signature| {
+            let hash = keccak256(signature.as_bytes());
+            [hash[0], hash[1], hash[2], hash[3]]
+        })
+        .collect()
+}
+
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     /// Reruns narrowly eligible scripts with libraries unused by direct broadcasts deployed only
     /// in the local EVM.
@@ -88,7 +130,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         .prepare_execution()
         .await;
         let Ok(candidate) = candidate else { return Ok(self) };
-        let candidate = candidate.execute().await;
+        let candidate = candidate.execute_restricted().await;
         let Ok(candidate) = candidate else { return Ok(self) };
         if !candidate.execution_result.success {
             return Ok(self);
@@ -285,44 +327,12 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     }
 
     fn used_rerun_unsafe_cheatcode(&self) -> bool {
-        const SIGNATURES: &[&str] = &[
-            "setEnv(string,string)",
-            "sign(bytes32)",
-            "sign(address,bytes32)",
-            "signCompact(bytes32)",
-            "signCompact(address,bytes32)",
-            "rpc(string,string)",
-            "rpc(string,string,string)",
-            "rpcJson(string,string)",
-            "rpcJson(string,string,string)",
-            "sleep(uint256)",
-            "prompt(string)",
-            "promptSecret(string)",
-            "promptSecretUint(string)",
-            "promptAddress(string)",
-            "promptUint(string)",
-            "dumpState(string)",
-            "createFork(string)",
-            "createFork(string,uint256)",
-            "createFork(string,bytes32)",
-            "createSelectFork(string)",
-            "createSelectFork(string,uint256)",
-            "createSelectFork(string,bytes32)",
-            "rollFork(uint256)",
-            "rollFork(bytes32)",
-            "rollFork(uint256,uint256)",
-            "rollFork(uint256,bytes32)",
-            "selectFork(uint256)",
-            "transact(bytes32)",
-            "transact(uint256,bytes32)",
-        ];
+        let selectors = rerun_unsafe_cheatcode_selectors();
         self.execution_result.traces.iter().any(|(_, traces)| {
             traces.nodes().iter().any(|node| {
                 node.trace.address == CHEATCODE_ADDRESS
                     && node.trace.data.get(..4).is_some_and(|selector| {
-                        SIGNATURES
-                            .iter()
-                            .any(|signature| &keccak256(signature.as_bytes())[..4] == selector)
+                        selectors.iter().any(|blocked| blocked.as_slice() == selector)
                     })
             })
         })

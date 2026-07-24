@@ -108,7 +108,16 @@ pub struct PreExecutionState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
     /// Executes the script and returns the state after execution.
     /// Might require executing script twice in cases when we determine sender from execution.
-    pub async fn execute(mut self) -> Result<ExecutedState<FEN>> {
+    pub async fn execute(self) -> Result<ExecutedState<FEN>> {
+        self.execute_inner(false).await
+    }
+
+    /// Executes an optimization candidate while blocking externally observable cheatcodes.
+    pub(crate) async fn execute_restricted(self) -> Result<ExecutedState<FEN>> {
+        self.execute_inner(true).await
+    }
+
+    async fn execute_inner(mut self, restricted: bool) -> Result<ExecutedState<FEN>> {
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
@@ -116,6 +125,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
                 self.script_wallets.clone(),
                 self.args.debug,
                 self.build_data.build_data.target.clone(),
+                restricted,
             )
             .await?;
         let result = self.execute_with_runner(&mut runner).await?;
@@ -134,7 +144,10 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
                 build_data: self.build_data.build_data,
             };
 
-            return Box::pin(state.link().await?.prepare_execution().await?.execute()).await;
+            return Box::pin(
+                state.link().await?.prepare_execution().await?.execute_inner(restricted),
+            )
+            .await;
         }
 
         Ok(ExecutedState {
