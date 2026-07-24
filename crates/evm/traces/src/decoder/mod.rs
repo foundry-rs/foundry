@@ -1153,7 +1153,9 @@ impl CallTraceDecoder {
             }
         }
 
-        DecodedCallLog { name: None, params: None }
+        // The data failed to decode, but if topic0 matched a known event we still surface
+        // its name (without params) instead of dropping the log to raw topics/data.
+        DecodedCallLog { name: events.first().map(|e| e.name.clone()), params: None }
     }
 
     /// Prefetches function and event signatures into the identifier cache
@@ -2000,6 +2002,36 @@ mod tests {
             params[0].1.to_ascii_lowercase().contains("0000000000000000000000000000000000000abc")
         );
         assert_eq!(params[1], ("newLogoURI".into(), "\"ipfs://logo\"".into()));
+    }
+
+    #[tokio::test]
+    async fn test_decode_event_preserves_name_when_data_is_not_abi() {
+        // Regression for #10451: an event emitted with hand-packed (non-ABI) data fails to
+        // decode, but its name must still be surfaced from the matched topic0 instead of being
+        // dropped to raw topics/data.
+        let event = Event::parse("Exchange(bytes)").unwrap();
+        let topic0 = event.selector();
+
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.events.insert((topic0, 0), vec![event]);
+
+        // Hand-packed payload (not the ABI encoding of `bytes`), so `decode_log` fails.
+        let log = LogData::new_unchecked(
+            vec![topic0],
+            hex!(
+                "1111111111111111111111111111111111111111\
+                 2222222222222222222222222222222222222222\
+                 3333333333333333333333333333333333333333\
+                 00000000000000000000000000000064\
+                 00000000000000000000000000000190"
+            )
+            .to_vec()
+            .into(),
+        );
+
+        let decoded = decoder.decode_event(&log).await;
+        assert_eq!(decoded.name.as_deref(), Some("Exchange"));
+        assert_eq!(decoded.params, None);
     }
 
     #[tokio::test]
