@@ -379,10 +379,10 @@ impl Cheatcode for dumpStateCall {
         let fork_id = ccx.ecx.db().active_fork_id();
         let created_accounts = ccx
             .state
-            .created_accounts()
-            .filter_map(|(created_fork_id, address)| {
-                (*created_fork_id == fork_id || ccx.ecx.db().is_persistent(address))
-                    .then_some(*address)
+            .created_accounts(fork_id)
+            .into_iter()
+            .filter(|address| {
+                ccx.ecx.journal().evm_state().get(address).is_some_and(Account::is_created)
             })
             .collect::<Vec<_>>();
 
@@ -1530,13 +1530,14 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
             active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
         }
     }
+    let fork_id = ccx.ecx.db().active_fork_id();
     let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
-    ccx.state.snapshot_created_accounts(id);
+    ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
 }
 

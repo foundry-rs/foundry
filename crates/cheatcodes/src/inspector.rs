@@ -538,6 +538,21 @@ struct CreatedAccountsFrame {
     checkpoint: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CreatedAccountChange {
+    fork_id: Option<LocalForkId>,
+    address: Address,
+    creation: usize,
+    previous: Option<usize>,
+    committed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CreatedAccountsSnapshot {
+    fork_id: Option<LocalForkId>,
+    bindings: AddressHashMap<usize>,
+}
+
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -614,14 +629,20 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Completed account accesses prepended to the active user recording session.
     recorded_account_diffs_prefix: Option<Arc<[AccountAccess]>>,
 
-    /// Successfully created accounts in execution order, tagged by fork.
-    created_accounts: Vec<(Option<LocalForkId>, Address)>,
+    /// Successfully created accounts in execution order.
+    created_accounts: Vec<Address>,
+
+    /// The creation currently represented by each address on each fork.
+    created_account_bindings: HashMap<(Option<LocalForkId>, Address), usize>,
+
+    /// Revertible changes to creation bindings made by EVM create frames.
+    created_account_changes: Vec<CreatedAccountChange>,
 
     /// Creation-list checkpoints for frames observed by this inspector.
     created_accounts_frames: Vec<CreatedAccountsFrame>,
 
     /// Creation lists captured by state snapshots.
-    created_accounts_snapshots: HashMap<U256, Vec<(Option<LocalForkId>, Address)>>,
+    created_accounts_snapshots: HashMap<U256, CreatedAccountsSnapshot>,
 
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
@@ -779,6 +800,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_account_diffs: Default::default(),
             recorded_account_diffs_prefix: Default::default(),
             created_accounts: Default::default(),
+            created_account_bindings: Default::default(),
+            created_account_changes: Default::default(),
             created_accounts_frames: Default::default(),
             created_accounts_snapshots: Default::default(),
             recorded_logs: Default::default(),
@@ -864,9 +887,29 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .unwrap_or_default()
     }
 
-    /// Returns successfully created accounts and their originating forks in execution order.
-    pub(crate) fn created_accounts(&self) -> impl Iterator<Item = &(Option<LocalForkId>, Address)> {
-        self.created_accounts.iter()
+    /// Returns the current creation bound to each address on the given fork.
+    pub(crate) fn created_account_bindings(
+        &self,
+        fork_id: Option<LocalForkId>,
+    ) -> AddressHashMap<usize> {
+        self.created_account_bindings
+            .iter()
+            .filter_map(|(&(event_fork_id, address), &creation)| {
+                (event_fork_id == fork_id).then_some((address, creation))
+            })
+            .collect()
+    }
+
+    /// Returns successfully created accounts bound to the given fork in creation order.
+    pub(crate) fn created_accounts(&self, fork_id: Option<LocalForkId>) -> Vec<Address> {
+        let bindings = self.created_account_bindings(fork_id);
+        self.created_accounts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &address)| {
+                (bindings.get(&address) == Some(&index)).then_some(address)
+            })
+            .collect()
     }
 
     /// Records a successfully created account.
@@ -875,12 +918,57 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         fork_id: Option<LocalForkId>,
         address: Address,
     ) {
-        self.created_accounts.push((fork_id, address));
+        let creation = self.created_accounts.len();
+        self.created_accounts.push(address);
+        let previous = self.created_account_bindings.insert((fork_id, address), creation);
+        self.created_account_changes.push(CreatedAccountChange {
+            fork_id,
+            address,
+            creation,
+            previous,
+            committed: false,
+        });
+    }
+
+    /// Keeps creation bindings saved with an outgoing fork across later frame reverts.
+    pub(crate) fn commit_created_account_changes(&mut self, fork_id: Option<LocalForkId>) {
+        for change in &mut self.created_account_changes {
+            if change.fork_id == fork_id {
+                change.committed = true;
+            }
+        }
+    }
+
+    /// Records shared pre-fork creations on a newly selected fork without replacing local ones.
+    pub(crate) fn record_initial_created_accounts(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        accounts: impl IntoIterator<Item = (Address, usize)>,
+    ) {
+        for (address, creation) in accounts {
+            self.created_account_bindings.entry((fork_id, address)).or_insert(creation);
+        }
+    }
+
+    /// Records creations propagated to a fork with persistent account state.
+    pub(crate) fn record_propagated_accounts(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        accounts: impl IntoIterator<Item = (Address, usize)>,
+    ) {
+        self.created_account_bindings
+            .extend(accounts.into_iter().map(|(address, creation)| ((fork_id, address), creation)));
     }
 
     /// Captures creation ordering alongside a state snapshot.
-    pub(crate) fn snapshot_created_accounts(&mut self, snapshot_id: U256) {
-        self.created_accounts_snapshots.insert(snapshot_id, self.created_accounts.clone());
+    pub(crate) fn snapshot_created_accounts(
+        &mut self,
+        snapshot_id: U256,
+        fork_id: Option<LocalForkId>,
+    ) {
+        let bindings = self.created_account_bindings(fork_id);
+        self.created_accounts_snapshots
+            .insert(snapshot_id, CreatedAccountsSnapshot { fork_id, bindings });
     }
 
     /// Restores creation ordering from a state snapshot.
@@ -891,7 +979,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.created_accounts_snapshots.get(&snapshot_id).cloned()
         };
         if let Some(snapshot) = snapshot {
-            self.created_accounts = snapshot;
+            self.created_account_bindings.retain(|(fork_id, _), _| *fork_id != snapshot.fork_id);
+            self.created_account_bindings.extend(
+                snapshot
+                    .bindings
+                    .into_iter()
+                    .map(|(address, creation)| ((snapshot.fork_id, address), creation)),
+            );
         }
     }
 
@@ -913,16 +1007,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         if reset {
             self.created_accounts.clear();
+            self.created_account_bindings.clear();
+            self.created_account_changes.clear();
             self.created_accounts_frames.clear();
             // Earlier snapshots contain no creations from the new root transaction.
             for snapshot in self.created_accounts_snapshots.values_mut() {
-                snapshot.clear();
+                snapshot.bindings.clear();
             }
         }
         self.created_accounts_frames.push(CreatedAccountsFrame {
             kind,
             depth,
-            checkpoint: self.created_accounts.len(),
+            checkpoint: self.created_account_changes.len(),
         });
     }
 
@@ -943,7 +1039,21 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let checkpoint = frame.checkpoint;
         self.created_accounts_frames.pop();
         if !success {
-            self.created_accounts.truncate(checkpoint);
+            while self.created_account_changes.len() > checkpoint {
+                let change = self.created_account_changes.pop().expect("length checked");
+                if change.committed {
+                    continue;
+                }
+                let key = (change.fork_id, change.address);
+                if self.created_account_bindings.get(&key) != Some(&change.creation) {
+                    continue;
+                }
+                if let Some(previous) = change.previous {
+                    self.created_account_bindings.insert(key, previous);
+                } else {
+                    self.created_account_bindings.remove(&key);
+                }
+            }
         }
     }
 

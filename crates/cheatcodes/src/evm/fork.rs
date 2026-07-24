@@ -5,13 +5,16 @@ use crate::{
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{
-    FoundryContextExt, backend::JournaledState, evm::FoundryEvmNetwork, fork::CreateFork,
+    FoundryContextExt,
+    backend::{JournaledState, LocalForkId},
+    evm::FoundryEvmNetwork,
+    fork::CreateFork,
 };
 use revm::context::ContextTr;
 
@@ -113,9 +116,14 @@ impl Cheatcode for selectForkCall {
         let Self { forkId } = self;
         persist_caller(ccx);
         check_broadcast(ccx.state)?;
-        fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
+        let source_fork_id = ccx.ecx.db().active_fork_id();
+        let initial = ccx.state.created_account_bindings(None);
+        let propagated = persistent_created_accounts(ccx);
+        let result = fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
             db.select_fork(*forkId, evm_env, tx_env, inner)
-        })
+        })?;
+        record_fork_switch(ccx, source_fork_id, initial, propagated);
+        Ok(result)
     }
 }
 
@@ -322,9 +330,14 @@ fn create_select_fork<FEN: FoundryEvmNetwork>(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
+    let source_fork_id = ccx.ecx.db().active_fork_id();
+    let initial = ccx.state.created_account_bindings(None);
+    let propagated = persistent_created_accounts(ccx);
+    let result = fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
         db.create_select_fork(fork, evm_env, tx_env, inner)
-    })
+    })?;
+    record_fork_switch(ccx, source_fork_id, initial, propagated);
+    Ok(result)
 }
 
 /// Creates a new fork
@@ -347,9 +360,14 @@ fn create_select_fork_at_transaction<FEN: FoundryEvmNetwork>(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
+    let source_fork_id = ccx.ecx.db().active_fork_id();
+    let initial = ccx.state.created_account_bindings(None);
+    let propagated = persistent_created_accounts(ccx);
+    let result = fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
         db.create_select_fork_at_transaction(fork, evm_env, tx_env, inner, *transaction)
-    })
+    })?;
+    record_fork_switch(ccx, source_fork_id, initial, propagated);
+    Ok(result)
 }
 
 /// Creates a new fork at the given transaction
@@ -408,6 +426,31 @@ fn fork_env_op<CTX: FoundryContextExt, T: SolValue>(
     ecx.set_evm(evm_env);
     ecx.set_tx(tx_env);
     Ok(result.abi_encode())
+}
+
+fn persistent_created_accounts<FEN: FoundryEvmNetwork>(
+    ccx: &CheatsCtxt<'_, '_, FEN>,
+) -> Vec<(Address, usize)> {
+    let fork_id = ccx.ecx.db().active_fork_id();
+    ccx.state
+        .created_account_bindings(fork_id)
+        .into_iter()
+        .filter(|(address, _)| ccx.ecx.db().is_persistent(address))
+        .collect()
+}
+
+fn record_fork_switch<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    source_fork_id: Option<LocalForkId>,
+    initial: AddressHashMap<usize>,
+    propagated: Vec<(Address, usize)>,
+) {
+    let target_fork_id = ccx.ecx.db().active_fork_id();
+    if source_fork_id != target_fork_id {
+        ccx.state.commit_created_account_changes(source_fork_id);
+    }
+    ccx.state.record_initial_created_accounts(target_fork_id, initial);
+    ccx.state.record_propagated_accounts(target_fork_id, propagated);
 }
 
 fn check_broadcast<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>) -> Result<()> {
