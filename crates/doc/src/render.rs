@@ -5,6 +5,7 @@ use crate::{
     utils::Deployment,
 };
 use foundry_common::sh_warn;
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use solar::{
     ast::{
         CommentKind, ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError,
@@ -18,8 +19,10 @@ use solar::{
     sema::{Gcx, hir},
 };
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt::Write as _,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -995,36 +998,265 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
+/// Byte ranges that MDX parses as code. Pulldown-cmark reports CommonMark fences and inline code
+/// spans, including multi-line ones. MDX-only fences indented by four or more columns are added
+/// separately. An HTML entity would render literally inside these ranges, so neutralization skips
+/// them.
+fn code_regions(text: &str) -> Vec<Range<usize>> {
+    let (markdown, collapsed_crlf_ends) = markdown_parse_source(text);
+    let mut regions = Vec::new();
+    let mut fenced_start: Option<usize> = None;
+    for (event, range) in Parser::new_ext(&markdown, Options::empty()).into_offset_iter() {
+        let range = original_offset(range.start, &collapsed_crlf_ends)
+            ..original_offset(range.end, &collapsed_crlf_ends);
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) => {
+                fenced_start = Some(range.start);
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some(start) = fenced_start.take() {
+                    regions.push(start..mdx_fence_end(text, start, range.end));
+                }
+            }
+            Event::Code(_) => regions.push(range),
+            _ => {}
+        }
+    }
+    let mut regions = merge_regions(regions);
+    let indented_fences = mdx_indented_fence_regions(text, &regions);
+    regions.extend(indented_fences);
+    merge_regions(regions)
+}
+
+/// Normalize line endings only for Markdown parsing and record where CRLF pairs were contracted.
+/// Pulldown-cmark then sees CR, CRLF, and LF as equivalent, while the sparse offset map lets code
+/// regions refer back to the unchanged source text.
+fn markdown_parse_source(text: &str) -> (Cow<'_, str>, Vec<usize>) {
+    if !text.contains('\r') {
+        return (Cow::Borrowed(text), Vec::new());
+    }
+
+    let bytes = text.as_bytes();
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut collapsed_crlf_ends = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if bytes[offset] == b'\r' {
+            normalized.push(b'\n');
+            offset += 1;
+            if bytes.get(offset) == Some(&b'\n') {
+                offset += 1;
+                collapsed_crlf_ends.push(normalized.len());
+            }
+        } else {
+            normalized.push(bytes[offset]);
+            offset += 1;
+        }
+    }
+
+    (
+        Cow::Owned(String::from_utf8(normalized).expect("normalization preserves UTF-8")),
+        collapsed_crlf_ends,
+    )
+}
+
+/// Translate a byte offset in normalized Markdown back to the original text. Every contracted CRLF
+/// before the boundary contributes one additional source byte.
+fn original_offset(normalized: usize, collapsed_crlf_ends: &[usize]) -> usize {
+    normalized + collapsed_crlf_ends.partition_point(|&end| end <= normalized)
+}
+
+/// Sort and merge overlapping or adjacent code regions so they can be traversed with one cursor.
+fn merge_regions(mut regions: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    regions.sort_unstable_by_key(|region| region.start);
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(regions.len());
+    for region in regions {
+        if let Some(previous) = merged.last_mut()
+            && region.start <= previous.end
+        {
+            previous.end = previous.end.max(region.end);
+        } else {
+            merged.push(region);
+        }
+    }
+    merged
+}
+
+/// Logical lines and their byte offsets in the original text. CRLF is one separator; lone CR and
+/// LF are separators too. The separator bytes are excluded from the returned slices and preserved
+/// in the source string.
+fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let bytes = text.as_bytes();
+    let mut offset = 0;
+    std::iter::from_fn(move || {
+        if offset >= bytes.len() {
+            return None;
+        }
+        let start = offset;
+        let end = bytes[start..]
+            .iter()
+            .position(|&byte| byte == b'\n' || byte == b'\r')
+            .map_or(bytes.len(), |position| start + position);
+        offset = if end == bytes.len() {
+            end
+        } else if bytes[end] == b'\r' && bytes.get(end + 1) == Some(&b'\n') {
+            end + 2
+        } else {
+            end + 1
+        };
+        Some((start, &text[start..end]))
+    })
+}
+
+/// Check a position against sorted, merged ranges while advancing monotonically.
+fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize) -> bool {
+    while regions.get(*cursor).is_some_and(|region| region.end <= position) {
+        *cursor += 1;
+    }
+    regions.get(*cursor).is_some_and(|region| region.start <= position)
+}
+
+/// Fenced code blocks that MDX recognizes but CommonMark does not: opening fences indented by
+/// four or more columns. Once opened, a matching closer may use any indentation; without one the
+/// block extends to EOF.
+fn mdx_indented_fence_regions(text: &str, parsed_regions: &[Range<usize>]) -> Vec<Range<usize>> {
+    let mut regions = Vec::new();
+    let mut open: Option<(usize, char, usize)> = None;
+    let mut parsed_cursor = 0;
+
+    for (offset, line) in logical_lines(text) {
+        let line_end = offset + line.len();
+        let marker = line.trim_start_matches([' ', '\t']);
+
+        if let Some((start, fence, open_len)) = open {
+            let run = marker.chars().take_while(|&c| c == fence).count();
+            if run >= open_len && marker[run..].trim_matches([' ', '\t']).is_empty() {
+                regions.push(start..line_end);
+                open = None;
+            }
+        } else {
+            let indent = &line[..line.len() - marker.len()];
+            let indent_columns = indent.bytes().fold(0, |column, byte| match byte {
+                b'\t' => column + 4 - column % 4,
+                _ => column + 1,
+            });
+            if indent_columns >= 4
+                && let Some(fence) = marker.chars().next().filter(|&c| c == '`' || c == '~')
+            {
+                let open_len = marker.chars().take_while(|&c| c == fence).count();
+                let start = offset + indent.len();
+                if open_len >= 3
+                    && (fence != '`' || !marker[open_len..].contains('`'))
+                    && !region_contains(parsed_regions, &mut parsed_cursor, start)
+                {
+                    open = Some((start, fence, open_len));
+                }
+            }
+        }
+    }
+
+    if let Some((start, _, _)) = open {
+        regions.push(start..text.len());
+    }
+    regions
+}
+
+/// Where MDX ends the fenced block that pulldown-cmark reports as `start..cmark_end`. MDX
+/// (micromark) has no indented code blocks, so it closes a fence at a matching marker at *any*
+/// indentation, while CommonMark requires the closer to be indented at most three spaces. When a
+/// fence is closed by a more-indented marker, pulldown keeps the block open past it and would hide
+/// a following `import`/`export` inside the range; truncating at the first MDX-style closer keeps
+/// that statement neutralizable.
+fn mdx_fence_end(text: &str, start: usize, cmark_end: usize) -> usize {
+    let block = &text[start..cmark_end];
+    let mut lines = logical_lines(block);
+    let opener = lines.next().map_or("", |(_, line)| line).trim_start();
+    let Some(fence) = opener.chars().next().filter(|&c| c == '`' || c == '~') else {
+        return cmark_end;
+    };
+    let open_len = opener.chars().take_while(|&c| c == fence).count();
+    for (offset, line) in lines {
+        let marker = line.trim_start();
+        let run = marker.chars().take_while(|&c| c == fence).count();
+        if run >= open_len && run > 0 && marker[run..].trim().is_empty() {
+            return start + offset + line.len();
+        }
+    }
+    cmark_end
+}
+
+/// Neutralize any line MDX would parse as an ESM statement (`import`/`export` at the start of
+/// a line): the keyword's first letter becomes an HTML entity, so the line renders the same but
+/// no longer begins with an ESM token. NatSpec text can be inherited from a dependency via
+/// `@inheritdoc`, so this must run wherever displayed prose is assembled. A keyword that falls
+/// inside a Markdown code span or fenced code block is left untouched (see `code_regions`): the
+/// entity would render literally and corrupt the example, and MDX would not execute it there.
+fn neutralize_esm(text: &str) -> String {
+    let regions = code_regions(text);
+    let mut region_cursor = 0;
+    let mut copied = 0;
+    let mut out = String::with_capacity(text.len());
+
+    for (line_start, line) in logical_lines(text) {
+        let trimmed = line.trim_start();
+        let mut entity = None;
+        for (keyword, replacement) in [("import", "&#105;"), ("export", "&#101;")] {
+            if let Some(rest) = trimmed.strip_prefix(keyword)
+                && !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+            {
+                entity = Some(replacement);
+                break;
+            }
+        }
+        let Some(entity) = entity else { continue };
+        let keyword_pos = line_start + (line.len() - trimmed.len());
+        if region_contains(&regions, &mut region_cursor, keyword_pos) {
+            continue;
+        }
+        out.push_str(&text[copied..keyword_pos]);
+        out.push_str(entity);
+        copied = keyword_pos + 1;
+    }
+
+    out.push_str(&text[copied..]);
+    out
+}
+
 fn write_comment_block(out: &mut String, data: &CommentData) {
+    let mut block = String::new();
     if !data.titles.is_empty() {
         let label = if data.titles.len() == 1 { "Title" } else { "Titles" };
-        writeln!(out, "**{label}:** {}", data.titles.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.titles.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.authors.is_empty() {
         let label = if data.authors.len() == 1 { "Author" } else { "Authors" };
-        writeln!(out, "**{label}:** {}", data.authors.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.authors.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     // Render descriptions in source order (notices and devs interleaved, continuations joined).
     // `@dev` paragraphs are wrapped in `_..._` per paragraph so each multi-line block renders
     // as a single italic span (markdown emphasis cannot cross blank lines).
     for desc in &data.descriptions {
         match desc.kind {
-            DescKind::Notice => writeln!(out, "{}", desc.content).unwrap(),
-            DescKind::Dev => writeln!(out, "{}", italicize_dev(&desc.content)).unwrap(),
+            DescKind::Notice => writeln!(block, "{}", desc.content).unwrap(),
+            DescKind::Dev => writeln!(block, "{}", italicize_dev(&desc.content)).unwrap(),
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.customs.is_empty() {
         let label = if data.customs.len() == 1 { "Note" } else { "Notes" };
-        writeln!(out, "**{label}:**").unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:**").unwrap();
+        writeln!(block).unwrap();
         for (tag, content) in &data.customs {
-            writeln!(out, "- **{tag}:** {content}").unwrap();
+            writeln!(block, "- **{tag}:** {content}").unwrap();
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
+    // Neutralize the fully assembled block once: fence state stays continuous across the
+    // whole block, and every displayed line (authors, notices, custom notes), not just
+    // descriptions, is covered.
+    out.push_str(&neutralize_esm(&block));
 }
 
 fn write_code_block(out: &mut String, snippet: &str) {
@@ -1234,4 +1466,69 @@ fn dedent(s: &str) -> String {
         .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim() })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::neutralize_esm;
+
+    #[test]
+    fn preserves_line_endings_while_neutralizing_esm() {
+        assert_eq!(
+            neutralize_esm("Intro.\r\rexport const afterCarriageReturn = 1"),
+            "Intro.\r\r&#101;xport const afterCarriageReturn = 1"
+        );
+        for (input, expected) in [
+            (
+                "```\rimport inside\r```\rexport outside",
+                "```\rimport inside\r```\r&#101;xport outside",
+            ),
+            (
+                "```\r\nimport inside\r\n```\r\nexport outside",
+                "```\r\nimport inside\r\n```\r\n&#101;xport outside",
+            ),
+            (
+                "`example:\rimport inside`\rexport outside",
+                "`example:\rimport inside`\r&#101;xport outside",
+            ),
+            (
+                "`example:\r\nimport inside`\r\nexport outside",
+                "`example:\r\nimport inside`\r\n&#101;xport outside",
+            ),
+            (
+                "    ```\r    import inside\r    ```\rexport outside",
+                "    ```\r    import inside\r    ```\r&#101;xport outside",
+            ),
+            ("```\rinside\r    ```\rexport outside", "```\rinside\r    ```\r&#101;xport outside"),
+        ] {
+            assert_eq!(neutralize_esm(input), expected);
+        }
+        assert_eq!(neutralize_esm("Intro.\r\nimport outside"), "Intro.\r\n&#105;mport outside");
+        assert_eq!(
+            neutralize_esm("export first\r\npréface `span:\rimport inside`\r\nimport last"),
+            "&#101;xport first\r\npréface `span:\rimport inside`\r\n&#105;mport last"
+        );
+    }
+
+    #[test]
+    fn traverses_sorted_code_regions() {
+        let input = "`first`\n    ```\n    import inside fence\n    ```\n`last`\nexport outside";
+        let expected =
+            "`first`\n    ```\n    import inside fence\n    ```\n`last`\n&#101;xport outside";
+        assert_eq!(neutralize_esm(input), expected);
+    }
+
+    #[test]
+    fn leaves_non_esm_prefixes_unchanged() {
+        let input = "important\nexporter\nimport_\nexport$\nImport value\nExport value";
+        assert_eq!(neutralize_esm(input), input);
+    }
+
+    #[test]
+    fn neutralizes_many_candidates_across_many_code_regions() {
+        let input = "`code`\nexport outside\n".repeat(10_000);
+        let output = neutralize_esm(&input);
+        assert_eq!(output.matches("`code`").count(), 10_000);
+        assert_eq!(output.matches("&#101;xport outside").count(), 10_000);
+    }
 }
