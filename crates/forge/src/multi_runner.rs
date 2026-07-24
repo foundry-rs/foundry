@@ -11,7 +11,7 @@ use crate::{
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, ChainId, U256};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
@@ -483,6 +483,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub spec_id: SpecFor<FEN>,
     /// Exact network hardfork selected for the execution environment.
     pub hardfork: Option<FoundryHardfork>,
+    /// Source chain ID used to resolve fork hardfork schedules.
+    pub fork_chain_id: Option<ChainId>,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
@@ -528,7 +530,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             &config,
             self.evm_opts.networks,
             &mut self.evm_env,
-            self.evm_opts.fork_url.is_some(),
+            self.fork_chain_id,
             None,
             None,
         );
@@ -628,6 +630,8 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
+    /// Source chain ID used to resolve the fork's hardfork schedule.
+    pub fork_chain_id: Option<ChainId>,
     /// Project config.
     pub config: Arc<Config>,
     /// Parsed inline configuration.
@@ -676,6 +680,7 @@ impl MultiContractRunnerBuilder {
             sender: Default::default(),
             initial_balance: Default::default(),
             fork: Default::default(),
+            fork_chain_id: None,
             line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
@@ -737,6 +742,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
         self.fork = fork;
+        self
+    }
+
+    pub const fn with_fork_chain_id(mut self, chain_id: Option<ChainId>) -> Self {
+        self.fork_chain_id = chain_id;
         self
     }
 
@@ -924,11 +934,14 @@ impl MultiContractRunnerBuilder {
             )
         };
 
+        let fork_chain_id = self.fork_chain_id.or_else(|| {
+            (self.fork.is_some() || evm_opts.fork_url.is_some()).then_some(evm_env.cfg_env.chain_id)
+        });
         let hardfork = resolve_execution_spec(
             &self.config,
             evm_opts.networks,
             &mut evm_env,
-            self.fork.is_some() || evm_opts.fork_url.is_some(),
+            fork_chain_id,
             None,
             None,
         );
@@ -953,6 +966,7 @@ impl MultiContractRunnerBuilder {
                 tx_env,
                 spec_id,
                 hardfork,
+                fork_chain_id,
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,

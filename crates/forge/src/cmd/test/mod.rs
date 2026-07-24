@@ -2495,8 +2495,11 @@ impl TestArgs {
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork_context) = evm_opts
+            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+            .await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
 
         let config = Arc::new(config);
@@ -2507,7 +2510,12 @@ impl TestArgs {
             .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(evm_opts.get_fork(
+                &config,
+                fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
+                fork_block,
+            ))
+            .with_fork_chain_id(fork_chain_id)
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .set_coverage(execution.coverage)
@@ -2531,15 +2539,23 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         options: FuzzMinimizeNetworkPassOptions,
     ) -> eyre::Result<MultiContractRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork_context) = evm_opts
+            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+            .await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
 
         let config = Arc::new(config);
         MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(evm_opts.get_fork(
+                &config,
+                fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
+                fork_block,
+            ))
+            .with_fork_chain_id(fork_chain_id)
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .with_multi_network(options.multi_network)

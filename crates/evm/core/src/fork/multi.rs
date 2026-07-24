@@ -597,12 +597,14 @@ async fn create_fork<
     // Here we use [`AnyNetwork`] to maximize compatibility with custom chains, aligned with
     // `EvmOpts::env` impl.
     let any_provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
-    let (evm_env, number) = fork.evm_opts.fork_evm_env::<_, BLOCK, _, _>(&any_provider).await?;
+    let (evm_env, fork_context) =
+        fork.evm_opts.fork_evm_env_with_context::<_, BLOCK, _, _>(&any_provider).await?;
+    let number = fork_context.block_number;
     let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), fork.url.clone());
 
     // Determine the cache path if caching is enabled.
     let cache_path = if fork.enable_caching {
-        Config::foundry_block_cache_dir(evm_env.cfg_env.chain_id, number)
+        Config::foundry_block_cache_dir(fork_context.source_chain_id, number)
     } else {
         None
     };

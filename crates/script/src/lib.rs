@@ -895,13 +895,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         debug: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (mut evm_env, mut tx_env, fork_block) =
-            self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
+        let (mut evm_env, mut tx_env, fork_context) =
+            self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         self.hardfork = resolve_execution_spec(
             &self.config,
             self.evm_opts.networks,
             &mut evm_env,
-            self.evm_opts.fork_url.is_some(),
+            fork_chain_id,
             None,
             None,
         );
@@ -910,8 +912,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
-                    let fork =
-                        self.evm_opts.get_fork(&self.config, evm_env.cfg_env.chain_id, fork_block);
+                    let fork = self.evm_opts.get_fork(
+                        &self.config,
+                        fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
+                        fork_block,
+                    );
                     let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend

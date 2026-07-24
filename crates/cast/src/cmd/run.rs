@@ -359,11 +359,8 @@ impl RunArgs {
             // fork. Falls back to a blob-gas heuristic for unknown chains.
             if evm_version.is_none()
                 && config.hardfork.is_none()
-                && FoundryHardfork::from_chain_and_timestamp(
-                    evm_env.cfg_env.chain_id,
-                    block.header().timestamp(),
-                )
-                .is_none()
+                && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
+                    .is_none()
                 && block.header().excess_blob_gas().is_some()
             {
                 // TODO: add glamsterdam header field checks in the future
@@ -375,8 +372,13 @@ impl RunArgs {
                 config.networks,
             );
         }
-        let resolved_hardfork =
-            TracingExecutor::<FEN>::resolve_spec(&config, networks, &mut evm_env, evm_version);
+        let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+            &config,
+            networks,
+            chain.id(),
+            &mut evm_env,
+            evm_version,
+        );
 
         let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
             let block = block.as_ref().ok_or_else(|| {

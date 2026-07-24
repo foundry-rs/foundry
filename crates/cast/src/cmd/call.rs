@@ -491,8 +491,13 @@ impl CallArgs {
                     evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
-            let resolved_hardfork =
-                TracingExecutor::<FEN>::resolve_spec(&config, networks, &mut evm_env, evm_version);
+            let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+                &config,
+                networks,
+                chain.id(),
+                &mut evm_env,
+                evm_version,
+            );
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)

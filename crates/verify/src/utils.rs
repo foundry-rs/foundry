@@ -1,6 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -312,14 +312,14 @@ where
     fork_config.fork_block_number = Some(fork_blk_num);
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (mut evm_env, tx_env, fork, _chain, networks) =
+    let (mut evm_env, tx_env, fork, chain, networks) =
         TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
 
     evm_env.block_env.set_number(U256::from(execution_blk_num));
     if let Some(block) = execution_block {
         configure_env_block::<FEN>(&mut evm_env, block, networks);
     }
-    resolve_runtime_spec::<FEN>(fork_config, networks, &mut evm_env);
+    resolve_runtime_spec::<FEN>(fork_config, networks, chain.id(), &mut evm_env);
 
     let executor = TracingExecutor::<FEN>::new(
         (evm_env.clone(), tx_env.clone()),
@@ -337,12 +337,13 @@ where
 fn resolve_runtime_spec<FEN>(
     config: &Config,
     networks: NetworkConfigs,
+    source_chain_id: ChainId,
     evm_env: &mut EvmEnvFor<FEN>,
 ) -> Option<FoundryHardfork>
 where
     FEN: FoundryEvmNetwork,
 {
-    TracingExecutor::<FEN>::resolve_spec(config, networks, evm_env, None)
+    TracingExecutor::<FEN>::resolve_spec_for_chain(config, networks, source_chain_id, evm_env, None)
 }
 
 pub fn configure_env_block<FEN>(
@@ -606,25 +607,29 @@ contract Broken {
 
     #[test]
     #[cfg(feature = "monad")]
-    fn runtime_spec_uses_monad_timestamp_instead_of_compiler_evm_version() {
+    fn runtime_spec_uses_monad_source_chain_timestamp() {
         let monad_nine_timestamp = MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
 
         let before_config = Config { evm_version: EvmVersion::Osaka, ..Default::default() };
         let mut before_env = monad_env(monad_nine_timestamp - 1);
+        before_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
         let before = resolve_runtime_spec::<MonadEvmNetwork>(
             &before_config,
             NetworkConfigs::with_monad(),
+            NamedChain::Monad as u64,
             &mut before_env,
         );
 
         assert_eq!(before, Some(FoundryHardfork::Monad(MonadHardfork::MonadEight)));
         assert_eq!(before_env.cfg_env.spec, MonadHardfork::MonadEight);
+        assert_eq!(before_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
 
         let after_config = Config { evm_version: EvmVersion::Prague, ..Default::default() };
         let mut after_env = monad_env(monad_nine_timestamp);
         let after = resolve_runtime_spec::<MonadEvmNetwork>(
             &after_config,
             NetworkConfigs::with_monad(),
+            NamedChain::Monad as u64,
             &mut after_env,
         );
 
@@ -642,6 +647,7 @@ contract Broken {
         let resolved = resolve_runtime_spec::<MonadEvmNetwork>(
             &config,
             NetworkConfigs::with_monad(),
+            NamedChain::Monad as u64,
             &mut env,
         );
 

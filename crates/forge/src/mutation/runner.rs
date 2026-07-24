@@ -714,8 +714,11 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork_context) = evm_opts
+            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+            .await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
 
         // Build test runner mirroring the canonical `forge test` runner: same
         // isolation flag, same fail-fast semantics for mutation, and same
@@ -725,7 +728,12 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(evm_opts.get_fork(
+                config,
+                fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
+                fork_block,
+            ))
+            .with_fork_chain_id(fork_chain_id)
             .enable_isolation(isolate)
             .fail_fast(true)
             .with_create2_deployer_available(create2_deployer_available)
