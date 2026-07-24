@@ -788,17 +788,15 @@ impl<N: Network> Backend<N> {
 
     /// Returns a block's number, parent hash, and cached Monad participants.
     #[cfg(feature = "monad")]
-    fn monad_block_participants(
+    fn monad_block_participants_from_storage(
         &self,
+        storage: &BlockchainStorage<N>,
         hash: B256,
     ) -> Result<(u64, B256, MonadBlockParticipants), BlockchainError> {
-        let local = {
-            let storage = self.blockchain.storage.read();
-            storage.blocks.get(&hash).cloned().map(|block| {
-                let participants = storage.monad_block_participants.get(&hash).cloned();
-                (block, participants)
-            })
-        };
+        let local = storage.blocks.get(&hash).cloned().map(|block| {
+            let participants = storage.monad_block_participants.get(&hash).cloned();
+            (block, participants)
+        });
         if let Some((block, participants)) = local {
             let participants = if let Some(participants) = participants {
                 participants
@@ -834,31 +832,35 @@ impl<N: Network> Backend<N> {
         ))
     }
 
+    /// Returns a block's number, parent hash, and cached Monad participants.
+    #[cfg(feature = "monad")]
+    fn monad_block_participants(
+        &self,
+        hash: B256,
+    ) -> Result<(u64, B256, MonadBlockParticipants), BlockchainError> {
+        self.monad_block_participants_from_storage(&self.blockchain.storage.read(), hash)
+    }
+
     /// Rebuilds Monad participant metadata for locally stored blocks with transaction bodies.
     #[cfg(feature = "monad")]
-    fn rebuild_monad_block_participant_cache(&self) -> Result<(), BlockchainError> {
-        let blocks = {
-            let storage = self.blockchain.storage.read();
-            storage
-                .blocks
-                .iter()
-                .filter(|(_, block)| {
-                    !block.body.transactions.is_empty()
-                        || block.header.transactions_root() == EMPTY_ROOT_HASH
-                })
-                .map(|(hash, block)| (*hash, block.body.transactions.clone()))
-                .collect::<Vec<_>>()
-        };
-
-        let participants = blocks
-            .into_iter()
+    fn rebuild_monad_block_participant_cache(
+        &self,
+        storage: &mut BlockchainStorage<N>,
+    ) -> Result<(), BlockchainError> {
+        let participants = storage
+            .blocks
+            .iter()
+            .filter(|(_, block)| {
+                !block.body.transactions.is_empty()
+                    || block.header.transactions_root() == EMPTY_ROOT_HASH
+            })
+            .map(|(hash, block)| (*hash, block.body.transactions.clone()))
             .map(|(hash, transactions)| {
                 let tx_envs = self.monad_tx_envs(&transactions)?;
                 Ok((hash, collect_monad_block_participants(&tx_envs)))
             })
             .collect::<Result<Vec<_>, BlockchainError>>()?;
 
-        let mut storage = self.blockchain.storage.write();
         for (hash, participants) in participants {
             if storage.blocks.contains_key(&hash) {
                 storage.monad_block_participants.insert(hash, participants);
@@ -873,11 +875,22 @@ impl<N: Network> Backend<N> {
         &self,
         parent_hash: B256,
     ) -> Result<MonadContextAux, BlockchainError> {
-        let (_, grandparent_hash, parent) = self.monad_block_participants(parent_hash)?;
+        self.monad_context_for_child_of_in_storage(&self.blockchain.storage.read(), parent_hash)
+    }
+
+    /// Builds the initial Monad context from staged storage.
+    #[cfg(feature = "monad")]
+    fn monad_context_for_child_of_in_storage(
+        &self,
+        storage: &BlockchainStorage<N>,
+        parent_hash: B256,
+    ) -> Result<MonadContextAux, BlockchainError> {
+        let (_, grandparent_hash, parent) =
+            self.monad_block_participants_from_storage(storage, parent_hash)?;
         let grandparent = if grandparent_hash.is_zero() {
             MonadBlockParticipants::default()
         } else {
-            self.monad_block_participants(grandparent_hash)?.2
+            self.monad_block_participants_from_storage(storage, grandparent_hash)?.2
         };
         Ok(monad_context_from_participants(grandparent, parent, &[], 0))
     }
@@ -5560,35 +5573,30 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage atomically so concurrent readers
-        // never observe blocks without their transactions
-        {
-            let mut storage = self.blockchain.storage.write();
-            storage.load_blocks(state.blocks.clone());
-            storage.load_transactions(state.transactions.clone());
-            #[cfg(feature = "monad")]
-            if self.is_monad() {
-                for (hash, participants) in &state.monad_block_participants {
-                    if storage.blocks.contains_key(hash) {
-                        storage
-                            .monad_block_participants
-                            .insert(*hash, participants.iter().copied().collect());
-                    }
-                }
-            }
-        }
+        let _mining_guard = self.mining.lock().await;
+
+        // Stage the complete chain update first. Besides keeping blocks and transactions atomic for
+        // concurrent readers, this ensures validation failures cannot leave a partially loaded
+        // chain behind.
+        let mut storage = self.blockchain.storage.read().clone();
+        storage.load_blocks(state.blocks.clone());
+        storage.load_transactions(state.transactions.clone());
         #[cfg(feature = "monad")]
         if self.is_monad() {
-            self.rebuild_monad_block_participant_cache()?;
-        }
-        // reset the block env
-        if let Some(block) = state.block.clone() {
-            {
-                let mut env = self.evm_env.write();
-                env.block_env = block.clone();
-                if self.is_tempo() && self.is_fork() && env.block_env.beneficiary.is_zero() {
-                    env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+            for (hash, participants) in &state.monad_block_participants {
+                if storage.blocks.contains_key(hash) {
+                    storage
+                        .monad_block_participants
+                        .insert(*hash, participants.iter().copied().collect());
                 }
+            }
+            self.rebuild_monad_block_participant_cache(&mut storage)?;
+        }
+
+        let mut block_env = state.block.clone();
+        if let Some(block) = block_env.as_mut() {
+            if self.is_tempo() && self.is_fork() && block.beneficiary.is_zero() {
+                block.beneficiary = TIP_FEE_MANAGER_ADDRESS;
             }
 
             // Set the current best block number.
@@ -5602,53 +5610,53 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 // to the state block number.
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
                 if best_number > number {
-                    self.blockchain.storage.write().best_number = best_number;
-                    let best_hash = self
-                        .blockchain
-                        .storage
-                        .read()
+                    storage.best_number = best_number;
+                    let best_hash = storage
                         .hash(best_number.into(), self.slots_in_an_epoch)
                         .ok_or_else(|| {
                             BlockchainError::RpcError(RpcError::internal_error_with(format!(
                                 "Best hash not found for best number {best_number}",
                             )))
                         })?;
-                    self.blockchain.storage.write().best_hash = best_hash;
+                    storage.best_hash = best_hash;
                     best_number
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
-                    self.blockchain.storage.write().best_number = number;
-                    self.blockchain.storage.write().best_hash = hash;
+                    storage.best_number = number;
+                    storage.best_hash = hash;
                     number
                 }
             } else {
-                self.blockchain.storage.write().best_number = best_number;
+                storage.best_number = best_number;
 
                 // Set the current best block hash;
-                let best_hash = self
-                    .blockchain
-                    .storage
-                    .read()
-                    .hash(best_number.into(), self.slots_in_an_epoch)
-                    .ok_or_else(|| {
+                let best_hash =
+                    storage.hash(best_number.into(), self.slots_in_an_epoch).ok_or_else(|| {
                         BlockchainError::RpcError(RpcError::internal_error_with(format!(
                             "Best hash not found for best number {best_number}",
                         )))
                     })?;
 
-                self.blockchain.storage.write().best_hash = best_hash;
+                storage.best_hash = best_hash;
                 best_number
             };
 
             // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
             // can intentionally keep BlockEnv.number distinct from the best L2 block number.
             if !is_arbitrum(self.chain_id().to()) {
-                self.set_block_number(selected_best_number);
+                block.number = U256::from(selected_best_number);
             }
         }
 
-        if let Some(latest) = state.blocks.iter().max_by_key(|b| b.header.number()) {
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            // Reject state that cannot supply the ancestor metadata required by the next block
+            // before changing the live chain, EVM environment, or database.
+            self.monad_context_for_child_of_in_storage(&storage, storage.best_hash)?;
+        }
+
+        let next_fees = state.blocks.iter().max_by_key(|b| b.header.number()).map(|latest| {
             let header = &latest.header;
             let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                 header.gas_used(),
@@ -5659,32 +5667,17 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 header.excess_blob_gas().unwrap_or_default(),
                 header.blob_gas_used().unwrap_or_default(),
             );
-
-            // update next base fee
-            self.fees.set_base_fee(next_block_base_fee);
-
-            self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+            let blob_excess_gas_and_price = BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
                 get_blob_base_fee_update_fraction(
                     self.evm_env.read().cfg_env.chain_id,
                     header.timestamp,
                 ),
-            ));
-        }
+            );
+            (next_block_base_fee, blob_excess_gas_and_price)
+        });
 
-        if !self.db.write().await.load_state(state.clone())? {
-            return Err(RpcError::invalid_params(
-                "Loading state not supported with the current configuration",
-            )
-            .into());
-        }
-
-        // Backfill the EVM-level block hash cache from the freshly loaded blocks so that the
-        // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already
-        // computed by `load_blocks` above. Only collect the last 256 blocks since that's all
-        // BLOCKHASH can access.
         let block_hashes = {
-            let storage = self.blockchain.storage.read();
             let min_block = storage.best_number.saturating_sub(256);
             storage
                 .hashes
@@ -5693,16 +5686,31 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 .map(|(&num, &hash)| (U256::from(num), hash))
                 .collect()
         };
+
+        if !self.db.write().await.load_state(state.clone())? {
+            return Err(RpcError::invalid_params(
+                "Loading state not supported with the current configuration",
+            )
+            .into());
+        }
+
+        *self.blockchain.storage.write() = storage;
+        if let Some(block_env) = block_env {
+            self.evm_env.write().block_env = block_env;
+        }
+        if let Some((next_block_base_fee, blob_excess_gas_and_price)) = next_fees {
+            self.fees.set_base_fee(next_block_base_fee);
+            self.fees.set_blob_excess_gas_and_price(blob_excess_gas_and_price);
+        }
+
+        // Backfill the EVM-level block hash cache from the freshly loaded blocks so that the
+        // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already
+        // computed by `load_blocks` above. Only collect the last 256 blocks since that's all
+        // BLOCKHASH can access.
         self.db.write().await.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = state.historical_states {
             self.states.write().load_states(historical_states);
-        }
-
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            // Reject state that cannot supply the ancestor metadata required by the next block.
-            self.monad_context_for_child_of(self.best_hash())?;
         }
 
         Ok(true)
@@ -5880,62 +5888,70 @@ impl Backend<FoundryNetwork> {
             )));
         }
 
-        self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
-            let mut cache_db = CacheDB::new(state);
-            if let Some(state_override) = state_override {
-                apply_state_overrides(state_override, &mut cache_db)?;
-            }
-
-            let mut results = Vec::with_capacity(bundles.len());
-            for bundle in bundles {
-                let Bundle { transactions, block_override } = bundle;
-                let mut bundle_block_env = block_env.clone();
-                if let Some(block_override) = block_override {
-                    cache_db.apply_block_overrides(block_override, &mut bundle_block_env);
+        self.with_database_at_and_context(
+            block_request,
+            |state, mut block_env, mut monad_context| {
+                let mut cache_db = CacheDB::new(state);
+                if let Some(state_override) = state_override {
+                    apply_state_overrides(state_override, &mut cache_db)?;
                 }
 
-                let mut bundle_results = Vec::with_capacity(transactions.len());
-                for request in transactions {
-                    let fee_details = FeeDetails::new(
-                        request.gas_price,
-                        request.max_fee_per_gas,
-                        request.max_priority_fee_per_gas,
-                        request.max_fee_per_blob_gas,
-                    )?
-                    .or_zero_fees();
-                    let (evm_env, tx_env, op_deposit) =
-                        self.build_call_env(request, fee_details, bundle_block_env.clone());
+                let mut results = Vec::with_capacity(bundles.len());
+                for bundle in bundles {
+                    let Bundle { transactions, block_override } = bundle;
+                    if let Some(block_override) = block_override {
+                        cache_db.apply_block_overrides(block_override, &mut block_env);
+                    }
 
-                    let mut inspector = self.build_inspector();
-                    let ResultAndState { result, state } = self
-                        .transact_with_inspector_ref_and_context(
-                            &cache_db,
-                            &evm_env,
-                            &mut inspector,
-                            tx_env,
-                            op_deposit,
-                            monad_context.as_mut().map(next_monad_context),
-                        )?;
+                    let mut bundle_results = Vec::with_capacity(transactions.len());
+                    for request in transactions {
+                        let fee_details = FeeDetails::new(
+                            request.gas_price,
+                            request.max_fee_per_gas,
+                            request.max_priority_fee_per_gas,
+                            request.max_fee_per_blob_gas,
+                        )?
+                        .or_zero_fees();
+                        let (evm_env, tx_env, op_deposit) =
+                            self.build_call_env(request, fee_details, block_env.clone());
 
-                    let output = result.output().cloned().unwrap_or_default();
-                    let response = if result.is_success() {
-                        EthCallResponse { value: Some(output), error: None }
-                    } else {
-                        let error = RevertDecoder::new()
-                            .maybe_decode(&output, None)
-                            .unwrap_or_else(|| "execution failed".to_string());
-                        EthCallResponse { value: None, error: Some(error) }
-                    };
+                        let mut inspector = self.build_inspector();
+                        let ResultAndState { result, state } = self
+                            .transact_with_inspector_ref_and_context(
+                                &cache_db,
+                                &evm_env,
+                                &mut inspector,
+                                tx_env,
+                                op_deposit,
+                                monad_context.as_mut().map(next_monad_context),
+                            )?;
 
-                    cache_db.commit(state);
-                    bundle_results.push(response);
+                        let output = result.output().cloned().unwrap_or_default();
+                        let response = if result.is_success() {
+                            EthCallResponse { value: Some(output), error: None }
+                        } else {
+                            let error = RevertDecoder::new()
+                                .maybe_decode(&output, None)
+                                .unwrap_or_else(|| "execution failed".to_string());
+                            EthCallResponse { value: None, error: Some(error) }
+                        };
+
+                        cache_db.commit(state);
+                        bundle_results.push(response);
+                    }
+
+                    results.push(bundle_results);
+                    block_env.number = block_env.number.saturating_add(U256::ONE);
+                    block_env.timestamp = block_env.timestamp.saturating_add(U256::ONE);
+                    #[cfg(feature = "monad")]
+                    if let Some(context) = monad_context.as_mut() {
+                        advance_monad_block(context);
+                    }
                 }
 
-                results.push(bundle_results);
-            }
-
-            Ok(results)
-        })
+                Ok(results)
+            },
+        )
         .await
     }
 
@@ -7325,6 +7341,60 @@ mod tests {
 
         let outcome = loaded_api.backend.mine_block(vec![]).await;
         assert_eq!(outcome.block_number, 3);
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test]
+    async fn monad_load_state_rejection_is_atomic() {
+        let config = || {
+            NodeConfig::test_monad()
+                .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+                .with_transaction_block_keeper(Some(1usize))
+        };
+        let (source_api, source_handle) = spawn(config()).await;
+        let source_provider = source_handle.http_provider();
+        let accounts = source_provider.get_accounts().await.unwrap();
+        let sentinel = Address::repeat_byte(0x77);
+
+        source_api.anvil_set_balance(sentinel, U256::from(123)).await.unwrap();
+        for nonce in 0..2 {
+            source_provider
+                .send_transaction(
+                    TransactionRequest::default()
+                        .with_from(accounts[0])
+                        .with_to(accounts[1])
+                        .with_nonce(nonce)
+                        .with_value(U256::from(1))
+                        .into(),
+                )
+                .await
+                .unwrap()
+                .get_receipt()
+                .await
+                .unwrap();
+        }
+
+        let mut invalid_state = source_api.serialized_state(false).await.unwrap();
+        assert_eq!(invalid_state.monad_block_participants.len(), 1);
+        invalid_state.monad_block_participants.clear();
+
+        let (target_api, _handle) = spawn(config()).await;
+        target_api.anvil_set_balance(sentinel, U256::from(7)).await.unwrap();
+        target_api.mine_one().await;
+        let original_best_hash = target_api.backend.best_hash();
+        let original_best_number = target_api.backend.best_number();
+        let original_block_env = target_api.backend.evm_env.read().block_env.clone();
+        let original_balance = target_api.backend.current_balance(sentinel).await.unwrap();
+
+        let err = target_api.backend.load_state(invalid_state).await.unwrap_err();
+        assert!(matches!(err, super::BlockchainError::DataUnavailable));
+        assert_eq!(target_api.backend.best_hash(), original_best_hash);
+        assert_eq!(target_api.backend.best_number(), original_best_number);
+        assert_eq!(target_api.backend.evm_env.read().block_env, original_block_env);
+        assert_eq!(target_api.backend.current_balance(sentinel).await.unwrap(), original_balance);
+
+        let outcome = target_api.backend.mine_block(vec![]).await;
+        assert_eq!(outcome.block_number, original_best_number + 1);
     }
 
     #[cfg(feature = "monad")]

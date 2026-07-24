@@ -10,6 +10,7 @@ use alloy_rpc_types::{
     simulate::{SimBlock, SimulatePayload},
     trace::parity::{TraceResults, TraceType},
 };
+use alloy_rpc_types_eth::{Bundle, EthCallResponse};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, NodeHandle, spawn};
@@ -111,6 +112,43 @@ async fn monad_simulate_tracks_current_block_senders() {
 
     assert_eq!(blocks[0].calls[0].return_data, Bytes::from(U256::ZERO.to_be_bytes::<32>()));
     assert_eq!(blocks[0].calls[1].return_data, Bytes::from(U256::ONE.to_be_bytes::<32>()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_call_many_ages_reserve_participants_across_empty_bundles() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let sender = provider.get_accounts().await.unwrap()[0];
+    api.anvil_set_code(RESERVE_PROBE_ADDRESS, RESERVE_RETURN_PROBE_CODE.into()).await.unwrap();
+    api.anvil_set_balance(sender, mon(12)).await.unwrap();
+
+    let request = |value| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(RESERVE_PROBE_ADDRESS)
+                .with_value(value)
+                .with_gas_limit(100_000),
+        )
+    };
+    let bundles = vec![
+        Bundle { transactions: vec![request(mon(2))], block_override: None },
+        Bundle { transactions: Vec::new(), block_override: None },
+        Bundle { transactions: Vec::new(), block_override: None },
+        Bundle { transactions: vec![request(mon(1))], block_override: None },
+    ];
+
+    let response: Vec<Vec<EthCallResponse>> =
+        provider.client().request("eth_callMany", (bundles,)).await.unwrap();
+
+    assert_eq!(
+        response[0][0].clone().ensure_ok().unwrap(),
+        Bytes::from(U256::ZERO.to_be_bytes::<32>())
+    );
+    assert_eq!(
+        response[3][0].clone().ensure_ok().unwrap(),
+        Bytes::from(U256::ZERO.to_be_bytes::<32>())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
