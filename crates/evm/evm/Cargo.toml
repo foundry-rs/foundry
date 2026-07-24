@@ -67,6 +67,15 @@ tokio.workspace = true
 
 [features]
 default = ["optimism"]
+monad = [
+    "foundry-evm-core/monad",
+    "foundry-evm-hardforks/monad",
+    "foundry-evm-networks/monad",
+    "foundry-cheatcodes/monad",
+    "foundry-evm-coverage/monad",
+    "foundry-evm-fuzz/monad",
+    "foundry-evm-traces/monad",
+]
 optimism = [
     "foundry-evm-core/optimism",
     "foundry-evm-hardforks/optimism",

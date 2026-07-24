@@ -155,6 +155,13 @@ forgetest!(testdata, |_prj, cmd| {
     orig_assert.success();
 });
 
+#[cfg(feature = "monad")]
+forgetest!(monad_testdata, |_prj, cmd| {
+    setup_testdata_cmd(&mut cmd);
+    cmd.args(["test", "--network", "monad", "--mc=(MonadStakingTest|MonadReserveBalanceTest)"])
+        .assert_success();
+});
+
 // Run flaky testdata contracts excluded from the main `testdata` test above.
 // Picked up by the nightly `test-flaky` workflow via `cargo nextest run --profile flaky`.
 forgetest!(flaky_testdata, |_prj, cmd| {

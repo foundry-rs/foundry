@@ -18,7 +18,7 @@ use alloy_primitives::{
 };
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockTransactions, erc4337::TransactionConditional,
+    BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions, erc4337::TransactionConditional,
     request::TransactionRequest, state::AccountOverride,
 };
 use alloy_rpc_types_eth::{Bundle, EthCallResponse};
@@ -568,6 +568,41 @@ async fn can_call_many() {
     let output = response[0][1].clone().ensure_ok().unwrap();
     let value = SimpleStorage::getValueCall::abi_decode_returns(&output).unwrap();
     assert_eq!(value, "updated");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_many_progresses_block_context() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let probe = Address::repeat_byte(0x42);
+    // Return NUMBER followed by TIMESTAMP.
+    api.anvil_set_code(probe, bytes!("435f524260205260405ff3")).await.unwrap();
+
+    let request = || {
+        WithOtherFields::new(TransactionRequest::default().with_to(probe).with_gas_limit(100_000))
+    };
+    let bundles = vec![
+        Bundle {
+            transactions: vec![request()],
+            block_override: Some(BlockOverrides {
+                number: Some(U256::from(99)),
+                time: Some(1_234),
+                ..Default::default()
+            }),
+        },
+        Bundle { transactions: Vec::new(), block_override: None },
+        Bundle { transactions: vec![request()], block_override: None },
+    ];
+
+    let response: Vec<Vec<EthCallResponse>> =
+        provider.client().request("eth_callMany", (bundles,)).await.unwrap();
+    let first = response[0][0].clone().ensure_ok().unwrap();
+    let third = response[2][0].clone().ensure_ok().unwrap();
+
+    assert_eq!(U256::from_be_slice(&first[..32]), U256::from(99));
+    assert_eq!(U256::from_be_slice(&first[32..]), U256::from(1_234));
+    assert_eq!(U256::from_be_slice(&third[..32]), U256::from(101));
+    assert_eq!(U256::from_be_slice(&third[32..]), U256::from(1_236));
 }
 
 #[tokio::test(flavor = "multi_thread")]

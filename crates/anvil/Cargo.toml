@@ -28,6 +28,8 @@ foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
+alloy-monad-evm = { workspace = true, optional = true }
+monad-revm = { workspace = true, optional = true }
 foundry-primitives = { workspace = true, default-features = false }
 tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
@@ -127,6 +129,14 @@ tempo-alloy.workspace = true
 
 [features]
 default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
+monad = [
+    "dep:alloy-monad-evm",
+    "dep:monad-revm",
+    "foundry-config/monad",
+    "foundry-evm/monad",
+    "foundry-evm-networks/monad",
+    "foundry-cli?/monad",
+]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-rpc-types",

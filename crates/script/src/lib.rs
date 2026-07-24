@@ -39,13 +39,15 @@ use foundry_common::{
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
-    Config, Eip1559FeeEstimatePreset, figment,
+    Config, Eip1559FeeEstimatePreset, FoundryHardfork, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
     },
 };
 use foundry_debugger::DebuggerLayout;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -59,7 +61,7 @@ use foundry_evm::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
-    opts::EvmOpts,
+    opts::{EvmOpts, resolve_execution_spec},
     revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
@@ -382,6 +384,11 @@ impl ScriptArgs {
             .await;
         }
 
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return Box::pin(self.run_generic_script::<MonadEvmNetwork>(config, evm_opts)).await;
+        }
+
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
             return Box::pin(self.run_generic_script::<OpEvmNetwork>(config, evm_opts)).await;
@@ -456,14 +463,10 @@ impl ScriptArgs {
                 return Ok(None);
             }
 
-            let size_limits = pre_simulation
-                .script_config
-                .evm_opts
-                .env
-                .code_size_limit
-                .or(pre_simulation.script_config.config.code_size_limit)
-                .map(ContractSizeLimits::with_runtime_limit)
-                .unwrap_or_default();
+            let size_limits = pre_simulation.args.contract_size_limits(
+                &pre_simulation.script_config.config,
+                &pre_simulation.script_config.evm_opts,
+            );
             pre_simulation.args.check_contract_sizes(
                 size_limits,
                 &pre_simulation.execution_result,
@@ -668,6 +671,22 @@ impl ScriptArgs {
         Ok(())
     }
 
+    fn contract_size_limits(&self, config: &Config, evm_opts: &EvmOpts) -> ContractSizeLimits {
+        self.evm
+            .env
+            .code_size_limit
+            .or(evm_opts.env.code_size_limit)
+            .or(config.code_size_limit)
+            .map(ContractSizeLimits::with_runtime_limit)
+            .or_else(|| {
+                evm_opts
+                    .networks
+                    .contract_size_limits()
+                    .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+            })
+            .unwrap_or_default()
+    }
+
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
     const fn should_broadcast(&self) -> bool {
         self.broadcast || self.resume || self.verify
@@ -786,6 +805,8 @@ struct JsonResult<'a, N: Network> {
 pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
+    /// Exact network hardfork selected for script execution.
+    pub hardfork: Option<FoundryHardfork>,
     pub sender_nonce: u64,
     sender_nonce_override: Option<u64>,
     /// Maps a rpc url to a backend
@@ -819,6 +840,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(Self {
             config,
             evm_opts,
+            hardfork: None,
             sender_nonce,
             sender_nonce_override,
             backends: HashMap::default(),
@@ -873,14 +895,28 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         debug: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (evm_env, mut tx_env, fork_block) = self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
+        let (mut evm_env, mut tx_env, fork_context) =
+            self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        self.hardfork = resolve_execution_spec(
+            &self.config,
+            self.evm_opts.networks,
+            &mut evm_env,
+            fork_chain_id,
+            None,
+            None,
+        );
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
-                    let fork =
-                        self.evm_opts.get_fork(&self.config, evm_env.cfg_env.chain_id, fork_block);
+                    let fork = self.evm_opts.get_fork(
+                        &self.config,
+                        fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
+                        fork_block,
+                    );
                     let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
@@ -902,7 +938,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
-            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 
@@ -1424,6 +1459,45 @@ mod tests {
         // The CLI flag must land in evm_opts so that the size_limits computation in run() picks
         // it up via `.evm_opts.env.code_size_limit.or(config.code_size_limit)`.
         assert_eq!(args.evm.env.code_size_limit, Some(2147483647));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn contract_size_limits_use_resolved_monad_network() {
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
+        let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
+
+        let limits = args.contract_size_limits(&Config::default(), &evm_opts);
+
+        assert!(limits.runtime > ContractSizeLimits::default().runtime);
+        assert!(limits.initcode > ContractSizeLimits::default().initcode);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn contract_size_limits_prefer_cli_then_config_over_network() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--code-size-limit",
+            "64",
+        ]);
+        let mut config = Config { code_size_limit: Some(128), ..Default::default() };
+        let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
+        assert_eq!(
+            args.contract_size_limits(&config, &evm_opts),
+            ContractSizeLimits::with_runtime_limit(64)
+        );
+
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
+        config.code_size_limit = Some(128);
+        assert_eq!(
+            args.contract_size_limits(&config, &evm_opts),
+            ContractSizeLimits::with_runtime_limit(128)
+        );
     }
 
     #[test]

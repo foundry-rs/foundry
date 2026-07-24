@@ -68,6 +68,88 @@ jobs:
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
       - run: cargo build --workspace --no-default-features --locked
 
+  monad-check:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Check Monad release binaries
+        run: cargo check --locked --bins --no-default-features --features "aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad"
+
+  monad-library-tests:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Test Monad libraries
+        run: |
+          cargo test --locked -p foundry-evm-hardforks --features monad --lib monad
+          cargo test --locked -p foundry-evm-networks --features monad --lib monad
+          cargo test --locked -p foundry-config --features monad --lib monad
+          cargo test --locked -p foundry-evm-core --features monad --lib monad
+          cargo test --locked -p foundry-evm --features monad --lib monad
+          cargo test --locked -p foundry-evm-traces --features monad --lib monad
+          cargo test --locked -p forge-script --features monad --lib monad
+          cargo test --locked -p forge-verify --features monad --lib monad
+          cargo test --locked -p chisel --features monad --lib monad
+
+  monad-integration-tests:
+    name: Monad integration (${{ matrix.suite }})
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [anvil, cast, forge, chisel]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Test Monad Anvil integration
+        if: matrix.suite == 'anvil'
+        run: |
+          cargo test --locked -p anvil --features monad --lib monad
+          cargo test --locked -p anvil --features monad --test it monad -- --test-threads=1
+      - name: Test Monad Cast integration
+        if: matrix.suite == 'cast'
+        run: |
+          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
+            --test cli monad -- --test-threads=1
+      - name: Test Monad Forge integration
+        if: matrix.suite == 'forge'
+        run: cargo test --locked -p forge --features monad --test cli monad -- --test-threads=1
+      - name: Test Monad Chisel integration
+        if: matrix.suite == 'chisel'
+        run: cargo test --locked -p chisel --features monad --test it monad -- --test-threads=1
+
   typos:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
@@ -197,6 +279,9 @@ jobs:
       - docs
       - doctest
       - no-default-features
+      - monad-check
+      - monad-library-tests
+      - monad-integration-tests
       - typos
       - clippy
       - rustfmt

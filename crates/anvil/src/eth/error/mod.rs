@@ -318,6 +318,9 @@ pub enum InvalidTransactionError {
     /// Thrown when Blob transaction contains a versioned hash with an incorrect version.
     #[error("Blob transaction contains a versioned hash with an incorrect version")]
     BlobVersionNotSupported,
+    /// Thrown when a blob transaction is submitted on a Monad network.
+    #[error("EIP-4844 blob transactions are not supported on Monad")]
+    MonadBlobTransactionUnsupported,
     /// Thrown when there are no `blob_hashes` in the transaction.
     #[error("There should be at least one blob in a Blob transaction.")]
     EmptyBlobs,

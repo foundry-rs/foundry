@@ -258,6 +258,24 @@ async fn test_simulate_v1_rejects_precompile_moves_on_tempo_rpc() {
     assert_eq!(response["error"]["code"], -32000, "{response}");
 }
 
+#[cfg(feature = "monad")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_v1_rejects_precompile_moves_on_monad_rpc() {
+    let (_, handle) = spawn(NodeConfig::test_monad()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{"stateOverrides": {
+            "0x0000000000000000000000000000000000000004": {
+                "movePrecompileToAddress": "0x0000000000000000000000000000000000123456"
+            }
+        }}]}, "latest"]),
+    )
+    .await;
+
+    assert_eq!(response["error"]["code"], -32000, "{response}");
+}
+
 #[cfg(feature = "optimism")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_v1_rejects_precompile_moves_on_optimism_rpc() {

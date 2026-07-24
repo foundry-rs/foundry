@@ -11,12 +11,13 @@ use foundry_compilers::{
     project::ProjectCompiler,
     solc::Solc,
 };
-use foundry_config::{Config, SolcReq};
+use foundry_config::{Config, FoundryHardfork, SolcReq};
 use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
     opts::EvmOpts,
 };
+use foundry_evm_networks::NetworkConfigs;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solar::{
@@ -279,6 +280,15 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     pub foundry_config: Config,
     /// EVM Options
     pub evm_opts: EvmOpts,
+    /// Network family to restore when leaving fork mode.
+    #[serde(default)]
+    pub local_networks: Option<NetworkConfigs>,
+    /// Chain ID to restore when leaving fork mode.
+    #[serde(default)]
+    pub local_chain_id: Option<u64>,
+    /// Exact network hardfork selected for the latest execution.
+    #[serde(skip)]
+    pub resolved_hardfork: Option<FoundryHardfork>,
     /// Disable the default `Vm` import.
     pub no_vm: bool,
     /// In-memory REVM db for the session's runner.
@@ -296,6 +306,15 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
+    /// Captures the local execution context for sessions saved before it was persisted explicitly.
+    pub fn initialize_local_context(&mut self) {
+        if self.local_networks.is_none() {
+            self.local_networks = Some(self.evm_opts.networks);
+            self.local_chain_id =
+                self.evm_opts.env.chain_id.or(self.foundry_config.chain.map(|chain| chain.id()));
+        }
+    }
+
     /// Detect the solc version to know if VM can be injected.
     pub fn detect_solc(&mut self) -> Result<()> {
         if self.foundry_config.solc.is_none() {
@@ -627,6 +646,25 @@ mod tests {
     use foundry_compilers::artifacts::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
     use foundry_evm::core::evm::EthEvmNetwork;
     use std::fs;
+
+    #[test]
+    fn initialize_local_context_migrates_legacy_session() {
+        let mut config = SessionSourceConfig::<EthEvmNetwork>::default();
+        config.evm_opts.networks = NetworkConfigs::with_tempo();
+        config.evm_opts.env.chain_id = Some(4217);
+
+        config.initialize_local_context();
+
+        assert_eq!(config.local_networks, Some(NetworkConfigs::with_tempo()));
+        assert_eq!(config.local_chain_id, Some(4217));
+
+        config.evm_opts.networks = NetworkConfigs::default();
+        config.evm_opts.env.chain_id = Some(1);
+        config.initialize_local_context();
+
+        assert_eq!(config.local_networks, Some(NetworkConfigs::with_tempo()));
+        assert_eq!(config.local_chain_id, Some(4217));
+    }
 
     /// Regression test for <https://github.com/foundry-rs/foundry/issues/14711>.
     ///

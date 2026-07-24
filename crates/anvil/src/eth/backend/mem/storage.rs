@@ -28,6 +28,8 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadBlockParticipants;
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
@@ -314,6 +316,9 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Monad senders and authorities retained even when old transaction bodies are pruned.
+    #[cfg(feature = "monad")]
+    pub monad_block_participants: B256HashMap<MonadBlockParticipants>,
 }
 
 impl<N: Network> BlockchainStorage<N> {
@@ -366,6 +371,8 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
         }
     }
 
@@ -382,6 +389,8 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
         }
     }
 
@@ -401,6 +410,8 @@ impl<N: Network> BlockchainStorage<N> {
                 if let Some(block) = self.blocks.remove(&hash) {
                     removed.push(block);
                 }
+                #[cfg(feature = "monad")]
+                self.monad_block_participants.remove(&hash);
                 self.hashes.remove(&i);
             }
         }
@@ -419,6 +430,8 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
         }
     }
 

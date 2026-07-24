@@ -2,14 +2,14 @@
 
 use super::BackendError;
 use crate::{
-    FoundryInspectorExt,
+    FoundryContextState, FoundryInspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
     evm::{
-        EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor,
-        TxEnvFor,
+        ContextAuxFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
+        HaltReasonFor, SpecFor, TxEnvFor, execute_replay_transaction,
     },
     fork::{CreateFork, ForkId},
 };
@@ -87,13 +87,28 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
+        let context_aux = self.context_for_synthetic_transaction(tx_env)?;
+        self.inspect_with_context(evm_env, tx_env, context_aux, inspector)
+    }
+
+    /// Executes the configured transaction with explicit network-specific context.
+    #[instrument(name = "inspect", level = "debug", skip_all)]
+    pub fn inspect_with_context<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &mut TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
-        let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+        let factory = FEN::EvmFactory::default();
+        let mut evm = factory.create_foundry_evm_with_inspector(
             self,
             evm_env.clone(),
+            context_aux,
             inspector,
         );
 
@@ -103,6 +118,37 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         *evm_env = evm.finish().1;
 
         Ok(res)
+    }
+
+    /// Executes a canonical replay transaction with explicit network-specific context.
+    #[instrument(name = "inspect_replay", level = "debug", skip_all)]
+    pub fn inspect_replay_with_context<
+        I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>,
+    >(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &mut TxEnvFor<FEN>,
+        context_aux: ContextAuxFor<FEN>,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
+        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
+
+        let factory = FEN::EvmFactory::default();
+        let is_protocol_system = factory.protocol_system_call(tx_env)?.is_some();
+        let mut evm = factory.create_foundry_evm_with_inspector(
+            self,
+            evm_env.clone(),
+            context_aux,
+            inspector,
+        );
+        let result = execute_replay_transaction(&factory, &mut evm, tx_env.clone())?;
+
+        if !is_protocol_system {
+            *tx_env = evm.tx().clone();
+        }
+        *evm_env = evm.finish().1;
+
+        Ok(result)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
@@ -134,23 +180,30 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN> {
+    fn context_for_synthetic_transaction(
+        &self,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ContextAuxFor<FEN>> {
+        self.backend.context_for_synthetic_transaction(tx)
+    }
+
     fn snapshot_state(
         &mut self,
-        journaled_state: &JournaledState,
+        context_state: &FoundryContextState<ContextAuxFor<FEN>>,
         evm_env: &EvmEnvFor<FEN>,
     ) -> U256 {
-        self.backend_mut().snapshot_state(journaled_state, evm_env)
+        self.backend_mut().snapshot_state(context_state, evm_env)
     }
 
     fn revert_state(
         &mut self,
         id: U256,
-        journaled_state: &JournaledState,
+        context_state: &FoundryContextState<ContextAuxFor<FEN>>,
         evm_env: &mut EvmEnvFor<FEN>,
         caller: Address,
         action: RevertStateSnapshotAction,
-    ) -> Option<JournaledState> {
-        self.backend_mut().revert_state(id, journaled_state, evm_env, caller, action)
+    ) -> Option<FoundryContextState<ContextAuxFor<FEN>>> {
+        self.backend_mut().revert_state(id, context_state, evm_env, caller, action)
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {

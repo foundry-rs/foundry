@@ -11,7 +11,7 @@ use crate::{
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, ChainId, U256};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
@@ -22,7 +22,7 @@ use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
 };
-use foundry_config::{Config, InlineConfig};
+use foundry_config::{Config, FoundryHardfork, InlineConfig};
 use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
@@ -34,7 +34,7 @@ use foundry_evm::{
         strategies::{EnumBounds, LiteralsDictionary},
     },
     inspectors::{CheatsConfig, EdgeIndexMap},
-    opts::EvmOpts,
+    opts::{EvmOpts, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
@@ -481,6 +481,10 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub tx_env: TxEnvFor<FEN>,
     /// EVM version.
     pub spec_id: SpecFor<FEN>,
+    /// Exact network hardfork selected for the execution environment.
+    pub hardfork: Option<FoundryHardfork>,
+    /// Source chain ID used to resolve fork hardfork schedules.
+    pub fork_chain_id: Option<ChainId>,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
@@ -520,9 +524,17 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
+        self.hardfork = resolve_execution_spec(
+            &config,
+            self.evm_opts.networks,
+            &mut self.evm_env,
+            self.fork_chain_id,
+            None,
+            None,
+        );
+        self.spec_id = self.evm_env.cfg_env.spec;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
@@ -618,6 +630,8 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
+    /// Source chain ID used to resolve the fork's hardfork schedule.
+    pub fork_chain_id: Option<ChainId>,
     /// Project config.
     pub config: Arc<Config>,
     /// Parsed inline configuration.
@@ -666,6 +680,7 @@ impl MultiContractRunnerBuilder {
             sender: Default::default(),
             initial_balance: Default::default(),
             fork: Default::default(),
+            fork_chain_id: None,
             line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
@@ -730,6 +745,11 @@ impl MultiContractRunnerBuilder {
         self
     }
 
+    pub const fn with_fork_chain_id(mut self, chain_id: Option<ChainId>) -> Self {
+        self.fork_chain_id = chain_id;
+        self
+    }
+
     pub const fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
         self
@@ -770,7 +790,7 @@ impl MultiContractRunnerBuilder {
     pub fn build<FEN: FoundryEvmNetwork, C: Compiler<CompilerContract = Contract>>(
         self,
         output: &ProjectCompileOutput,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner<FEN>> {
@@ -914,6 +934,19 @@ impl MultiContractRunnerBuilder {
             )
         };
 
+        let fork_chain_id = self.fork_chain_id.or_else(|| {
+            (self.fork.is_some() || evm_opts.fork_url.is_some()).then_some(evm_env.cfg_env.chain_id)
+        });
+        let hardfork = resolve_execution_spec(
+            &self.config,
+            evm_opts.networks,
+            &mut evm_env,
+            fork_chain_id,
+            None,
+            None,
+        );
+        let spec_id = evm_env.cfg_env.spec;
+
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             revert_decoder,
@@ -931,7 +964,9 @@ impl MultiContractRunnerBuilder {
                 evm_opts,
                 evm_env,
                 tx_env,
-                spec_id: self.config.evm_spec_id(),
+                spec_id,
+                hardfork,
+                fork_chain_id,
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,

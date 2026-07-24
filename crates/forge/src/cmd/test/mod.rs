@@ -50,7 +50,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
+    Config, FoundryHardfork, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -59,6 +59,8 @@ use foundry_config::{
     fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -67,7 +69,6 @@ use foundry_evm::{
     },
     executors::ShowmapDomain,
     fuzz::{BasicTxDetails, CounterExample},
-    hardforks::TempoHardfork,
     opts::EvmOpts,
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
@@ -267,6 +268,8 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
 #[derive(Clone, Copy)]
 enum NetworkDispatchKind {
     Tempo,
+    #[cfg(feature = "monad")]
+    Monad,
     #[cfg(feature = "optimism")]
     Optimism,
     Eth,
@@ -275,6 +278,11 @@ enum NetworkDispatchKind {
 const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
     if evm_opts.networks.is_tempo() {
         return NetworkDispatchKind::Tempo;
+    }
+
+    #[cfg(feature = "monad")]
+    if evm_opts.networks.is_monad() {
+        return NetworkDispatchKind::Monad;
     }
 
     #[cfg(feature = "optimism")]
@@ -2487,8 +2495,11 @@ impl TestArgs {
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork_context) = evm_opts
+            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+            .await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
 
         let config = Arc::new(config);
@@ -2499,7 +2510,12 @@ impl TestArgs {
             .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(evm_opts.get_fork(
+                &config,
+                fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
+                fork_block,
+            ))
+            .with_fork_chain_id(fork_chain_id)
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .set_coverage(execution.coverage)
@@ -2523,15 +2539,23 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         options: FuzzMinimizeNetworkPassOptions,
     ) -> eyre::Result<MultiContractRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork_context) = evm_opts
+            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+            .await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
 
         let config = Arc::new(config);
         MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(evm_opts.get_fork(
+                &config,
+                fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
+                fork_block,
+            ))
+            .with_fork_chain_id(fork_chain_id)
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .with_multi_network(options.multi_network)
@@ -2554,6 +2578,13 @@ impl TestArgs {
         match network_dispatch_kind(dispatch_opts) {
             NetworkDispatchKind::Tempo => {
                 self.build_and_run_tests::<TempoEvmNetwork>(
+                    config, evm_opts, output, filter, execution,
+                )
+                .await
+            }
+            #[cfg(feature = "monad")]
+            NetworkDispatchKind::Monad => {
+                self.build_and_run_tests::<MonadEvmNetwork>(
                     config, evm_opts, output, filter, execution,
                 )
                 .await
@@ -2586,6 +2617,11 @@ impl TestArgs {
         match network_dispatch_kind(dispatch_opts) {
             NetworkDispatchKind::Tempo => self
                 .build_fuzz_minimize_runner::<TempoEvmNetwork>(config, evm_opts, output, options)
+                .await
+                .map(|runner| fuzz_minimize_replay(runner, filter)),
+            #[cfg(feature = "monad")]
+            NetworkDispatchKind::Monad => self
+                .build_fuzz_minimize_runner::<MonadEvmNetwork>(config, evm_opts, output, options)
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             #[cfg(feature = "optimism")]
@@ -2801,7 +2837,7 @@ impl TestArgs {
         // In multi-pass mode the per-pass summary is suppressed; the merged summary is
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
-        let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
+        let resolved_hardfork = runner.tcfg.hardfork;
         let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
         // Run tests in a streaming fashion.
@@ -2828,10 +2864,20 @@ impl TestArgs {
             .with_tracing_config(tracing)
             .with_known_contracts(&known_contracts)
             .with_chain_id(remote_chain.map(|c| c.id()))
-            .with_tempo_hardfork(
-                (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
-                    .then(|| config.evm_spec_id::<TempoHardfork>()),
-            );
+            .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+                _ => None,
+            }));
+        #[cfg(feature = "monad")]
+        {
+            builder =
+                builder.with_monad_hardfork(resolved_hardfork.and_then(
+                    |hardfork| match hardfork {
+                        FoundryHardfork::Monad(hardfork) => Some(hardfork),
+                        _ => None,
+                    },
+                ));
+        }
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
@@ -2850,6 +2896,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
+                FEN::EXTRA_CHEATCODE_ADDRESSES.iter().copied(),
             )
         });
 

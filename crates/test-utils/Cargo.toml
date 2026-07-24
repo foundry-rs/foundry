@@ -24,11 +24,13 @@ alloy-chains.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 
+axum.workspace = true
 eyre.workspace = true
 fd-lock = "4.0"
 parking_lot.workspace = true
 regex.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["net", "rt"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand.workspace = true
@@ -41,9 +43,6 @@ svm.workspace = true
 # Pinned dependencies. See /Cargo.toml.
 [target.'cfg(any())'.dependencies]
 idna_adapter.workspace = true
-
-[dev-dependencies]
-tokio.workspace = true
 
 [features]
 default = ["optimism"]

@@ -531,6 +531,17 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "83982c7de9e0a44
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "83982c7de9e0a4448b1859822b1cd82ce9b2f05f" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "83982c7de9e0a4448b1859822b1cd82ce9b2f05f" }
 
+# Monad
+alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", rev = "efe250baeee0366f4a2a03cbf6b34ce3bb2165d9", default-features = false, features = [
+    "std",
+    "memory_limit",
+] }
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "c3a8a3c745750159c6887c67ef50964596194c8d", default-features = false, features = [
+    "std",
+    "serde",
+    "memory_limit",
+] }
+
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # testing
@@ -542,6 +553,8 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "c3a8a3c745750159c6887c67ef50964596194c8d" }
+
 ## foundry-core
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }

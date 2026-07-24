@@ -50,7 +50,7 @@ use foundry_evm::{
             replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
-        replay_sequence_for_minimization,
+        replay_sequence_for_minimization, should_ignore_revert,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -3372,20 +3372,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return SymbolicFuzzSeedReplay::Rejected;
         }
 
-        let success = if !fuzz_config.fail_on_revert
-            && raw_call_result
-                .reverter
-                .is_some_and(|reverter| reverter != self.address && reverter != CHEATCODE_ADDRESS)
-        {
-            true
-        } else {
-            self.executor.is_raw_call_success(
-                self.address,
-                Cow::Borrowed(&raw_call_result.state_changeset),
-                &raw_call_result,
-                false,
-            )
-        };
+        let success = should_ignore_revert::<FEN>(
+            fuzz_config.fail_on_revert,
+            self.address,
+            raw_call_result.reverter,
+        ) || self.executor.is_raw_call_success(
+            self.address,
+            Cow::Borrowed(&raw_call_result.state_changeset),
+            &raw_call_result,
+            false,
+        );
 
         if success { SymbolicFuzzSeedReplay::Success } else { SymbolicFuzzSeedReplay::Failure }
     }

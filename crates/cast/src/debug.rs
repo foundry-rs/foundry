@@ -2,8 +2,12 @@ use alloy_chains::Chain;
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
-use foundry_config::{Config, TracingConfig};
+#[cfg(feature = "monad")]
+use foundry_config::NamedChain;
+use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
+#[cfg(feature = "monad")]
+use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     hardforks::TempoHardfork,
     traces::{
@@ -23,7 +27,7 @@ pub(crate) async fn handle_traces(
     tracing: &TracingConfig,
     with_local_artifacts: bool,
     debug: bool,
-    tempo_hardfork: Option<TempoHardfork>,
+    hardfork: Option<FoundryHardfork>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
@@ -41,7 +45,20 @@ pub(crate) async fn handle_traces(
         (None, ContractSources::default())
     };
 
+    let resolved_hardfork = hardfork.or(config.hardfork);
+    let tempo_hardfork = resolved_hardfork.and_then(|hardfork| match hardfork {
+        FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+        _ => None,
+    });
     let is_tempo = tempo_hardfork.is_some() || chain.is_tempo();
+    #[cfg(feature = "monad")]
+    let is_monad = config.networks.is_monad()
+        || matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet));
+    #[cfg(feature = "monad")]
+    let monad_hardfork = resolved_hardfork.and_then(|hardfork| match hardfork {
+        FoundryHardfork::Monad(hardfork) => Some(hardfork),
+        _ => None,
+    });
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
@@ -50,6 +67,12 @@ pub(crate) async fn handle_traces(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),
         );
+    #[cfg(feature = "monad")]
+    {
+        builder = builder.with_monad_hardfork(
+            monad_hardfork.or_else(|| is_monad.then(|| config.evm_spec_id::<MonadHardfork>())),
+        );
+    }
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);

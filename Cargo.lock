@@ -408,6 +408,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-monad-evm"
+version = "0.4.0"
+source = "git+https://github.com/category-labs/alloy-monad-evm.git?rev=efe250baeee0366f4a2a03cbf6b34ce3bb2165d9#efe250baeee0366f4a2a03cbf6b34ce3bb2165d9"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "monad-revm",
+ "revm",
+]
+
+[[package]]
 name = "alloy-network"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1214,6 +1225,7 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
+ "alloy-monad-evm",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",
@@ -1254,6 +1266,7 @@ dependencies = [
  "hyper",
  "imbl",
  "itertools 0.15.0",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",
@@ -3046,6 +3059,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm",
+ "foundry-evm-networks",
  "foundry-test-utils",
  "itertools 0.15.0",
  "reqwest 0.13.4",
@@ -4856,7 +4870,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5322,6 +5336,7 @@ dependencies = [
  "jsonpath_lib",
  "k256",
  "memchr",
+ "monad-revm",
  "p256",
  "parking_lot",
  "proptest",
@@ -5735,6 +5750,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-json-abi",
+ "alloy-monad-evm",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",
@@ -5758,6 +5774,7 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.15.0",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types",
@@ -5830,6 +5847,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-rpc-types",
  "foundry-compilers",
+ "monad-revm",
  "op-revm",
  "revm",
  "serde",
@@ -5847,6 +5865,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "foundry-evm-hardforks",
+ "monad-revm",
  "revm",
  "serde",
  "serde_json",
@@ -5898,10 +5917,12 @@ dependencies = [
  "foundry-config",
  "foundry-evm-core",
  "foundry-evm-hardforks",
+ "foundry-evm-networks",
  "foundry-linking",
  "futures",
  "itertools 0.15.0",
  "memchr",
+ "monad-revm",
  "rayon",
  "reqwest 0.13.4",
  "revm",
@@ -5996,6 +6017,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives",
  "alloy-provider",
+ "axum",
  "eyre",
  "fd-lock",
  "foundry-block-explorers",
@@ -6264,8 +6286,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
 ]
 
 [[package]]
@@ -6709,7 +6731,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -7713,6 +7735,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "monad-revm"
+version = "0.3.0"
+source = "git+https://github.com/category-labs/monad-revm.git?rev=c3a8a3c745750159c6887c67ef50964596194c8d#c3a8a3c745750159c6887c67ef50964596194c8d"
+dependencies = [
+ "alloy-sol-types",
+ "auto_impl",
+ "revm",
+ "revm-interpreter",
+ "serde",
+]
+
+[[package]]
 name = "mpp"
 version = "0.11.0"
 source = "git+https://github.com/tempoxyz/mpp-rs?rev=e2e27edc17c1f8274bab982f3dc91477fcc01a44#e2e27edc17c1f8274bab982f3dc91477fcc01a44"
@@ -8115,7 +8149,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b685c8311c9171d1bd2895222965d25616b2de2cb5819dd3504ed9250df9fecd"
 dependencies = [
  "ahash",
- "hashbrown 0.17.1",
+ "hashbrown 0.16.1",
  "parking_lot",
  "stable_deref_trait",
 ]

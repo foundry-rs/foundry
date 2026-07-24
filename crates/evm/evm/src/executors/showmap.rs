@@ -24,6 +24,7 @@ use crate::{
             call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
             snapshot_edge_fingerprint,
         },
+        should_ignore_revert,
     },
     inspectors::EdgeIndexMap,
 };
@@ -653,15 +654,8 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
     call_result: &mut crate::executors::RawCallResult<FEN>,
     fail_on_revert: bool,
 ) -> bool {
-    if !fail_on_revert
-        && call_result
-            .reverter
-            .is_some_and(|reverter| reverter != target_addr && reverter != CHEATCODE_ADDRESS)
-    {
-        true
-    } else {
-        executor.is_raw_call_mut_success(target_addr, call_result, false)
-    }
+    should_ignore_revert::<FEN>(fail_on_revert, target_addr, call_result.reverter)
+        || executor.is_raw_call_mut_success(target_addr, call_result, false)
 }
 
 fn broken_invariant<FEN: FoundryEvmNetwork>(

@@ -36,6 +36,7 @@ alloy-primitives = { workspace = true, features = [
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
+alloy-monad-evm = { workspace = true, optional = true }
 alloy-eips.workspace = true
 alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
@@ -55,6 +56,7 @@ revm = { workspace = true, features = [
     "blst",
 ] }
 revm-inspectors.workspace = true
+monad-revm = { workspace = true, optional = true }
 op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
@@ -88,6 +90,13 @@ tempo-primitives.workspace = true
 
 [features]
 default = ["optimism"]
+monad = [
+    "anvil/monad",
+    "dep:alloy-monad-evm",
+    "dep:monad-revm",
+    "foundry-evm-hardforks/monad",
+    "foundry-evm-networks/monad",
+]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-network",

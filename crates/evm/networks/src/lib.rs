@@ -13,7 +13,16 @@ use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
+#[cfg(feature = "monad")]
+use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+#[cfg(not(feature = "monad"))]
+type MonadHardfork = ();
+#[cfg(feature = "monad")]
+use monad_revm::{
+    MONAD_MAX_CODE_SIZE, MONAD_MAX_INITCODE_SIZE, reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+    staking::STAKING_ADDRESS,
+};
 use revm::precompile::{
     Precompile as RevmPrecompile,
     secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
@@ -50,6 +59,14 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("StorageCredits", STORAGE_CREDITS_ADDRESS),
     ("CurrentCommittee", CURRENT_COMMITTEE_ADDRESS),
 ];
+
+#[cfg(feature = "monad")]
+const MONAD_PRECOMPILE_LABELS: &[(&str, Address)] =
+    &[("Staking", STAKING_ADDRESS), ("ReserveBalance", RESERVE_BALANCE_ADDRESS)];
+
+#[cfg(feature = "monad")]
+const MONAD_PRECOMPILES: &[(&str, Address)] =
+    &[("MonadStaking", STAKING_ADDRESS), ("MonadReserveBalance", RESERVE_BALANCE_ADDRESS)];
 
 /// BSC secp256r1 precompile address introduced by the Haber hardfork.
 const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
@@ -122,6 +139,13 @@ pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterat
         .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
 }
 
+/// Returns whether a well-known Monad precompile address is active at `hardfork`.
+#[cfg(feature = "monad")]
+pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
+    address == STAKING_ADDRESS
+        || (address == RESERVE_BALANCE_ADDRESS && MonadHardfork::MonadNine.is_enabled_in(hardfork))
+}
+
 #[derive(
     Clone,
     Copy,
@@ -144,6 +168,17 @@ pub enum NetworkVariant {
     #[cfg(feature = "optimism")]
     Optimism,
     Tempo,
+    #[cfg(feature = "monad")]
+    Monad,
+}
+
+/// Runtime and initcode byte-size limits for a configured network.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetworkContractSizeLimits {
+    /// Maximum deployed runtime bytecode size.
+    pub runtime: usize,
+    /// Maximum initcode bytecode size.
+    pub initcode: usize,
 }
 
 impl std::str::FromStr for NetworkVariant {
@@ -155,6 +190,8 @@ impl std::str::FromStr for NetworkVariant {
             #[cfg(feature = "optimism")]
             "optimism" => Ok(Self::Optimism),
             "tempo" => Ok(Self::Tempo),
+            #[cfg(feature = "monad")]
+            "monad" => Ok(Self::Monad),
             _ => Err(format!("unknown network variant: {s}")),
         }
     }
@@ -177,6 +214,12 @@ impl NetworkVariant {
         matches!(self, Self::Tempo)
     }
 
+    /// Returns `true` if this is the Monad network variant.
+    #[cfg(feature = "monad")]
+    pub const fn is_monad(&self) -> bool {
+        matches!(self, Self::Monad)
+    }
+
     /// Returns the network variant name.
     pub const fn name(&self) -> &'static str {
         match self {
@@ -184,6 +227,8 @@ impl NetworkVariant {
             #[cfg(feature = "optimism")]
             Self::Optimism => "optimism",
             Self::Tempo => "tempo",
+            #[cfg(feature = "monad")]
+            Self::Monad => "monad",
         }
     }
 }
@@ -200,6 +245,10 @@ impl From<ChainId> for NetworkVariant {
         if chain.is_tempo() {
             return Self::Tempo;
         }
+        #[cfg(feature = "monad")]
+        if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
+            return Self::Monad;
+        }
         #[cfg(feature = "optimism")]
         if chain.is_optimism() {
             return Self::Optimism;
@@ -213,15 +262,18 @@ pub struct NetworkConfigs {
     /// Enable a specific network family.
     #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
+    #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
     #[serde(default)]
     pub(crate) network: Option<NetworkVariant>,
     /// Enable Celo network features.
     #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
+    #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
     celo: bool,
     /// Enable Optimism network features (deprecated: use --network optimism).
     #[cfg(feature = "optimism")]
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
+    #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
     // canonical form is `network = "optimism"`.
     #[serde(default)]
@@ -229,10 +281,19 @@ pub struct NetworkConfigs {
     /// Enable Tempo network features (deprecated: use --network tempo).
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
+    #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
     // canonical form is `network = "tempo"`.
     #[serde(default)]
     tempo: bool,
+    /// Enable Monad network features (deprecated: use --network monad).
+    #[cfg(feature = "monad")]
+    #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
+    #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
+    // Deserialize-only legacy alias: accepted in foundry.toml but never serialized - the
+    // canonical form is `network = "monad"`.
+    #[serde(default)]
+    monad: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
     #[serde(default)]
@@ -240,9 +301,9 @@ pub struct NetworkConfigs {
 }
 
 // Custom `Serialize` impl: always emits the *resolved* network as the canonical
-// `network = "..."` field, and never emits the legacy `tempo` / `optimism` aliases. This avoids
-// confusing output like `network = "tempo"` next to `tempo = false`, and ensures `tempo = true`
-// in foundry.toml round-trips as `network = "tempo"`.
+// `network = "..."` field, and never emits the legacy `tempo` / `optimism` / `monad` aliases.
+// This avoids confusing output like `network = "monad"` next to `monad = false`, and ensures
+// legacy aliases in foundry.toml round-trip as canonical network values.
 impl Serialize for NetworkConfigs {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -263,8 +324,23 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Tempo), tempo: true, ..Default::default() }
     }
 
+    #[cfg(feature = "monad")]
+    pub fn with_monad() -> Self {
+        Self { network: Some(NetworkVariant::Monad), monad: true, ..Default::default() }
+    }
+
     pub const fn is_tempo(&self) -> bool {
         if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
+    }
+
+    #[cfg(feature = "monad")]
+    pub const fn is_monad(&self) -> bool {
+        if let Some(network) = self.resolved_network() { network.is_monad() } else { false }
+    }
+
+    #[cfg(not(feature = "monad"))]
+    pub const fn is_monad(&self) -> bool {
+        false
     }
 
     pub const fn is_celo(&self) -> bool {
@@ -282,6 +358,10 @@ impl NetworkConfigs {
         }
         if self.tempo {
             return Some(NetworkVariant::Tempo);
+        }
+        #[cfg(feature = "monad")]
+        if self.monad {
+            return Some(NetworkVariant::Monad);
         }
         None
     }
@@ -313,6 +393,21 @@ impl NetworkConfigs {
         BaseFeeParams::ethereum()
     }
 
+    /// Returns contract size limits for networks that override Ethereum defaults.
+    #[cfg(feature = "monad")]
+    pub fn contract_size_limits(&self) -> Option<NetworkContractSizeLimits> {
+        self.is_monad().then_some(NetworkContractSizeLimits {
+            runtime: MONAD_MAX_CODE_SIZE,
+            initcode: MONAD_MAX_INITCODE_SIZE,
+        })
+    }
+
+    /// Returns contract size limits for networks that override Ethereum defaults.
+    #[cfg(not(feature = "monad"))]
+    pub const fn contract_size_limits(&self) -> Option<NetworkContractSizeLimits> {
+        None
+    }
+
     pub fn bypass_prevrandao(&self, chain_id: u64) -> bool {
         if let Ok(
             Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk | RskTestnet | Gnosis | Chiado,
@@ -336,6 +431,10 @@ impl NetworkConfigs {
         }
         if chain.is_tempo() {
             return Self::with_tempo();
+        }
+        #[cfg(feature = "monad")]
+        if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
+            return Self::with_monad();
         }
         #[cfg(feature = "optimism")]
         if chain.is_optimism() {
@@ -363,6 +462,8 @@ impl NetworkConfigs {
             FoundryHardfork::Tempo(_) => Self::with_tempo(),
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(_) => Self::with_optimism(),
+            #[cfg(feature = "monad")]
+            FoundryHardfork::Monad(_) => Self::with_monad(),
         };
 
         Ok(network)
@@ -398,7 +499,10 @@ impl NetworkConfigs {
     pub fn precompiles_label(
         self,
         tempo_hardfork: Option<TempoHardfork>,
+        monad_hardfork: Option<MonadHardfork>,
     ) -> AddressHashMap<String> {
+        #[cfg(not(feature = "monad"))]
+        let _ = monad_hardfork;
         let mut labels = AddressHashMap::default();
         if self.celo {
             labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
@@ -416,11 +520,31 @@ impl NetworkConfigs {
                     .map(|(label, address)| (address, label.to_string())),
             );
         }
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            labels.extend(
+                MONAD_PRECOMPILE_LABELS
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        monad_hardfork.is_none_or(|hardfork| {
+                            is_monad_precompile_active_at(*address, hardfork)
+                        })
+                    })
+                    .map(|(label, address)| (address, label.to_string())),
+            );
+        }
         labels
     }
 
     /// Returns precompiles for configured networks.
-    pub fn precompiles(self, tempo_hardfork: Option<TempoHardfork>) -> BTreeMap<String, Address> {
+    pub fn precompiles(
+        self,
+        tempo_hardfork: Option<TempoHardfork>,
+        monad_hardfork: Option<MonadHardfork>,
+    ) -> BTreeMap<String, Address> {
+        #[cfg(not(feature = "monad"))]
+        let _ = monad_hardfork;
         let mut precompiles = BTreeMap::new();
         if self.celo {
             precompiles
@@ -439,6 +563,20 @@ impl NetworkConfigs {
                     .map(|(label, address)| (label.to_string(), address)),
             );
         }
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            precompiles.extend(
+                MONAD_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        monad_hardfork.is_none_or(|hardfork| {
+                            is_monad_precompile_active_at(*address, hardfork)
+                        })
+                    })
+                    .map(|(label, address)| (label.to_string(), address)),
+            );
+        }
         precompiles
     }
 }
@@ -449,6 +587,10 @@ impl From<NetworkVariant> for NetworkConfigs {
             NetworkVariant::Ethereum => Self::default(),
             NetworkVariant::Tempo => {
                 Self { network: Some(network), tempo: true, ..Default::default() }
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                Self { network: Some(network), monad: true, ..Default::default() }
             }
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
@@ -475,12 +617,27 @@ mod tests {
         assert!(NetworkVariant::Tempo.is_tempo());
         assert!(!NetworkVariant::Tempo.is_ethereum());
 
+        #[cfg(feature = "monad")]
+        {
+            assert!(!NetworkVariant::Ethereum.is_monad());
+            assert!(!NetworkVariant::Tempo.is_monad());
+            assert!(NetworkVariant::Monad.is_monad());
+            assert!(!NetworkVariant::Monad.is_ethereum());
+            assert!(!NetworkVariant::Monad.is_tempo());
+        }
+
         #[cfg(feature = "optimism")]
         {
             assert!(NetworkVariant::Optimism.is_optimism());
             assert!(!NetworkVariant::Optimism.is_ethereum());
             assert!(!NetworkVariant::Optimism.is_tempo());
+
+            #[cfg(feature = "monad")]
+            assert!(!NetworkVariant::Optimism.is_monad());
         }
+
+        #[cfg(all(feature = "optimism", feature = "monad"))]
+        assert!(!NetworkVariant::Monad.is_optimism());
     }
 
     #[test]
@@ -489,8 +646,8 @@ mod tests {
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
-        assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
-        assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
+        assert_eq!(via_new.precompiles(None, None), via_old.precompiles(None, None));
+        assert_eq!(via_new.precompiles_label(None, None), via_old.precompiles_label(None, None));
     }
 
     fn bsc_p256_gas_used(chain_id: ChainId, timestamp: u64) -> Option<u64> {
@@ -544,33 +701,65 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
 
         assert_eq!(
-            cfg.precompiles(None).get("TIP20ChannelReserve"),
+            cfg.precompiles(None, None).get("TIP20ChannelReserve"),
             Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
         );
-        assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("TIP20ChannelReserve"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("ReceivePolicyGuard"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2)).contains_key("AddressRegistry"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2)).contains_key("SignatureVerifier"));
+        assert!(
+            !cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("TIP20ChannelReserve")
+        );
+        assert!(!cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("ReceivePolicyGuard"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("AddressRegistry"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("SignatureVerifier"));
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3)).get("AddressRegistry"),
+            cfg.precompiles(Some(TempoHardfork::T3), None).get("AddressRegistry"),
             Some(&ADDRESS_REGISTRY_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3)).get("SignatureVerifier"),
+            cfg.precompiles(Some(TempoHardfork::T3), None).get("SignatureVerifier"),
             Some(&SIGNATURE_VERIFIER_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(Some(TempoHardfork::T5)).get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            cfg.precompiles_label(Some(TempoHardfork::T5), None)
+                .get(&TIP20_CHANNEL_RESERVE_ADDRESS),
             Some(&"TIP20ChannelReserve".to_string())
         );
-        assert!(cfg.precompiles_label(None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(cfg.precompiles_label(None, None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(
-            !cfg.precompiles_label(Some(TempoHardfork::T5))
+            !cfg.precompiles_label(Some(TempoHardfork::T5), None)
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
         assert!(
-            cfg.precompiles_label(Some(TempoHardfork::T6))
+            cfg.precompiles_label(Some(TempoHardfork::T6), None)
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn canonical_monad_network_reports_hardfork_gated_precompiles() {
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Monad), ..Default::default() };
+
+        assert_eq!(
+            cfg.precompiles(None, Some(MonadHardfork::MonadEight)).get("MonadStaking"),
+            Some(&STAKING_ADDRESS)
+        );
+        assert!(
+            !cfg.precompiles(None, Some(MonadHardfork::MonadEight))
+                .contains_key("MonadReserveBalance")
+        );
+        assert_eq!(
+            cfg.precompiles(None, Some(MonadHardfork::MonadNine)).get("MonadReserveBalance"),
+            Some(&RESERVE_BALANCE_ADDRESS)
+        );
+        assert_eq!(
+            cfg.precompiles_label(None, Some(MonadHardfork::MonadNine))
+                .get(&RESERVE_BALANCE_ADDRESS),
+            Some(&"ReserveBalance".to_string())
+        );
+        assert!(cfg.precompiles_label(None, None).contains_key(&RESERVE_BALANCE_ADDRESS));
+        assert!(
+            !cfg.precompiles_label(None, Some(MonadHardfork::MonadEight))
+                .contains_key(&RESERVE_BALANCE_ADDRESS)
         );
     }
 
@@ -582,8 +771,8 @@ mod tests {
 
         // The hardfork-filtered precompile map must honor the same T7 activation.
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
-        assert!(!cfg.precompiles(Some(TempoHardfork::T6)).contains_key("StorageCredits"));
-        assert!(cfg.precompiles(Some(TempoHardfork::T7)).contains_key("StorageCredits"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T6), None).contains_key("StorageCredits"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T7), None).contains_key("StorageCredits"));
     }
 
     #[test]
@@ -593,8 +782,8 @@ mod tests {
         assert!(TEMPO_PRECOMPILE_ADDRESSES.contains(&CURRENT_COMMITTEE_ADDRESS));
 
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
-        assert!(!cfg.precompiles(Some(TempoHardfork::T7)).contains_key("CurrentCommittee"));
-        assert!(cfg.precompiles(Some(TempoHardfork::T8)).contains_key("CurrentCommittee"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T7), None).contains_key("CurrentCommittee"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T8), None).contains_key("CurrentCommittee"));
     }
 
     // --- resolved() / active_network_name ---
@@ -603,6 +792,23 @@ mod tests {
     fn active_network_name_tempo() {
         let cfg = NetworkConfigs::with_tempo();
         assert_eq!(cfg.active_network_name(), Some("tempo"));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn active_network_name_monad() {
+        let cfg = NetworkConfigs::with_monad();
+        assert_eq!(cfg.active_network_name(), Some("monad"));
+        assert!(cfg.is_monad());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn contract_size_limits_monad() {
+        let limits = NetworkConfigs::with_monad().contract_size_limits().unwrap();
+        assert_eq!(limits.runtime, MONAD_MAX_CODE_SIZE);
+        assert_eq!(limits.initcode, MONAD_MAX_INITCODE_SIZE);
+        assert!(NetworkConfigs::default().contract_size_limits().is_none());
     }
 
     #[test]
@@ -629,14 +835,36 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
+    fn serde_roundtrip_monad() {
+        let original = NetworkConfigs::with_monad();
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
+        assert!(restored.is_monad());
+        assert!(!restored.is_tempo());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn serde_legacy_monad_bool_deserialized() {
+        let json = r#"{"monad": true, "celo": false, "bypass_prevrandao": false}"#;
+        let cfg: NetworkConfigs = serde_json::from_str(json).unwrap();
+        assert!(cfg.is_monad());
+    }
+
+    #[test]
     fn serde_serializes_legacy_alias_as_canonical_network() {
-        // Legacy `tempo = true` should serialize as the canonical `network = "tempo"`,
-        // and the legacy `tempo` / `optimism` keys must not appear in the output.
-        let cfg = NetworkConfigs { tempo: true, ..Default::default() };
-        let json = serde_json::to_value(cfg).unwrap();
-        assert_eq!(json["network"], serde_json::json!("tempo"));
-        assert!(json.get("tempo").is_none(), "legacy `tempo` key should not be serialized");
-        assert!(json.get("optimism").is_none(), "legacy `optimism` key should not be serialized");
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut cases = vec![(NetworkConfigs { tempo: true, ..Default::default() }, "tempo")];
+        #[cfg(feature = "monad")]
+        cases.push((NetworkConfigs { monad: true, ..Default::default() }, "monad"));
+
+        for (cfg, expected) in cases {
+            let json = serde_json::to_value(cfg).unwrap();
+            assert_eq!(json["network"], serde_json::json!(expected));
+            assert!(json.get("tempo").is_none(), "legacy `tempo` key should not be serialized");
+            assert!(json.get("monad").is_none(), "legacy `monad` key should not be serialized");
+        }
     }
 
     #[test]
@@ -644,6 +872,22 @@ mod tests {
         let json_tempo = r#"{"network": "tempo", "celo": false, "bypass_prevrandao": false}"#;
         let cfg_tempo: NetworkConfigs = serde_json::from_str(json_tempo).unwrap();
         assert!(cfg_tempo.is_tempo());
+
+        #[cfg(feature = "monad")]
+        {
+            let json_monad = r#"{"network": "monad", "celo": false, "bypass_prevrandao": false}"#;
+            let cfg_monad: NetworkConfigs = serde_json::from_str(json_monad).unwrap();
+            assert!(cfg_monad.is_monad());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn chain_id_detects_monad_network() {
+        assert_eq!(NetworkVariant::from(143), NetworkVariant::Monad);
+        assert_eq!(NetworkVariant::from(10143), NetworkVariant::Monad);
+
+        assert!(NetworkConfigs::default().with_chain_id(143).is_monad());
     }
 
     #[cfg(feature = "optimism")]

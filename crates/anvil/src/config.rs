@@ -13,7 +13,7 @@ use crate::{
     },
     mem::{self, in_memory_db::StateRootDb},
 };
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -35,13 +35,15 @@ use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
 };
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_evm::hardfork::MonadHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
     hardforks::latest_active_tempo_hardfork,
     utils::{
-        apply_chain_and_block_specific_env_changes, block_env_from_header,
+        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
         get_blob_base_fee_update_fraction,
     },
 };
@@ -120,7 +122,7 @@ pub struct NodeConfig {
     pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
-    /// The hardfork to use
+    /// The hardfork to force, or `None` to infer it from chain activation data.
     pub hardfork: Option<FoundryHardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<PrivateKeySigner>,
@@ -152,6 +154,8 @@ pub struct NodeConfig {
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
+    /// Chain ID discovered from the active fork source.
+    pub fork_source_chain_id: Option<u64>,
     /// The generator used to generate the dev accounts
     pub account_generator: Option<AccountGenerator>,
     /// whether to enable tracing
@@ -449,6 +453,13 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_tempo(), ..Self::test() }
     }
 
+    /// Returns a test config with Monad network enabled.
+    #[cfg(feature = "monad")]
+    #[doc(hidden)]
+    pub fn test_monad() -> Self {
+        Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
+    }
+
     /// Returns a new config which does not initialize any accounts on node startup.
     pub fn empty_state() -> Self {
         Self {
@@ -507,6 +518,7 @@ impl Default for NodeConfig {
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
+            fork_source_chain_id: None,
             // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
@@ -588,7 +600,7 @@ impl NodeConfig {
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
                 get_blob_base_fee_update_fraction(
-                    self.get_chain_id(),
+                    self.protocol_chain_id(),
                     self.get_genesis_timestamp(),
                 ),
             )
@@ -597,7 +609,7 @@ impl NodeConfig {
 
     /// Returns the [`BlobParams`] that should be used.
     pub fn get_blob_params(&self) -> BlobParams {
-        get_blob_params(self.get_chain_id(), self.get_genesis_timestamp())
+        get_blob_params(self.protocol_chain_id(), self.get_genesis_timestamp())
     }
 
     /// Returns the hardfork to use
@@ -607,7 +619,16 @@ impl NodeConfig {
         }
         if self.networks.is_tempo()
             && let Some(hardfork) = TempoHardfork::from_chain_and_timestamp(
-                self.get_chain_id(),
+                self.protocol_chain_id(),
+                self.get_genesis_timestamp(),
+            )
+        {
+            return hardfork.into();
+        }
+        #[cfg(feature = "monad")]
+        if self.networks.is_monad()
+            && let Some(hardfork) = MonadHardfork::from_chain_and_timestamp(
+                self.protocol_chain_id(),
                 self.get_genesis_timestamp(),
             )
         {
@@ -619,6 +640,10 @@ impl NodeConfig {
         }
         if self.networks.is_tempo() {
             return latest_active_tempo_hardfork().into();
+        }
+        #[cfg(feature = "monad")]
+        if self.networks.is_monad() {
+            return MonadHardfork::default().into();
         }
         EthereumHardfork::default().into()
     }
@@ -663,8 +688,16 @@ impl NodeConfig {
     /// Returns the chain ID to use
     pub fn get_chain_id(&self) -> u64 {
         self.chain_id
+            .or(self.fork_source_chain_id)
             .or_else(|| self.genesis.as_ref().map(|g| g.config.chain_id))
             .unwrap_or(CHAIN_ID)
+    }
+
+    /// Returns the chain ID that defines protocol behavior.
+    fn protocol_chain_id(&self) -> u64 {
+        self.fork_source_chain_id
+            .or_else(|| self.fork_chain_id.map(|chain_id| chain_id.to()))
+            .unwrap_or_else(|| self.get_chain_id())
     }
 
     /// Sets the chain id and updates all wallets
@@ -672,6 +705,10 @@ impl NodeConfig {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
         self.networks = self.networks.with_chain_id(chain_id);
+        self.update_wallet_chain_id(chain_id);
+    }
+
+    fn update_wallet_chain_id(&mut self, chain_id: u64) {
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -1072,10 +1109,13 @@ impl NodeConfig {
     ///
     /// See also [ Config::foundry_block_cache_file()]
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
+        self.block_cache_path_for_chain(self.protocol_chain_id(), block)
+    }
+
+    fn block_cache_path_for_chain(&self, chain_id: u64, block: u64) -> Option<PathBuf> {
         if self.no_storage_caching || self.fork_urls.is_empty() {
             return None;
         }
-        let chain_id = self.get_chain_id();
 
         Config::foundry_block_cache_file(chain_id, block)
     }
@@ -1112,6 +1152,14 @@ impl NodeConfig {
     #[must_use]
     pub fn with_tempo(mut self) -> Self {
         self.networks = NetworkConfigs::with_tempo();
+        self
+    }
+
+    /// Enable Monad network features.
+    #[cfg(feature = "monad")]
+    #[must_use]
+    pub fn with_monad(mut self) -> Self {
+        self.networks = NetworkConfigs::with_monad();
         self
     }
 
@@ -1226,7 +1274,7 @@ impl NodeConfig {
         if let Some(ref genesis) = self.genesis {
             // --chain-id flag gets precedence over the genesis.json chain id
             // <https://github.com/foundry-rs/foundry/issues/10059>
-            if self.chain_id.is_none() {
+            if self.chain_id.is_none() && fork.is_none() {
                 evm_env.cfg_env.chain_id = genesis.config.chain_id;
             }
             evm_env.block_env.timestamp = U256::from(genesis.timestamp);
@@ -1260,9 +1308,19 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
+        let active_hardfork = fork
+            .as_ref()
+            .and_then(|fork| fork.config.read().hardfork)
+            .unwrap_or_else(|| self.get_hardfork());
         let mut decoder_builder = CallTraceDecoderBuilder::new().with_tempo_hardfork(
-            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork())),
+            self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
         );
+        #[cfg(feature = "monad")]
+        {
+            decoder_builder = decoder_builder.with_monad_hardfork(
+                self.networks.is_monad().then(|| MonadHardfork::from(active_hardfork)),
+            );
+        }
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
@@ -1331,6 +1389,35 @@ impl NodeConfig {
         Ok((db, Some(fork)))
     }
 
+    fn fork_provider(&self, eth_rpc_url: &str) -> Result<RetryProvider> {
+        ProviderBuilder::new(eth_rpc_url)
+            .timeout(self.fork_request_timeout)
+            .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+            .compute_units_per_second(self.compute_units_per_second)
+            .max_retry(self.fork_request_retries)
+            .headers(self.fork_headers.clone())
+            .build()
+            .wrap_err("failed to establish provider to fork url")
+    }
+
+    pub(crate) async fn detect_fork_network(&self, eth_rpc_url: &str) -> Result<NetworkConfigs> {
+        let chain_id = self
+            .fork_provider(eth_rpc_url)?
+            .get_chain_id()
+            .await
+            .wrap_err("failed to fetch network chain ID")?;
+        if chain_id == self.protocol_chain_id() && self.networks.active_network_name().is_some() {
+            return Ok(self.networks);
+        }
+        let detected = NetworkConfigs::default().with_chain_id(chain_id);
+
+        if detected.active_network_name().is_some() || Chain::from_id(chain_id).named().is_some() {
+            Ok(detected)
+        } else {
+            Ok(self.networks)
+        }
+    }
+
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
     ///  - returning a tuple of a [ForkedDatabase] and [ClientForkConfig] which can be used to build
     ///    a [ClientFork] to fork from.
@@ -1347,41 +1434,29 @@ impl NodeConfig {
         // Always bootstrap with the primary URL only to avoid race conditions
         // where discovery calls (get_chain_id, find_latest_fork_block, get_block)
         // hit different endpoints that may be at different chain tips.
-        let provider = Arc::new(
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(self.fork_request_retries)
-                .headers(self.fork_headers.clone())
-                .build()
-                .wrap_err("failed to establish provider to fork url")?,
-        );
+        let provider = Arc::new(self.fork_provider(&eth_rpc_url)?);
 
-        let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
-            &self.fork_choice
-        {
+        let source_chain_id = if let Some(chain_id) = self.fork_chain_id {
+            chain_id.to()
+        } else {
+            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+        };
+        self.fork_source_chain_id = Some(source_chain_id);
+        self.networks = self.networks.with_chain_id(source_chain_id);
+
+        let (fork_block_number, force_transactions) = if let Some(fork_choice) = &self.fork_choice {
             let (fork_block_number, force_transactions) =
                 derive_block_and_transactions(fork_choice, &provider).await.wrap_err(
                     "failed to derive fork block number and force transactions from fork choice",
                 )?;
-            let chain_id = if let Some(chain_id) = self.fork_chain_id {
-                Some(chain_id)
-            } else if self.hardfork.is_none() {
-                let chain_id =
-                    provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-                Some(U256::from(chain_id))
-            } else {
-                None
-            };
 
-            (fork_block_number, chain_id, force_transactions)
+            (fork_block_number, force_transactions)
         } else {
             // pick the last block number but also ensure it's not pending anymore
             let bn = find_latest_fork_block(&provider)
                 .await
                 .wrap_err("failed to get fork block number")?;
-            (bn, None, None)
+            (bn, None)
         };
 
         let block = provider
@@ -1423,35 +1498,31 @@ latest block number: {latest_block}"
             ..block_env_from_header(&block.header)
         };
 
-        // Determine chain_id early so we can use it consistently
-        let chain_id = if let Some(chain_id) = self.chain_id {
-            chain_id
-        } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
+        let override_chain_id = self.chain_id;
+        let execution_chain_id = override_chain_id.unwrap_or(source_chain_id);
+        if override_chain_id.is_none() {
+            // Sign locally produced transactions for the source chain without turning the
+            // inferred value into an explicit execution override.
+            self.update_wallet_chain_id(source_chain_id);
+        }
+        evm_env.cfg_env.chain_id = execution_chain_id;
 
-            // need to update the dev signers and env with the chain id
-            self.set_chain_id(Some(chain_id));
-            evm_env.cfg_env.chain_id = chain_id;
-            chain_id
-        };
-
-        // Auto-detect hardfork from chain activation data if not explicitly set.
-        if self.hardfork.is_none()
-            && let Some(hardfork) =
-                FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
-        {
-            evm_env.cfg_env.spec = SpecId::from(hardfork);
-            self.hardfork = Some(hardfork);
+        // Resolve the fork block's hardfork without materializing it into `self.hardfork`.
+        // That field represents the user's explicit override; keeping inference on the fork
+        // config lets a later reset re-resolve timestamp-based activations.
+        let fork_hardfork = self.hardfork.or_else(|| {
+            FoundryHardfork::from_chain_and_timestamp(source_chain_id, block.header.timestamp())
+        });
+        if let Some(hardfork) = fork_hardfork {
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(SpecId::from(hardfork));
         }
 
         // The fee manager was built before the fork hardfork was known, so refresh the Tempo
         // hardfork it uses for base fee calculations.
         if self.networks.is_tempo() {
-            fees.set_tempo_hardfork(Some(TempoHardfork::from(self.get_hardfork())));
+            fees.set_tempo_hardfork(Some(TempoHardfork::from(
+                fork_hardfork.unwrap_or_else(|| self.get_hardfork()),
+            )));
         }
 
         // if not set explicitly we use the base fee of the latest block
@@ -1476,7 +1547,7 @@ latest block number: {latest_block}"
             (block.header.excess_blob_gas(), block.header.blob_gas_used())
         {
             // Derive blob params using the fork block timestamp regardless of explicit base fee.
-            let blob_params = get_blob_params(chain_id, block.header.timestamp());
+            let blob_params = get_blob_params(source_chain_id, block.header.timestamp());
 
             evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                 blob_excess_gas,
@@ -1503,19 +1574,20 @@ latest block number: {latest_block}"
 
         let block_hash = block.header.hash;
 
-        let override_chain_id = self.chain_id;
-        // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
+        // Apply changes such as difficulty -> prevrandao for the remote source chain.
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
             evm_env,
             &block,
+            source_chain_id,
             self.networks,
         );
 
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
+        let cache_path = self.block_cache_path_for_chain(source_chain_id, fork_block_number);
         let block_chain_db = if self.fork_chain_id.is_some() {
-            BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
+            BlockchainDb::new_skip_check(meta, cache_path)
         } else {
-            BlockchainDb::new(meta, self.block_cache_path(fork_block_number))
+            BlockchainDb::new(meta, cache_path)
         };
 
         // After bootstrap, rebuild the provider with round-robin if multiple URLs are
@@ -1552,9 +1624,10 @@ latest block number: {latest_block}"
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,
-            chain_id,
+            chain_id: source_chain_id,
             override_chain_id,
-            hardfork: self.hardfork,
+            fork_chain_id: self.fork_chain_id.map(|chain_id| chain_id.to()),
+            hardfork: fork_hardfork,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -1860,6 +1933,17 @@ mod tests {
         assert!(config.is_state_history_supported());
     }
 
+    #[test]
+    fn fork_cache_path_can_use_source_chain() {
+        let mut config = NodeConfig::test()
+            .with_eth_rpc_url(Some("http://localhost:8545".to_string()))
+            .with_chain_id(Some(1u64));
+        let block = 42;
+        config.fork_source_chain_id = Some(143);
+
+        assert_eq!(config.block_cache_path(block), Config::foundry_block_cache_file(143, block));
+    }
+
     #[cfg(feature = "optimism")]
     #[test]
     fn set_chain_id_updates_network_config() {
@@ -1887,5 +1971,17 @@ mod tests {
         let config = NodeConfig::test_tempo();
 
         assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn get_hardfork_on_monad_fork_uses_source_chain_timestamp_mapping() {
+        let mut config = NodeConfig::test_monad()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(1_763_648_999u64));
+        config.fork_source_chain_id = Some(143);
+
+        assert_eq!(config.get_chain_id(), 1);
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Monad(MonadHardfork::MonadEight));
     }
 }

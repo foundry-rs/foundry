@@ -14,6 +14,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     executors::ExecutorBuilder,
     inspectors::CheatsConfig,
+    opts::resolve_execution_spec,
     traces::TraceRequirements,
 };
 use solar::{
@@ -193,15 +194,28 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
-            self.config.evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (mut evm_env, tx_env, fork_context) = self
+            .config
+            .evm_opts
+            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+            .await?;
+        let fork_block = fork_context.map(|context| context.block_number);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        self.config.resolved_hardfork = resolve_execution_spec(
+            &self.config.foundry_config,
+            self.config.evm_opts.networks,
+            &mut evm_env,
+            fork_chain_id,
+            None,
+            None,
+        );
 
         let backend = match self.config.backend.clone() {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(
                     &self.config.foundry_config,
-                    evm_env.cfg_env.chain_id,
+                    fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
                     fork_block,
                 );
                 let backend = Backend::spawn(fork)?;
@@ -229,7 +243,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec_id(self.config.foundry_config.evm_spec_id::<SpecFor<FEN>>())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(evm_env, tx_env, backend);
 

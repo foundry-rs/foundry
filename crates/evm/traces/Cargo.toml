@@ -21,6 +21,7 @@ foundry-linking.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-hardforks.workspace = true
+foundry-evm-networks = { workspace = true, optional = true }
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
@@ -35,6 +36,7 @@ revm-inspectors.workspace = true
 
 tempo-contracts.workspace = true
 tempo-precompiles.workspace = true
+monad-revm = { workspace = true, optional = true }
 
 async-trait.workspace = true
 eyre.workspace = true
@@ -58,4 +60,11 @@ snapbox.workspace = true
 
 [features]
 default = ["optimism"]
+monad = [
+    "dep:monad-revm",
+    "dep:foundry-evm-networks",
+    "foundry-evm-core/monad",
+    "foundry-evm-hardforks/monad",
+    "foundry-evm-networks/monad",
+]
 optimism = ["foundry-common/optimism", "foundry-evm-core/optimism"]

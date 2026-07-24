@@ -124,12 +124,7 @@ impl BuildArgs {
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
-            .size_limits(
-                config
-                    .code_size_limit
-                    .map(ContractSizeLimits::with_runtime_limit)
-                    .unwrap_or_default(),
-            )
+            .size_limits(contract_size_limits(&config))
             .bail(!format_json)
             .compile(&project)?;
 
@@ -357,6 +352,18 @@ impl BuildArgs {
     }
 }
 
+fn contract_size_limits(config: &Config) -> ContractSizeLimits {
+    config
+        .code_size_limit
+        .map(ContractSizeLimits::with_runtime_limit)
+        .or_else(|| {
+            config
+                .networks
+                .contract_size_limits()
+                .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+        })
+        .unwrap_or_default()
+}
 /// Notice shown on lint-on-build failure; printed separately so it survives single-line
 /// cause-chain rendering.
 const LINT_FAILURE_NOTICE: &str = "\

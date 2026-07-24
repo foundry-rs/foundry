@@ -4,7 +4,7 @@ use crate::{
         call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
     },
     traces::TraceKind,
-    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
@@ -36,15 +36,20 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        evm::{
+            BlockContext, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork,
+            TxEnvFor,
+        },
     },
     executors::{EvmError, Executor, TracingExecutor},
-    hardforks::{ExecutionSpec, FoundryHardfork},
+    hardforks::FoundryHardfork,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
@@ -154,21 +159,26 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_evm::<TempoEvmNetwork>().await;
+            return self.run_with_evm::<TempoEvmNetwork>(evm_opts).await;
+        }
+
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return self.run_with_evm::<MonadEvmNetwork>(evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_evm::<OpEvmNetwork>().await;
+            return self.run_with_evm::<OpEvmNetwork>(evm_opts).await;
         }
 
-        self.run_with_evm::<EthEvmNetwork>().await
+        self.run_with_evm::<EthEvmNetwork>(evm_opts).await
     }
 
-    async fn run_with_evm<FEN: FoundryEvmNetwork>(mut self) -> Result<()> {
+    async fn run_with_evm<FEN: FoundryEvmNetwork>(mut self, evm_opts: EvmOpts) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = load_config_from_provider(figment)?;
+        config.networks = evm_opts.networks;
         self.tracing.labels.append(&mut self.legacy_labels);
         let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
 
@@ -268,6 +278,18 @@ impl RunArgs {
             };
 
             let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            // A configured hardfork is an explicit trace-decoding override. Otherwise decode
+            // against the transaction's exact historical block timestamp.
+            let resolved_hardfork = if let Some(hardfork) = config.hardfork {
+                Some(hardfork)
+            } else {
+                provider.get_block_by_number(tx_block_number.into()).await?.and_then(|block| {
+                    FoundryHardfork::from_chain_and_timestamp(
+                        chain.id(),
+                        block.header().timestamp(),
+                    )
+                })
+            };
             handle_traces(
                 result,
                 &config,
@@ -276,18 +298,21 @@ impl RunArgs {
                 &tracing,
                 with_local_artifacts,
                 false,
-                config.hardfork.and_then(|hardfork| match hardfork {
-                    FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-                    _ => None,
-                }),
+                resolved_hardfork,
             )
             .await?;
 
             return Ok(());
         }
 
-        // check if the tx is a system transaction
-        if !self.replay_system_txes
+        let factory = FEN::EvmFactory::default();
+        let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+        let target_is_protocol_system = factory.protocol_system_call(&target_tx_env)?.is_some();
+
+        // Generic system transactions remain opt-in. Protocol system envelopes are always
+        // replayed through their network's dedicated execution path.
+        if !target_is_protocol_system
+            && !self.replay_system_txes
             && (is_known_system_sender(tx.from())
                 || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
         {
@@ -313,14 +338,6 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
-        let mut resolved_tempo_hardfork = config
-            .hardfork
-            .and_then(|hardfork| match hardfork {
-                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-                _ => None,
-            })
-            .or_else(|| (networks.is_tempo() || chain.is_tempo()).then(|| config.evm_spec_id()));
-
         evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
@@ -331,11 +348,6 @@ impl RunArgs {
 
         evm_env.cfg_env.limit_contract_code_size = None;
         evm_env.block_env.set_number(U256::from(tx_block_number));
-        let configured_spec =
-            config.hardfork.and_then(<SpecFor<FEN> as ExecutionSpec>::from_foundry_hardfork);
-        if let Some(spec) = configured_spec {
-            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
-        }
 
         let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
@@ -345,26 +357,40 @@ impl RunArgs {
             // Unless explicitly configured, resolve the correct spec for the block using the same
             // approach as reth: walk known chain activation conditions to find the latest active
             // fork. Falls back to a blob-gas heuristic for unknown chains.
-            if evm_version.is_none() && configured_spec.is_none() {
-                if let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
-                    evm_env.cfg_env.chain_id,
-                    block.header().timestamp(),
-                ) {
-                    if let FoundryHardfork::Tempo(hardfork) = hardfork {
-                        resolved_tempo_hardfork = Some(hardfork);
-                    }
-                    evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
-                } else if block.header().excess_blob_gas().is_some() {
-                    // TODO: add glamsterdam header field checks in the future
-                    evm_version = Some(EvmVersion::Cancun);
-                }
+            if evm_version.is_none()
+                && config.hardfork.is_none()
+                && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
+                    .is_none()
+                && block.header().excess_blob_gas().is_some()
+            {
+                // TODO: add glamsterdam header field checks in the future
+                evm_version = Some(EvmVersion::Cancun);
             }
-            apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
+            apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
                 &mut evm_env,
                 block,
+                chain.id(),
                 config.networks,
             );
         }
+        let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+            &config,
+            networks,
+            chain.id(),
+            &mut evm_env,
+            evm_version,
+        );
+
+        let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+            let block = block.as_ref().ok_or_else(|| {
+                eyre::eyre!(
+                    "block {tx_block_number} is required to reconstruct transaction context"
+                )
+            })?;
+            Some(BlockContext::<FEN>::fetch(&provider, block).await?)
+        } else {
+            None
+        };
 
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)
@@ -378,7 +404,7 @@ impl RunArgs {
         let mut executor = TracingExecutor::<FEN>::new(
             (evm_env.clone(), tx_env),
             fork,
-            evm_version,
+            None,
             trace_requirements,
             networks,
             create2_deployer,
@@ -390,7 +416,7 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
         if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root)?
+            parent_beacon_block_root_for_network::<FEN>(spec_id, parent_beacon_block_root)?
         {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
@@ -431,7 +457,7 @@ impl RunArgs {
         if !self.quick && !prestate_applied {
             sh_status!("Executing previous transactions from the block.")?;
 
-            if let Some(block) = block {
+            if let Some(block) = &block {
                 let pb = init_progress(block.transactions().len() as u64, "tx");
                 pb.set_position(0);
 
@@ -440,40 +466,68 @@ impl RunArgs {
                 };
 
                 for (index, tx) in txs.iter().enumerate() {
-                    // Replay system transactions only if running with `sys` option.
-                    // System transactions such as on L2s don't contain any pricing info so it
-                    // could cause reverts.
-                    if !self.replay_system_txes
+                    if tx.tx_hash() == tx_hash {
+                        break;
+                    }
+
+                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let is_protocol_system = factory.protocol_system_call(&tx_env)?.is_some();
+                    // Generic system transactions remain opt-in because they may omit pricing
+                    // fields. Protocol envelopes must be replayed to reconstruct canonical state.
+                    if !is_protocol_system
+                        && !self.replay_system_txes
                         && (is_known_system_sender(tx.from())
                             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
                     {
                         pb.set_position((index + 1) as u64);
                         continue;
                     }
-                    if tx.tx_hash() == tx_hash {
-                        break;
-                    }
 
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let context_aux = block_context.as_ref().map_or_else(
+                        || FEN::EvmFactory::default().context_for_transaction(&tx_env),
+                        |context| context.transaction(index),
+                    );
 
                     evm_env.cfg_env.disable_balance_check = true;
 
-                    if let Some(to) = Transaction::to(tx) {
+                    if is_protocol_system {
+                        trace!(tx=?tx.tx_hash(), "executing previous protocol system transaction");
+                        executor
+                            .transact_protocol_system_with_env_and_context(
+                                evm_env.clone(),
+                                tx_env.clone(),
+                                context_aux,
+                            )
+                            .wrap_err_with(|| {
+                                format!(
+                                    "Failed to execute protocol system transaction: {:?} in block {}",
+                                    tx.tx_hash(),
+                                    evm_env.block_env.number()
+                                )
+                            })?;
+                    } else if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor.transact_with_env(evm_env.clone(), tx_env.clone()).wrap_err_with(
-                            || {
+                        executor
+                            .transact_with_env_and_context(
+                                evm_env.clone(),
+                                tx_env.clone(),
+                                context_aux,
+                            )
+                            .wrap_err_with(|| {
                                 format!(
                                     "Failed to execute transaction: {:?} in block {}",
                                     tx.tx_hash(),
                                     evm_env.block_env.number()
                                 )
-                            },
-                        )?;
+                            })?;
                     } else {
                         trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) =
-                            executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
-                        {
+                        if let Err(error) = executor.deploy_with_env_and_context(
+                            evm_env.clone(),
+                            tx_env.clone(),
+                            context_aux,
+                            None,
+                        ) {
                             match error {
                                 // Reverted transactions should be skipped
                                 EvmError::Execution(_) => (),
@@ -499,18 +553,51 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+            let tx_env = target_tx_env;
+            let target_index = if let Some(block) = &block {
+                let BlockTransactions::Full(transactions) = block.transactions() else {
+                    return Err(eyre::eyre!("Could not get block txs"));
+                };
+                transactions
+                    .iter()
+                    .position(|candidate| candidate.tx_hash() == tx_hash)
+                    .ok_or_else(|| {
+                        eyre::eyre!("transaction {tx_hash:?} is missing from its block")
+                    })?
+            } else {
+                0
+            };
+            let context_aux = block_context.as_ref().map_or_else(
+                || FEN::EvmFactory::default().context_for_transaction(&tx_env),
+                |context| context.transaction(target_index),
+            );
 
             if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
                 evm_env.cfg_env.disable_balance_check = true;
             }
 
-            if let Some(to) = Transaction::to(&tx) {
+            if target_is_protocol_system {
+                trace!(tx=?tx.tx_hash(), "executing protocol system transaction");
+                TraceResult::from(executor.transact_protocol_system_with_env_and_context(
+                    evm_env,
+                    tx_env,
+                    context_aux,
+                )?)
+            } else if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
+                TraceResult::from(executor.transact_with_env_and_context(
+                    evm_env,
+                    tx_env,
+                    context_aux,
+                )?)
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
-                TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
+                TraceResult::try_from(executor.deploy_with_env_and_context(
+                    evm_env,
+                    tx_env,
+                    context_aux,
+                    None,
+                ))?
             }
         };
 
@@ -523,7 +610,7 @@ impl RunArgs {
             &tracing,
             with_local_artifacts,
             debug,
-            resolved_tempo_hardfork,
+            resolved_hardfork,
         )
         .await?;
 
@@ -531,11 +618,11 @@ impl RunArgs {
     }
 }
 
-fn parent_beacon_block_root_for_spec(
+fn parent_beacon_block_root_for_network<FEN: FoundryEvmNetwork>(
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
 ) -> Result<Option<B256>> {
-    if !spec_id.is_enabled_in(SpecId::CANCUN) {
+    if !FEN::EvmFactory::USES_EIP4788_BEACON_ROOTS || !spec_id.is_enabled_in(SpecId::CANCUN) {
         return Ok(None);
     }
 
@@ -742,16 +829,44 @@ mod tests {
 
     #[test]
     fn parent_beacon_block_root_is_required_for_cancun() {
-        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None).unwrap_err();
+        let err = parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::CANCUN, None)
+            .unwrap_err();
         assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
-            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::CANCUN, Some(root))
+                .unwrap(),
             Some(root),
         );
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
+        assert_eq!(
+            parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::SHANGHAI, Some(root))
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            parent_beacon_block_root_for_network::<EthEvmNetwork>(SpecId::SHANGHAI, None).unwrap(),
+            None,
+        );
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn parent_beacon_block_root_is_not_used_by_monad() {
+        for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
+            assert_eq!(
+                parent_beacon_block_root_for_network::<MonadEvmNetwork>(spec_id, None).unwrap(),
+                None,
+            );
+            assert_eq!(
+                parent_beacon_block_root_for_network::<MonadEvmNetwork>(
+                    spec_id,
+                    Some(B256::repeat_byte(0x42)),
+                )
+                .unwrap(),
+                None,
+            );
+        }
     }
 
     #[test]

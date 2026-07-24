@@ -16,7 +16,7 @@ env:
 
   # Keep in sync with `docker-publish.yml`.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad
 
 jobs:
   prepare:

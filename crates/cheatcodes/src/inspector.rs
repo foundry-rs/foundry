@@ -1,5 +1,7 @@
 //! Cheatcode EVM inspector.
 
+#[cfg(feature = "monad")]
+use crate::monad::{apply_monad_cheatcode as apply_monad_cheatcode_call, is_monad_cheatcode_call};
 use crate::{
     Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
@@ -40,8 +42,9 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor, with_cloned_context,
+        BlockEnvFor, ContextAuxFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor,
+        with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -89,7 +92,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
@@ -119,7 +122,8 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        context_aux: ContextAuxFor<FEN>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
@@ -173,15 +177,21 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
-            *evm.journal_inner_mut() = journal_inner;
+        with_cloned_context(ecx, |db, evm_env, context_state| {
+            let context_aux = context_state.auxiliary.clone();
+            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+                db,
+                evm_env,
+                context_aux,
+                cheats,
+            );
+            evm.set_context_state(context_state);
             f(&mut *evm)?;
-            let sub_inner = evm.journal_inner_mut().clone();
+            let sub_state = evm.context_state();
             let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_inner))
+            Ok((sub_evm_env, sub_state))
         })
     }
 
@@ -190,9 +200,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        context_aux: ContextAuxFor<FEN>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
+        let mut evm =
+            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, context_aux, cheats);
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -920,6 +932,26 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         )
     }
 
+    /// Decodes the input data and applies Monad-specific cheatcodes.
+    #[cfg(feature = "monad")]
+    fn apply_monad_cheatcode(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        call: &CallInputs,
+    ) -> Result {
+        let input = call.input.bytes(ecx);
+        let caller = call.caller;
+
+        // ensure the caller is allowed to execute cheatcodes,
+        // but only if the backend is in forking mode
+        ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
+
+        apply_monad_cheatcode_call(
+            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &input,
+        )
+    }
+
     /// Grants cheat code access for new contracts if the caller also has
     /// cheatcode access or the new contract is created in top most call.
     ///
@@ -986,7 +1018,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().set_spec_and_mainnet_gas_params(spec_id);
+            ecx.set_spec_and_gas_params(spec_id);
         }
 
         let gas = Gas::new(call.gas_limit);
@@ -1043,6 +1075,41 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     precompile_call_logs: vec![],
                     charged_new_account_state_gas: false,
                 }),
+            };
+        }
+
+        #[cfg(feature = "monad")]
+        if is_monad_cheatcode_call::<FEN>(call.target_address) {
+            let checkpoint = ecx.journal_mut().checkpoint();
+            return match self.apply_monad_cheatcode(ecx, call) {
+                Ok(retdata) => {
+                    ecx.journal_mut().checkpoint_commit();
+                    Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Return,
+                            output: retdata.into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: true,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
+                    })
+                }
+                Err(err) => {
+                    ecx.journal_mut().checkpoint_revert(checkpoint);
+                    Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: err.abi_encode().into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
+                    })
+                }
             };
         }
 
@@ -1721,8 +1788,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        #[cfg(feature = "monad")]
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        #[cfg(not(feature = "monad"))]
+        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
+            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        #[cfg(feature = "monad")]
+        let cheatcode_call = cheatcode_call || is_monad_cheatcode_call::<FEN>(call.target_address);
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
@@ -2172,7 +2245,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().set_spec_and_mainnet_gas_params(spec_id);
+            ecx.set_spec_and_gas_params(spec_id);
         }
 
         let gas = Gas::new(input.gas_limit());

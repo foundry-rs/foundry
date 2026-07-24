@@ -9,8 +9,12 @@ use crate::{
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
+use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
-use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_network::{
+    BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder,
+    primitives::HeaderResponse,
+};
 use alloy_primitives::{Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
@@ -35,24 +39,28 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config, TracingConfig,
+    Chain, Config, FoundryHardfork, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, context_for_child_transaction},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
+use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::WalletOpts;
+use revm::context::Block;
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -205,12 +213,12 @@ impl CallArgs {
             return self.run_curl().await;
         }
 
-        if self.tx.tempo.is_tempo() {
-            return self.run_with_network::<TempoEvmNetwork>().await;
-        }
-
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
+        if self.tx.tempo.is_tempo() {
+            evm_opts.networks = NetworkConfigs::with_tempo();
+            return self.run_with_network_and_opts::<TempoEvmNetwork>(evm_opts).await;
+        }
         if let Some(chain) = self.chain {
             evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
         }
@@ -220,15 +228,20 @@ impl CallArgs {
         }
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_network::<TempoEvmNetwork>().await;
+            return self.run_with_network_and_opts::<TempoEvmNetwork>(evm_opts).await;
+        }
+
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return self.run_with_network_and_opts::<MonadEvmNetwork>(evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_network::<OpEvmNetwork>().await;
+            return self.run_with_network_and_opts::<OpEvmNetwork>(evm_opts).await;
         }
 
-        self.run_with_network::<EthEvmNetwork>().await
+        self.run_with_network_and_opts::<EthEvmNetwork>(evm_opts).await
     }
 
     fn validate_trace_args(&self) -> Result<()> {
@@ -255,7 +268,20 @@ impl CallArgs {
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
+        // Keep the public generic wrapper independent of the network-specific future layout.
+        Box::pin(self.run_with_network_and_opts::<FEN>(evm_opts)).await
+    }
+
+    async fn run_with_network_and_opts<FEN: FoundryEvmNetwork>(
+        self,
+        evm_opts: EvmOpts,
+    ) -> Result<()>
+    where
+        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
+    {
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let mut config = load_config_from_provider(figment)?;
+        config.networks = evm_opts.networks;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
         let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
@@ -312,7 +338,25 @@ impl CallArgs {
             .await?;
 
         if self.debug_trace_call {
-            let block = self.block.unwrap_or(BlockId::latest());
+            let requested_block = self.block.unwrap_or(BlockId::latest());
+            let fetched_block = provider.get_block(requested_block).await?;
+            // Pin moving canonical tags to the block whose timestamp is used for decoding. This
+            // prevents `latest`, `safe`, or `finalized` from crossing an activation boundary
+            // between the block lookup and `debug_traceCall`.
+            let block = if matches!(
+                requested_block,
+                BlockId::Number(
+                    BlockNumberOrTag::Latest | BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized
+                )
+            ) {
+                fetched_block
+                    .as_ref()
+                    .map(|block| BlockId::hash(block.header().hash()))
+                    .unwrap_or(requested_block)
+            } else {
+                requested_block
+            };
+            let block_time_override = block_overrides.as_ref().and_then(|overrides| overrides.time);
             let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -394,6 +438,18 @@ impl CallArgs {
             };
 
             let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            let block_timestamp = if let Some(timestamp) = block_time_override {
+                Some(timestamp)
+            } else {
+                fetched_block.as_ref().map(|block| block.header().timestamp())
+            };
+            // A configured hardfork is an explicit trace-decoding override. Otherwise decode
+            // against the exact effective timestamp used by the RPC call.
+            let resolved_hardfork = config.hardfork.or_else(|| {
+                block_timestamp.and_then(|timestamp| {
+                    FoundryHardfork::from_chain_and_timestamp(chain.id(), timestamp)
+                })
+            });
             handle_traces(
                 result,
                 &config,
@@ -402,7 +458,7 @@ impl CallArgs {
                 &tracing,
                 with_local_artifacts,
                 false,
-                None,
+                resolved_hardfork,
             )
             .await?;
 
@@ -419,6 +475,7 @@ impl CallArgs {
             let verbosity = tracing.verbosity;
             let (mut evm_env, tx_env, fork, chain, networks) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
+            let context_block_number = evm_env.block_env.number().saturating_to();
 
             // modify settings that usually set in eth_call
             evm_env.cfg_env.disable_block_gas_limit = true;
@@ -434,6 +491,13 @@ impl CallArgs {
                     evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
+            let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+                &config,
+                networks,
+                chain.id(),
+                &mut evm_env,
+                evm_version,
+            );
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
@@ -447,7 +511,7 @@ impl CallArgs {
             let mut executor = TracingExecutor::<FEN>::new(
                 (evm_env, tx_env),
                 fork,
-                evm_version,
+                None,
                 trace_requirements,
                 networks,
                 create2_deployer,
@@ -499,13 +563,26 @@ impl CallArgs {
                 env_tx.set_signed_authorization(auth);
             }
 
+            let mut context_tx = executor.tx_env().clone();
+            context_tx.set_caller(from);
+            context_tx.set_kind(tx_kind);
+            context_tx.set_data(input.clone());
+            context_tx.set_value(value);
+            let context_aux = context_for_child_transaction::<FEN, _>(
+                &provider,
+                context_block_number,
+                &context_tx,
+            )
+            .await?;
+
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result = executor.deploy(from, input, value, None);
+                    let deploy_result =
+                        executor.deploy_with_context(from, input, value, context_aux, None);
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw(from, to, input, value)?,
+                    executor.transact_raw_with_context(from, to, input, value, context_aux)?,
                     TraceKind::Execution,
                 ),
             };
@@ -519,7 +596,7 @@ impl CallArgs {
                 &tracing,
                 with_local_artifacts,
                 debug,
-                None,
+                resolved_hardfork,
             )
             .await?;
 

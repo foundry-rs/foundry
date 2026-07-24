@@ -131,6 +131,12 @@ impl<N: Network> ClientFork<N> {
         self.config.read().chain_id
     }
 
+    /// Returns the execution chain ID exposed by the forked node.
+    pub fn execution_chain_id(&self) -> u64 {
+        let config = self.config.read();
+        config.override_chain_id.unwrap_or(config.chain_id)
+    }
+
     fn provider(&self) -> Arc<RetryProvider<N>> {
         self.config.read().provider.clone()
     }
@@ -452,8 +458,8 @@ impl<N: Network> ClientFork<N> {
     ) -> Result<(), BlockchainError> {
         if !urls.is_empty() {
             self.config.write().update_urls(urls)?;
-            let override_chain_id = self.config.read().override_chain_id;
-            let chain_id = if let Some(chain_id) = override_chain_id {
+            let fork_chain_id = self.config.read().fork_chain_id;
+            let chain_id = if let Some(chain_id) = fork_chain_id {
                 chain_id
             } else {
                 self.provider().get_chain_id().await?
@@ -835,8 +841,12 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     /// The transaction hash we forked off of, if any.
     pub transaction_hash: Option<B256>,
     pub provider: Arc<RetryProvider<N>>,
+    /// Chain ID of the remote fork source.
     pub chain_id: u64,
+    /// Explicit execution chain ID exposed by the local node.
     pub override_chain_id: Option<u64>,
+    /// User-provided source chain ID that avoids remote discovery.
+    pub fork_chain_id: Option<u64>,
     /// The hardfork resolved for the forked block, if known.
     pub hardfork: Option<FoundryHardfork>,
     /// The timestamp for the forked block

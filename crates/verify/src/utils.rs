@@ -1,6 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, TxKind};
+use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -16,21 +16,24 @@ use foundry_common::{
     ignore_metadata_hash, shell,
 };
 use foundry_compilers::{
-    artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
+    artifacts::{BytecodeHash, CompactContractBytecode},
     utils::canonicalize,
 };
-use foundry_config::Config;
+use foundry_config::{Config, FoundryHardfork};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryBlock as _,
         decode::RevertDecoder,
-        evm::{BlockEnvFor, BlockResponseFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+        evm::{
+            BlockContext, BlockEnvFor, BlockResponseFor, ContextAuxFor, EvmEnvFor,
+            FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor,
+        },
     },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::TraceRequirements,
-    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
@@ -299,23 +302,29 @@ pub fn load_fork_config_and_evm_opts(config: &Config) -> Result<(Config, EvmOpts
 pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
-    evm_version: EvmVersion,
+    execution_blk_num: u64,
+    execution_block: Option<&BlockResponseFor<FEN>>,
     evm_opts: EvmOpts,
 ) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
 where
     FEN: FoundryEvmNetwork,
 {
     fork_config.fork_block_number = Some(fork_blk_num);
-    fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (evm_env, tx_env, fork, _chain, networks) =
+    let (mut evm_env, tx_env, fork, chain, networks) =
         TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
+
+    evm_env.block_env.set_number(U256::from(execution_blk_num));
+    if let Some(block) = execution_block {
+        configure_env_block::<FEN>(&mut evm_env, block, chain.id(), networks);
+    }
+    resolve_runtime_spec::<FEN>(fork_config, networks, chain.id(), &mut evm_env);
 
     let executor = TracingExecutor::<FEN>::new(
         (evm_env.clone(), tx_env.clone()),
         fork,
-        Some(fork_config.evm_version),
+        None,
         TraceRequirements::none().with_calls(true),
         networks,
         create2_deployer,
@@ -325,9 +334,22 @@ where
     Ok((evm_env, tx_env, executor))
 }
 
+fn resolve_runtime_spec<FEN>(
+    config: &Config,
+    networks: NetworkConfigs,
+    source_chain_id: ChainId,
+    evm_env: &mut EvmEnvFor<FEN>,
+) -> Option<FoundryHardfork>
+where
+    FEN: FoundryEvmNetwork,
+{
+    TracingExecutor::<FEN>::resolve_spec_for_chain(config, networks, source_chain_id, evm_env, None)
+}
+
 pub fn configure_env_block<FEN>(
     evm_env: &mut EvmEnvFor<FEN>,
     block: &BlockResponseFor<FEN>,
+    source_chain_id: ChainId,
     config: NetworkConfigs,
 ) where
     FEN: FoundryEvmNetwork,
@@ -335,29 +357,32 @@ pub fn configure_env_block<FEN>(
     let number = evm_env.block_env.number();
     evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
     evm_env.block_env.set_number(number);
-    apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(evm_env, block, config);
+    apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
+        evm_env,
+        block,
+        source_chain_id,
+        config,
+    );
 }
 
 pub fn deploy_contract<FEN>(
     executor: &mut TracingExecutor<FEN>,
     evm_env: &EvmEnvFor<FEN>,
     tx_env: &TxEnvFor<FEN>,
-    spec_id: SpecFor<FEN>,
     to: TxKind,
+    context_aux: ContextAuxFor<FEN>,
 ) -> Result<Address, eyre::ErrReport>
 where
     FEN: FoundryEvmNetwork,
 {
-    let mut evm_env = evm_env.clone();
-    evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
-
     if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!(
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
             );
         }
-        let result = executor.transact_with_env(evm_env, tx_env.clone())?;
+        let result =
+            executor.transact_with_env_and_context(evm_env.clone(), tx_env.clone(), context_aux)?;
 
         trace!(transact_result = ?result.exit_reason);
 
@@ -387,10 +412,28 @@ where
 
         Ok(Address::from_slice(&result.result))
     } else {
-        let deploy_result = executor.deploy_with_env(evm_env, tx_env.clone(), None)?;
+        let deploy_result = executor.deploy_with_env_and_context(
+            evm_env.clone(),
+            tx_env.clone(),
+            context_aux,
+            None,
+        )?;
         trace!(deploy_result = ?deploy_result.raw.exit_reason);
         Ok(deploy_result.address)
     }
+}
+
+pub fn synthetic_deployment_context<FEN>(
+    block_context: Option<&BlockContext<FEN>>,
+    tx_env: &TxEnvFor<FEN>,
+) -> ContextAuxFor<FEN>
+where
+    FEN: FoundryEvmNetwork,
+{
+    block_context.map_or_else(
+        || FEN::EvmFactory::default().context_for_transaction(tx_env),
+        |context| context.child(tx_env),
+    )
 }
 
 pub async fn get_runtime_codes<FEN>(
@@ -486,8 +529,30 @@ mod tests {
     use crate::verify::VerifierArgs;
     use foundry_cli::opts::EtherscanOpts;
     use foundry_compilers::PathStyle;
+    #[cfg(feature = "monad")]
+    use foundry_compilers::artifacts::EvmVersion;
     use foundry_config::NamedChain;
+    #[cfg(feature = "monad")]
+    use foundry_evm::{
+        core::{FoundryTransaction as _, evm::MonadEvmNetwork},
+        hardforks::MonadHardfork,
+    };
     use foundry_test_utils::TestProject;
+
+    #[cfg(feature = "monad")]
+    fn monad_env(timestamp: u64) -> EvmEnvFor<MonadEvmNetwork> {
+        let mut env = EvmEnvFor::<MonadEvmNetwork>::default();
+        env.cfg_env.chain_id = NamedChain::Monad as u64;
+        env.block_env.set_timestamp(U256::from(timestamp));
+        env
+    }
+
+    #[cfg(feature = "monad")]
+    fn monad_tx(caller: Address) -> TxEnvFor<MonadEvmNetwork> {
+        let mut tx = TxEnvFor::<MonadEvmNetwork>::default();
+        tx.set_caller(caller);
+        tx
+    }
 
     #[test]
     fn build_project_finds_artifact_by_relative_contract_path() {
@@ -544,6 +609,99 @@ contract Broken {
 
         assert_eq!(fork_config.chain, Some(NamedChain::Mainnet.into()));
         assert_eq!(evm_opts.env.chain_id, Some(1));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn runtime_spec_uses_monad_source_chain_timestamp() {
+        let monad_nine_timestamp = MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+
+        let before_config = Config { evm_version: EvmVersion::Osaka, ..Default::default() };
+        let mut before_env = monad_env(monad_nine_timestamp - 1);
+        before_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
+        let before = resolve_runtime_spec::<MonadEvmNetwork>(
+            &before_config,
+            NetworkConfigs::with_monad(),
+            NamedChain::Monad as u64,
+            &mut before_env,
+        );
+
+        assert_eq!(before, Some(FoundryHardfork::Monad(MonadHardfork::MonadEight)));
+        assert_eq!(before_env.cfg_env.spec, MonadHardfork::MonadEight);
+        assert_eq!(before_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
+
+        let after_config = Config { evm_version: EvmVersion::Prague, ..Default::default() };
+        let mut after_env = monad_env(monad_nine_timestamp);
+        let after = resolve_runtime_spec::<MonadEvmNetwork>(
+            &after_config,
+            NetworkConfigs::with_monad(),
+            NamedChain::Monad as u64,
+            &mut after_env,
+        );
+
+        assert_eq!(after, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+        assert_eq!(after_env.cfg_env.spec, MonadHardfork::MonadNine);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn runtime_spec_prefers_explicit_monad_hardfork() {
+        let config =
+            Config { hardfork: Some(MonadHardfork::MonadEight.into()), ..Default::default() };
+        let mut env = monad_env(MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap());
+
+        let resolved = resolve_runtime_spec::<MonadEvmNetwork>(
+            &config,
+            NetworkConfigs::with_monad(),
+            NamedChain::Monad as u64,
+            &mut env,
+        );
+
+        assert_eq!(resolved, Some(FoundryHardfork::Monad(MonadHardfork::MonadEight)));
+        assert_eq!(env.cfg_env.spec, MonadHardfork::MonadEight);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn synthetic_monad_deployment_uses_child_block_context() {
+        let discarded_grandparent = Address::repeat_byte(0x11);
+        let child_grandparent = Address::repeat_byte(0x22);
+        let child_parent = Address::repeat_byte(0x33);
+        let synthetic_sender = Address::repeat_byte(0x44);
+        let context = BlockContext::<MonadEvmNetwork>::new(
+            vec![monad_tx(discarded_grandparent)],
+            vec![monad_tx(child_grandparent)],
+            vec![monad_tx(child_parent)],
+        );
+        let synthetic_tx = monad_tx(synthetic_sender);
+
+        let auxiliary =
+            synthetic_deployment_context::<MonadEvmNetwork>(Some(&context), &synthetic_tx);
+
+        assert_eq!(
+            auxiliary.chain.grandparent_senders_and_authorities,
+            [child_grandparent].into_iter().collect()
+        );
+        assert_eq!(
+            auxiliary.chain.parent_senders_and_authorities,
+            [child_parent].into_iter().collect()
+        );
+        assert_eq!(auxiliary.chain.current_block_senders, vec![synthetic_sender]);
+        assert_eq!(auxiliary.chain.current_tx_index, 0);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn synthetic_monad_deployment_without_history_uses_transaction_context() {
+        let synthetic_sender = Address::repeat_byte(0x44);
+        let synthetic_tx = monad_tx(synthetic_sender);
+
+        let auxiliary = synthetic_deployment_context::<MonadEvmNetwork>(None, &synthetic_tx);
+
+        assert!(auxiliary.chain.grandparent_senders_and_authorities.is_empty());
+        assert!(auxiliary.chain.parent_senders_and_authorities.is_empty());
+        assert_eq!(auxiliary.chain.current_block_senders, vec![synthetic_sender]);
+        assert_eq!(auxiliary.chain.current_tx_index, 0);
     }
 
     #[test]
