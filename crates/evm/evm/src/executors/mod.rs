@@ -843,7 +843,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         context_aux: ContextAuxFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let factory = FEN::EvmFactory::default();
-        if factory.protocol_system_call(&tx_env).is_none() {
+        if factory.protocol_system_call(&tx_env)?.is_none() {
             eyre::bail!("transaction is not a protocol system transaction");
         }
 

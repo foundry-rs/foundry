@@ -307,7 +307,7 @@ impl RunArgs {
 
         let factory = FEN::EvmFactory::default();
         let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
-        let target_is_protocol_system = factory.protocol_system_call(&target_tx_env).is_some();
+        let target_is_protocol_system = factory.protocol_system_call(&target_tx_env)?.is_some();
 
         // Generic system transactions remain opt-in. Protocol system envelopes are always
         // replayed through their network's dedicated execution path.
@@ -468,7 +468,7 @@ impl RunArgs {
                     }
 
                     let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
-                    let is_protocol_system = factory.protocol_system_call(&tx_env).is_some();
+                    let is_protocol_system = factory.protocol_system_call(&tx_env)?.is_some();
                     // Generic system transactions remain opt-in because they may omit pricing
                     // fields. Protocol envelopes must be replayed to reconstruct canonical state.
                     if !is_protocol_system

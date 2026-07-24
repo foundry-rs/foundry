@@ -710,7 +710,7 @@ impl VerifyBytecodeArgs {
                     }
 
                     let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
-                    let is_protocol_system = factory.protocol_system_call(&tx_env).is_some();
+                    let is_protocol_system = factory.protocol_system_call(&tx_env)?.is_some();
                     if !is_protocol_system
                         && (is_known_system_sender(tx.from())
                             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))

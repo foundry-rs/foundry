@@ -22,10 +22,10 @@ use monad_revm::{
 };
 use revm::{
     context::{
-        BlockEnv, ContextTr, LocalContextTr, Transaction, TxEnv,
+        BlockEnv, ContextTr, LocalContextTr, Transaction, TransactionType, TxEnv,
         result::{EVMError, ResultAndState},
     },
-    context_interface::{ContextSetters, transaction::AuthorizationTr},
+    context_interface::{Cfg, ContextSetters, transaction::AuthorizationTr},
     handler::{EthFrame, EvmTr, FrameResult, Handler},
     inspector::{InspectSystemCallEvm, InspectorHandler},
     interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
@@ -139,40 +139,120 @@ impl FoundryEvmFactory for MonadEvmFactory {
         )
     }
 
-    fn protocol_system_call(&self, tx: &Self::Tx) -> Option<ProtocolSystemCall> {
-        if tx.caller() != SYSTEM_ADDRESS
-            || tx.kind() != revm::primitives::TxKind::Call(STAKING_ADDRESS)
-        {
-            return None;
+    fn protocol_system_call(&self, tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
+        if tx.caller() != SYSTEM_ADDRESS {
+            return Ok(None);
         }
 
-        let selector: [u8; 4] = tx.input().get(..4)?.try_into().ok()?;
+        eyre::ensure!(
+            tx.tx_type() == TransactionType::Legacy as u8,
+            "invalid Monad protocol system transaction: transaction type must be legacy"
+        );
+        eyre::ensure!(
+            tx.kind() == revm::primitives::TxKind::Call(STAKING_ADDRESS),
+            "invalid Monad protocol system transaction: target must be the staking contract"
+        );
+        eyre::ensure!(
+            tx.gas_limit() == 0,
+            "invalid Monad protocol system transaction: gas limit must be zero"
+        );
+        eyre::ensure!(
+            tx.gas_price() == 0,
+            "invalid Monad protocol system transaction: gas price must be zero"
+        );
+        eyre::ensure!(
+            tx.gas_priority_fee.is_none(),
+            "invalid Monad protocol system transaction: priority fee must be absent"
+        );
+        eyre::ensure!(
+            tx.access_list.0.is_empty(),
+            "invalid Monad protocol system transaction: access list must be empty"
+        );
+        eyre::ensure!(
+            tx.blob_hashes.is_empty(),
+            "invalid Monad protocol system transaction: blob hashes must be empty"
+        );
+        eyre::ensure!(
+            tx.max_fee_per_blob_gas == 0,
+            "invalid Monad protocol system transaction: blob gas fee must be zero"
+        );
+        eyre::ensure!(
+            tx.authorization_list.is_empty(),
+            "invalid Monad protocol system transaction: authorization list must be empty"
+        );
+
+        let selector: [u8; 4] = tx
+            .input()
+            .get(..4)
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "invalid Monad protocol system transaction: calldata is shorter than a selector"
+                )
+            })?
+            .try_into()
+            .expect("slice has exactly four bytes");
         let (data, balance_increment) = match selector {
             syscallRewardCall::SELECTOR => {
-                let call = syscallRewardCall::abi_decode_raw(&tx.input()[4..]).ok()?;
+                eyre::ensure!(
+                    tx.input().len() == 36,
+                    "invalid Monad protocol system transaction: reward calldata must be 36 bytes"
+                );
+                let call = syscallRewardCall::abi_decode_raw(&tx.input()[4..])
+                    .wrap_err("invalid Monad protocol system reward calldata")?;
+                eyre::ensure!(
+                    call.abi_encode().as_slice() == tx.input(),
+                    "invalid Monad protocol system reward calldata"
+                );
                 (
                     syscall_reward_calldata(call.blockAuthor, tx.value()),
                     Some((STAKING_ADDRESS, tx.value())),
                 )
             }
             syscallSnapshotCall::SELECTOR => {
-                syscallSnapshotCall::abi_decode_raw(&tx.input()[4..]).ok()?;
+                eyre::ensure!(
+                    tx.input().len() == 4,
+                    "invalid Monad protocol system transaction: snapshot calldata must be 4 bytes"
+                );
+                eyre::ensure!(
+                    tx.value().is_zero(),
+                    "invalid Monad protocol system transaction: snapshot value must be zero"
+                );
+                syscallSnapshotCall::abi_decode_raw(&tx.input()[4..])
+                    .wrap_err("invalid Monad protocol system snapshot calldata")?;
                 (syscall_snapshot_calldata(), None)
             }
             syscallOnEpochChangeCall::SELECTOR => {
-                let call = syscallOnEpochChangeCall::abi_decode_raw(&tx.input()[4..]).ok()?;
+                eyre::ensure!(
+                    tx.input().len() == 36,
+                    "invalid Monad protocol system transaction: epoch calldata must be 36 bytes"
+                );
+                eyre::ensure!(
+                    tx.value().is_zero(),
+                    "invalid Monad protocol system transaction: epoch value must be zero"
+                );
+                let call = syscallOnEpochChangeCall::abi_decode_raw(&tx.input()[4..])
+                    .wrap_err("invalid Monad protocol system epoch calldata")?;
+                eyre::ensure!(
+                    call.abi_encode().as_slice() == tx.input(),
+                    "invalid Monad protocol system epoch calldata"
+                );
                 (syscall_on_epoch_change_calldata(call.epoch), None)
             }
-            _ => return None,
+            _ => {
+                eyre::bail!(
+                    "invalid Monad protocol system transaction: unknown staking syscall selector"
+                )
+            }
         };
 
-        Some(ProtocolSystemCall {
+        Ok(Some(ProtocolSystemCall {
             caller: SYSTEM_ADDRESS,
             contract: STAKING_ADDRESS,
             data,
             nonce: tx.nonce(),
+            chain_id: tx.chain_id(),
             balance_increment,
-        })
+        }))
     }
 
     fn create_foundry_nested_evm<'db>(
@@ -255,10 +335,11 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 
     fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
         let factory = MonadEvmFactory::default();
-        let Some(system_call) = factory.protocol_system_call(&tx) else {
+        let Some(system_call) = factory.protocol_system_call(&tx)? else {
             return self.transact_raw(tx).map_err(Into::into);
         };
 
+        system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
         let prestate = system_call.apply_prestate(self.0.ctx.db_mut())?;
         let result = self
             .inspect_system_call_with_caller(
@@ -282,9 +363,11 @@ mod tests {
     use revm::{
         context_interface::{
             either::Either,
-            transaction::{Authorization, RecoveredAuthority, RecoveredAuthorization},
+            transaction::{
+                AccessListItem, Authorization, RecoveredAuthority, RecoveredAuthorization,
+            },
         },
-        primitives::U256,
+        primitives::{B256, U256},
     };
 
     fn transaction(caller: Address, authority: Address) -> TxEnv {
@@ -301,13 +384,21 @@ mod tests {
 
     fn system_transaction(data: Vec<u8>, value: U256) -> TxEnv {
         TxEnv {
+            tx_type: TransactionType::Legacy as u8,
             caller: SYSTEM_ADDRESS,
+            gas_limit: 0,
             kind: revm::primitives::TxKind::Call(STAKING_ADDRESS),
             data: data.into(),
             value,
             nonce: 3,
+            chain_id: None,
             ..Default::default()
         }
+    }
+
+    fn assert_invalid_system_transaction(tx: TxEnv, expected: &str) {
+        let err = MonadEvmFactory::default().protocol_system_call(&tx).unwrap_err();
+        assert!(err.to_string().contains(expected), "expected {expected:?} in error, got {err:?}");
     }
 
     #[test]
@@ -325,20 +416,130 @@ mod tests {
             syscallRewardCall { blockAuthor: Address::with_last_byte(1) }.abi_encode(),
             reward,
         );
-        let reward_call = factory.protocol_system_call(&reward_tx).unwrap();
+        let reward_call = factory.protocol_system_call(&reward_tx).unwrap().unwrap();
         assert_eq!(reward_call.data.len(), 68);
         assert_eq!(reward_call.balance_increment, Some((STAKING_ADDRESS, reward)));
 
         let snapshot_tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
-        assert!(factory.protocol_system_call(&snapshot_tx).is_some());
+        assert!(factory.protocol_system_call(&snapshot_tx).unwrap().is_some());
 
         let epoch_tx =
             system_transaction(syscallOnEpochChangeCall { epoch: 9 }.abi_encode(), U256::ZERO);
-        assert!(factory.protocol_system_call(&epoch_tx).is_some());
+        assert!(factory.protocol_system_call(&epoch_tx).unwrap().is_some());
 
         let mut unrelated = snapshot_tx;
         unrelated.caller = Address::with_last_byte(2);
-        assert!(factory.protocol_system_call(&unrelated).is_none());
+        unrelated.tx_type = TransactionType::Eip1559 as u8;
+        assert!(factory.protocol_system_call(&unrelated).unwrap().is_none());
+    }
+
+    #[test]
+    fn monad_factory_rejects_noncanonical_system_envelope_fields() {
+        let canonical = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
+
+        let mut tx = canonical.clone();
+        tx.tx_type = TransactionType::Eip1559 as u8;
+        assert_invalid_system_transaction(tx, "transaction type must be legacy");
+
+        let mut tx = canonical.clone();
+        tx.kind = revm::primitives::TxKind::Call(Address::ZERO);
+        assert_invalid_system_transaction(tx, "target must be the staking contract");
+
+        let mut tx = canonical.clone();
+        tx.gas_limit = 1;
+        assert_invalid_system_transaction(tx, "gas limit must be zero");
+
+        let mut tx = canonical.clone();
+        tx.gas_price = 1;
+        assert_invalid_system_transaction(tx, "gas price must be zero");
+
+        let mut tx = canonical.clone();
+        tx.gas_priority_fee = Some(0);
+        assert_invalid_system_transaction(tx, "priority fee must be absent");
+
+        let mut tx = canonical.clone();
+        tx.access_list.0.push(AccessListItem::default());
+        assert_invalid_system_transaction(tx, "access list must be empty");
+
+        let mut tx = canonical.clone();
+        tx.blob_hashes.push(B256::ZERO);
+        assert_invalid_system_transaction(tx, "blob hashes must be empty");
+
+        let mut tx = canonical.clone();
+        tx.max_fee_per_blob_gas = 1;
+        assert_invalid_system_transaction(tx, "blob gas fee must be zero");
+
+        let mut tx = canonical;
+        tx.authorization_list =
+            transaction(Address::ZERO, Address::with_last_byte(1)).authorization_list;
+        assert_invalid_system_transaction(tx, "authorization list must be empty");
+    }
+
+    #[test]
+    fn monad_factory_rejects_noncanonical_system_call_data_and_value() {
+        assert_invalid_system_transaction(
+            system_transaction(Vec::new(), U256::ZERO),
+            "calldata is shorter than a selector",
+        );
+        assert_invalid_system_transaction(
+            system_transaction(vec![0xff; 4], U256::ZERO),
+            "unknown staking syscall selector",
+        );
+
+        let mut reward = syscallRewardCall { blockAuthor: Address::with_last_byte(1) }.abi_encode();
+        reward.push(0);
+        assert_invalid_system_transaction(
+            system_transaction(reward, U256::ZERO),
+            "reward calldata must be 36 bytes",
+        );
+
+        let mut malformed_reward =
+            syscallRewardCall { blockAuthor: Address::with_last_byte(1) }.abi_encode();
+        malformed_reward[4] = 1;
+        assert_invalid_system_transaction(
+            system_transaction(malformed_reward, U256::ZERO),
+            "invalid Monad protocol system reward calldata",
+        );
+
+        let mut snapshot = syscallSnapshotCall {}.abi_encode();
+        snapshot.push(0);
+        assert_invalid_system_transaction(
+            system_transaction(snapshot, U256::ZERO),
+            "snapshot calldata must be 4 bytes",
+        );
+        assert_invalid_system_transaction(
+            system_transaction(syscallSnapshotCall {}.abi_encode(), U256::from(1)),
+            "snapshot value must be zero",
+        );
+
+        let mut epoch = syscallOnEpochChangeCall { epoch: 9 }.abi_encode();
+        epoch.push(0);
+        assert_invalid_system_transaction(
+            system_transaction(epoch, U256::ZERO),
+            "epoch calldata must be 36 bytes",
+        );
+        let mut malformed_epoch = syscallOnEpochChangeCall { epoch: 9 }.abi_encode();
+        malformed_epoch[4] = 1;
+        assert_invalid_system_transaction(
+            system_transaction(malformed_epoch, U256::ZERO),
+            "invalid Monad protocol system epoch calldata",
+        );
+        assert_invalid_system_transaction(
+            system_transaction(syscallOnEpochChangeCall { epoch: 9 }.abi_encode(), U256::from(1)),
+            "epoch value must be zero",
+        );
+    }
+
+    #[test]
+    fn monad_factory_validates_system_envelope_chain_id_at_execution() {
+        let mut tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
+        tx.chain_id = Some(143);
+        let system_call = MonadEvmFactory::default().protocol_system_call(&tx).unwrap().unwrap();
+
+        system_call.validate_chain_id(143).unwrap();
+        assert!(
+            system_call.validate_chain_id(1).unwrap_err().to_string().contains("chain ID mismatch")
+        );
     }
 
     #[test]

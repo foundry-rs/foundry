@@ -1115,7 +1115,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let mut txs_to_replay = Vec::with_capacity(target_index);
         for (index, tx) in transactions[..target_index].iter().enumerate() {
             let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
-            let is_protocol_system = factory.protocol_system_call(&tx_env).is_some();
+            let is_protocol_system = factory.protocol_system_call(&tx_env)?.is_some();
             if !is_protocol_system
                 && (is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE)
             {

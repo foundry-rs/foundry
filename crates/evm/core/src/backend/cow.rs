@@ -134,7 +134,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let is_protocol_system = factory.protocol_system_call(tx_env).is_some();
+        let is_protocol_system = factory.protocol_system_call(tx_env)?.is_some();
         let mut evm = factory.create_foundry_evm_with_inspector(
             self,
             evm_env.clone(),

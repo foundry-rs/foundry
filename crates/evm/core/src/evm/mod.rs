@@ -205,8 +205,11 @@ pub trait FoundryEvmFactory:
     }
 
     /// Converts a canonical envelope into a family-specific protocol system call.
-    fn protocol_system_call(&self, _tx: &Self::Tx) -> Option<ProtocolSystemCall> {
-        None
+    ///
+    /// Returns an error when the transaction uses a network's reserved protocol sender but does
+    /// not satisfy that network's canonical envelope rules.
+    fn protocol_system_call(&self, _tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
+        Ok(None)
     }
 
     /// Creates an uninspected EVM with explicit network-specific auxiliary state.

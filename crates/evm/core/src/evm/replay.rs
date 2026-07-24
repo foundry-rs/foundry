@@ -23,11 +23,25 @@ pub struct ProtocolSystemCall {
     pub data: Bytes,
     /// Sender nonce encoded by the canonical envelope.
     pub nonce: u64,
+    /// Optional EIP-155 chain ID encoded by the canonical envelope.
+    pub chain_id: Option<u64>,
     /// Optional protocol mint applied before system-call execution.
     pub balance_increment: Option<(Address, U256)>,
 }
 
 impl ProtocolSystemCall {
+    pub(crate) fn validate_chain_id(&self, chain_id: u64) -> Result<()> {
+        if let Some(envelope_chain_id) = self.chain_id
+            && envelope_chain_id != chain_id
+        {
+            eyre::bail!(
+                "protocol system transaction chain ID mismatch: envelope {envelope_chain_id}, \
+                 environment {chain_id}"
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn apply_prestate<DB: alloy_evm::Database + DatabaseCommit>(
         &self,
         db: &mut DB,
@@ -87,10 +101,11 @@ where
     E: Evm<Tx = F::Tx, HaltReason = F::HaltReason>,
     E::DB: DatabaseCommit,
 {
-    let Some(system_call) = factory.protocol_system_call(&tx) else {
+    let Some(system_call) = factory.protocol_system_call(&tx)? else {
         return evm.transact(tx).wrap_err("failed to replay transaction");
     };
 
+    system_call.validate_chain_id(evm.chain_id())?;
     let prestate = system_call.apply_prestate(evm.db_mut())?;
     let result = evm
         .transact_system_call(system_call.caller, system_call.contract, system_call.data)
@@ -136,6 +151,7 @@ mod tests {
             contract: recipient,
             data: Bytes::new(),
             nonce: 7,
+            chain_id: None,
             balance_increment: Some((recipient, U256::from(25))),
         };
 
@@ -157,6 +173,7 @@ mod tests {
             contract: Address::ZERO,
             data: Bytes::new(),
             nonce: 4,
+            chain_id: None,
             balance_increment: None,
         };
 
@@ -164,6 +181,26 @@ mod tests {
 
         assert!(err.to_string().contains("nonce mismatch"));
         assert_eq!(db.basic(caller).unwrap().unwrap().nonce, 3);
+    }
+
+    #[test]
+    fn protocol_prestate_rejects_nonce_overflow() {
+        let caller = address!("00000000000000000000000000000000000000fe");
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(caller, AccountInfo { nonce: u64::MAX, ..Default::default() });
+        let call = ProtocolSystemCall {
+            caller,
+            contract: Address::ZERO,
+            data: Bytes::new(),
+            nonce: u64::MAX,
+            chain_id: None,
+            balance_increment: None,
+        };
+
+        let err = call.apply_prestate(&mut db).unwrap_err();
+
+        assert!(err.to_string().contains("nonce overflow"));
+        assert_eq!(db.basic(caller).unwrap().unwrap().nonce, u64::MAX);
     }
 }
 
