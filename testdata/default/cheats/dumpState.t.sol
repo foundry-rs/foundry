@@ -11,6 +11,21 @@ contract SimpleContract {
     }
 }
 
+contract DeploymentOrderHelper {
+    function deploy() public returns (SimpleContract) {
+        return new SimpleContract();
+    }
+
+    function deploy(bytes32 salt) public returns (SimpleContract) {
+        return new SimpleContract{salt: salt}();
+    }
+
+    function deployAndRevert() public {
+        new SimpleContract();
+        revert();
+    }
+}
+
 contract DumpStateTest is Test {
     function testDumpStateCheatAccount() public {
         // Path to temporary file that is deleted after the test
@@ -69,6 +84,9 @@ contract DumpStateTest is Test {
         string memory json = vm.readFile(path);
         string[] memory keys = vm.parseJsonKeys(json, "");
         assertEq(keys.length, 4);
+        assertLt(indexOfAddress(json, address(0x100)), indexOfAddress(json, address(0x200)));
+        assertLt(indexOfAddress(json, address(0x200)), indexOfAddress(json, address(0x300)));
+        assertLt(indexOfAddress(json, address(0x300)), indexOfAddress(json, address(0x400)));
 
         assertEq(4, vm.parseJsonKeys(json, string.concat(".", vm.toString(address(0x100)))).length);
         assertEq(1, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x100)), ".nonce")));
@@ -119,6 +137,100 @@ contract DumpStateTest is Test {
         vm.removeFile(path);
     }
 
+    function testDumpStateDeploymentOrder() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_deployment_order.json");
+
+        SimpleContract first = new SimpleContract();
+        SimpleContract second = new SimpleContract();
+        SimpleContract third = new SimpleContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = indexOfAddress(json, address(first));
+        uint256 secondIndex = indexOfAddress(json, address(second));
+        uint256 thirdIndex = indexOfAddress(json, address(third));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertTrue(thirdIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+        assertLt(secondIndex, thirdIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testDumpStateDeploymentOrderAfterRevert() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_deployment_order_revert.json");
+
+        DeploymentOrderHelper helper = new DeploymentOrderHelper();
+        SimpleContract first = new SimpleContract();
+        try helper.deployAndRevert() {} catch {}
+        SimpleContract second = new SimpleContract();
+        SimpleContract third = helper.deploy();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = indexOfAddress(json, address(first));
+        uint256 secondIndex = indexOfAddress(json, address(second));
+        uint256 thirdIndex = indexOfAddress(json, address(third));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertTrue(thirdIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+        assertLt(secondIndex, thirdIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testDumpStateDeploymentOrderAfterSnapshotRevert() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_deployment_order_snapshot.json");
+
+        DeploymentOrderHelper helper = new DeploymentOrderHelper();
+        uint256 snapshot = vm.snapshotState();
+        bytes32 salt = bytes32(uint256(1));
+        helper.deploy(salt);
+        assertTrue(vm.revertToState(snapshot));
+        SimpleContract first = new SimpleContract();
+        SimpleContract second = helper.deploy(salt);
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = indexOfAddress(json, address(first));
+        uint256 secondIndex = indexOfAddress(json, address(second));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testDumpStateDeploymentOrderAfterNonlinearSnapshotRevert() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_deployment_order_nonlinear_snapshot.json");
+
+        SimpleContract first = new SimpleContract();
+        uint256 firstSnapshot = vm.snapshotState();
+        SimpleContract second = new SimpleContract();
+        uint256 secondSnapshot = vm.snapshotState();
+        assertTrue(vm.revertToState(firstSnapshot));
+        assertTrue(vm.revertToState(secondSnapshot));
+        SimpleContract third = new SimpleContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = indexOfAddress(json, address(first));
+        uint256 secondIndex = indexOfAddress(json, address(second));
+        uint256 thirdIndex = indexOfAddress(json, address(third));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertTrue(thirdIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+        assertLt(secondIndex, thirdIndex);
+
+        vm.removeFile(path);
+    }
+
     function testDumpStateEmptyAccount() public {
         string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_empty_account.json");
 
@@ -132,5 +244,9 @@ contract DumpStateTest is Test {
         assertEq(keys.length, 0);
 
         vm.removeFile(path);
+    }
+
+    function indexOfAddress(string memory json, address account) private view returns (uint256) {
+        return vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(account)), '"'));
     }
 }
