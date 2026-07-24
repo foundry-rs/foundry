@@ -97,6 +97,15 @@ fn normalize(path: &Path) -> PathBuf {
     normalized
 }
 
+fn sanitize_nested_config(config: Config) -> Config {
+    let mut config = config.canonic();
+    config.sanitize_remappings();
+    // Preserve declared precedence while removing duplicate library paths.
+    let mut seen = HashSet::new();
+    config.libs.retain(|lib| seen.insert(lib.clone()));
+    config
+}
+
 fn remapping_context_covers(root: &Path, explicit: &Remapping, generated: &Remapping) -> bool {
     let Some(generated) = generated.context.as_deref() else { return false };
     let Some(explicit) = explicit.context.as_deref() else { return true };
@@ -454,7 +463,7 @@ impl RemappingsProvider<'_> {
             let config = configs.entry(canonical_lib.clone()).or_insert_with(|| {
                 Config::load_with_root_and_fallback_without_auto_detected_remappings(&canonical_lib)
                     .ok()
-                    .map(Config::sanitized)
+                    .map(sanitize_nested_config)
             });
             let Some(config) = config.as_ref() else { continue };
             let (nested_remappings, nested_libs) =
@@ -704,6 +713,20 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
+
+    #[test]
+    fn nested_config_libs_are_stably_deduplicated() {
+        let root = tempdir().unwrap();
+        for lib in ["vendor-a", "vendor-b"] {
+            fs::create_dir(root.path().join(lib)).unwrap();
+        }
+        let mut config = Config::with_root(root.path());
+        config.libs = vec!["vendor-b".into(), "vendor-a".into(), "./vendor-b".into()];
+
+        let config = sanitize_nested_config(config);
+        let root = dunce::canonicalize(root.path()).unwrap();
+        assert_eq!(config.libs, vec![root.join("vendor-b"), root.join("vendor-a")]);
+    }
 
     #[test]
     fn windows_absolute_context_roundtrips() {

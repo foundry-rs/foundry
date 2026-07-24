@@ -1623,6 +1623,45 @@ shared/=second/contracts/
 "#]]);
 });
 
+forgetest!(nested_configured_lib_order_breaks_equal_remapping_ties, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    pretty_err(&outer, fs::create_dir_all(&outer));
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("foundry.toml"),
+            "[profile.default]\nlibs = [\"vendor-b\", \"vendor-a\", \"vendor-b\"]\n",
+        ),
+    );
+    for (vendor, contract) in [("vendor-a", "SelectedA"), ("vendor-b", "SelectedB")] {
+        let dep = outer.join(vendor).join("shared");
+        pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+        pretty_err(&dep, fs::write(dep.join("foundry.toml"), "[profile.default]\n"));
+        pretty_err(
+            &dep,
+            fs::write(dep.join("src/Selected.sol"), format!("contract {contract} {{}}\n")),
+        );
+    }
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("Outer.sol"),
+            "import {SelectedB} from \"shared/Selected.sol\"; contract Outer is SelectedB {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; contract UsesOuter is Outer {}\n",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+outer/=lib/outer/
+shared/=lib/outer/vendor-b/shared/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();
+});
+
 // test remappings with closer paths are prioritised
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
 forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
