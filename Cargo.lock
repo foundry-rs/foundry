@@ -5646,7 +5646,6 @@ dependencies = [
  "toml_edit",
  "tracing",
  "unit-prefix",
- "walkdir",
  "yansi",
 ]
 

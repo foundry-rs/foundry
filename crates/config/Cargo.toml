@@ -46,7 +46,6 @@ thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
 toml_edit.workspace = true
 tracing.workspace = true
-walkdir.workspace = true
 yansi.workspace = true
 clap = { version = "4", features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
