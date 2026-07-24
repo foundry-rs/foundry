@@ -5,6 +5,7 @@ use crate::{
     fork::fork_config,
     utils::http_provider_with_signer,
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes};
@@ -875,6 +876,59 @@ async fn flaky_test_reorg() {
         })
         .await;
     assert!(res.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Arbitrum as u64))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    api.mine_one().await;
+
+    let recipient = accounts[1].address();
+    let value = U256::from(100);
+    let mut tx = TxEip1559 {
+        chain_id: api.chain_id(),
+        to: TxKind::Call(recipient),
+        value,
+        max_priority_fee_per_gas: 3_000_000_000,
+        max_fee_per_gas: 2_000_000_000,
+        gas_limit: 21_000,
+        ..Default::default()
+    };
+    let signature = accounts[0].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let mut encoded = vec![];
+    tx.eip2718_encode(&mut encoded);
+
+    let balance_before = provider.get_balance(recipient).await.unwrap();
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::Raw(encoded.into()), 0)],
+    })
+    .await
+    .unwrap();
+    let balance_after = provider.get_balance(recipient).await.unwrap();
+
+    assert_eq!(balance_after, balance_before + value);
+
+    let mut tx = TxEip1559 {
+        chain_id: api.chain_id(),
+        nonce: 1,
+        to: TxKind::Call(recipient),
+        max_priority_fee_per_gas: 3_000_000_000,
+        max_fee_per_gas: 2_000_000_000,
+        gas_limit: 21_000,
+        ..Default::default()
+    };
+    let signature = accounts[0].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let mut encoded = vec![];
+    tx.eip2718_encode(&mut encoded);
+
+    let err = provider.send_raw_transaction(&encoded).await.unwrap_err();
+    assert!(err.to_string().contains("max priority fee per gas higher than max fee per gas"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

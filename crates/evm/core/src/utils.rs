@@ -175,6 +175,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tx_replay_env_changes_disable_priority_fee_check_only_for_arbitrum() {
+        let mut evm_env = EvmEnv::new(
+            revm::context::CfgEnv::<SpecId>::default(),
+            revm::context::BlockEnv::default(),
+        );
+        evm_env.cfg_env.chain_id = NamedChain::Arbitrum as u64;
+
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(evm_env.cfg_env.disable_priority_fee_check);
+
+        evm_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
+        evm_env.cfg_env.disable_priority_fee_check = false;
+
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(!evm_env.cfg_env.disable_priority_fee_check);
+    }
+
+    #[test]
     fn blob_params_by_spec_id_tracks_latest_known_blob_schedule() {
         assert_eq!(get_blob_params_by_spec_id(SpecId::CANCUN), BlobParams::cancun());
         assert_eq!(get_blob_params_by_spec_id(SpecId::PRAGUE), BlobParams::prague());
