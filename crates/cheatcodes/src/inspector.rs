@@ -525,6 +525,19 @@ impl ArbitraryStorage {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CreatedAccountsFrameKind {
+    Call,
+    Create,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CreatedAccountsFrame {
+    kind: CreatedAccountsFrameKind,
+    depth: usize,
+    checkpoint: usize,
+}
+
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -604,8 +617,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Successfully created accounts in execution order, tagged by fork.
     created_accounts: Vec<(Option<LocalForkId>, Address)>,
 
-    /// Creation-list lengths at the start of each active call or create frame.
-    created_accounts_checkpoints: Vec<usize>,
+    /// Creation-list checkpoints for frames observed by this inspector.
+    created_accounts_frames: Vec<CreatedAccountsFrame>,
 
     /// Creation lists captured by state snapshots.
     created_accounts_snapshots: HashMap<U256, Vec<(Option<LocalForkId>, Address)>>,
@@ -766,7 +779,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_account_diffs: Default::default(),
             recorded_account_diffs_prefix: Default::default(),
             created_accounts: Default::default(),
-            created_accounts_checkpoints: Default::default(),
+            created_accounts_frames: Default::default(),
             created_accounts_snapshots: Default::default(),
             recorded_logs: Default::default(),
             record_debug_steps_info: Default::default(),
@@ -897,23 +910,43 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.created_accounts_snapshots.clear();
     }
 
-    fn start_created_accounts_frame(&mut self, reset: bool) {
+    fn start_created_accounts_frame(
+        &mut self,
+        reset: bool,
+        kind: CreatedAccountsFrameKind,
+        depth: usize,
+    ) {
         if reset {
             self.created_accounts.clear();
-            self.created_accounts_checkpoints.clear();
+            self.created_accounts_frames.clear();
             // Earlier snapshots contain no creations from the new root transaction.
             for snapshot in self.created_accounts_snapshots.values_mut() {
                 snapshot.clear();
             }
         }
-        self.created_accounts_checkpoints.push(self.created_accounts.len());
+        self.created_accounts_frames.push(CreatedAccountsFrame {
+            kind,
+            depth,
+            checkpoint: self.created_accounts.len(),
+        });
     }
 
-    fn finish_created_accounts_frame(&mut self, success: bool) {
-        let checkpoint = self
-            .created_accounts_checkpoints
-            .pop()
-            .expect("creation frame checkpoint is initialized");
+    fn finish_created_accounts_frame(
+        &mut self,
+        success: bool,
+        kind: CreatedAccountsFrameKind,
+        depth: usize,
+    ) {
+        let Some(frame) = self
+            .created_accounts_frames
+            .last()
+            .copied()
+            .filter(|frame| frame.kind == kind && frame.depth == depth)
+        else {
+            return;
+        };
+        let checkpoint = frame.checkpoint;
+        self.created_accounts_frames.pop();
         if !success {
             self.created_accounts.truncate(checkpoint);
         }
@@ -1071,7 +1104,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journal().depth();
-        self.start_created_accounts_frame(curr_depth == 0);
+        self.start_created_accounts_frame(
+            curr_depth == 0,
+            CreatedAccountsFrameKind::Call,
+            curr_depth,
+        );
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
@@ -1804,15 +1841,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let curr_depth = ecx.journal().depth();
 
-        self.finish_created_accounts_frame(outcome.result.is_ok());
+        self.finish_created_accounts_frame(
+            outcome.result.is_ok(),
+            CreatedAccountsFrameKind::Call,
+            curr_depth,
+        );
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
-            let curr_depth = ecx.journal().depth();
             if let Some(prank) = &self.get_prank(curr_depth)
                 && curr_depth == prank.depth
             {
@@ -2260,7 +2301,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         let gas = Gas::new(input.gas_limit());
         let curr_depth = ecx.journal().depth();
-        self.start_created_accounts_frame(curr_depth == 0);
+        self.start_created_accounts_frame(
+            curr_depth == 0,
+            CreatedAccountsFrameKind::Create,
+            curr_depth,
+        );
 
         // Check if we should intercept this create
         if self.intercept_next_create_call {
@@ -2394,7 +2439,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
-        self.finish_created_accounts_frame(outcome.result.is_ok());
+        self.finish_created_accounts_frame(
+            outcome.result.is_ok(),
+            CreatedAccountsFrameKind::Create,
+            curr_depth,
+        );
 
         // Clean up pranks
         if let Some(prank) = &self.get_prank(curr_depth)
