@@ -254,11 +254,11 @@ impl NodeArgs {
 
         let funded_accounts = self.parse_funded_accounts()?;
 
-        let networks = self
-            .evm
-            .chain_id
-            .map(u64::from)
-            .or_else(|| self.evm.fork_chain_id.map(u64::from))
+        let inferred_network_chain_id =
+            self.evm.fork_chain_id.map(u64::from).or_else(|| {
+                self.evm.chain_id.filter(|_| self.evm.fork_url.is_empty()).map(u64::from)
+            });
+        let networks = inferred_network_chain_id
             .map_or(self.evm.networks, |chain_id| self.evm.networks.with_chain_id(chain_id));
 
         let hardfork = match &self.hardfork {
@@ -323,10 +323,10 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(networks)
-            // Apply chain-id after explicit network flags so auto-detection can fill in
-            // defaults when no network was set, without being overwritten afterward.
             .with_chain_id(self.evm.chain_id)
+            // Restore the source-derived or explicitly selected network after applying the
+            // execution chain ID. Fork source discovery can refine an unresolved network later.
+            .with_networks(networks)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -1033,6 +1033,41 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn fork_chain_id_precedes_execution_chain_id_for_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "10143",
+            "--chain-id",
+            "1",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_monad());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    fn fork_execution_chain_id_does_not_infer_source_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--chain-id",
+            "4217",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.resolved_network().is_none());
+        assert_eq!(config.get_chain_id(), 4217);
     }
 
     #[test]

@@ -62,8 +62,9 @@ use alloy_monad_evm::{MonadContext, MonadEvm, MonadEvmFactory};
 #[cfg(feature = "monad")]
 use alloy_network::BlockResponse;
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
-    NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
+    AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
+    UnknownTypedTransaction,
 };
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
@@ -134,8 +135,9 @@ use foundry_evm::{
         TracingInspectorConfig,
     },
     utils::{
-        block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
+        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
+        get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -655,6 +657,11 @@ impl<N: Network> Backend<N> {
         U256::from(self.evm_env.read().cfg_env.chain_id)
     }
 
+    /// Returns the chain ID that defines protocol behavior.
+    fn protocol_chain_id(&self) -> u64 {
+        self.get_fork().map_or_else(|| self.evm_env.read().cfg_env.chain_id, |fork| fork.chain_id())
+    }
+
     pub fn set_chain_id(&self, chain_id: u64) {
         self.evm_env.write().cfg_env.chain_id = chain_id;
     }
@@ -987,10 +994,8 @@ impl<N: Network> Backend<N> {
         let spec_id = self.spec_id();
         let mut precompiles =
             PrecompilesMap::from_static(Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)));
-        let (chain_id, timestamp) = {
-            let evm_env = self.evm_env.read();
-            (evm_env.cfg_env.chain_id, evm_env.block_env.timestamp.saturating_to())
-        };
+        let chain_id = self.protocol_chain_id();
+        let timestamp = self.evm_env.read().block_env.timestamp.saturating_to();
         self.networks.inject_chain_precompiles(&mut precompiles, chain_id, timestamp);
 
         let mut precompiles_map = BTreeMap::<String, Address>::default();
@@ -1531,7 +1536,7 @@ impl<N: Network> Backend<N> {
         let mut block = WithOtherFields::new(block);
 
         // If Arbitrum, apply chain specifics to converted block.
-        if is_arbitrum(self.chain_id().to::<u64>()) {
+        if is_arbitrum(self.protocol_chain_id()) {
             // Set `l1BlockNumber` field.
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
@@ -1677,7 +1682,7 @@ impl<N: Network> Backend<N> {
         self.networks.inject_precompiles(precompiles);
         self.networks.inject_chain_precompiles(
             precompiles,
-            evm_env.cfg_env.chain_id,
+            self.protocol_chain_id(),
             evm_env.block_env.timestamp.saturating_to(),
         );
 
@@ -2370,7 +2375,7 @@ impl<N: Network> Backend<N> {
     }
 
     fn arbitrum_block_number(&self, evm_env: &EvmEnv) -> Option<u64> {
-        if !arbitrum::is_arbitrum_chain(evm_env.cfg_env.chain_id) {
+        if !arbitrum::is_arbitrum_chain(self.protocol_chain_id()) {
             return None;
         }
 
@@ -3190,6 +3195,7 @@ impl<N: Network> Backend<N> {
             let reset_urls =
                 forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
             let rpc_url_changed = target_rpc_url != fork.database_rpc_url();
+            let previous_source_chain_id = fork.chain_id();
             fork.prepare_reset(reset_urls, block_number.into()).await?;
             if rpc_url_changed {
                 // Clear state fetched from the previous RPC URL before persisting the cache.
@@ -3205,7 +3211,7 @@ impl<N: Network> Backend<N> {
                     if config.no_storage_caching || config.fork_urls.is_empty() {
                         None
                     } else {
-                        foundry_config::Config::foundry_chain_cache_dir(config.get_chain_id())
+                        foundry_config::Config::foundry_chain_cache_dir(previous_source_chain_id)
                     }
                 };
                 if let Some(cache_dir) = cache_dir
@@ -3222,56 +3228,56 @@ impl<N: Network> Backend<N> {
                 .block_by_number(fork_block_number)
                 .await?
                 .ok_or(BlockchainError::BlockNotFound)?;
-            // update all settings related to the forked block
-            {
-                if let Some(fork_url) = forking.json_rpc_url {
-                    self.reset_block_number(fork_url, fork_block_number).await?;
-                } else {
-                    // If rpc url is unspecified, then update the fork with the new block number and
-                    // existing rpc url, this updates the cache path
-                    if let Some(fork_url) = target_rpc_url.clone() {
-                        self.reset_block_number(fork_url, fork_block_number).await?;
-                    }
-
-                    let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
-                    let mut env = self.evm_env.write();
-
-                    env.cfg_env.chain_id = fork.chain_id();
-                    env.block_env = BlockEnv {
-                        number: U256::from(fork_block_number),
-                        timestamp: U256::from(fork_block.header.timestamp()),
-                        gas_limit,
-                        difficulty: fork_block.header.difficulty(),
-                        prevrandao: Some(fork_block.header.mix_hash().unwrap_or_default()),
-                        // Keep previous `beneficiary` and `basefee` value
-                        beneficiary: env.block_env.beneficiary,
-                        basefee: env.block_env.basefee,
-                        ..env.block_env.clone()
-                    };
-
-                    // this is the base fee of the current block, but we need the base fee of
-                    // the next block
-                    let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                        fork_block.header.gas_used(),
-                        gas_limit,
-                        fork_block.header.base_fee_per_gas().unwrap_or_default(),
-                    );
-
-                    self.fees.set_base_fee(next_block_base_fee);
-                }
-
-                // reset the time to the timestamp of the forked block
-                self.time.reset(fork_block.header.timestamp());
-                // drop any pending next-block prevrandao override so it does not leak into a block
-                self.cheats.clear_next_block_prevrandao();
-
-                // also reset the total difficulty
-                self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
+            let reset_without_url = forking.json_rpc_url.is_none();
+            if let Some(fork_url) = forking.json_rpc_url.or_else(|| target_rpc_url.clone()) {
+                // Rebuild the fork database so its cache path follows the selected block and URL.
+                self.reset_block_number(fork_url, fork_block_number).await?;
             }
+            let fork = self
+                .get_fork()
+                .ok_or_else(|| BlockchainError::Internal("fork missing after reset".to_string()))?;
+            if reset_without_url {
+                let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
+                let mut env = self.evm_env.write();
+
+                env.cfg_env.chain_id = fork.execution_chain_id();
+                env.block_env = BlockEnv {
+                    number: U256::from(fork_block_number),
+                    timestamp: U256::from(fork_block.header.timestamp()),
+                    gas_limit,
+                    difficulty: fork_block.header.difficulty(),
+                    prevrandao: Some(fork_block.header.mix_hash().unwrap_or_default()),
+                    // Keep previous `beneficiary` and `basefee` value.
+                    beneficiary: env.block_env.beneficiary,
+                    basefee: env.block_env.basefee,
+                    ..env.block_env.clone()
+                };
+                apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+                    &mut env,
+                    &fork_block,
+                    fork.chain_id(),
+                    self.networks,
+                );
+
+                // This is the base fee of the current block, but we need the base fee of the next
+                // block.
+                let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                    fork_block.header.gas_used(),
+                    gas_limit,
+                    fork_block.header.base_fee_per_gas().unwrap_or_default(),
+                );
+
+                self.fees.set_base_fee(next_block_base_fee);
+            }
+
+            // Update all settings related to the forked block.
+            self.time.reset(fork_block.header.timestamp());
+            // Drop any pending next-block prevrandao override so it does not leak into a block.
+            self.cheats.clear_next_block_prevrandao();
+            self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
+
             #[cfg(feature = "monad")]
-            if self.is_monad()
-                && let Some(fork) = self.get_fork()
-            {
+            if self.is_monad() {
                 cache_monad_fork_context(&fork).await?;
             }
             // reset storage
@@ -3742,7 +3748,7 @@ where
             let block_number = self.blockchain.storage.read().best_number.saturating_add(1);
 
             // increase block number for this block
-            if is_arbitrum(evm_env.cfg_env.chain_id) {
+            if is_arbitrum(self.protocol_chain_id()) {
                 // Temporary set `env.block.number` to `block_number` for Arbitrum chains.
                 evm_env.block_env.number = U256::from(block_number);
             } else {
@@ -5644,7 +5650,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
             // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
             // can intentionally keep BlockEnv.number distinct from the best L2 block number.
-            if !is_arbitrum(self.chain_id().to()) {
+            if !is_arbitrum(self.protocol_chain_id()) {
                 block.number = U256::from(selected_best_number);
             }
         }
@@ -5669,10 +5675,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             );
             let blob_excess_gas_and_price = BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
-                get_blob_base_fee_update_fraction(
-                    self.evm_env.read().cfg_env.chain_id,
-                    header.timestamp,
-                ),
+                get_blob_base_fee_update_fraction(self.protocol_chain_id(), header.timestamp),
             );
             (next_block_base_fee, blob_excess_gas_and_price)
         });

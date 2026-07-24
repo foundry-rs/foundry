@@ -2022,6 +2022,30 @@ async fn test_fork_reset_after_set_rpc_url_does_not_reuse_old_cache() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_after_set_rpc_url_updates_source_chain_id() {
+    let (_first_origin_api, first_origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let (_second_origin_api, second_origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(56u64))).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint())),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    assert_eq!(provider.get_chain_id().await.unwrap(), 1);
+    assert_eq!(api.anvil_metadata().await.unwrap().forked_network.unwrap().chain_id, 1);
+
+    api.anvil_set_rpc_url(second_origin_handle.http_endpoint()).await.unwrap();
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+    assert_eq!(provider.get_chain_id().await.unwrap(), 56);
+    assert_eq!(api.anvil_metadata().await.unwrap().forked_network.unwrap().chain_id, 56);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_client_fork_reset_then_backend_reset_rebuilds_database() {
     let address = Address::random();
     let first_balance = U256::from(1337u64);

@@ -527,6 +527,51 @@ async fn monad_fork_uses_monad_execution() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_preserves_source_chain_with_execution_override() {
+    let (_origin, endpoint) = monad_boundary_origin().await;
+    let config = NodeConfig::test()
+        .with_chain_id(Some(1u64))
+        .with_eth_rpc_url(Some(endpoint))
+        .with_fork_block_number(Some(1u64));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    let node_info = api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network, Some("monad".to_string()));
+    assert_eq!(node_info.hard_fork, "MonadEight");
+    assert_eq!(node_info.environment.chain_id, 1);
+    assert_eq!(
+        api.anvil_metadata().await.unwrap().forked_network.unwrap().chain_id,
+        MONAD_TESTNET_CHAIN_ID
+    );
+    assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(2) })).await.unwrap();
+
+    let node_info = api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network, Some("monad".to_string()));
+    assert_eq!(node_info.hard_fork, "MonadNine");
+    assert_eq!(node_info.environment.chain_id, 1);
+    assert_eq!(
+        api.anvil_metadata().await.unwrap().forked_network.unwrap().chain_id,
+        MONAD_TESTNET_CHAIN_ID
+    );
+    assert_eq!(provider.call(reserve_balance_call()).await.unwrap(), Bytes::from(vec![0; 32]));
+
+    let (_ethereum_api, ethereum_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let err = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(ethereum_handle.http_endpoint()),
+            block_number: None,
+        }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cannot reset Anvil across network families (monad -> ethereum)"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_fork_reset_without_url_preserves_monad_execution() {
     let (origin_api, origin_handle) = spawn(monad_nine_config()).await;
     origin_api.mine_one().await;
