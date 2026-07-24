@@ -150,8 +150,16 @@ impl VerifyBundle {
         } else {
             self.source_sourcify_url =
                 Some(sourcify_api_url(chain).unwrap_or_else(|| SOURCIFY_URL.to_string()));
-            self.source_etherscan_url =
-                config.get_etherscan_config_with_chain(Some(chain))?.map(|config| config.api_url);
+            self.source_etherscan_url = config
+                .get_etherscan_config_with_chain(Some(chain))?
+                .map(|config| config.api_url)
+                .or_else(|| {
+                    if provider.is_etherscan() && !chain.is_custom_sourcify() {
+                        chain.etherscan_urls().map(|(api_url, _)| api_url.to_string())
+                    } else {
+                        None
+                    }
+                });
             self.source_etherscan_key = resolved_key.clone();
         }
         self.etherscan.key = resolved_key;
@@ -680,6 +688,47 @@ mod tests {
         );
         verify.set_chain(&config, Chain::mainnet()).unwrap();
         assert_eq!(verify.source_sourcify_url.as_deref(), Some(SOURCIFY_URL));
+    }
+
+    #[test]
+    fn cli_only_etherscan_key_uses_chain_source_endpoint() {
+        let chain = Chain::mainnet();
+        let config = Config::default();
+        let mut verify = bundle(
+            &config,
+            VerifierArgs { verifier_api_key: Some("cli-key".into()), ..Default::default() },
+        );
+
+        verify.set_chain(&config, chain).unwrap();
+
+        assert_eq!(
+            verify.source_etherscan_url.as_deref(),
+            Some("https://api.etherscan.io/v2/api?chainid=1")
+        );
+        assert_eq!(verify.source_etherscan_key.as_deref(), Some("cli-key"));
+        assert_eq!(verify.etherscan.key.as_deref(), Some("cli-key"));
+    }
+
+    #[test]
+    fn chain_source_endpoint_requires_valid_etherscan_route() {
+        let config = Config::default();
+        for (chain, provider) in [
+            (Chain::mainnet(), VerificationProviderType::Custom),
+            (Chain::from(4217u64), VerificationProviderType::Etherscan),
+        ] {
+            let mut verify = bundle(
+                &config,
+                VerifierArgs {
+                    verifier: Some(provider),
+                    verifier_api_key: Some("private-key".into()),
+                    ..Default::default()
+                },
+            );
+
+            verify.set_chain(&config, chain).unwrap();
+
+            assert!(verify.source_etherscan_url.is_none());
+        }
     }
 
     #[test]
