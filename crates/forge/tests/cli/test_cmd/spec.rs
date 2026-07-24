@@ -368,19 +368,25 @@ contract MonadEvmVersionTest is Test {
     EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
     address constant CLZ_TARGET = address(uint160(0x0c17));
     address constant MEMORY_TARGET = address(uint160(0x3e3));
+    address constant RESERVE_TARGET = address(uint160(0x1001));
 
     function test_set_monad_evm_version() public {
+        evm.setEvmVersion("MonadEight");
         vm.etch(CLZ_TARGET, hex"60011e60005260206000f3");
 
-        evm.setEvmVersion("MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
         assertEq(memoryExpansionGasDelta(), 897, "MonadEight should use Ethereum memory pricing");
+        uint256 monadEightModexpGas = modexpGas();
+        assertFalse(reservePrecompileActive(), "MonadEight should not expose the reserve precompile");
         (bool ok,) = CLZ_TARGET.staticcall(hex"");
         assertFalse(ok, "CLZ should be unavailable on MonadEight");
 
         evm.setEvmVersion("MonadNine");
         assertEq(evm.getEvmVersion(), "monadnine");
         assertEq(memoryExpansionGasDelta(), 128, "MonadNine should use MIP-3 memory pricing");
+        uint256 monadNineModexpGas = modexpGas();
+        assertGt(monadNineModexpGas, monadEightModexpGas, "MonadNine should use MIP-3 MODEXP pricing");
+        assertTrue(reservePrecompileActive(), "MonadNine should expose the reserve precompile");
         bytes memory output;
         (ok, output) = CLZ_TARGET.staticcall(hex"");
         assertTrue(ok, "CLZ should be available on MonadNine");
@@ -389,6 +395,10 @@ contract MonadEvmVersionTest is Test {
         evm.setEvmVersion("monad:MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
         assertEq(memoryExpansionGasDelta(), 897, "MonadEight memory pricing should be restored");
+        assertLt(modexpGas(), monadNineModexpGas, "MonadEight MODEXP pricing should be restored");
+        assertFalse(
+            reservePrecompileActive(), "MonadEight should remove the reserve precompile again"
+        );
         (ok,) = CLZ_TARGET.staticcall(hex"");
         assertFalse(ok, "CLZ should be disabled after switching back to MonadEight");
     }
@@ -405,6 +415,31 @@ contract MonadEvmVersionTest is Test {
         (bool ok, bytes memory output) = MEMORY_TARGET.staticcall(hex"");
         assertTrue(ok, "memory gas probe should succeed");
         return abi.decode(output, (uint256));
+    }
+
+    function modexpGas() internal view returns (uint256) {
+        bytes memory input = abi.encodePacked(
+            bytes32(uint256(32)),
+            bytes32(uint256(32)),
+            bytes32(uint256(32)),
+            bytes32(type(uint256).max),
+            bytes32(type(uint256).max),
+            bytes32(type(uint256).max)
+        );
+        uint256 gasBefore = gasleft();
+        (bool ok,) = address(5).staticcall(input);
+        uint256 gasUsed = gasBefore - gasleft();
+        assertTrue(ok, "MODEXP probe should succeed");
+        return gasUsed;
+    }
+
+    function reservePrecompileActive() internal returns (bool) {
+        (bool ok, bytes memory output) = RESERVE_TARGET.call(hex"3a61584e");
+        assertTrue(ok, "reserve probe should succeed");
+        if (output.length == 0) return false;
+        assertEq(output.length, 32, "reserve probe returned malformed output");
+        assertFalse(abi.decode(output, (bool)), "fresh execution should not dip into reserve");
+        return true;
     }
 }
    "#,
