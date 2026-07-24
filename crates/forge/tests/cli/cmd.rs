@@ -1901,7 +1901,7 @@ contract ContractField {
       "label": "token",
       "offset": 0,
       "slot": "0xbb00b7e016d7ea496af7283aed140b9036f331e3d3c10ad916e0333859828600",
-      "type": "contract IERC20"
+      "type": "contract IERC20#ContractId(0)"
     },
     {
       "astId": 0,
@@ -1918,7 +1918,7 @@ contract ContractField {
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "contract IERC20": {
+    "contract IERC20#ContractId(0)": {
       "encoding": "inplace",
       "label": "contract IERC20",
       "numberOfBytes": "20"
@@ -2084,7 +2084,7 @@ contract Composite {
       "label": "pairs",
       "offset": 0,
       "slot": "0x81ae721f920fedc11581a214debb56ba6198e52123849352f75511a326eb7b00",
-      "type": "struct Composite.Pair[2]"
+      "type": "struct Composite.Pair#StructId(0)[2]"
     }
   ],
   "types": {
@@ -2093,7 +2093,7 @@ contract Composite {
       "label": "address",
       "numberOfBytes": "20"
     },
-    "struct Composite.Pair": {
+    "struct Composite.Pair#StructId(0)": {
       "encoding": "inplace",
       "label": "struct Composite.Pair",
       "numberOfBytes": "64",
@@ -2116,11 +2116,11 @@ contract Composite {
         }
       ]
     },
-    "struct Composite.Pair[2]": {
+    "struct Composite.Pair#StructId(0)[2]": {
       "encoding": "inplace",
       "label": "struct Composite.Pair[2]",
       "numberOfBytes": "128",
-      "base": "struct Composite.Pair"
+      "base": "struct Composite.Pair#StructId(0)"
     },
     "uint256": {
       "encoding": "inplace",
@@ -2173,7 +2173,7 @@ contract DeepMapping {
       "label": "tokens",
       "offset": 0,
       "slot": "0xf3683f60db86b0b051284bbd846b2bbe66a86997292a57e82f40f5e8a330a700",
-      "type": "mapping(uint256 => struct DeepMapping.Token)"
+      "type": "mapping(uint256 => struct DeepMapping.Token#StructId(0))"
     }
   ],
   "types": {
@@ -2182,14 +2182,14 @@ contract DeepMapping {
       "label": "address",
       "numberOfBytes": "20"
     },
-    "mapping(uint256 => struct DeepMapping.Token)": {
+    "mapping(uint256 => struct DeepMapping.Token#StructId(0))": {
       "encoding": "mapping",
       "key": "uint256",
       "label": "mapping(uint256 => struct DeepMapping.Token)",
       "numberOfBytes": "32",
-      "value": "struct DeepMapping.Token"
+      "value": "struct DeepMapping.Token#StructId(0)"
     },
-    "struct DeepMapping.Token": {
+    "struct DeepMapping.Token#StructId(0)": {
       "encoding": "inplace",
       "label": "struct DeepMapping.Token",
       "numberOfBytes": "64",
@@ -2270,11 +2270,11 @@ contract Struct3 {
       "label": "data",
       "offset": 0,
       "slot": "0x2519de6936a0f3f35369a45024b659776437a50d0982ecf943e2488b087abf00",
-      "type": "struct Struct3.Inner"
+      "type": "struct Struct3.Inner#StructId(1)"
     }
   ],
   "types": {
-    "struct Struct3.Inner": {
+    "struct Struct3.Inner#StructId(1)": {
       "encoding": "inplace",
       "label": "struct Struct3.Inner",
       "numberOfBytes": "96",
@@ -2285,7 +2285,7 @@ contract Struct3 {
           "label": "p",
           "offset": 0,
           "slot": "0",
-          "type": "struct Struct3.Point"
+          "type": "struct Struct3.Point#StructId(0)"
         },
         {
           "astId": 0,
@@ -2297,7 +2297,7 @@ contract Struct3 {
         }
       ]
     },
-    "struct Struct3.Point": {
+    "struct Struct3.Point#StructId(0)": {
       "encoding": "inplace",
       "label": "struct Struct3.Point",
       "numberOfBytes": "64",
@@ -2457,11 +2457,11 @@ contract RecursiveArray {
       "label": "root",
       "offset": 0,
       "slot": "0x539c3f42a016558808fc037d9c7f266a766b5f0aab821e2a24b0d64653589200",
-      "type": "struct RecursiveArray.Node"
+      "type": "struct RecursiveArray.Node#StructId(0)"
     }
   ],
   "types": {
-    "struct RecursiveArray.Node": {
+    "struct RecursiveArray.Node#StructId(0)": {
       "encoding": "inplace",
       "label": "struct RecursiveArray.Node",
       "numberOfBytes": "64",
@@ -2472,7 +2472,7 @@ contract RecursiveArray {
           "label": "children",
           "offset": 0,
           "slot": "0",
-          "type": "struct RecursiveArray.Node[]"
+          "type": "struct RecursiveArray.Node#StructId(0)[]"
         },
         {
           "astId": 0,
@@ -2484,11 +2484,11 @@ contract RecursiveArray {
         }
       ]
     },
-    "struct RecursiveArray.Node[]": {
+    "struct RecursiveArray.Node#StructId(0)[]": {
       "encoding": "dynamic_array",
       "label": "struct RecursiveArray.Node[]",
       "numberOfBytes": "32",
-      "base": "struct RecursiveArray.Node"
+      "base": "struct RecursiveArray.Node#StructId(0)"
     },
     "uint256": {
       "encoding": "inplace",
@@ -2613,7 +2613,7 @@ contract PackedStruct {
       "label": "word",
       "offset": 0,
       "slot": "[..]",
-      "type": "struct PackedStruct.HalfWord"
+      "type": "struct PackedStruct.HalfWord#StructId(0)"
     },
     {
       "astId": 0,
@@ -2625,7 +2625,7 @@ contract PackedStruct {
     }
   ],
   "types": {
-    "struct PackedStruct.HalfWord": {
+    "struct PackedStruct.HalfWord#StructId(0)": {
       "encoding": "inplace",
       "label": "struct PackedStruct.HalfWord",
       "numberOfBytes": "32",
@@ -3070,6 +3070,114 @@ contract Consumer5 {
 }
 
 "#]]);
+});
+
+// erc7201("test.collideA") = 0x520b7efd6f4ed363ff9120fdaff363cdf3d2004d02efde1dcd2f866a488ec000
+// erc7201("test.collideB") = 0x16b1e394820a50044d67a7b807ec9b60fd5bd095941c3b1a9de3413add3cb400
+// Two distinct file-scope structs named `Layout`, both labeled "struct Layout", must not collapse
+// into one `types` entry.
+forgetest!(can_inspect_erc7201_same_named_structs_do_not_collide, |prj, cmd| {
+    prj.add_source(
+        "FileA.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+struct Layout {
+    uint256 a;
+    uint256 b;
+}
+
+/// @custom:storage-location erc7201:test.collideA
+struct RootA {
+    Layout inner;
+}
+    "#,
+    );
+    prj.add_source(
+        "FileB.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+struct Layout {
+    address addr;
+}
+
+/// @custom:storage-location erc7201:test.collideB
+struct RootB {
+    Layout inner;
+}
+    "#,
+    );
+    prj.add_source(
+        "Consumer6.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {RootA} from "./FileA.sol";
+import {RootB} from "./FileB.sol";
+
+contract Consumer6 {
+    function _a() private pure returns (RootA storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.collideA")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+    function _b() private pure returns (RootB storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.collideB")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["inspect", "Consumer6", "storageLayout", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let layout: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("storageLayout --json should be valid JSON");
+
+    let storage = layout["storage"].as_array().expect("storage array");
+    let entry_a = storage
+        .iter()
+        .find(|e| e["contract"] == "Consumer6 [erc7201:test.collideA]")
+        .expect("collideA entry");
+    let entry_b = storage
+        .iter()
+        .find(|e| e["contract"] == "Consumer6 [erc7201:test.collideB]")
+        .expect("collideB entry");
+    assert_eq!(
+        entry_a["slot"],
+        "0x520b7efd6f4ed363ff9120fdaff363cdf3d2004d02efde1dcd2f866a488ec000"
+    );
+    assert_eq!(
+        entry_b["slot"],
+        "0x16b1e394820a50044d67a7b807ec9b60fd5bd095941c3b1a9de3413add3cb400"
+    );
+
+    let type_a = entry_a["type"].as_str().expect("entry_a type");
+    let type_b = entry_b["type"].as_str().expect("entry_b type");
+    assert_ne!(type_a, type_b, "distinct `Layout` declarations must not share a type id");
+
+    let types = layout["types"].as_object().expect("types map");
+    let members_a = types[type_a]["members"].as_array().expect("type_a members");
+    let members_b = types[type_b]["members"].as_array().expect("type_b members");
+
+    assert_eq!(types[type_a]["numberOfBytes"], "64");
+    assert_eq!(members_a.len(), 2);
+    assert_eq!(members_a[0]["label"], "a");
+    assert_eq!(members_a[0]["type"], "uint256");
+    assert_eq!(members_a[1]["label"], "b");
+    assert_eq!(members_a[1]["type"], "uint256");
+
+    assert_eq!(types[type_b]["numberOfBytes"], "32");
+    assert_eq!(members_b.len(), 1);
+    assert_eq!(members_b[0]["label"], "addr");
+    assert_eq!(members_b[0]["type"], "address");
 });
 
 // test that `forge snapshot` commands work

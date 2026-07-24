@@ -536,8 +536,46 @@ fn hir_type_label<'hir>(gcx: Gcx<'hir>, kind: &TypeKind<'hir>) -> String {
     }
 }
 
-/// Returns `(label, number_of_bytes, slot_count, encoding)` for a HIR type in storage context.
+/// Returns a unique structural identifier for a type.
 ///
+/// Unlike [`hir_type_label`], which distinct declarations can share (e.g. two file-scope structs
+/// both named `Layout`), this embeds the declaration's HIR id for struct/enum/UDVT/contract
+/// types, so it never collapses two distinct declarations into one key. Used as the `types` map
+/// key and for cross-references (`Storage.type`, array `base`, mapping `key`/`value`, struct
+/// `members[].type`); [`hir_type_label`] remains the human-readable `StorageType.label`.
+fn hir_type_id<'hir>(gcx: Gcx<'hir>, kind: &TypeKind<'hir>) -> String {
+    match kind {
+        TypeKind::Array(arr) => {
+            let elem_id = hir_type_id(gcx, &arr.element.kind);
+            let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
+                ConstantEvaluator::new(gcx)
+                    .try_eval(size_expr)
+                    .ok()
+                    .and_then(|s| s.as_u256())
+                    .and_then(|n| n.try_into().ok())
+                    .filter(|&n: &u64| n > 0)
+            });
+            match fixed_len {
+                Some(n) => format!("{elem_id}[{n}]"),
+                None => format!("{elem_id}[]"),
+            }
+        }
+        TypeKind::Mapping(m) => {
+            let key_id = hir_type_id(gcx, &m.key.kind);
+            let val_id = hir_type_id(gcx, &m.value.kind);
+            format!("mapping({key_id} => {val_id})")
+        }
+        TypeKind::Custom(ItemId::Struct(id)) => format!("{}#{id:?}", hir_type_label(gcx, kind)),
+        TypeKind::Custom(ItemId::Enum(id)) => format!("{}#{id:?}", hir_type_label(gcx, kind)),
+        TypeKind::Custom(ItemId::Udvt(id)) => format!("{}#{id:?}", hir_type_label(gcx, kind)),
+        TypeKind::Custom(ItemId::Contract(id)) => format!("{}#{id:?}", hir_type_label(gcx, kind)),
+        _ => hir_type_label(gcx, kind),
+    }
+}
+
+/// Returns `(id, number_of_bytes, slot_count, encoding)` for a HIR type in storage context.
+///
+/// - `id`: unique structural identifier, see [`hir_type_id`].
 /// - `number_of_bytes`: actual data bytes (used in `StorageType.numberOfBytes`)
 /// - `slot_count`: 0 for packable value types; ≥ 1 for slot-boundary types (arrays, structs,
 ///   mappings, string, bytes). The packing algorithm advances `current_slot` by this amount.
@@ -546,7 +584,7 @@ fn hir_type_storage_info<'hir>(
     kind: &TypeKind<'hir>,
 ) -> (String, u64, u64, &'static str) {
     let hir = &gcx.hir;
-    let label = hir_type_label(gcx, kind);
+    let id = hir_type_id(gcx, kind);
     let (byte_size, slot_count, encoding) = match kind {
         TypeKind::Elementary(et) => match et {
             ElementaryType::Address(_) => (20u64, 0u64, "inplace"),
@@ -610,11 +648,12 @@ fn hir_type_storage_info<'hir>(
         }
         TypeKind::Custom(_) | TypeKind::Err(_) => (32, 1, "inplace"),
     };
-    (label, byte_size, slot_count, encoding)
+    (id, byte_size, slot_count, encoding)
 }
 
 /// Runs Solidity's storage packing algorithm over `fields`, invoking
-/// `on_field(var_id, type_label, slot, byte_offset)` for each field.
+/// `on_field(var_id, type_id, slot, byte_offset)` for each field, where `type_id` is the
+/// [`hir_type_id`] of the field's type.
 /// Returns the total number of 32-byte slots consumed.
 fn pack_fields<'hir>(
     gcx: Gcx<'hir>,
@@ -626,7 +665,7 @@ fn pack_fields<'hir>(
     let mut current_offset: u64 = 0;
     for &var_id in fields {
         let var = hir.variable(var_id);
-        let (type_label, byte_size, slot_count, _) = hir_type_storage_info(gcx, &var.ty.kind);
+        let (type_id, byte_size, slot_count, _) = hir_type_storage_info(gcx, &var.ty.kind);
         let (field_slot, field_offset) = if slot_count > 0 {
             if current_offset > 0 {
                 current_slot += 1;
@@ -645,7 +684,7 @@ fn pack_fields<'hir>(
             current_offset += byte_size;
             (s, o)
         };
-        on_field(var_id, &type_label, field_slot, field_offset);
+        on_field(var_id, &type_id, field_slot, field_offset);
     }
     if current_offset > 0 { current_slot + 1 } else { current_slot }
 }
@@ -653,18 +692,19 @@ fn pack_fields<'hir>(
 /// Inserts `kind`'s [`StorageType`] entry into `types`, recursively populating composite metadata:
 /// arrays get a `"base"` key, mappings get `key`/`value`, structs get a `"members"` array.
 ///
-/// Returns the type label used as the key in `types` and as `Storage.storage_type`.
+/// Returns the [`hir_type_id`] used as the key in `types` and as `Storage.storage_type`.
 fn register_type_recursive<'hir>(
     gcx: Gcx<'hir>,
     kind: &TypeKind<'hir>,
     types: &mut BTreeMap<String, StorageType>,
 ) -> String {
-    let (label, byte_size, _, encoding) = hir_type_storage_info(gcx, kind);
+    let (id, byte_size, _, encoding) = hir_type_storage_info(gcx, kind);
 
-    if types.contains_key(&label) {
-        return label;
+    if types.contains_key(&id) {
+        return id;
     }
 
+    let label = hir_type_label(gcx, kind);
     let st = match kind {
         TypeKind::Array(arr) => {
             let base = register_type_recursive(gcx, &arr.element.kind, types);
@@ -673,7 +713,7 @@ fn register_type_recursive<'hir>(
             StorageType {
                 encoding: encoding.to_string(),
                 key: None,
-                label: label.clone(),
+                label,
                 number_of_bytes: byte_size.to_string(),
                 value: None,
                 other,
@@ -685,22 +725,22 @@ fn register_type_recursive<'hir>(
             StorageType {
                 encoding: encoding.to_string(),
                 key: Some(key_type),
-                label: label.clone(),
+                label,
                 number_of_bytes: byte_size.to_string(),
                 value: Some(val_type),
                 other: BTreeMap::new(),
             }
         }
-        TypeKind::Custom(ItemId::Struct(id)) => {
+        TypeKind::Custom(ItemId::Struct(struct_id)) => {
             let hir = &gcx.hir;
-            let s = hir.strukt(*id);
+            let s = hir.strukt(*struct_id);
             // Placeholder inserted before recursing so self-referential types hit contains_key;
             // overwritten by the real entry at the end of this function.
             {
                 let mut placeholder_other = BTreeMap::new();
                 placeholder_other.insert("members".to_string(), Value::Array(vec![]));
                 types.insert(
-                    label.clone(),
+                    id.clone(),
                     StorageType {
                         encoding: encoding.to_string(),
                         key: None,
@@ -712,7 +752,7 @@ fn register_type_recursive<'hir>(
                 );
             }
             let mut members: Vec<Value> = Vec::new();
-            pack_fields(gcx, s.fields, |var_id, field_type, field_slot, field_offset| {
+            pack_fields(gcx, s.fields, |var_id, field_type_id, field_slot, field_offset| {
                 let var = hir.variable(var_id);
                 let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
                 register_type_recursive(gcx, &var.ty.kind, types);
@@ -722,7 +762,7 @@ fn register_type_recursive<'hir>(
                     "label": field_name,
                     "offset": field_offset,
                     "slot": field_slot.to_string(),
-                    "type": field_type,
+                    "type": field_type_id,
                 }));
             });
             let mut other = BTreeMap::new();
@@ -730,7 +770,7 @@ fn register_type_recursive<'hir>(
             StorageType {
                 encoding: encoding.to_string(),
                 key: None,
-                label: label.clone(),
+                label,
                 number_of_bytes: byte_size.to_string(),
                 value: None,
                 other,
@@ -739,15 +779,15 @@ fn register_type_recursive<'hir>(
         _ => StorageType {
             encoding: encoding.to_string(),
             key: None,
-            label: label.clone(),
+            label,
             number_of_bytes: byte_size.to_string(),
             value: None,
             other: BTreeMap::new(),
         },
     };
 
-    types.insert(label.clone(), st);
-    label
+    types.insert(id.clone(), st);
+    id
 }
 
 /// Returns `true` if `kind` resolves to `struct_id`, directly or through arrays/mappings.
@@ -913,7 +953,7 @@ fn collect_erc7201_entries(
             let base_slot = U256::from_be_bytes(erc7201(namespace).0);
             let contract_label = format!("{target_contract_name} [erc7201:{namespace}]");
 
-            pack_fields(gcx, strukt.fields, |var_id, type_label, field_slot, field_offset| {
+            pack_fields(gcx, strukt.fields, |var_id, type_id, field_slot, field_offset| {
                 let var = hir.variable(var_id);
                 let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
                 let slot_value = base_slot + U256::from(field_slot);
@@ -923,7 +963,7 @@ fn collect_erc7201_entries(
                     label: field_name,
                     offset: field_offset as i64,
                     slot: format!("{slot_value:#066x}"),
-                    storage_type: type_label.to_string(),
+                    storage_type: type_id.to_string(),
                 });
                 register_type_recursive(gcx, &var.ty.kind, &mut types);
             });
