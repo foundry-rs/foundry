@@ -240,7 +240,7 @@ pub struct ScriptArgs {
     pub verify: bool,
 
     /// Opt-in verification of contracts deployed by external factories using explorer source.
-    #[arg(long, requires = "verify")]
+    #[arg(long, requires = "verify", conflicts_with_all = ["skip_simulation", "offline"])]
     pub verify_external: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
@@ -1191,6 +1191,22 @@ mod tests {
         ])
         .unwrap();
         assert!(args.verify_external);
+    }
+
+    #[test]
+    fn verify_external_requires_simulation_and_online_mode() {
+        for conflicting_arg in ["--skip-simulation", "--offline"] {
+            let err = ScriptArgs::try_parse_from([
+                "foundry-cli",
+                "Contract.sol",
+                "--broadcast",
+                "--verify",
+                "--verify-external",
+                conflicting_arg,
+            ])
+            .unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
     }
 
     #[test]

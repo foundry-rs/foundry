@@ -26,6 +26,13 @@ use external::{ExternalResolver, MAX_PROVENANCE_ADDRESSES, MatchResult, match_ca
 
 const MAX_EXTERNAL_JOBS: usize = 32;
 
+fn same_endpoint(left: &str, right: &str) -> bool {
+    let (Ok(left), Ok(right)) = (reqwest::Url::parse(left), reqwest::Url::parse(right)) else {
+        return false;
+    };
+    left == right
+}
+
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
 /// broadcasted transactions.
@@ -141,6 +148,15 @@ impl VerifyBundle {
                 .flatten()
                 .map(|config| config.api_url);
             self.source_etherscan_key = config_key;
+            if self
+                .source_sourcify_url
+                .as_deref()
+                .zip(self.source_etherscan_url.as_deref())
+                .is_some_and(|(sourcify, etherscan)| same_endpoint(sourcify, etherscan))
+            {
+                self.source_etherscan_url = None;
+                self.source_etherscan_key = None;
+            }
         } else if let Some(url) = &self.verifier.verifier_url {
             // An explicit non-Sourcify endpoint may be private. Do not disclose provenance to the
             // public Sourcify service as an implicit fallback.
@@ -615,8 +631,8 @@ fn check_unverified<N: Network>(
 mod tests {
     use super::{
         ContractsByArtifact, RetryArgs, SOURCIFY_URL, VerificationProviderType, VerifierArgs,
-        VerifyBundle, concise, ensure_verification_complete, source_api_key, sourcify_api_url,
-        take_matching_index,
+        VerifyBundle, concise, ensure_verification_complete, same_endpoint, source_api_key,
+        sourcify_api_url, take_matching_index,
     };
     use alloy_chains::Chain;
     use foundry_config::Config;
@@ -665,6 +681,8 @@ mod tests {
         verify.set_chain(&config, tempo).unwrap();
         assert_eq!(verify.source_sourcify_url, sourcify_api_url(tempo));
         assert_ne!(verify.source_sourcify_url.as_deref(), Some(SOURCIFY_URL));
+        assert!(verify.source_etherscan_url.is_none());
+        assert!(verify.source_etherscan_key.is_none());
 
         let config = Config::default();
         let mut verify = bundle(
@@ -688,6 +706,17 @@ mod tests {
         );
         verify.set_chain(&config, Chain::mainnet()).unwrap();
         assert_eq!(verify.source_sourcify_url.as_deref(), Some(SOURCIFY_URL));
+    }
+
+    #[test]
+    fn source_endpoint_comparison_normalizes_urls_without_ignoring_routes() {
+        assert!(same_endpoint("https://CONTRACTS.tempo.xyz:443", "https://contracts.tempo.xyz/"));
+        assert!(!same_endpoint("https://contracts.tempo.xyz/api", "https://contracts.tempo.xyz/"));
+        assert!(!same_endpoint(
+            "https://contracts.tempo.xyz/?chainid=4217",
+            "https://contracts.tempo.xyz/"
+        ));
+        assert!(!same_endpoint("not a URL", "https://contracts.tempo.xyz/"));
     }
 
     #[test]

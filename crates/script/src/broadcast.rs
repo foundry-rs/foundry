@@ -874,6 +874,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     }
 
     pub async fn verify_preflight_check(&self) -> Result<()> {
+        if self.args.verify_external && self.script_config.config.offline {
+            bail!("External contract verification is unavailable in offline mode");
+        }
+
         for sequence in self.sequence.sequences() {
             let chain: Chain = sequence.chain.into();
             // Resolve the API key: CLI arg first, then per-chain config, then global fallback.
