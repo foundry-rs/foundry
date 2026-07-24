@@ -818,11 +818,14 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     pub async fn new(
         config: Config,
-        evm_opts: EvmOpts,
+        mut evm_opts: EvmOpts,
         batch: bool,
         tempo: TempoOpts,
         sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
+        // Linking happens before runner construction, so pin now to ensure its CREATE2 factory
+        // lookup and all later environment/backend construction use the same fork block.
+        evm_opts.pin_fork_block().await?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if let Some(fork_url) = evm_opts.fork_url.as_ref() {
@@ -847,7 +850,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         self.sender_nonce = if let Some(sender_nonce) = self.sender_nonce_override {
             sender_nonce
         } else if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, None).await?
+            next_nonce(sender, fork_url, self.evm_opts.fork_block_number).await?
         } else {
             // dapptools compatibility
             1
@@ -975,6 +978,9 @@ mod tests {
     use alloy_chains::NamedChain;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
+    use alloy_provider::Provider as _;
+    use alloy_rpc_types::TransactionRequest;
+    use anvil::{NodeConfig, spawn};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
     use foundry_common::tempo::{
         KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
@@ -1082,6 +1088,40 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_sender_uses_pinned_fork_nonce() {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        let original_sender = accounts[0].address();
+        let replacement_sender = accounts[1].address();
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            sender: original_sender,
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(config.evm_opts.fork_block_number, Some(0));
+
+        let provider = handle.http_provider();
+        let tx = TransactionRequest::default()
+            .from(replacement_sender)
+            .to(original_sender)
+            .value(U256::from(1));
+        provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+        assert_eq!(provider.get_transaction_count(replacement_sender).await.unwrap(), 1);
+
+        config.update_sender(replacement_sender).await.unwrap();
+        assert_eq!(config.sender_nonce, 0);
     }
 
     #[test]

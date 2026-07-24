@@ -584,6 +584,7 @@ contract Broken {
             network: None,
             etherscan: EtherscanOpts::default(),
             verifier: VerifierArgs::default(),
+            libraries: Vec::new(),
             root: Some(prj.root().to_path_buf()),
             ignore: None,
         };

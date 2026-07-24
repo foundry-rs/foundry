@@ -750,10 +750,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                     log_collector,
                     tempo_labels,
                     tracer,
+                    revert_diag,
                     reverter,
                     ..
                 },
         } = self;
+
+        let trace_diagnostics =
+            revert_diag.map(|revert_diag| revert_diag.into_diagnostics()).unwrap_or_default();
 
         let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
             let ignored = cheatcodes
@@ -770,7 +774,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                 })
                 .unwrap_or_default();
 
-            SparsedTraceArena { arena, ignored }
+            SparsedTraceArena { arena, ignored, diagnostics: trace_diagnostics }
         });
 
         let (edge_coverage, evm_cmp_values) = edge_coverage
@@ -1413,16 +1417,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             self.top_level_frame_start(ecx);
         }
 
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_start();
+        }
+
         call_inspectors!(
             #[ret]
-            [
-                &mut self.fuzzer,
-                &mut self.tracer,
-                &mut self.log_collector,
-                &mut self.printer,
-                &mut self.revert_diag,
-                &mut self.tempo_labels
-            ],
+            [&mut self.fuzzer],
             |inspector| {
                 let mut out = None;
                 if let Some(output) = inspector.call(ecx, call) {
@@ -1430,6 +1431,32 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 }
                 out
             },
+        );
+
+        if self.tracer.is_some() {
+            crate::utils::cold_path();
+            let (output, trace_idx) = {
+                let tracer = self.tracer.as_deref_mut().unwrap();
+                let output = tracer.call(ecx, call);
+                (output, tracer.traces().nodes().len() - 1)
+            };
+            if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+                revert_diag.set_trace_node(trace_idx);
+            }
+            if output.is_some() {
+                return output;
+            }
+        }
+
+        call_inspectors!(
+            #[ret]
+            [
+                &mut self.log_collector,
+                &mut self.printer,
+                &mut self.revert_diag,
+                &mut self.tempo_labels
+            ],
+            |inspector| inspector.call(ecx, call).map(Some),
         );
 
         // The tracer records call inputs before cheatcodes apply caller overrides such as pranks
@@ -1545,6 +1572,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         self.do_call_end(ecx, inputs, outcome);
 
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_end();
+        }
+
         if ecx.journal().depth() == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
@@ -1564,9 +1595,28 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             self.top_level_frame_start(ecx);
         }
 
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_start();
+        }
+
+        if self.tracer.is_some() {
+            crate::utils::cold_path();
+            let (output, trace_idx) = {
+                let tracer = self.tracer.as_deref_mut().unwrap();
+                let output = tracer.create(ecx, create);
+                (output, tracer.traces().nodes().len() - 1)
+            };
+            if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+                revert_diag.set_trace_node(trace_idx);
+            }
+            if output.is_some() {
+                return output;
+            }
+        }
+
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.line_coverage],
+            [&mut self.line_coverage],
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
@@ -1649,6 +1699,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         }
 
         self.do_create_end(ecx, call, outcome);
+
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_end();
+        }
 
         if ecx.journal().depth() == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
@@ -1935,7 +1989,7 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
 #[cfg(test)]
 mod tests {
     use super::{
-        Address, Fuzzer, InspectorStack, InspectorStackInner, OpcodeStepDispatch,
+        Address, Fuzzer, InspectorStack, InspectorStackInner, OpcodeStepDispatch, RevertDiagnostic,
         TraceRequirements, compute_batch_create_salt,
     };
     use foundry_evm_core::evm::EthEvmNetwork;
@@ -2001,6 +2055,19 @@ mod tests {
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         stack.collect_edge_coverage(false);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+    }
+
+    #[test]
+    fn revert_diagnostic_frames_remain_balanced() {
+        let mut inspector = RevertDiagnostic::default();
+        inspector.frame_start();
+        inspector.set_trace_node(0);
+        inspector.frame_start();
+        inspector.set_trace_node(1);
+        inspector.frame_end();
+        inspector.frame_end();
+
+        assert!(inspector.into_diagnostics().is_empty());
     }
 
     #[test]

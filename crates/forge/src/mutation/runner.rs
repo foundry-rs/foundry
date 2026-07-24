@@ -173,6 +173,7 @@ pub fn run_mutations_parallel_with_progress(
     original_source: Arc<String>,
     config: Arc<Config>,
     evm_opts: EvmOpts,
+    create2_deployer_available: bool,
     num_workers: usize,
     progress: Option<MutationProgress>,
     silent: bool,
@@ -262,6 +263,7 @@ pub fn run_mutations_parallel_with_progress(
                     &original_source,
                     &config,
                     &evm_opts,
+                    create2_deployer_available,
                     &shared_state,
                     &temp_root,
                     &filter_args,
@@ -341,6 +343,7 @@ fn test_single_mutant_isolated(
     original_source: &Arc<String>,
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
+    create2_deployer_available: bool,
     shared_state: &Arc<SharedMutationState>,
     temp_root: &Path,
     filter_args: &Arc<FilterArgs>,
@@ -419,6 +422,7 @@ fn test_single_mutant_isolated(
         Some(budget) => run_compile_and_test_with_timeout(
             temp_config,
             evm_opts,
+            create2_deployer_available,
             budget,
             temp_dir,
             shared_state,
@@ -431,6 +435,7 @@ fn test_single_mutant_isolated(
             let res = match compile_and_test(
                 &temp_config,
                 evm_opts,
+                create2_deployer_available,
                 filter_args,
                 rerun_failures.as_ref().as_deref(),
                 selected_sources_relative,
@@ -471,6 +476,7 @@ fn test_single_mutant_isolated(
 fn run_compile_and_test_with_timeout(
     config: Arc<Config>,
     evm_opts: &EvmOpts,
+    create2_deployer_available: bool,
     budget: Duration,
     temp_dir: TempDir,
     shared_state: &Arc<SharedMutationState>,
@@ -497,6 +503,7 @@ fn run_compile_and_test_with_timeout(
                 compile_and_test(
                     &cfg,
                     &opts,
+                    create2_deployer_available,
                     &filter_for_worker,
                     rerun_for_worker.as_ref().as_deref(),
                     &selected_sources_for_worker,
@@ -612,6 +619,7 @@ fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
 fn compile_and_test(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
+    create2_deployer_available: bool,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
@@ -621,6 +629,7 @@ fn compile_and_test(
         compile_and_test_inner::<TempoEvmNetwork>(
             config,
             evm_opts,
+            create2_deployer_available,
             filter_args,
             rerun_failures,
             selected_sources_relative,
@@ -632,6 +641,7 @@ fn compile_and_test(
             return compile_and_test_inner::<MonadEvmNetwork>(
                 config,
                 evm_opts,
+                create2_deployer_available,
                 filter_args,
                 rerun_failures,
                 selected_sources_relative,
@@ -643,6 +653,7 @@ fn compile_and_test(
             return compile_and_test_inner::<OpEvmNetwork>(
                 config,
                 evm_opts,
+                create2_deployer_available,
                 filter_args,
                 rerun_failures,
                 selected_sources_relative,
@@ -652,6 +663,7 @@ fn compile_and_test(
         compile_and_test_inner::<EthEvmNetwork>(
             config,
             evm_opts,
+            create2_deployer_available,
             filter_args,
             rerun_failures,
             selected_sources_relative,
@@ -663,6 +675,7 @@ fn compile_and_test(
 fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
+    create2_deployer_available: bool,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
@@ -715,6 +728,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
             .enable_isolation(isolate)
             .fail_fast(true)
+            .with_create2_deployer_available(create2_deployer_available)
             .build::<FEN, MultiCompiler>(&compile_output, evm_env, tx_env, evm_opts.clone())?;
 
         runner.test_collect(&filter)

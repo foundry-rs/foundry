@@ -670,6 +670,9 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 fn ensure_source_entrypoint(root: &Path) -> Result<()> {
     let src = root.join("src");
     let has_src_sources = fs::files_with_ext(&src, "sol").next().is_some();
+    if has_src_sources {
+        return Ok(());
+    }
     let forge_std = root.join("lib/forge-std");
     let mut sources = fs::files_with_ext(root, "sol")
         .filter(|path| !path.starts_with(&src) && !path.starts_with(&forge_std))
@@ -1271,7 +1274,6 @@ mod tests {
         std::fs::create_dir_all(&library).unwrap();
         std::fs::create_dir_all(&other_library).unwrap();
         std::fs::create_dir_all(&forge_std).unwrap();
-        std::fs::write(src.join("Unrelated.sol"), "contract Unrelated {}").unwrap();
         std::fs::write(library.join("AToken.sol"), "contract AToken {}").unwrap();
         std::fs::write(library.join("Helper.sol"), "contract Helper {}").unwrap();
         std::fs::write(other_library.join("Helper.sol"), "contract Helper {}").unwrap();
@@ -1291,6 +1293,21 @@ mod tests {
              import * as CloneSource2 from \"../lib/other/src/Helper.sol\";\n"
         );
         compile_project(temp.path()).unwrap();
+    }
+
+    #[test]
+    fn test_does_not_add_entrypoint_when_src_has_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("src");
+        let library = temp.path().join("lib/dependency/src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&library).unwrap();
+        std::fs::write(src.join("Contract.sol"), "contract Contract {}").unwrap();
+        std::fs::write(library.join("Dependency.sol"), "contract Dependency {}").unwrap();
+
+        ensure_source_entrypoint(temp.path()).unwrap();
+
+        assert!(!src.join("Clone.sol").exists());
     }
 
     #[test]

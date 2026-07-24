@@ -1,7 +1,8 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::eth::macros::node_info;
-use alloy_primitives::{Address, Log, U256};
+use alloy_primitives::{Address, B256, Log, LogData, U256};
+use alloy_sol_types::SolValue;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
@@ -13,14 +14,14 @@ use foundry_evm::{
 };
 use revm::{
     Inspector,
-    context::ContextTr,
+    context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
-        interpreter::EthInterpreter,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme,
+        Interpreter, interpreter::EthInterpreter,
     },
 };
-use revm_inspectors::transfer::TransferInspector;
+use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector};
 use std::sync::Arc;
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -32,6 +33,89 @@ pub struct AnvilInspector {
     pub log_collector: Option<LogCollector>,
     /// Collects all internal ETH transfers as ERC20 transfer events.
     pub transfer: Option<TransferInspector>,
+    /// Collects canonical and synthetic transfer logs for an `eth_simulateV1` response.
+    simulation_logs: Option<SimulationLogCollector>,
+}
+
+#[derive(Clone, Debug)]
+struct SimulationLog {
+    log: Log,
+    index: u64,
+    canonical: bool,
+}
+
+/// Collects simulation response logs without inserting synthetic logs into EVM state.
+#[derive(Clone, Debug, Default)]
+struct SimulationLogCollector {
+    logs: Vec<SimulationLog>,
+    checkpoints: Vec<usize>,
+    next_index: u64,
+    trace_transfers: bool,
+    journal_log_count: usize,
+}
+
+impl SimulationLogCollector {
+    fn push_log(&mut self, log: Log, canonical: bool) {
+        self.logs.push(SimulationLog { log, index: self.next_index, canonical });
+        self.next_index += 1;
+    }
+
+    fn push_canonical_log(&mut self, log: Log, journal_log_count: usize) {
+        self.push_log(log, true);
+        self.journal_log_count = journal_log_count;
+    }
+
+    fn sync_journal_logs(&mut self, logs: &[Log]) {
+        self.journal_log_count = self.journal_log_count.min(logs.len());
+        for log in &logs[self.journal_log_count..] {
+            self.push_log(log.clone(), true);
+        }
+        self.journal_log_count = logs.len();
+    }
+
+    fn push_transfer(&mut self, from: Address, to: Address, value: U256) {
+        if !self.trace_transfers || value.is_zero() {
+            return;
+        }
+        self.push_log(
+            Log {
+                address: TRANSFER_LOG_EMITTER,
+                data: LogData::new_unchecked(
+                    vec![
+                        TRANSFER_EVENT_TOPIC,
+                        B256::from_slice(&from.abi_encode()),
+                        B256::from_slice(&to.abi_encode()),
+                    ],
+                    value.abi_encode().into(),
+                ),
+            },
+            false,
+        );
+    }
+
+    fn frame_start(&mut self) {
+        self.checkpoints.push(self.logs.len());
+    }
+
+    fn frame_end(&mut self, success: bool, journal_log_count: usize) {
+        let checkpoint = self.checkpoints.pop().expect("execution frame checkpoint exists");
+        if !success {
+            self.logs.truncate(checkpoint);
+        }
+        self.journal_log_count = journal_log_count;
+    }
+
+    fn append_remaining_canonical_logs(&mut self, canonical_logs: &[Log]) {
+        let mut canonical_logs = canonical_logs.iter();
+        for collected in self.logs.iter().filter(|log| log.canonical) {
+            let canonical =
+                canonical_logs.next().expect("collected canonical log exists in result");
+            assert_eq!(&collected.log, canonical, "collected canonical logs preserve ordering");
+        }
+        for log in canonical_logs {
+            self.push_log(log.clone(), true);
+        }
+    }
 }
 
 /// Configuration for per-transaction inspector lifecycle.
@@ -130,6 +214,27 @@ impl AnvilInspector {
         self
     }
 
+    /// Collects canonical and synthetic transfer logs for an `eth_simulateV1` response.
+    pub fn with_simulation_logs(mut self, trace_transfers: bool) -> Self {
+        self.simulation_logs =
+            Some(SimulationLogCollector { trace_transfers, ..Default::default() });
+        self
+    }
+
+    /// Takes the collected `eth_simulateV1` response logs and attempted log count.
+    pub fn take_simulation_logs(
+        &mut self,
+        canonical_logs: &[Log],
+    ) -> Option<(Vec<(u64, Log)>, u64)> {
+        self.simulation_logs.take().map(|mut collector| {
+            collector.append_remaining_canonical_logs(canonical_logs);
+            (
+                collector.logs.into_iter().map(|log| (log.index, log.log)).collect(),
+                collector.next_index,
+            )
+        })
+    }
+
     /// Configures the `Tracer` [`revm::Inspector`] with a trace printer
     pub fn with_trace_printer(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
@@ -153,7 +258,8 @@ fn print_traces(tracer: TracingInspector, decoder: Arc<CallTraceDecoder>) {
         })
     });
 
-    let traces = SparsedTraceArena { arena, ignored: Default::default() };
+    let traces =
+        SparsedTraceArena { arena, ignored: Default::default(), diagnostics: Default::default() };
     let trace = render_trace_arena_inner(&traces, false, true);
     node_info!(Traces = %format!("\n{}", trace));
 }
@@ -163,12 +269,18 @@ where
     CTX: ContextTr<Journal: JournalExt>,
 {
     fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(ecx.journal().logs());
+        }
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.initialize_interp(interp, ecx);
         });
     }
 
     fn step(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(ecx.journal().logs());
+        }
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step(interp, ecx);
         });
@@ -178,6 +290,9 @@ where
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step_end(interp, ecx);
         });
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(ecx.journal().logs());
+        }
     }
 
     #[allow(clippy::redundant_clone)]
@@ -185,6 +300,9 @@ where
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log(ecx, log.clone());
         });
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.push_canonical_log(log, ecx.journal().logs().len());
+        }
     }
 
     #[allow(clippy::redundant_clone)]
@@ -192,9 +310,21 @@ where
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log_full(interp, ecx, log.clone());
         });
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.push_canonical_log(log, ecx.journal().logs().len());
+        }
     }
 
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(ecx.journal().logs());
+            collector.frame_start();
+            if matches!(inputs.scheme, CallScheme::Call)
+                && let Some(value) = inputs.transfer_value()
+            {
+                collector.push_transfer(inputs.transfer_from(), inputs.transfer_to(), value);
+            }
+        }
         call_inspectors!(
             #[ret]
             [&mut self.tracer, &mut self.log_collector, &mut self.transfer],
@@ -207,9 +337,23 @@ where
         if let Some(tracer) = &mut self.tracer {
             tracer.call_end(ecx, inputs, outcome);
         }
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(ecx.journal().logs());
+            collector.frame_end(outcome.instruction_result().is_ok(), ecx.journal().logs().len());
+        }
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(ecx.journal().logs());
+            collector.frame_start();
+            if matches!(inputs.scheme(), CreateScheme::Create | CreateScheme::Create2 { .. })
+                && let Ok(account) = ecx.journal_mut().load_account(inputs.caller())
+            {
+                let address = inputs.created_address(account.data.info.nonce);
+                collector.push_transfer(inputs.caller(), address, inputs.value());
+            }
+        }
         call_inspectors!(
             #[ret]
             [&mut self.tracer, &mut self.transfer],
@@ -222,12 +366,22 @@ where
         if let Some(tracer) = &mut self.tracer {
             tracer.create_end(ecx, inputs, outcome);
         }
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(ecx.journal().logs());
+            collector.frame_end(
+                outcome.instruction_result().is_ok() && outcome.address.is_some(),
+                ecx.journal().logs().len(),
+            );
+        }
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
             Inspector::<CTX, EthInterpreter>::selfdestruct(inspector, contract, target, value)
         });
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.push_transfer(contract, target, value);
+        }
     }
 }
 
