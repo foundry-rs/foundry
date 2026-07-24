@@ -40,7 +40,12 @@ foundry_config::impl_figment_convert!(CoverageArgs, test);
 /// option in `foundry.toml`. CLI flags take precedence over config; the helper
 /// `resolve_with` merges them after the config is loaded.
 #[derive(Parser)]
-#[command(after_long_help = r#"Compatibility:
+#[command(after_long_help = r#"Source attribution:
+  Coverage follows compiler source maps. Inherited modifier code is reported under the
+  source where the modifier is declared. Dependency sources are excluded by default;
+  use `--include-libs` to include their coverage.
+
+Compatibility:
   `forge coverage` supports test filters and `--watch`, but not test-only output or
   execution modes such as `--json`, `--junit`, `--list`, `--debug`, flame profiles,
   symbolic artifact replay, showmap replay, brutalization, or mutation testing. Use
@@ -91,7 +96,7 @@ pub struct CoverageArgs {
     )]
     report_file: Option<PathBuf>,
 
-    /// Whether to include libraries in the coverage report.
+    /// Include dependency sources in the coverage report.
     #[arg(long)]
     include_libs: bool,
 
