@@ -282,13 +282,18 @@ fn render_contract<'ast, 'gcx>(
                 writeln!(out, "### {vname}").unwrap();
                 writeln!(out).unwrap();
                 let mut c = collect_comments(docs, name_to_page, page_path, local);
-                // Attempt @inheritdoc resolution for public state variables.
-                let inherited = inheritdoc_base(docs).and_then(|base| {
-                    hir_id.and_then(|cid| hir_ext::resolve_inheritdoc_var(gcx, cid, &vname, &base))
-                });
+                // Explicit `@inheritdoc` merges into a partial local doc; implicit
+                // inheritance only runs when the variable has no local NatSpec at all.
+                let inherited = match inheritdoc_base(docs) {
+                    Some(base) => hir_id
+                        .and_then(|cid| hir_ext::resolve_inheritdoc_var(gcx, cid, &vname, &base)),
+                    None if !has_local_natspec(docs) => hir_id
+                        .and_then(|cid| hir_ext::resolve_implicit_inheritdoc_var(gcx, cid, &vname)),
+                    None => None,
+                };
+                let sanitize =
+                    |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                 if let Some(ref base_doc) = inherited {
-                    let sanitize =
-                        |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                     if c.notices.is_empty() {
                         let inherited_notices: Vec<String> =
                             base_doc.notices.iter().map(|s| sanitize(s)).collect();
@@ -318,7 +323,14 @@ fn render_contract<'ast, 'gcx>(
                 }
                 write_comment_block(out, &c);
                 write_code_block(out, &ctx.dedented_snippet(*span));
-                if !c.returns.is_empty() {
+                // When the documentation is inherited from the variable's generated getter,
+                // render the getter's parameter and return signature instead of the declared
+                // (possibly mapping) type.
+                let getter_doc = inherited.as_ref().filter(|d| !d.getter_returns.is_empty());
+                if let Some(base_doc) = getter_doc {
+                    write_getter_table(out, "Parameters", &base_doc.getter_params, &sanitize);
+                    write_getter_table(out, "Returns", &base_doc.getter_returns, &sanitize);
+                } else if !c.returns.is_empty() {
                     let ty = format!("`{}`", ctx.snippet(v.ty.span).trim());
                     writeln!(out, "**Returns**").unwrap();
                     writeln!(out).unwrap();
@@ -354,30 +366,40 @@ fn render_contract<'ast, 'gcx>(
         writeln!(out, "## Functions").unwrap();
         writeln!(out).unwrap();
         for (span, f, docs) in &functions {
-            let fn_name = f.header.name.map(|n| n.as_str().to_string());
-            // Attempt inheritdoc resolution.
+            let fn_name = match f.kind {
+                FunctionKind::Constructor => None,
+                FunctionKind::Fallback => Some("fallback".to_string()),
+                FunctionKind::Receive => Some("receive".to_string()),
+                FunctionKind::Function | FunctionKind::Modifier => {
+                    f.header.name.map(|name| name.as_str().to_string())
+                }
+            };
+            // Explicit `@inheritdoc` merges into a partial local doc; implicit inheritance
+            // only runs when the function has no local NatSpec at all.
             let inherited = fn_name.as_deref().and_then(|fname| {
-                let base = inheritdoc_base(docs)?;
-                let param_types = hir_id
-                    .and_then(|cid| {
-                        let fid = gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
-                            hir::ItemId::Function(id) if gcx.hir.function(id).span == *span => {
-                                Some(id)
-                            }
-                            _ => None,
-                        });
-                        if fid.is_none() {
+                let fid = hir_id.and_then(|cid| {
+                    gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
+                        hir::ItemId::Function(id) if gcx.hir.function(id).span == *span => Some(id),
+                        _ => None,
+                    })
+                });
+                match inheritdoc_base(docs) {
+                    Some(base) => {
+                        if hir_id.is_some() && fid.is_none() {
                             let _ = sh_warn!(
                                 "forge doc: failed to find HIR function for `{}.{fname}` while resolving @inheritdoc",
                                 c.name
                             );
                         }
-                        fid
-                    })
-                    .and_then(|fid| hir_ext::function_param_types(gcx, fid));
-                hir_id.and_then(|cid| {
-                    hir_ext::resolve_inheritdoc(gcx, cid, fname, &base, param_types.as_deref())
-                })
+                        let param_types = fid.and_then(|fid| hir_ext::function_param_types(gcx, fid));
+                        hir_id.and_then(|cid| {
+                            hir_ext::resolve_inheritdoc(gcx, cid, fname, &base, param_types.as_deref())
+                        })
+                    }
+                    None if !has_local_natspec(docs) => hir_id
+                        .and_then(|cid| hir_ext::resolve_implicit_inheritdoc(gcx, cid, fname, fid)),
+                    None => None,
+                }
             });
             render_function_section(
                 &mut out,
@@ -934,6 +956,43 @@ fn is_known_custom_tag(tag: &str) -> bool {
 }
 
 /// Returns the base contract name from `@inheritdoc Base`, or `None`.
+/// Whether the declaration carries any local NatSpec item other than `@inheritdoc`. Solidity
+/// only auto-inherits documentation for a member with none, so implicit inheritance is gated
+/// on this being false; a local `@custom:*`, `@title` or `@author` counts as local
+/// documentation just like `@notice`/`@dev`/`@param`/`@return`.
+fn has_local_natspec(docs: &DocComments<'_>) -> bool {
+    docs.iter().any(|doc| {
+        doc.natspec.iter().any(|item| !matches!(item.kind, NatSpecKind::Inheritdoc { .. }))
+    })
+}
+
+/// Render a getter signature table (`Parameters` or `Returns`) from its inherited rows.
+fn write_getter_table(
+    out: &mut String,
+    heading: &str,
+    fields: &[hir_ext::GetterField],
+    sanitize: &impl Fn(&str) -> String,
+) {
+    if fields.is_empty() {
+        return;
+    }
+    writeln!(out, "**{heading}**").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Name | Type | Description |").unwrap();
+    writeln!(out, "| ---- | ---- | ----------- |").unwrap();
+    for field in fields {
+        let name = field
+            .name
+            .as_deref()
+            .map(escape_table_cell)
+            .unwrap_or_else(|| "&lt;none&gt;".to_string());
+        let ty = escape_table_cell(&field.ty);
+        let desc = escape_table_cell(&sanitize(&field.description));
+        writeln!(out, "| {name} | `{ty}` | {desc} |").unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
 fn inheritdoc_base(docs: &DocComments<'_>) -> Option<String> {
     for doc in docs.iter() {
         for item in doc.natspec.iter() {
