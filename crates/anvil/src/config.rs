@@ -38,6 +38,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::resolve_fork_hardfork,
     hardfork::FoundryHardfork,
     hardforks::latest_active_tempo_hardfork,
     utils::{
@@ -1358,30 +1359,19 @@ impl NodeConfig {
                 .wrap_err("failed to establish provider to fork url")?,
         );
 
-        let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
-            &self.fork_choice
-        {
+        let (fork_block_number, force_transactions) = if let Some(fork_choice) = &self.fork_choice {
             let (fork_block_number, force_transactions) =
                 derive_block_and_transactions(fork_choice, &provider).await.wrap_err(
                     "failed to derive fork block number and force transactions from fork choice",
                 )?;
-            let chain_id = if let Some(chain_id) = self.fork_chain_id {
-                Some(chain_id)
-            } else if self.hardfork.is_none() {
-                let chain_id =
-                    provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-                Some(U256::from(chain_id))
-            } else {
-                None
-            };
 
-            (fork_block_number, chain_id, force_transactions)
+            (fork_block_number, force_transactions)
         } else {
             // pick the last block number but also ensure it's not pending anymore
             let bn = find_latest_fork_block(&provider)
                 .await
                 .wrap_err("failed to get fork block number")?;
-            (bn, None, None)
+            (bn, None)
         };
 
         let block = provider
@@ -1423,35 +1413,41 @@ latest block number: {latest_block}"
             ..block_env_from_header(&block.header)
         };
 
+        let fork_chain_id = if let Some(fork_chain_id) = self.fork_chain_id {
+            fork_chain_id.to()
+        } else if self.hardfork.is_some()
+            && let Some(chain_id) = self.chain_id
+        {
+            chain_id
+        } else {
+            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+        };
+
         // Determine chain_id early so we can use it consistently
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
         } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
-
             // need to update the dev signers and env with the chain id
-            self.set_chain_id(Some(chain_id));
-            evm_env.cfg_env.chain_id = chain_id;
-            chain_id
+            self.set_chain_id(Some(fork_chain_id));
+            evm_env.cfg_env.chain_id = fork_chain_id;
+            fork_chain_id
         };
 
-        // Auto-detect hardfork from chain activation data if not explicitly set.
-        if self.hardfork.is_none()
-            && let Some(hardfork) =
-                FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
-        {
-            evm_env.cfg_env.spec = SpecId::from(hardfork);
-            self.hardfork = Some(hardfork);
-        }
+        let hardfork = resolve_fork_hardfork(
+            provider.as_ref(),
+            self.hardfork,
+            self.get_hardfork(),
+            fork_chain_id,
+            block.header.timestamp(),
+            fork_block_number,
+        )
+        .await;
+        evm_env.cfg_env.spec = SpecId::from(hardfork);
 
         // The fee manager was built before the fork hardfork was known, so refresh the Tempo
         // hardfork it uses for base fee calculations.
         if self.networks.is_tempo() {
-            fees.set_tempo_hardfork(Some(TempoHardfork::from(self.get_hardfork())));
+            fees.set_tempo_hardfork(Some(TempoHardfork::from(hardfork)));
         }
 
         // if not set explicitly we use the base fee of the latest block
@@ -1554,7 +1550,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            hardfork: self.hardfork,
+            hardfork: Some(hardfork),
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
