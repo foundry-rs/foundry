@@ -4,16 +4,27 @@ use crate::{
     sequence::{ScriptSequenceKind, get_commit_hash},
 };
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, TxHash, hex};
 use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
+use forge_verify::{
+    RetryArgs, VerifierArgs, VerifyArgs,
+    provider::{ExternalVerificationContext, VerificationProviderType},
+    sourcify::SOURCIFY_URL,
+    verify::sourcify_api_url,
+};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
 use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use foundry_evm::core::evm::FoundryEvmNetwork;
 use semver::Version;
+
+mod external;
+
+use external::{ExternalResolver, MAX_PROVENANCE_ADDRESSES, MatchResult, match_candidates};
+
+const MAX_EXTERNAL_JOBS: usize = 32;
 
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
@@ -35,6 +46,7 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
             build_data.known_contracts,
             args.retry,
             args.verifier,
+            args.verify_external,
         );
 
         for sequence in sequence.sequences_mut() {
@@ -55,6 +67,10 @@ pub struct VerifyBundle {
     pub retry: RetryArgs,
     pub verifier: VerifierArgs,
     pub via_ir: bool,
+    pub verify_external: bool,
+    source_etherscan_url: Option<String>,
+    source_etherscan_key: Option<String>,
+    source_sourcify_url: Option<String>,
 }
 
 impl VerifyBundle {
@@ -64,6 +80,7 @@ impl VerifyBundle {
         known_contracts: ContractsByArtifact,
         retry: RetryArgs,
         verifier: VerifierArgs,
+        verify_external: bool,
     ) -> Self {
         let num_of_optimizations =
             if config.optimizer == Some(true) { config.optimizer_runs } else { None };
@@ -91,16 +108,55 @@ impl VerifyBundle {
             retry,
             verifier,
             via_ir,
+            verify_external,
+            source_etherscan_url: None,
+            source_etherscan_key: None,
+            source_sourcify_url: None,
         }
     }
 
     /// Configures the chain and sets the etherscan key, if available
-    pub fn set_chain(&mut self, config: &Config, chain: Chain) {
+    pub fn set_chain(&mut self, config: &Config, chain: Chain) -> Result<()> {
         // If dealing with multiple chains, we need to be able to change in between the config
         // chain_id.
-        self.etherscan.key =
-            config.get_etherscan_api_key(Some(chain)).or_else(|| config.etherscan_api_key.clone());
+        let config_key = source_api_key(config, chain);
+        let resolved_key = self.verifier.resolve_api_key(config_key.as_deref()).map(str::to_owned);
+        let provider = self.verifier.resolve(resolved_key.as_deref(), Some(chain));
+
+        // A selected Etherscan-compatible verifier is both the source and submission endpoint.
+        // Sourcify credentials must not be sent to the independent Etherscan discovery fallback.
+        if provider.is_sourcify() {
+            self.source_sourcify_url = Some(
+                self.verifier
+                    .verifier_url
+                    .clone()
+                    .or_else(|| sourcify_api_url(chain))
+                    .unwrap_or_else(|| SOURCIFY_URL.to_string()),
+            );
+            // Etherscan is optional when Sourcify is selected, so an invalid fallback must not
+            // prevent verification through the selected provider.
+            self.source_etherscan_url = config
+                .get_etherscan_config_with_chain(Some(chain))
+                .ok()
+                .flatten()
+                .map(|config| config.api_url);
+            self.source_etherscan_key = config_key;
+        } else if let Some(url) = &self.verifier.verifier_url {
+            // An explicit non-Sourcify endpoint may be private. Do not disclose provenance to the
+            // public Sourcify service as an implicit fallback.
+            self.source_sourcify_url = None;
+            self.source_etherscan_url = Some(url.clone());
+            self.source_etherscan_key = resolved_key.clone();
+        } else {
+            self.source_sourcify_url =
+                Some(sourcify_api_url(chain).unwrap_or_else(|| SOURCIFY_URL.to_string()));
+            self.source_etherscan_url =
+                config.get_etherscan_config_with_chain(Some(chain))?.map(|config| config.api_url);
+            self.source_etherscan_key = resolved_key.clone();
+        }
+        self.etherscan.key = resolved_key;
         self.etherscan.chain = Some(chain);
+        Ok(())
     }
 
     /// Given a `VerifyBundle` and contract details, it tries to generate a valid `VerifyArgs` to
@@ -181,6 +237,168 @@ impl VerifyBundle {
     }
 }
 
+fn source_api_key(config: &Config, chain: Chain) -> Option<String> {
+    config.get_etherscan_api_key(Some(chain)).or_else(|| config.etherscan_api_key.clone())
+}
+
+enum VerificationJob {
+    Local(VerifyArgs),
+    External(VerifyArgs, Box<ExternalVerificationContext>),
+}
+
+impl VerificationJob {
+    async fn run(self) -> Result<()> {
+        match self {
+            Self::Local(args) => args.run().await,
+            Self::External(args, context) => args.run_with_external_context(*context).await,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn external_job(
+    resolver: &mut Option<ExternalResolver>,
+    config: &Config,
+    chain: Chain,
+    verify: &VerifyBundle,
+    address: Address,
+    init_code: &[u8],
+    creators: &[Address],
+    creation_transaction_hash: TxHash,
+) -> Result<VerificationJob, String> {
+    if resolver.is_none() {
+        *resolver = Some(ExternalResolver::new().map_err(|err| concise(&err.to_string()))?);
+    }
+    let resolver = resolver.as_mut().unwrap();
+    let mut candidate_sets = Vec::new();
+    let mut reasons = Vec::new();
+
+    for &creator in creators.iter().take(MAX_PROVENANCE_ADDRESSES) {
+        let sources = [
+            (
+                "Sourcify",
+                resolver
+                    .resolve_sourcify(chain, creator, verify.source_sourcify_url.as_deref())
+                    .await,
+            ),
+            (
+                "Etherscan",
+                resolver
+                    .resolve_etherscan(
+                        chain,
+                        creator,
+                        verify.source_etherscan_url.as_deref(),
+                        verify.source_etherscan_key.as_deref(),
+                    )
+                    .await,
+            ),
+        ];
+        for (provider, source) in sources {
+            match source {
+                Ok(Some(source)) => match resolver.compile(&source).await {
+                    Ok((compiled, has_unresolved_links)) => {
+                        if has_unresolved_links {
+                            reasons.push(format!(
+                                "{} {creator}: contracts with unresolved library links are unsupported",
+                                source.provider
+                            ));
+                        }
+                        candidate_sets.push(compiled);
+                    }
+                    Err(err) => reasons.push(format!(
+                        "{} {creator}: compile failed ({})",
+                        source.provider,
+                        concise(&err)
+                    )),
+                },
+                Ok(None) => {}
+                Err(err) => reasons.push(format!("{provider} {creator}: {}", concise(&err))),
+            }
+        }
+    }
+
+    let matched = match match_candidates(
+        init_code,
+        candidate_sets.iter().flat_map(|candidates| candidates.iter()),
+    ) {
+        MatchResult::Unique(matched) => matched,
+        MatchResult::None => {
+            let context = if reasons.is_empty() {
+                "no matching candidates were found".to_string()
+            } else {
+                format!("no matching candidates were found; {}", reasons.join("; "))
+            };
+            return Err(context);
+        }
+        MatchResult::Ambiguous(matches) => {
+            let fqns = matches
+                .into_iter()
+                .map(|matched| format!("{}@{}", matched.fqn, matched.version))
+                .collect::<Vec<_>>();
+            return Err(format!("ambiguous external candidates: {}", fqns.join(", ")));
+        }
+    };
+
+    let mut pinned_config = config.clone();
+    pinned_config.chain = Some(chain);
+    let context = ExternalVerificationContext {
+        config: pinned_config,
+        compiler_version: matched.version.clone(),
+        standard_json_input: matched.input,
+        target: matched.fqn,
+    };
+    let args = VerifyArgs {
+        address,
+        contract: None,
+        compiler_version: Some(matched.version.to_string()),
+        constructor_args: Some(hex::encode(matched.constructor_args)),
+        constructor_args_path: None,
+        no_auto_detect: false,
+        use_solc: None,
+        num_of_optimizations: None,
+        etherscan: verify.etherscan.clone(),
+        rpc: Default::default(),
+        flatten: false,
+        force: false,
+        skip_is_verified_check: true,
+        watch: true,
+        print_submission_result_to_stdout: false,
+        retry: verify.retry,
+        libraries: Vec::new(),
+        root: None,
+        verifier: verify.verifier.clone(),
+        via_ir: false,
+        license_type: None,
+        evm_version: None,
+        show_standard_json_input: false,
+        guess_constructor_args: false,
+        compilation_profile: None,
+        language: None,
+        creation_transaction_hash: Some(creation_transaction_hash),
+    };
+    Ok(VerificationJob::External(args, Box::new(context)))
+}
+
+fn concise(reason: &str) -> String {
+    const LIMIT: usize = 160;
+    let mut chars = reason.chars().map(|ch| if ch.is_control() { ' ' } else { ch });
+    let reason = chars.by_ref().take(LIMIT).collect::<String>();
+    if chars.next().is_some() { format!("{reason}…") } else { reason }
+}
+
+fn take_matching_index<T>(
+    values: &[T],
+    consumed: &mut [bool],
+    predicate: impl Fn(&T) -> bool,
+) -> Option<usize> {
+    let index = values
+        .iter()
+        .enumerate()
+        .position(|(index, value)| !consumed[index] && predicate(value))?;
+    consumed[index] = true;
+    Some(index)
+}
+
 /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
 /// created contract on etherscan.
 async fn verify_contracts<FEN: FoundryEvmNetwork>(
@@ -190,20 +408,37 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 ) -> Result<()> {
     trace!(target: "script", "verifying {} contracts [{}]", verify.known_contracts.len(), sequence.chain);
 
-    verify.set_chain(config, sequence.chain.into());
+    verify.set_chain(config, sequence.chain.into())?;
 
     if verify.etherscan.has_key()
         || verify.verifier.effective_type() != VerificationProviderType::Etherscan
     {
         trace!(target: "script", "prepare future verifications");
 
-        let mut future_verifications = Vec::with_capacity(sequence.receipts.len());
+        let mut verification_jobs = Vec::with_capacity(sequence.receipts.len());
         let mut unverifiable_contracts = vec![];
+        let mut resolver = None;
+        let mut external_jobs = 0;
+        let mut skipped_external = 0;
+        let mut warned_offline = false;
+        let mut consumed_receipts = vec![false; sequence.receipts.len()];
 
-        // Make sure the receipts have the right order first.
-        sequence.sort_receipts();
-
-        for (receipt, tx) in sequence.receipts.iter_mut().zip(sequence.transactions.iter()) {
+        for tx in &sequence.transactions {
+            let Some(tx_hash) = tx.hash else {
+                let _ = sh_warn!("Skipping verification for transaction without a hash.");
+                continue;
+            };
+            let Some(receipt_index) =
+                take_matching_index(&sequence.receipts, &mut consumed_receipts, |receipt| {
+                    receipt.transaction_hash() == tx_hash
+                })
+            else {
+                let _ = sh_warn!(
+                    "Skipping verification for transaction {tx_hash}: receipt unavailable."
+                );
+                continue;
+            };
+            let receipt = &mut sequence.receipts[receipt_index];
             // create2 hash offset
             let offset = if tx.is_create2()
                 && let Some(contract_address) = tx.contract_address
@@ -223,13 +458,15 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(verify) => future_verifications.push(verify.run()),
+                    Some(verify) => verification_jobs.push(VerificationJob::Local(verify)),
                     None => unverifiable_contracts.push(address),
                 };
             }
 
             // Verify potential contracts created during the transaction execution
-            for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
+            for AdditionalContract { address, init_code, creator_code_addresses, .. } in
+                &tx.additional_contracts
+            {
                 match verify.get_verify_args(
                     *address,
                     0,
@@ -237,21 +474,66 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(verify) => future_verifications.push(verify.run()),
-                    None => unverifiable_contracts.push(*address),
+                    Some(args) => verification_jobs.push(VerificationJob::Local(args)),
+                    None if !verify.verify_external => unverifiable_contracts.push(*address),
+                    None if config.offline => {
+                        skipped_external += 1;
+                        if !warned_offline {
+                            let _ = sh_warn!(
+                                "Skipping external contract verification because offline mode is enabled."
+                            );
+                            warned_offline = true;
+                        }
+                    }
+                    None if creator_code_addresses.is_empty() => {
+                        skipped_external += 1;
+                        let _ = sh_warn!(
+                            "Skipping external verification for {address}: creator provenance is unavailable (old broadcast logs or skipped simulation)."
+                        );
+                    }
+                    None if external_jobs >= MAX_EXTERNAL_JOBS => {
+                        skipped_external += 1;
+                        let _ = sh_warn!(
+                            "Skipping external verification for {address}: external job limit exceeded."
+                        );
+                    }
+                    None => {
+                        external_jobs += 1;
+                        match external_job(
+                            &mut resolver,
+                            config,
+                            sequence.chain.into(),
+                            &verify,
+                            *address,
+                            init_code,
+                            creator_code_addresses,
+                            receipt.transaction_hash(),
+                        )
+                        .await
+                        {
+                            Ok(job) => verification_jobs.push(job),
+                            Err(reason) => {
+                                skipped_external += 1;
+                                let _ = sh_warn!(
+                                    "Skipping external verification for {address}: {reason}"
+                                );
+                            }
+                        }
+                    }
                 };
             }
         }
 
-        trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", future_verifications.len(), unverifiable_contracts.len());
+        trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", verification_jobs.len(), unverifiable_contracts.len());
 
         check_unverified(sequence, unverifiable_contracts, verify);
 
-        let num_verifications = future_verifications.len();
+        let num_verifications = verification_jobs.len();
+        let num_requested = num_verifications + skipped_external;
         let mut num_of_successful_verifications = 0;
-        sh_status!("##\nStart verification for ({num_verifications}) contracts")?;
-        for verification in future_verifications {
-            match verification.await {
+        sh_status!("##\nStart verification for ({num_requested}) contracts")?;
+        for verification in verification_jobs {
+            match verification.run().await {
                 Ok(_) => {
                     num_of_successful_verifications += 1;
                 }
@@ -261,15 +543,34 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
             }
         }
 
-        if num_of_successful_verifications < num_verifications {
-            return Err(eyre!(
-                "Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"
-            ));
-        }
+        ensure_verification_complete(
+            num_of_successful_verifications,
+            num_verifications,
+            skipped_external,
+        )?;
 
-        sh_status!("All ({num_verifications}) contracts were verified!")?;
+        sh_status!("All ({num_requested}) contracts were verified!")?;
     }
 
+    Ok(())
+}
+
+fn ensure_verification_complete(
+    successful: usize,
+    submitted: usize,
+    skipped_external: usize,
+) -> Result<()> {
+    let requested = submitted + skipped_external;
+    if successful < requested {
+        let skipped = if skipped_external == 0 {
+            String::new()
+        } else {
+            format!("; {skipped_external} external verification(s) were skipped")
+        };
+        return Err(eyre!(
+            "Not all ({successful} / {requested}) contracts were verified{skipped}!"
+        ));
+    }
     Ok(())
 }
 
@@ -299,5 +600,101 @@ fn check_unverified<N: Network>(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ContractsByArtifact, RetryArgs, SOURCIFY_URL, VerificationProviderType, VerifierArgs,
+        VerifyBundle, concise, ensure_verification_complete, source_api_key, sourcify_api_url,
+        take_matching_index,
+    };
+    use alloy_chains::Chain;
+    use foundry_config::Config;
+
+    fn bundle(config: &Config, verifier: VerifierArgs) -> VerifyBundle {
+        let project = config.project().unwrap();
+        VerifyBundle::new(
+            &project,
+            config,
+            ContractsByArtifact::default(),
+            RetryArgs::default(),
+            verifier,
+            true,
+        )
+    }
+
+    #[test]
+    fn receipt_matching_is_hash_based_and_consumes_duplicate_hashes_in_order() {
+        let reversed = [(2, "second"), (1, "first")];
+        let mut consumed = [false; 2];
+        assert_eq!(take_matching_index(&reversed, &mut consumed, |(hash, _)| *hash == 1), Some(1));
+        assert_eq!(take_matching_index(&reversed, &mut consumed, |(hash, _)| *hash == 2), Some(0));
+        assert_eq!(consumed, [true, true]);
+
+        let batch = [(7, "first"), (7, "second")];
+        let mut consumed = [false; 2];
+        let first = take_matching_index(&batch, &mut consumed, |(hash, _)| *hash == 7).unwrap();
+        let second = take_matching_index(&batch, &mut consumed, |(hash, _)| *hash == 7).unwrap();
+        assert_eq!((batch[first].1, batch[second].1), ("first", "second"));
+        assert!(take_matching_index(&batch, &mut consumed, |(hash, _)| *hash == 7).is_none());
+    }
+
+    #[test]
+    fn source_key_reads_etherscan_config_fallback() {
+        let mut config = Config { etherscan_api_key: Some("source".into()), ..Default::default() };
+        assert_eq!(source_api_key(&config, Chain::mainnet()).as_deref(), Some("source"));
+        config.etherscan_api_key = None;
+        assert!(source_api_key(&config, Chain::mainnet()).is_none());
+    }
+
+    #[test]
+    fn source_endpoints_follow_selected_provider_privacy() {
+        let tempo = Chain::from(4217u64);
+        let config = Config { etherscan_api_key: Some("ambient".into()), ..Default::default() };
+        let mut verify = bundle(&config, VerifierArgs::default());
+        verify.set_chain(&config, tempo).unwrap();
+        assert_eq!(verify.source_sourcify_url, sourcify_api_url(tempo));
+        assert_ne!(verify.source_sourcify_url.as_deref(), Some(SOURCIFY_URL));
+
+        let config = Config::default();
+        let mut verify = bundle(
+            &config,
+            VerifierArgs {
+                verifier: Some(VerificationProviderType::Custom),
+                verifier_api_key: Some("private-key".into()),
+                verifier_url: Some("https://private.example/api".into()),
+            },
+        );
+        verify.set_chain(&config, Chain::mainnet()).unwrap();
+        assert!(verify.source_sourcify_url.is_none());
+        assert_eq!(verify.source_etherscan_url.as_deref(), Some("https://private.example/api"));
+
+        let mut verify = bundle(
+            &config,
+            VerifierArgs {
+                verifier: Some(VerificationProviderType::Etherscan),
+                ..Default::default()
+            },
+        );
+        verify.set_chain(&config, Chain::mainnet()).unwrap();
+        assert_eq!(verify.source_sourcify_url.as_deref(), Some(SOURCIFY_URL));
+    }
+
+    #[test]
+    fn skipped_external_verifications_make_the_summary_fail() {
+        let err = ensure_verification_complete(0, 0, 1).unwrap_err().to_string();
+        assert!(err.contains("0 / 1"));
+        assert!(err.contains("1 external verification(s) were skipped"));
+        ensure_verification_complete(1, 1, 0).unwrap();
+    }
+
+    #[test]
+    fn concise_sanitizes_and_bounds_remote_errors() {
+        let message = format!("remote\n\u{1b}[31m{}", "x".repeat(200));
+        let concise = concise(&message);
+        assert!(!concise.chars().any(char::is_control));
+        assert!(concise.chars().count() <= 161);
     }
 }

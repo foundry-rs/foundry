@@ -5157,6 +5157,7 @@ dependencies = [
  "indicatif",
  "itertools 0.15.0",
  "parking_lot",
+ "reqwest 0.13.4",
  "revm-inspectors",
  "semver 1.0.28",
  "serde",

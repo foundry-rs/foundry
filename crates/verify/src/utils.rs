@@ -446,16 +446,22 @@ pub fn wrap_verifier_url_error(
 ) -> eyre::Error {
     let Some(verifier_url) = verifier_url else { return err };
     let url = match Url::parse(verifier_url) {
-        Ok(url) => url,
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            url
+        }
         Err(url_err) => {
-            return err.wrap_err(format!("Invalid URL {verifier_url} provided: {url_err}"));
+            return err.wrap_err(format!("Invalid verifier URL provided: {url_err}"));
         }
     };
     if is_host_only(&url) && using_etherscan {
         return err.wrap_err(format!(
-            "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{verifier_url}`.\n\
+            "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{url}`.\n\
              Fixes (pick one):\n\
-             - Append the API path, e.g. `--verifier-url {verifier_url}/api`\n\
+             - Append the API path, e.g. `--verifier-url {url}api`\n\
              - Switch verifier, e.g. `--verifier sourcify` (works with host-only URLs)"
         ));
     }
@@ -584,6 +590,22 @@ contract Broken {
         let err = eyre::eyre!("upstream failure");
         let wrapped = wrap_verifier_url_error(err, Some("not a url"), true);
         let msg = format!("{wrapped:#}");
-        assert!(msg.contains("Invalid URL"), "message: {msg}");
+        assert!(msg.contains("Invalid verifier URL"), "message: {msg}");
+        assert!(!msg.contains("not a url"), "message: {msg}");
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_redacts_credentials_and_query() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(
+            err,
+            Some("https://user:secret@example.com?api_key=secret"),
+            true,
+        );
+        let msg = format!("{wrapped:#}");
+        assert!(msg.contains("https://example.com/"));
+        assert!(!msg.contains("user"));
+        assert!(!msg.contains("secret"));
+        assert!(!msg.contains("api_key"));
     }
 }

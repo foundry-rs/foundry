@@ -239,6 +239,10 @@ pub struct ScriptArgs {
     #[arg(long, requires = "broadcast")]
     pub verify: bool,
 
+    /// Opt-in verification of contracts deployed by external factories using explorer source.
+    #[arg(long, requires = "verify")]
+    pub verify_external: bool,
+
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
     /// specified in wei, or as a string with a unit type.
     ///
@@ -753,20 +757,38 @@ impl<N: Network> ScriptResult<N> {
         self.traces
             .iter()
             .flat_map(|(_, traces)| {
-                traces.nodes().iter().filter_map(|node| {
-                    if node.trace.kind.is_any_create() {
-                        let init_code = node.trace.data.clone();
-                        let contract_name = known_contracts
-                            .find_by_creation_code(init_code.as_ref())
-                            .map(|artifact| artifact.0.name.clone());
-                        return Some(AdditionalContract {
-                            call_kind: node.trace.kind,
-                            address: node.trace.address,
-                            contract_name,
-                            init_code,
-                        });
+                let nodes = traces.nodes();
+                nodes.iter().filter_map(|node| {
+                    if !node.trace.kind.is_any_create() || !node.trace.success {
+                        return None;
                     }
-                    None
+
+                    let mut creator_code_addresses = Vec::new();
+                    let mut parent = node.parent;
+                    while let Some(parent_idx) = parent {
+                        let ancestor = &nodes[parent_idx];
+                        if !ancestor.trace.success {
+                            return None;
+                        }
+                        if !ancestor.trace.kind.is_any_create()
+                            && !creator_code_addresses.contains(&ancestor.trace.address)
+                        {
+                            creator_code_addresses.push(ancestor.trace.address);
+                        }
+                        parent = ancestor.parent;
+                    }
+
+                    let init_code = node.trace.data.clone();
+                    let contract_name = known_contracts
+                        .find_by_creation_code(init_code.as_ref())
+                        .map(|artifact| artifact.0.name.clone());
+                    Some(AdditionalContract {
+                        call_kind: node.trace.kind,
+                        address: node.trace.address,
+                        contract_name,
+                        init_code,
+                        creator_code_addresses,
+                    })
                 })
             })
             .collect()
@@ -968,6 +990,9 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
+    use foundry_evm::traces::{
+        CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
+    };
     use std::{fs, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
@@ -986,6 +1011,109 @@ mod tests {
 
         let tracing = script_trace_requirements(&config, false).into_config().unwrap();
         assert!(tracing.record_state_diff);
+    }
+
+    #[test]
+    fn created_contracts_include_successful_creator_code_ancestry() {
+        let root = Address::repeat_byte(0x11);
+        let implementation = Address::repeat_byte(0x22);
+        let helper = Address::repeat_byte(0x33);
+        let created = Address::repeat_byte(0x44);
+        let init_code = Bytes::from_static(&[0x60, 0x00]);
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut()[0].trace =
+            CallTrace { success: true, address: root, kind: CallKind::Call, ..Default::default() };
+        arena.nodes_mut().extend([
+            CallTraceNode {
+                parent: Some(0),
+                idx: 1,
+                trace: CallTrace {
+                    success: true,
+                    address: implementation,
+                    kind: CallKind::DelegateCall,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(1),
+                idx: 2,
+                trace: CallTrace {
+                    success: true,
+                    address: helper,
+                    kind: CallKind::Call,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(2),
+                idx: 3,
+                trace: CallTrace {
+                    success: true,
+                    address: created,
+                    kind: CallKind::Create2,
+                    data: init_code.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]);
+        let result = ScriptResult::<Ethereum> {
+            traces: vec![(
+                TraceKind::Execution,
+                SparsedTraceArena {
+                    arena,
+                    ignored: Default::default(),
+                    diagnostics: Default::default(),
+                },
+            )],
+            ..Default::default()
+        };
+
+        let contracts = result.get_created_contracts(&ContractsByArtifact::default());
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(contracts[0].address, created);
+        assert_eq!(contracts[0].init_code, init_code);
+        assert_eq!(contracts[0].creator_code_addresses, [helper, implementation, root]);
+    }
+
+    #[test]
+    fn created_contracts_exclude_creations_rolled_back_by_an_ancestor() {
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut()[0].trace = CallTrace { success: true, ..Default::default() };
+        arena.nodes_mut().extend([
+            CallTraceNode {
+                parent: Some(0),
+                idx: 1,
+                trace: CallTrace { success: false, kind: CallKind::Call, ..Default::default() },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(1),
+                idx: 2,
+                trace: CallTrace {
+                    success: true,
+                    kind: CallKind::Create,
+                    data: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]);
+        let result = ScriptResult::<Ethereum> {
+            traces: vec![(
+                TraceKind::Execution,
+                SparsedTraceArena {
+                    arena,
+                    ignored: Default::default(),
+                    diagnostics: Default::default(),
+                },
+            )],
+            ..Default::default()
+        };
+
+        assert!(result.get_created_contracts(&ContractsByArtifact::default()).is_empty());
     }
 
     fn active_session_entry(
@@ -1046,6 +1174,23 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn verify_external_requires_verify() {
+        let err = ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--verify-external"])
+            .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--broadcast",
+            "--verify",
+            "--verify-external",
+        ])
+        .unwrap();
+        assert!(args.verify_external);
     }
 
     #[test]
