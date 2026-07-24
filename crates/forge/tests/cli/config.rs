@@ -1163,6 +1163,76 @@ dep/=lib/dep/src/
 "#]]);
 });
 
+forgetest!(explicit_context_matching_semantics_are_preserved, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("dep");
+    for path in [
+        prj.root().join("lib/root-file"),
+        prj.root().join("lib/root-prefix"),
+        prj.root().join("lib/root-override"),
+        dep.join("src"),
+        dep.join("lib/file"),
+        dep.join("lib/prefix"),
+        dep.join("lib/override"),
+    ] {
+        pretty_err(&path, fs::create_dir_all(&path));
+    }
+    prj.update_config(|config| {
+        config.remappings = vec![
+            Remapping::from_str("src/A.sol:@root-file/=lib/root-file/").unwrap().into(),
+            Remapping::from_str("src/generated:@root-prefix/=lib/root-prefix/").unwrap().into(),
+            Remapping::from_str("lib/dep/src/generated:@override/=lib/root-override/")
+                .unwrap()
+                .into(),
+        ];
+    });
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"src/A.sol:@file/=lib/file/\", \"src/generated:@prefix/=lib/prefix/\", \"src/generatedA.sol:@override/=lib/override/\"]\n",
+        ),
+    );
+
+    for (path, contract) in [
+        (prj.root().join("lib/root-file/X.sol"), "RootFile"),
+        (prj.root().join("lib/root-prefix/X.sol"), "RootPrefix"),
+        (prj.root().join("lib/root-override/X.sol"), "RootOverride"),
+        (dep.join("lib/file/X.sol"), "DependencyFile"),
+        (dep.join("lib/prefix/X.sol"), "DependencyPrefix"),
+        (dep.join("lib/override/X.sol"), "DependencyOverride"),
+    ] {
+        pretty_err(&path, fs::write(&path, format!("contract {contract} {{}}\n")));
+    }
+    prj.add_source(
+        "A.sol",
+        "import {RootFile} from \"@root-file/X.sol\"; contract RootA is RootFile {}",
+    );
+    prj.add_source(
+        "generatedA.sol",
+        "import {RootPrefix} from \"@root-prefix/X.sol\"; contract RootGenerated is RootPrefix {}",
+    );
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("src/A.sol"),
+            "import {DependencyFile} from \"@file/X.sol\"; contract DependencyA is DependencyFile {}",
+        ),
+    );
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("src/generatedA.sol"),
+            "import {DependencyPrefix} from \"@prefix/X.sol\"; import {RootOverride} from \"@override/X.sol\"; contract DependencyGenerated is DependencyPrefix, RootOverride {}",
+        ),
+    );
+    prj.add_source(
+        "UsesDependency.sol",
+        "import {DependencyA} from \"dep/A.sol\"; import {DependencyGenerated} from \"dep/generatedA.sol\"; contract UsesDependency is DependencyA, DependencyGenerated {}",
+    );
+
+    cmd.args(["build", "--no-lint"]).assert_success();
+});
+
 forgetest!(dependency_explicit_aliases_are_preserved, |prj, cmd| {
     let dep = prj.paths().libraries[0].join("dep");
     pretty_err(&dep, fs::create_dir_all(dep.join("src")));

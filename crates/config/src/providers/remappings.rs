@@ -10,7 +10,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashSet, VecDeque, btree_map::Entry},
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
 
 fn parse_configured_remapping(remapping: &str) -> Result<Remapping, String> {
@@ -101,12 +101,17 @@ fn remapping_context_covers(root: &Path, explicit: &Remapping, generated: &Remap
     let Some(generated) = generated.context.as_deref() else { return false };
     let Some(explicit) = explicit.context.as_deref() else { return true };
     let absolute = |context: &str| {
+        let has_boundary = context.ends_with('/');
         let context = Path::new(context);
         let context =
             if context.is_absolute() { context.to_path_buf() } else { root.join(context) };
-        normalize(&context)
+        let mut context = normalize(&context).to_string_lossy().into_owned();
+        if has_boundary && !context.ends_with(MAIN_SEPARATOR) {
+            context.push(MAIN_SEPARATOR);
+        }
+        context
     };
-    absolute(generated).starts_with(absolute(explicit))
+    absolute(generated).starts_with(&absolute(explicit))
 }
 
 /// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
@@ -566,7 +571,9 @@ impl RemappingsProvider<'_> {
         lib: &Path,
         canonical_lib: &Path,
     ) -> Option<Remapping> {
-        let context = if let Some(context) = remapping.context.take() {
+        let explicit_context = remapping.context.take();
+        let has_boundary = explicit_context.as_ref().is_some_and(|context| context.ends_with('/'));
+        let context = if let Some(context) = explicit_context.as_deref() {
             let context = Path::new(&context);
             if context.is_absolute() {
                 if context.starts_with(canonical_lib) {
@@ -608,15 +615,18 @@ impl RemappingsProvider<'_> {
             }
         }
         let Ok(canonical_ancestor) = dunce::canonicalize(ancestor) else { return None };
-        if !canonical_ancestor.is_dir() || !canonical_ancestor.starts_with(canonical_lib) {
+        let remainder = context.strip_prefix(ancestor).ok()?;
+        if !canonical_ancestor.starts_with(canonical_lib)
+            || (!remainder.as_os_str().is_empty() && !canonical_ancestor.is_dir())
+        {
             trace!(?context, ?lib, "skipping dependency remapping with escaping context");
             return None;
         }
-        let context = canonical_ancestor.join(context.strip_prefix(ancestor).ok()?);
+        let context = canonical_ancestor.join(remainder);
         let context = lib.join(context.strip_prefix(canonical_lib).ok()?);
 
         let mut context = context.to_string_lossy().into_owned();
-        if !context.ends_with('/') {
+        if (explicit_context.is_none() || has_boundary) && !context.ends_with('/') {
             context.push('/');
         }
         remapping.context = Some(context);
@@ -947,6 +957,27 @@ mod tests {
     }
 
     #[test]
+    fn source_prefix_context_precedence_preserves_boundaries() {
+        let remapping = |context: &str| Remapping {
+            context: Some(context.to_string()),
+            name: "alias/".to_string(),
+            path: "src/".to_string(),
+        };
+        let generated = remapping("lib/dep/src/generatedA.sol");
+
+        assert!(remapping_context_covers(
+            Path::new("."),
+            &remapping("lib/dep/src/generated"),
+            &generated,
+        ));
+        assert!(!remapping_context_covers(
+            Path::new("."),
+            &remapping("lib/dep/src/generated/"),
+            &generated,
+        ));
+    }
+
+    #[test]
     fn dependency_remapping_context_cannot_escape() {
         let temp = tempdir().unwrap();
         let lib = temp.path().join("lib");
@@ -969,7 +1000,7 @@ mod tests {
             &lib,
         )
         .unwrap();
-        let expected_context = format!("{}/", src.display());
+        let expected_context = src.display().to_string();
         assert_eq!(contextual.context.as_deref(), Some(expected_context.as_str()));
         let generated = RemappingsProvider::with_dependency_context(
             remapping_with_context(Path::new("src/generated/../artifacts")),
@@ -977,19 +1008,40 @@ mod tests {
             &lib,
         )
         .unwrap();
-        let expected_context = format!("{}/", src.join("artifacts").display());
+        let expected_context = src.join("artifacts").display().to_string();
         assert_eq!(generated.context.as_deref(), Some(expected_context.as_str()));
         fs::write(lib.join("file"), "").unwrap();
-        for context in ["file", "file/missing"] {
-            assert!(
-                RemappingsProvider::with_dependency_context(
-                    remapping_with_context(Path::new(context)),
-                    &lib,
-                    &lib,
-                )
-                .is_none()
-            );
-        }
+        let file = RemappingsProvider::with_dependency_context(
+            remapping_with_context(Path::new("file")),
+            &lib,
+            &lib,
+        )
+        .unwrap();
+        assert_eq!(file.context.as_deref(), Some(lib.join("file").to_string_lossy().as_ref()));
+        assert!(
+            RemappingsProvider::with_dependency_context(
+                remapping_with_context(Path::new("file/missing")),
+                &lib,
+                &lib,
+            )
+            .is_none()
+        );
+        let synthesized = RemappingsProvider::with_dependency_context(
+            Remapping { context: None, name: "dep/".to_string(), path: "lib/dep/".to_string() },
+            &lib,
+            &lib,
+        )
+        .unwrap();
+        let expected_context = format!("{}/", lib.display());
+        assert_eq!(synthesized.context.as_deref(), Some(expected_context.as_str()));
+        let explicit_boundary = RemappingsProvider::with_dependency_context(
+            remapping_with_context(Path::new("src/")),
+            &lib,
+            &lib,
+        )
+        .unwrap();
+        let expected_context = format!("{}/", src.display());
+        assert_eq!(explicit_boundary.context.as_deref(), Some(expected_context.as_str()));
         assert!(
             RemappingsProvider::with_dependency_context(
                 remapping_with_context(Path::new("../outside")),
@@ -1029,7 +1081,7 @@ mod tests {
                 &lib,
             )
             .unwrap();
-            let expected_context = format!("{}/", src.join("missing").display());
+            let expected_context = src.join("missing").display().to_string();
             assert_eq!(internal.context.as_deref(), Some(expected_context.as_str()));
         }
     }
