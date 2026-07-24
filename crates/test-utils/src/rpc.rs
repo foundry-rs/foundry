@@ -247,7 +247,6 @@ pub async fn spawn_canonical_monad_system_rpc(endpoint: String, target_hash: B25
             let endpoint = endpoint.clone();
             let target_hash = target_hash.clone();
             async move {
-                let method = request["method"].as_str().unwrap();
                 let mut response = client
                     .post(endpoint)
                     .json(&request)
@@ -258,36 +257,7 @@ pub async fn spawn_canonical_monad_system_rpc(endpoint: String, target_hash: B25
                     .await
                     .unwrap();
 
-                match method {
-                    "eth_getTransactionByHash"
-                    | "eth_getTransactionByBlockHashAndIndex"
-                    | "eth_getTransactionByBlockNumberAndIndex" => {
-                        canonicalize_monad_system_transaction(
-                            &mut response["result"],
-                            &target_hash,
-                        );
-                    }
-                    "eth_getBlockByHash" | "eth_getBlockByNumber" => {
-                        if let Some(transactions) =
-                            response["result"]["transactions"].as_array_mut()
-                        {
-                            for transaction in transactions {
-                                canonicalize_monad_system_transaction(transaction, &target_hash);
-                            }
-                        }
-                    }
-                    "eth_getTransactionReceipt" => {
-                        canonicalize_monad_system_receipt(&mut response["result"], &target_hash);
-                    }
-                    "eth_getBlockReceipts" => {
-                        if let Some(receipts) = response["result"].as_array_mut() {
-                            for receipt in receipts {
-                                canonicalize_monad_system_receipt(receipt, &target_hash);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+                canonicalize_monad_system_response(&request, &mut response, &target_hash);
 
                 Json(response)
             }
@@ -297,6 +267,54 @@ pub async fn spawn_canonical_monad_system_rpc(endpoint: String, target_hash: B25
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{address}")
+}
+
+fn canonicalize_monad_system_response(request: &Value, response: &mut Value, target_hash: &str) {
+    if let Some(requests) = request.as_array() {
+        let Some(responses) = response.as_array_mut() else { return };
+        for response in responses {
+            let Some(response_id) = response.get("id") else { continue };
+            if let Some(request) =
+                requests.iter().find(|request| request.get("id") == Some(response_id))
+            {
+                canonicalize_monad_system_result(request, response, target_hash);
+            }
+        }
+    } else {
+        canonicalize_monad_system_result(request, response, target_hash);
+    }
+}
+
+fn canonicalize_monad_system_result(request: &Value, response: &mut Value, target_hash: &str) {
+    let Some(method) = request.get("method").and_then(Value::as_str) else { return };
+    let Some(result) = response.get_mut("result") else { return };
+
+    match method {
+        "eth_getTransactionByHash"
+        | "eth_getTransactionByBlockHashAndIndex"
+        | "eth_getTransactionByBlockNumberAndIndex" => {
+            canonicalize_monad_system_transaction(result, target_hash);
+        }
+        "eth_getBlockByHash" | "eth_getBlockByNumber" => {
+            if let Some(transactions) = result.get_mut("transactions").and_then(Value::as_array_mut)
+            {
+                for transaction in transactions {
+                    canonicalize_monad_system_transaction(transaction, target_hash);
+                }
+            }
+        }
+        "eth_getTransactionReceipt" => {
+            canonicalize_monad_system_receipt(result, target_hash);
+        }
+        "eth_getBlockReceipts" => {
+            if let Some(receipts) = result.as_array_mut() {
+                for receipt in receipts {
+                    canonicalize_monad_system_receipt(receipt, target_hash);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn canonicalize_monad_system_transaction(transaction: &mut Value, target_hash: &str) {
@@ -309,12 +327,30 @@ fn canonicalize_monad_system_transaction(transaction: &mut Value, target_hash: &
         return;
     }
 
+    let tx_type = transaction.get("type").and_then(parse_rpc_quantity).unwrap_or_default();
+    let legacy_v = (tx_type != 0)
+        .then(|| {
+            let parity = transaction
+                .get("yParity")
+                .or_else(|| transaction.get("v"))
+                .and_then(parse_rpc_quantity)
+                .filter(|parity| *parity <= 1)?;
+            let v = if let Some(chain_id) = transaction.get("chainId").and_then(parse_rpc_quantity)
+            {
+                chain_id.checked_mul(2)?.checked_add(35 + parity)?
+            } else {
+                27 + parity
+            };
+            Some(format!("0x{v:x}"))
+        })
+        .flatten();
+
     transaction.insert("gas".to_string(), json!("0x0"));
     transaction.insert("gasPrice".to_string(), json!("0x0"));
-    transaction.insert("r".to_string(), json!("0x0"));
-    transaction.insert("s".to_string(), json!("0x0"));
     transaction.insert("type".to_string(), json!("0x0"));
-    transaction.insert("v".to_string(), json!("0x0"));
+    if let Some(v) = legacy_v {
+        transaction.insert("v".to_string(), json!(v));
+    }
     for field in [
         "accessList",
         "authorizationList",
@@ -326,6 +362,12 @@ fn canonicalize_monad_system_transaction(transaction: &mut Value, target_hash: &
     ] {
         transaction.remove(field);
     }
+}
+
+fn parse_rpc_quantity(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value.as_str()?.strip_prefix("0x").and_then(|value| u64::from_str_radix(value, 16).ok())
+    })
 }
 
 fn canonicalize_monad_system_receipt(receipt: &mut Value, target_hash: &str) {
@@ -352,6 +394,70 @@ mod tests {
     use super::*;
     use alloy_primitives::address;
     use foundry_config::Chain;
+
+    #[test]
+    fn canonical_monad_system_response_supports_batches() {
+        let target_hash = B256::with_last_byte(1).to_string();
+        let requests = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_getTransactionByHash",
+                "params": [target_hash],
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "eth_getTransactionReceipt",
+                "params": [target_hash],
+            },
+        ]);
+        let mut responses = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "transactionHash": target_hash,
+                    "gasUsed": "0x5208",
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "hash": target_hash,
+                    "chainId": "0x7a69",
+                    "gas": "0x5208",
+                    "gasPrice": "0x1",
+                    "r": "0x1",
+                    "s": "0x1",
+                    "type": "0x2",
+                    "v": "0x1",
+                    "yParity": "0x1",
+                },
+            },
+        ]);
+
+        canonicalize_monad_system_response(&requests, &mut responses, &target_hash);
+
+        assert_eq!(responses[0]["result"]["gasUsed"], "0x0");
+        assert_eq!(responses[1]["result"]["gas"], "0x0");
+        assert_eq!(responses[1]["result"]["type"], "0x0");
+        assert_eq!(responses[1]["result"]["r"], "0x1");
+        assert_eq!(responses[1]["result"]["s"], "0x1");
+        assert_eq!(responses[1]["result"]["v"], "0xf4f6");
+        assert!(responses[1]["result"].get("yParity").is_none());
+    }
+
+    #[test]
+    fn canonical_monad_system_response_ignores_malformed_requests() {
+        let request = json!({"jsonrpc": "2.0", "id": 1});
+        let mut response = json!({"jsonrpc": "2.0", "id": 1, "result": "unchanged"});
+
+        canonicalize_monad_system_response(&request, &mut response, &B256::ZERO.to_string());
+
+        assert_eq!(response["result"], "unchanged");
+    }
 
     #[tokio::test]
     #[ignore = "run manually"]

@@ -878,10 +878,10 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
         rpc_request(&endpoint, "eth_getTransactionByHash", json!([target_hash])).await;
     assert_eq!(transaction["result"]["gas"], "0x0");
     assert_eq!(transaction["result"]["gasPrice"], "0x0");
-    assert_eq!(transaction["result"]["r"], "0x0");
-    assert_eq!(transaction["result"]["s"], "0x0");
+    assert_ne!(transaction["result"]["r"], "0x0");
+    assert_ne!(transaction["result"]["s"], "0x0");
     assert_eq!(transaction["result"]["type"], "0x0");
-    assert_eq!(transaction["result"]["v"], "0x0");
+    assert_ne!(transaction["result"]["v"], "0x0");
     assert_eq!(transaction["result"]["value"], format!("{reward:#x}"));
 
     let canonical_receipt =
@@ -900,9 +900,9 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     assert_eq!(target_block["result"]["transactions"][0]["hash"], target_hash.to_string());
     assert_eq!(target_block["result"]["transactions"][0]["gas"], "0x0");
     assert_eq!(target_block["result"]["transactions"][0]["gasPrice"], "0x0");
-    assert_eq!(target_block["result"]["transactions"][0]["r"], "0x0");
-    assert_eq!(target_block["result"]["transactions"][0]["s"], "0x0");
-    assert_eq!(target_block["result"]["transactions"][0]["v"], "0x0");
+    assert_eq!(target_block["result"]["transactions"][0]["r"], transaction["result"]["r"]);
+    assert_eq!(target_block["result"]["transactions"][0]["s"], transaction["result"]["s"]);
+    assert_eq!(target_block["result"]["transactions"][0]["v"], transaction["result"]["v"]);
 
     let source = r#"
 interface Vm {
