@@ -4387,7 +4387,7 @@
     {
       "func": {
         "id": "dumpState",
-        "description": "Dump a genesis JSON file's `allocs` to disk.",
+        "description": "Dumps a genesis JSON file's `allocs` to disk. Accounts created in the current transaction\nare ordered by deployment, followed by the remaining accounts in ascending address order.",
         "declaration": "function dumpState(string calldata pathToStateJson) external;",
         "visibility": "external",
         "mutability": "",
