@@ -358,13 +358,9 @@ impl RemappingsProvider<'_> {
                 || self.auto_detect_remappings(),
             );
 
-            // Root remappings remain first, followed by dependency-scoped remappings and global
-            // filesystem fallbacks. The compiler resolves the first applicable remapping, so a
-            // dependency's configuration applies within that dependency without affecting root or
-            // sibling imports.
             // Explicit project remappings are authoritative over generated dependency mappings.
-            // Remove generated overlaps covered by an explicit context so the compiler's
-            // first-match behavior and Solar's most-specific-match behavior resolve identically.
+            // Remove generated overlaps covered by an explicit context; retained remappings are
+            // ordered for consistent resolver behavior when constructing the project paths.
             all_remappings
                 .extend_explicit_with_precedence(nested_foundry_remappings.dependency, self.root);
 

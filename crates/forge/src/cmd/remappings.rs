@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
-use std::{collections::BTreeSet, path::PathBuf};
+use std::path::PathBuf;
 
 /// CLI arguments for `forge remappings`.
 #[derive(Clone, Debug, Parser)]
@@ -24,18 +24,18 @@ impl RemappingArgs {
         let config = self.load_config()?;
 
         if self.pretty {
-            let mut groups = BTreeSet::new();
+            let mut current_context = None;
             for remapping in &config.remappings {
-                sh_println!("{remapping}")?;
-                groups.insert(remapping.context.clone());
-            }
-            for group in groups {
-                if let Some(group) = group {
-                    sh_status!("Context: {group}")?;
-                } else {
-                    sh_status!("Global:")?;
+                let context = remapping.context.as_deref();
+                if current_context != Some(context) {
+                    if let Some(context) = context {
+                        sh_status!("Context: {context}")?;
+                    } else {
+                        sh_status!("Global:")?;
+                    }
+                    current_context = Some(context);
                 }
-                sh_eprintln!()?;
+                sh_println!("{remapping}")?;
             }
         } else {
             for remapping in config.remappings {

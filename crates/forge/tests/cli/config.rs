@@ -1334,7 +1334,7 @@ forgetest!(direct_dependency_keeps_configured_package_alias, |prj, cmd| {
 
 forgetest!(narrow_root_remapping_preserves_broad_dependency_fallback, |prj, cmd| {
     let dep = prj.paths().libraries[0].join("dep");
-    pretty_err(&dep, fs::create_dir_all(dep.join("src/pkg")));
+    pretty_err(&dep, fs::create_dir_all(dep.join("src/pkg/sub")));
     pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/local")));
     prj.update_config(|config| {
         config.remappings = vec![Remapping::from_str("pkg/sub/=src/local/").unwrap().into()];
@@ -1347,20 +1347,63 @@ forgetest!(narrow_root_remapping_preserves_broad_dependency_fallback, |prj, cmd|
         ),
     );
     pretty_err(&dep, fs::write(dep.join("src/pkg/Other.sol"), "contract Other {}\n"));
+    pretty_err(&dep, fs::write(dep.join("src/pkg/sub/X.sol"), "contract DependencyX {}\n"));
     pretty_err(
         &dep,
         fs::write(
             dep.join("src/Parent.sol"),
-            "import {Other} from \"pkg/Other.sol\"; contract Parent is Other {}\n",
+            "import {Other} from \"pkg/Other.sol\"; import {DependencyX} from \"pkg/sub/X.sol\"; contract Parent is Other, DependencyX {}\n",
         ),
     );
     pretty_err(
         prj.root(),
         fs::write(prj.root().join("src/local/Local.sol"), "contract Local {}\n"),
     );
+    pretty_err(prj.root(), fs::write(prj.root().join("src/local/X.sol"), "contract RootX {}\n"));
     prj.add_source(
         "UsesParent.sol",
-        "import {Parent} from \"dep/Parent.sol\"; import {Local} from \"pkg/sub/Local.sol\"; contract UsesParent is Parent, Local {}\n",
+        "import {Parent} from \"dep/Parent.sol\"; import {Local} from \"pkg/sub/Local.sol\"; import {RootX} from \"pkg/sub/X.sol\"; contract UsesParent is Parent, Local, RootX {}\n",
+    );
+
+    cmd.arg("build").assert_success();
+
+    prj.update_config(|config| config.remappings.clear());
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "pkg/sub/=src/local/"])
+        .assert_success();
+});
+
+forgetest!(explicit_descendant_context_precedes_dependency_fallback, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src/pkg/sub")));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/local")));
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("lib/dep/src/:pkg/sub/=src/local/").unwrap().into()];
+    });
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"pkg/=src/pkg/\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("src/pkg/Other.sol"), "contract Other {}\n"));
+    pretty_err(&dep, fs::write(dep.join("src/pkg/sub/X.sol"), "contract DependencyX {}\n"));
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/local/X.sol"), "contract ExplicitX {}\n"),
+    );
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("src/Parent.sol"),
+            "import {Other} from \"pkg/Other.sol\"; import {ExplicitX} from \"pkg/sub/X.sol\"; contract Parent is Other, ExplicitX {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesParent.sol",
+        "import {Parent} from \"dep/Parent.sol\"; contract UsesParent is Parent {}\n",
     );
 
     cmd.arg("build").assert_success();
@@ -1558,9 +1601,8 @@ forge-std/=lib/forge-std/src/
 "#]])
         .stderr_eq(str![[r#"
 Global:
-
 Context: lib/dep1/
-
+Global:
 
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
@@ -1600,11 +1642,9 @@ ctx-b:@scoped/=lib/b/
 "#]])
         .stderr_eq(str![[r#"
 Global:
-
 Context: ctx-a
-
+Global:
 Context: ctx-b
-
 
 "#]]);
 });

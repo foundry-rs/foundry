@@ -1574,6 +1574,13 @@ impl Config {
     /// # Ok::<_, eyre::Error>(())
     /// ```
     pub fn project_paths<L>(&self) -> ProjectPathsConfig<L> {
+        let mut remappings = self.get_all_remappings().collect::<Vec<_>>();
+        // The graph uses the first applicable remapping while solc and Solar choose the most
+        // specific context and then import prefix. Match that precedence at their shared boundary.
+        remappings.sort_by(|a, b| {
+            let context_len = |r: &Remapping| r.context.as_deref().map_or(0, str::len);
+            context_len(b).cmp(&context_len(a)).then_with(|| b.name.len().cmp(&a.name.len()))
+        });
         let mut builder = ProjectPathsConfig::builder()
             .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
@@ -1581,7 +1588,7 @@ impl Config {
             .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.iter())
-            .remappings(self.get_all_remappings())
+            .remappings(remappings)
             .allowed_path(&self.root)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
