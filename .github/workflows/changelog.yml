@@ -6,7 +6,7 @@ permissions: {}
 'on':
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] metadata-only; never checks out PR code
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 concurrency:
@@ -120,7 +120,6 @@ jobs:
             --output "$install_dir/amp"
           echo "${AMP_SHA256}  ${install_dir}/amp" | sha256sum --check -
           chmod 0755 "$install_dir/amp"
-          echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Generate advisory entry
         id: ai
@@ -160,7 +159,8 @@ jobs:
 
           PROMPT
             cat "$RUNNER_TEMP/pr.diff"
-          } | timeout 60s amp --settings-file "$settings" --execute > "$RUNNER_TEMP/ai-entry.md"
+          } | timeout 60s "$RUNNER_TEMP/amp-bin/amp" \
+            --settings-file "$settings" --execute > "$RUNNER_TEMP/ai-entry.md"
 
       - name: Create or update guidance comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
