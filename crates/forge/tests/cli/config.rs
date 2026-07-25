@@ -1542,6 +1542,35 @@ zzalias/=lib/foo/vendor/
 });
 
 #[cfg(unix)]
+forgetest!(internal_symlink_context_uses_lexical_path, |prj, cmd| {
+    let dep = prj.paths().libraries[0].join("dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    pretty_err(&dep, fs::create_dir_all(dep.join("vendor")));
+    pretty_err(&dep, symlink("src", dep.join("link")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nsrc = \".\"\nremappings = [\"link/:alias/=vendor/\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("vendor/V.sol"), "contract V {}\n"));
+    pretty_err(
+        &dep,
+        fs::write(dep.join("src/P.sol"), "import {V} from \"alias/V.sol\"; contract P is V {}\n"),
+    );
+    prj.add_source("UsesP.sol", "import {P} from \"dep/link/P.sol\"; contract UsesP is P {}\n");
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+lib/dep/link/:alias/=lib/dep/vendor/
+dep/=lib/dep/
+
+"#]]);
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+#[cfg(unix)]
 forgetest!(symlinked_transitive_dependency_uses_each_lexical_path, |prj, cmd| {
     let temp = tempfile::tempdir().unwrap();
     let child = temp.path().join("child");

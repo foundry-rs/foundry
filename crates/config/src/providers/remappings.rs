@@ -638,7 +638,6 @@ impl RemappingsProvider<'_> {
             trace!(?context, ?lib, "skipping dependency remapping with escaping context");
             return None;
         }
-        let context = canonical_ancestor.join(remainder);
         let context = lib.join(context.strip_prefix(canonical_lib).ok()?);
 
         let mut context = context.to_string_lossy().into_owned();
@@ -1111,7 +1110,7 @@ mod tests {
                 &lib,
             )
             .unwrap();
-            let expected_context = src.join("missing").display().to_string();
+            let expected_context = lib.join("internal/missing").display().to_string();
             assert_eq!(internal.context.as_deref(), Some(expected_context.as_str()));
         }
     }
