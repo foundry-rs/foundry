@@ -27,8 +27,8 @@ use solar::sema::{
     ast::Visibility,
     eval::ConstantEvaluator,
     hir::{
-        Block, ContractId, ElementaryType, FunctionId, ItemId, NatSpecKind, Stmt, StmtKind,
-        StructId, TypeKind, VariableId,
+        Block, ContractId, DataLocation, ElementaryType, FunctionId, ItemId, NatSpecKind, Stmt,
+        StmtKind, StructId, TypeKind, VariableId,
     },
     interface::source_map::FileName,
 };
@@ -803,6 +803,16 @@ fn type_references_struct(kind: &TypeKind<'_>, struct_id: StructId) -> bool {
     }
 }
 
+/// Returns `true` if `var_id` is a storage-located variable whose type resolves to `struct_id`.
+///
+/// A `memory` or `calldata` local of the annotated type (e.g. `Layout memory x = ...;`) is not
+/// evidence of namespaced storage: it is just a value copy, so its declaration is excluded.
+fn var_references_struct<'hir>(gcx: Gcx<'hir>, var_id: VariableId, struct_id: StructId) -> bool {
+    let var = gcx.hir.variable(var_id);
+    var.data_location == Some(DataLocation::Storage)
+        && type_references_struct(&var.ty.kind, struct_id)
+}
+
 /// Returns `true` if any statement in `block` references `struct_id`, recursing into nested
 /// blocks, loops, conditionals, switches, and try/catch clauses.
 fn block_references_struct<'hir>(gcx: Gcx<'hir>, block: &Block<'hir>, struct_id: StructId) -> bool {
@@ -810,15 +820,11 @@ fn block_references_struct<'hir>(gcx: Gcx<'hir>, block: &Block<'hir>, struct_id:
 }
 
 fn stmt_references_struct<'hir>(gcx: Gcx<'hir>, stmt: &Stmt<'hir>, struct_id: StructId) -> bool {
-    let hir = &gcx.hir;
     match &stmt.kind {
-        StmtKind::DeclSingle(var_id) => {
-            type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)
+        StmtKind::DeclSingle(var_id) => var_references_struct(gcx, *var_id, struct_id),
+        StmtKind::DeclMulti(vars, _) => {
+            vars.iter().flatten().any(|&var_id| var_references_struct(gcx, var_id, struct_id))
         }
-        StmtKind::DeclMulti(vars, _) => vars
-            .iter()
-            .flatten()
-            .any(|var_id| type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
             block_references_struct(gcx, block, struct_id)
         }
@@ -831,10 +837,7 @@ fn stmt_references_struct<'hir>(gcx: Gcx<'hir>, stmt: &Stmt<'hir>, struct_id: St
             sw.cases.iter().any(|case| block_references_struct(gcx, &case.body, struct_id))
         }
         StmtKind::Try(t) => t.clauses.iter().any(|clause| {
-            clause
-                .args
-                .iter()
-                .any(|&var_id| type_references_struct(&hir.variable(var_id).ty.kind, struct_id))
+            clause.args.iter().any(|&var_id| var_references_struct(gcx, var_id, struct_id))
                 || block_references_struct(gcx, &clause.block, struct_id)
         }),
         _ => false,
@@ -856,9 +859,7 @@ fn function_references_struct<'hir>(
 ) -> bool {
     let hir = &gcx.hir;
     let func = hir.function(func_id);
-    func.returns
-        .iter()
-        .any(|&var_id| type_references_struct(&hir.variable(var_id).ty.kind, struct_id))
+    func.returns.iter().any(|&var_id| var_references_struct(gcx, var_id, struct_id))
         || func.body.is_some_and(|body| block_references_struct(gcx, &body, struct_id))
 }
 

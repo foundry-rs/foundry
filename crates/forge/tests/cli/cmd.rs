@@ -1681,7 +1681,7 @@ contract Nested {
       "label": "inner",
       "offset": 0,
       "slot": "0x0d7a9e4512e090f383ec0ed12be937a91b31306fd9ab6e7fadab4922e5aea000",
-      "type": "struct Nested.TwoSlot"
+      "type": "struct Nested.TwoSlot#StructId(0)"
     },
     {
       "astId": 0,
@@ -1698,7 +1698,7 @@ contract Nested {
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "struct Nested.TwoSlot": {
+    "struct Nested.TwoSlot#StructId(0)": {
       "encoding": "inplace",
       "label": "struct Nested.TwoSlot",
       "numberOfBytes": "64",
@@ -2371,18 +2371,18 @@ contract Recursive {
       "label": "root",
       "offset": 0,
       "slot": "0x5c23e053b910ebb063cfd12509998b5de792f3e025459f15aaa45e15f0e0e800",
-      "type": "struct Recursive.Node"
+      "type": "struct Recursive.Node#StructId(0)"
     }
   ],
   "types": {
-    "mapping(uint256 => struct Recursive.Node)": {
+    "mapping(uint256 => struct Recursive.Node#StructId(0))": {
       "encoding": "mapping",
       "key": "uint256",
       "label": "mapping(uint256 => struct Recursive.Node)",
       "numberOfBytes": "32",
-      "value": "struct Recursive.Node"
+      "value": "struct Recursive.Node#StructId(0)"
     },
-    "struct Recursive.Node": {
+    "struct Recursive.Node#StructId(0)": {
       "encoding": "inplace",
       "label": "struct Recursive.Node",
       "numberOfBytes": "64",
@@ -2393,7 +2393,7 @@ contract Recursive {
           "label": "children",
           "offset": 0,
           "slot": "0",
-          "type": "mapping(uint256 => struct Recursive.Node)"
+          "type": "mapping(uint256 => struct Recursive.Node#StructId(0))"
         },
         {
           "astId": 0,
@@ -3178,6 +3178,51 @@ contract Consumer6 {
     assert_eq!(members_b.len(), 1);
     assert_eq!(members_b[0]["label"], "addr");
     assert_eq!(members_b[0]["type"], "address");
+});
+
+// A file-scope struct referenced only through a `memory` local variable must not get a synthetic
+// namespace-slot entry: a memory-located declaration is just a value copy, not evidence that the
+// struct is ever mounted at its ERC-7201 namespace slot.
+forgetest!(can_inspect_erc7201_memory_local_var_not_synthesized, |prj, cmd| {
+    prj.add_source(
+        "MemoryStorage.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @custom:storage-location erc7201:test.memoryonly
+struct Layout {
+    uint256 value;
+}
+    "#,
+    );
+    prj.add_source(
+        "Consumer7.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Layout} from "./MemoryStorage.sol";
+
+contract Consumer7 {
+    function _touch() internal pure returns (uint256) {
+        Layout memory x = Layout({value: 1});
+        return x.value;
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Consumer7", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [],
+  "types": {}
+}
+
+"#]]);
 });
 
 // test that `forge snapshot` commands work
