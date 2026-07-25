@@ -1,0 +1,6 @@
+ecosystem = "rust"
+dependent_bump = "none"
+ignore = []
+
+[changelog]
+format = "root"
