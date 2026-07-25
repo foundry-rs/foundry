@@ -4,7 +4,8 @@ use alloy_primitives::map::AddressHashMap;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for trace rendering.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TracingConfig {
     /// Verbosity to use for trace rendering.
     pub verbosity: u8,
@@ -20,4 +21,21 @@ pub struct TracingConfig {
     pub trace_depth: Option<usize>,
     /// Whether to identify internal functions in traces.
     pub decode_internal: bool,
+    /// Cumulative Sourcify/Etherscan metadata lookup budget, in seconds.
+    /// Zero disables all external trace identification, including OpenChain.
+    pub external_identification_timeout: u64,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        Self {
+            verbosity: 0,
+            labels: Default::default(),
+            disable_labels: false,
+            compact_labels: false,
+            trace_depth: None,
+            decode_internal: false,
+            external_identification_timeout: 5,
+        }
+    }
 }

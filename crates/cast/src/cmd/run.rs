@@ -170,7 +170,8 @@ impl RunArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = load_config_from_provider(figment)?;
         self.tracing.labels.append(&mut self.legacy_labels);
-        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        let tracing = config.tracing.clone();
 
         let with_local_artifacts = self.with_local_artifacts;
         let debug = self.debug;
