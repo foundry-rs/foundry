@@ -43,10 +43,24 @@ jobs:
           cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
+      - name: Restore bounded NanoUSD wallet
+        env:
+          TEMPO_ACCOUNTS_STORE_JSON_B64: ${{ secrets.TEMPO_ACCOUNTS_STORE_JSON_B64 }}
+          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp
+        run: |
+          if [ -z "$TEMPO_ACCOUNTS_STORE_JSON_B64" ]; then
+            echo "TEMPO_ACCOUNTS_STORE_JSON_B64 is not configured"
+            exit 1
+          fi
+          mkdir -p "$TEMPO_HOME/wallet"
+          printf '%s' "$TEMPO_ACCOUNTS_STORE_JSON_B64" | base64 --decode > "$TEMPO_HOME/wallet/store.json"
+          chmod 600 "$TEMPO_HOME/wallet/store.json"
+
       - name: Run MPP e2e test
         env:
           MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
           TEMPO_HOME: ${{ runner.temp }}/tempo-mpp
-          TEMPO_AUTO_FUND: "1"
-          TEMPO_ROTATE_WALLET: "1"
+          MPP_RPC_URL: https://rpc.mpp.tempo.xyz
+          TEMPO_RPC_URL: https://rpc.tempo.xyz
+          MPP_TOKEN: "0x20c0000000000000000000008b4c619d2eedec7a"
         run: ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"

@@ -3,7 +3,7 @@
 #
 # Prerequisites:
 #   - A Tempo Accounts `store.json`, or `TEMPO_ROTATE_WALLET=1` with an isolated `TEMPO_HOME`
-#   - Wallet funded with PathUSD on Moderato
+#   - Wallet funded with the token accepted by the configured MPP endpoint
 #   - Foundry binaries built: `cargo build --bin cast --bin forge --bin anvil --bin chisel`
 #
 # Usage:
