@@ -31,7 +31,7 @@ use foundry_common::{
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
-use foundry_wallets::{TempoAccessKeyWallet, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
 sol! {
@@ -301,7 +301,7 @@ impl Erc20Subcommand {
 
     async fn should_use_tempo_network(
         &self,
-        tempo_access_key: &Option<TempoAccessKeyWallet>,
+        tempo_access_key: &Option<TempoAccountsWallet>,
         has_session: bool,
     ) -> eyre::Result<bool> {
         if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
@@ -357,7 +357,7 @@ impl Erc20Subcommand {
     pub async fn run_generic<N: Network + RecommendedFillers>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
-        tempo_keychain: Option<TempoAccessKeyWallet>,
+        tempo_keychain: Option<TempoAccountsWallet>,
         has_session: bool,
     ) -> eyre::Result<()>
     where
@@ -381,19 +381,20 @@ impl Erc20Subcommand {
             ) => {{
                 let mut tx_opts = $tx_opts;
                 tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
-                let (pre_resolved_signer, tempo_keychain) = if has_session {
-                    let $provider =
-                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-                    let chain = get_chain(config.chain, &$provider).await?;
-                    tempo::resolve_session_or_wallet_signer(
-                        &tx_opts.tempo,
-                        &$send_tx.eth.wallet,
-                        chain.id(),
-                    )
-                    .await?
-                } else {
-                    (pre_resolved_signer, tempo_keychain)
-                };
+                let (pre_resolved_signer, tempo_keychain) =
+                    if has_session || tempo_keychain.is_some() {
+                        let $provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        let chain = get_chain(config.chain, &$provider).await?;
+                        tempo::resolve_session_or_wallet_signer(
+                            &tx_opts.tempo,
+                            &$send_tx.eth.wallet,
+                            chain.id(),
+                        )
+                        .await?
+                    } else {
+                        (pre_resolved_signer, tempo_keychain)
+                    };
                 let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
                 let sponsor_fee_payer = tx_opts.tempo.sponsor;
                 let expires_at = tx_opts.tempo.resolve_expires();

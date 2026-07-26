@@ -23,7 +23,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
-use foundry_wallets::{TempoAccessKeyWallet, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 
@@ -118,7 +118,7 @@ impl MakeTxArgs {
     pub async fn run_generic<N: Network>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
-        pre_resolved_access_key: Option<TempoAccessKeyWallet>,
+        pre_resolved_access_key: Option<TempoAccountsWallet>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -177,10 +177,10 @@ impl MakeTxArgs {
             .await?
             .with_blob_data(blob_data)?;
         let chain = tx_builder.chain();
-        let (signer, access_key) = if has_session {
+        let (signer, access_key) = if has_session || pre_resolved_access_key.is_some() {
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &eth.wallet, chain.id()).await?
         } else {
-            (pre_resolved_signer, pre_resolved_access_key)
+            (pre_resolved_signer, None)
         };
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.

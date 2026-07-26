@@ -5,7 +5,7 @@ use alloy_primitives::{
 use eyre::Result;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::tempo::ResolvedSessionSigner;
-use foundry_wallets::TempoAccessKeyWallet;
+use foundry_wallets::TempoAccountsWallet;
 use itertools::Itertools;
 
 /// A transaction sender scoped to one chain.
@@ -59,7 +59,7 @@ fn single_session_sender(required_addresses: &AddressHashSet) -> Result<Option<A
 /// Transactions from the session root on any other chain are rejected up front, so callers do not
 /// accidentally fall back to a long-lived root signer for the same session account.
 pub(crate) fn insert_session_access_key_for_remaining_transactions(
-    access_keys: &mut HashMap<SignerScope, TempoAccessKeyWallet>,
+    access_keys: &mut HashMap<SignerScope, TempoAccountsWallet>,
     session: ResolvedSessionSigner,
     remaining_transactions: &[RemainingScriptTransaction],
 ) -> Result<()> {
@@ -137,7 +137,7 @@ mod tests {
         let wallet =
             access_keys.get(&SignerScope::new(4217, root_address)).expect("session access key");
         assert_eq!(wallet.account(), root_address);
-        assert_eq!(wallet.key_id(), access_key_address);
+        assert_eq!(wallet.key_id().unwrap(), access_key_address);
     }
 
     fn session_signer(chain_id: u64) -> (ResolvedSessionSigner, Address, Address) {
@@ -145,7 +145,8 @@ mod tests {
         let root_address = root.address();
         let signer = foundry_wallets::utils::create_local_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
         let key_address = signer.address();
-        let access_key = foundry_wallets::tempo_access_key_wallet(root_address, signer, None);
+        let access_key =
+            TempoAccountsWallet::from_secp256k1(root_address, signer, None).with_chain_id(chain_id);
         let session = SessionEntry {
             session_id: B256::ZERO,
             root_account: root_address,

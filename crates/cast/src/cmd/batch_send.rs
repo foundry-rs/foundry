@@ -79,23 +79,15 @@ impl BatchSendArgs {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
-        // Resolve signer to detect keychain mode. Tempo sessions are resolved after chain lookup
-        // so they can fail closed on wrong-chain session use.
-        let (mut signer, mut tempo_access_key) =
-            if has_session { (None, None) } else { send_tx.eth.wallet.maybe_signer().await? };
-
         // Parse all call specs
         let call_specs: Vec<CallSpec> =
             calls.iter().map(|s| CallSpec::parse(s)).collect::<Result<Vec<_>>>()?;
 
         // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
-        if has_session
-            && let Some(session) =
-                tx.tempo.session_signer_for_wallet(&send_tx.eth.wallet, chain.id())?
-        {
-            (signer, tempo_access_key) = (None, Some(session.access_key));
-        }
+        let (signer, tempo_access_key) =
+            tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
+                .await?;
 
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
@@ -121,7 +113,7 @@ impl BatchSendArgs {
 
         // Preserve key_id for modes that do not call build_with_tempo_wallet, such as unlocked.
         if let Some(ref access_key) = tempo_access_key {
-            tx.tempo.key_id = Some(access_key.key_id());
+            tx.tempo.key_id = Some(access_key.key_id()?);
         }
 
         // Build transaction request with calls

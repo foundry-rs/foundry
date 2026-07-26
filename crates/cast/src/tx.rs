@@ -23,7 +23,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyWallet, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -565,8 +565,8 @@ where
     /// any sponsor digest can be computed.
     pub async fn build_with_tempo_wallet(
         self,
-        wallet: &TempoAccessKeyWallet,
-    ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccessKeyWallet)> {
+        wallet: &TempoAccountsWallet,
+    ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccountsWallet)> {
         let fill = self.fill;
         let mut prepared = wallet.clone();
         let (tx, func) = self._build(wallet.account(), fill, Some(&mut prepared)).await?;
@@ -577,7 +577,7 @@ where
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
-        tempo_wallet: Option<&mut TempoAccessKeyWallet>,
+        tempo_wallet: Option<&mut TempoAccountsWallet>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         // prepare
         let sender = sender.into();

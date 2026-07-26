@@ -19,7 +19,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
-use foundry_wallets::{TempoAccessKeyWallet, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use std::{str::FromStr, time::Duration};
 use tempo_alloy::{
     TempoNetwork,
@@ -183,12 +183,10 @@ impl Tip20Subcommand {
 pub(crate) async fn resolve_tip20_signer(
     send_tx: &SendTxOpts,
     tx_params: &TxParams,
-) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyWallet>)> {
-    if tx_params.tempo.session_id()?.is_none() {
-        return send_tx.eth.wallet.maybe_signer().await;
+) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    if tx_params.tempo.session_id()?.is_some() {
+        tempo::ensure_session_not_browser(&tx_params.tempo, send_tx.browser.browser)?;
     }
-
-    tempo::ensure_session_not_browser(&tx_params.tempo, send_tx.browser.browser)?;
 
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
@@ -203,7 +201,7 @@ pub(crate) async fn send_tip20_transaction(
     send_tx: SendTxOpts,
     tx_params: TxParams,
     pre_resolved_signer: Option<WalletSigner>,
-    access_key: Option<TempoAccessKeyWallet>,
+    access_key: Option<TempoAccountsWallet>,
 ) -> eyre::Result<()> {
     let mut tx_opts = tx_params.into_transaction_opts();
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
@@ -234,7 +232,7 @@ pub(crate) async fn send_tip20_transaction(
 
     let resolved_lane = resolve_lane(&mut tx_opts.tempo, &config.root)?;
     if let Some(ref ak) = access_key {
-        tx_opts.tempo.key_id = Some(ak.key_id());
+        tx_opts.tempo.key_id = Some(ak.key_id()?);
     }
 
     let builder = CastTxBuilder::new(&provider, tx_opts, &config)

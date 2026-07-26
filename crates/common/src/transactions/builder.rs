@@ -8,7 +8,7 @@ use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, Ne
 use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use eyre::Result;
-use foundry_wallets::TempoAccessKeyWallet;
+use foundry_wallets::TempoAccountsWallet;
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 #[cfg(feature = "optimism")]
@@ -256,8 +256,8 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     fn prepare_with_tempo_wallet<'a>(
         &'a mut self,
         _provider: &'a impl Provider<N>,
-        _wallet: &'a TempoAccessKeyWallet,
-    ) -> impl Future<Output = Result<TempoAccessKeyWallet>> + Send + 'a
+        _wallet: &'a TempoAccountsWallet,
+    ) -> impl Future<Output = Result<TempoAccountsWallet>> + Send + 'a
     where
         Self: Send,
     {
@@ -284,7 +284,7 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Sign a prepared request using a Tempo access-key wallet.
     fn sign_with_tempo_wallet(
         self,
-        _wallet: &TempoAccessKeyWallet,
+        _wallet: &TempoAccountsWallet,
     ) -> impl Future<Output = Result<Vec<u8>>> + Send {
         std::future::ready(Err(eyre::eyre!(
             "Tempo access-key wallets are not supported for this network"
@@ -472,8 +472,8 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
     async fn prepare_with_tempo_wallet<'a>(
         &'a mut self,
         provider: &'a impl Provider<TempoNetwork>,
-        wallet: &'a TempoAccessKeyWallet,
-    ) -> Result<TempoAccessKeyWallet>
+        wallet: &'a TempoAccountsWallet,
+    ) -> Result<TempoAccountsWallet>
     where
         Self: Send,
     {
@@ -498,7 +498,7 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         }
     }
 
-    async fn sign_with_tempo_wallet(self, wallet: &TempoAccessKeyWallet) -> Result<Vec<u8>> {
+    async fn sign_with_tempo_wallet(self, wallet: &TempoAccountsWallet) -> Result<Vec<u8>> {
         wallet.sign_request(self).await.map(|envelope| envelope.encoded_2718()).map_err(Into::into)
     }
 }

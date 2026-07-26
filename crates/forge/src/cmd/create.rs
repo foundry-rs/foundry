@@ -41,7 +41,7 @@ use foundry_config::{
     merge_impl_figment_convert,
 };
 use foundry_wallets::{
-    BrowserWalletOpts, TempoAccessKeyWallet, WalletSigner, wallet_browser::signer::BrowserSigner,
+    BrowserWalletOpts, TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner,
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
@@ -133,20 +133,20 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let (signer, tempo_access_key) = self.eth.wallet.maybe_signer().await?;
-
         // Resolve chain early so we can dispatch to the correct network type.
-        if self.chain_id().is_none() {
+        let chain = if let Some(chain) = self.chain_id() {
+            chain
+        } else {
             let config = self.load_config()?;
             let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
             let chain_id = provider.get_chain_id().await?;
-            self.eth.etherscan.chain = Some(chain_id.into());
-        }
+            let chain = Chain::from(chain_id);
+            self.eth.etherscan.chain = Some(chain);
+            chain
+        };
+        let (signer, tempo_access_key) = self.eth.wallet.maybe_signer_for_chain(chain.id()).await?;
 
-        if tempo_access_key.is_some()
-            || self.tx.tempo.is_tempo()
-            || self.chain_id().is_some_and(|c| c.is_tempo())
-        {
+        if tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
             self.run_generic::<Ethereum>(signer, None).await
@@ -156,7 +156,7 @@ impl CreateArgs {
     async fn run_generic<N: Network>(
         mut self,
         pre_resolved_signer: Option<WalletSigner>,
-        access_key: Option<TempoAccessKeyWallet>,
+        access_key: Option<TempoAccountsWallet>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -227,7 +227,7 @@ impl CreateArgs {
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
-            self.tx.tempo.key_id = Some(ak.key_id());
+            self.tx.tempo.key_id = Some(ak.key_id()?);
         }
 
         // Resolve `--tempo.lane <name>` against the lanes file (default
@@ -417,7 +417,7 @@ impl CreateArgs {
         timeout: u64,
         id: ArtifactId,
         dry_run: bool,
-        mut tempo_keychain: Option<TempoAccessKeyWallet>,
+        mut tempo_keychain: Option<TempoAccountsWallet>,
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,

@@ -7,8 +7,8 @@ use foundry_common::tempo::{EnsureAccessKeyConfig, ensure_access_key};
 pub enum TempoSubcommand {
     /// Authorize a new access key against your Tempo wallet via wallet.tempo.
     ///
-    /// Persists the key to `$TEMPO_HOME/wallet/keys.toml` (default
-    /// `~/.tempo/wallet/keys.toml`). Also runs automatically on a 402 from a
+    /// Persists the key to `$TEMPO_HOME/wallet/store.json` (default
+    /// `~/.tempo/wallet/store.json`). Also runs automatically on a 402 from a
     /// Tempo RPC when no local key is configured.
     ///
     /// Env: `TEMPO_HOME`, `TEMPO_CLI_AUTH_URL` (override auth service).

@@ -349,6 +349,34 @@ forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
     assert!(stdout.contains("Deployed to:"), "{stdout}");
 });
 
+forgetest_async!(create_rejects_tempo_access_key_before_broadcast, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+    let stderr = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            &rpc,
+            "--tempo.access-key",
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            "--tempo.root-account",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "--broadcast",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("Tempo access-key transactions cannot use CREATE"), "{stderr}");
+});
+
 // tests that we can deploy the template contract
 forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());

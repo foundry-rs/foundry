@@ -25,7 +25,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
-use foundry_wallets::{TempoAccessKeyWallet, WalletOpts, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast batch-mktx`.
@@ -113,7 +113,7 @@ impl BatchMakeTxArgs {
 
         // Preserve key_id for modes that do not call build_with_tempo_wallet, such as raw unsigned.
         if let Some(ref access_key) = tempo_access_key {
-            tx.tempo.key_id = Some(access_key.key_id());
+            tx.tempo.key_id = Some(access_key.key_id()?);
         }
 
         // Build transaction request with calls
@@ -211,9 +211,9 @@ async fn resolve_signer(
     wallet: &WalletOpts,
     chain_id: u64,
     raw_unsigned: bool,
-) -> Result<(Option<WalletSigner>, Option<TempoAccessKeyWallet>)> {
+) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     if raw_unsigned {
-        let (_, access_key) = wallet.maybe_signer().await?;
+        let (_, access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
         return Ok((None, access_key));
     }
 
@@ -247,7 +247,10 @@ mod tests {
                 access_key.account(),
                 address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
             );
-            assert_eq!(access_key.key_id(), address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"));
+            assert_eq!(
+                access_key.key_id().unwrap(),
+                address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+            );
         });
     }
 }

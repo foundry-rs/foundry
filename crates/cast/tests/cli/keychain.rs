@@ -20,6 +20,32 @@ fn path_usd() -> String {
     PATH_USD_ADDRESS.to_string()
 }
 
+fn write_accounts_store(tempo_home: &Path, chain_id: u64) {
+    let wallet = tempo_home.join("wallet");
+    fs::create_dir_all(&wallet).expect("create Tempo wallet dir");
+    let store = serde_json::json!({
+        "tempo-cli.store": {
+            "state": {
+                "activeAccount": 0,
+                "chainId": chain_id,
+                "accounts": [{"address": accounts::ADDR1}],
+                "accessKeys": [{
+                    "access": accounts::ADDR1,
+                    "address": accounts::ADDR2,
+                    "chainId": chain_id,
+                    "keyType": "secp256k1",
+                    "privateKey": accounts::PK2,
+                }],
+            },
+        },
+    });
+    fs::write(
+        wallet.join("store.json"),
+        serde_json::to_vec(&store).expect("serialize Tempo Accounts store"),
+    )
+    .expect("write Tempo Accounts store");
+}
+
 const ADDRESS_REGISTRY: &str = "0xFDC0000000000000000000000000000000000000";
 
 fn tip20_factory() -> String {
@@ -163,6 +189,8 @@ casttest!(keychain_rl_json_is_object, async |_prj, cmd| {
             &path_usd,
             "--rpc-url",
             &rpc,
+            "--timeout",
+            "5",
             "--json",
         ])
         .assert_success()
@@ -421,6 +449,98 @@ casttest!(keychain_authorize_admin_then_is_admin, async |_prj, cmd| {
     assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
 });
 
+// On-chain: authorize a regular access key, then use the real `cast send` binary to sign,
+// broadcast, and mine an account transaction with it.
+casttest!(send_with_authorized_access_key_succeeds, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            &path_usd,
+            "approve(address,uint256)",
+            accounts::ADDR3,
+            "0",
+            "--tempo.access-key",
+            accounts::PK2,
+            "--tempo.root-account",
+            accounts::ADDR1,
+            "--tempo.fee-token",
+            &path_usd,
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+    assert!(receipt["transactionHash"].is_string(), "unexpected receipt: {output}");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+});
+
+casttest!(send_uses_access_key_from_accounts_store, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    let tempo_home = tempfile::tempdir().unwrap();
+    write_accounts_store(tempo_home.path(), 31337);
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let output = cmd
+        .args([
+            "send",
+            &path_usd,
+            "approve(address,uint256)",
+            accounts::ADDR3,
+            "0",
+            "--from",
+            accounts::ADDR1,
+            "--tempo.fee-token",
+            &path_usd,
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+});
+
 // On-chain (T6): a keychain signature from an authorized admin key passes `verify-admin`.
 casttest!(keychain_verify_admin_accepts_admin_signature, async |_prj, cmd| {
     use alloy_primitives::{Address, B256, hex};
@@ -617,7 +737,21 @@ casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
 casttest!(keychain_show_json_no_match_returns_empty_array, |prj, cmd| {
     let tempo_home = prj.root().join("tempo-home");
     fs::create_dir_all(tempo_home.join("wallet")).expect("create Tempo wallet dir");
-    fs::write(tempo_home.join("wallet/keys.toml"), "keys = []\n").expect("write keys.toml");
+    let store = serde_json::json!({
+        "tempo-cli.store": {
+            "state": {
+                "activeAccount": 0,
+                "chainId": 4217,
+                "accounts": [{"address": accounts::ADDR2}],
+                "accessKeys": [],
+            },
+        },
+    });
+    fs::write(
+        tempo_home.join("wallet/store.json"),
+        serde_json::to_vec(&store).expect("serialize store"),
+    )
+    .expect("write store.json");
 
     cmd.env("TEMPO_HOME", &tempo_home);
 

@@ -21,7 +21,7 @@ use foundry_common::{
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Chain;
-use foundry_wallets::{TempoAccessKeyWallet, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use tempo_alloy::{
     TempoNetwork,
     transport::{RelayConnector, SponsorshipMode},
@@ -30,6 +30,7 @@ use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 use crate::{
     cmd::tip20::iso4217_warning_message,
+    tempo,
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
 };
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
@@ -121,7 +122,7 @@ impl SendTxArgs {
     pub async fn run_generic<N: Network>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
-        mut access_key: Option<TempoAccessKeyWallet>,
+        mut access_key: Option<TempoAccountsWallet>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -218,18 +219,17 @@ impl SendTxArgs {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
-        if has_session
-            && let Some(session) = tx.tempo.session_signer_for_wallet(
-                &send_tx.eth.wallet,
-                get_chain(config.chain, &provider).await?.id(),
-            )?
-        {
-            access_key = Some(session.access_key);
+        if has_session || access_key.is_some() {
+            let chain = get_chain(config.chain, &provider).await?;
+            let (_, resolved_access_key) =
+                tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
+                    .await?;
+            access_key = resolved_access_key;
         }
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
-            tx.tempo.key_id = Some(ak.key_id());
+            tx.tempo.key_id = Some(ak.key_id()?);
         }
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
@@ -571,7 +571,7 @@ where
 pub(crate) async fn cast_send_with_tempo_wallet<N: Network, P: Provider<N>>(
     provider: &P,
     mut tx: N::TransactionRequest,
-    wallet: &TempoAccessKeyWallet,
+    wallet: &TempoAccountsWallet,
     chain: Option<Chain>,
     fee_payer: Option<Address>,
     cast_async: bool,

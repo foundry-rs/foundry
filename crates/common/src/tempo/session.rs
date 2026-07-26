@@ -3,7 +3,7 @@
 use super::{KeyType, registry::*, tempo_home};
 use alloy_primitives::{Address, B256, Selector, U256};
 use eyre::ensure;
-use foundry_wallets::{TempoAccessKeyWallet, tempo_access_key_wallet};
+use foundry_wallets::TempoAccountsWallet;
 use serde::{Deserialize, Serialize};
 use std::{fmt, num::NonZeroU64, path::PathBuf};
 use tempo_primitives::transaction::{
@@ -59,7 +59,7 @@ pub struct SessionTokenLimit {
 /// Private key material for a temporary session access key.
 ///
 /// Session keys live with their lifecycle record in `wallet/sessions.toml`.
-/// Persistent Tempo wallet login keys remain in `wallet/keys.toml`, so creating
+/// Persistent Tempo wallet login keys remain in `wallet/store.json`, so creating
 /// or cleaning up a session cannot replace a user's long-lived access key.
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SessionKeyMaterial {
@@ -134,7 +134,7 @@ pub struct SessionEntry {
     #[serde(default)]
     pub status: SessionStatus,
     /// Session-scoped key material. This is intentionally separate from
-    /// `wallet/keys.toml`, which stores persistent access keys.
+    /// `wallet/store.json`, which stores persistent access keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<SessionKeyMaterial>,
 }
@@ -245,7 +245,7 @@ fn set_session_status(session: &mut SessionEntry, status: SessionStatus) -> bool
 #[derive(Debug)]
 pub struct ResolvedSessionSigner {
     pub session: SessionEntry,
-    pub access_key: TempoAccessKeyWallet,
+    pub access_key: TempoAccountsWallet,
 }
 
 /// Returns the path to the Tempo session registry file.
@@ -325,7 +325,9 @@ pub fn resolve_live_session_signer(
             auth,
         )?;
     }
-    let access_key = tempo_access_key_wallet(session.root_account, signer, key_authorization);
+    let access_key =
+        TempoAccountsWallet::from_secp256k1(session.root_account, signer, key_authorization)
+            .with_chain_id(session.chain_id);
 
     Ok(Some(ResolvedSessionSigner { session, access_key }))
 }
@@ -791,9 +793,9 @@ mod tests {
             upsert_session_entry(sample_entry(session_id, 100, SessionStatus::Pending)).unwrap();
 
             let session_path = session_registry_path().unwrap();
-            let keys_path = crate::tempo::tempo_keys_path().unwrap();
+            let keys_path = crate::tempo::tempo_accounts_store_path().unwrap();
             assert_eq!(session_path.file_name().and_then(|s| s.to_str()), Some("sessions.toml"));
-            assert_eq!(keys_path.file_name().and_then(|s| s.to_str()), Some("keys.toml"));
+            assert_eq!(keys_path.file_name().and_then(|s| s.to_str()), Some("store.json"));
             assert_ne!(session_path, keys_path);
 
             let record = read_session_record().unwrap();
@@ -927,7 +929,7 @@ mod tests {
 
             assert_eq!(resolved.session, entry);
             assert_eq!(resolved.access_key.account(), entry.root_account);
-            assert_eq!(resolved.access_key.key_id(), entry.key_address);
+            assert_eq!(resolved.access_key.key_id().unwrap(), entry.key_address);
             assert!(resolved.access_key.key_authorization().is_none());
         });
     }
@@ -1236,26 +1238,18 @@ mod tests {
     }
 
     #[test]
-    fn session_key_storage_does_not_replace_persistent_keys_file() {
+    fn session_key_storage_does_not_replace_accounts_store() {
         with_tempo_home(|| {
-            let keys_path = crate::tempo::tempo_keys_path().unwrap();
-            fs::create_dir_all(keys_path.parent().unwrap()).unwrap();
-            let original_keys = r#"[[keys]]
-wallet_type = "local"
-wallet_address = "0x0000000000000000000000000000000000000001"
-chain_id = 4217
-key_type = "secp256k1"
-key_address = "0x0000000000000000000000000000000000000001"
-key = "0x1111"
-expiry = 999
-"#;
-            fs::write(&keys_path, original_keys).unwrap();
+            let store_path = crate::tempo::tempo_accounts_store_path().unwrap();
+            fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+            let original_store = r#"{"tempo-cli.store":{"state":{"accounts":[],"accessKeys":[],"activeAccount":0,"chainId":4217},"version":0}}"#;
+            fs::write(&store_path, original_store).unwrap();
 
             let session_id = B256::from([0x99; 32]);
             upsert_session_entry(sample_entry_with_key(session_id, 200, SessionStatus::Active))
                 .unwrap();
 
-            assert_eq!(fs::read_to_string(&keys_path).unwrap(), original_keys);
+            assert_eq!(fs::read_to_string(&store_path).unwrap(), original_store);
             let session = read_live_session_key(session_id, 100).unwrap();
             assert_eq!(session.key.unwrap().key, "0xdeadbeef");
         });
@@ -1264,35 +1258,28 @@ expiry = 999
     #[test]
     fn removing_session_key_preserves_persistent_key() {
         with_tempo_home(|| {
-            let keys_path = crate::tempo::tempo_keys_path().unwrap();
-            fs::create_dir_all(keys_path.parent().unwrap()).unwrap();
-            let original_keys = r#"[[keys]]
-wallet_type = "local"
-wallet_address = "0x0000000000000000000000000000000000000001"
-chain_id = 4217
-key_type = "secp256k1"
-key_address = "0x0000000000000000000000000000000000000001"
-key = "0x1111"
-"#;
-            fs::write(&keys_path, original_keys).unwrap();
+            let store_path = crate::tempo::tempo_accounts_store_path().unwrap();
+            fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+            let original_store = r#"{"tempo-cli.store":{"state":{"accounts":[],"accessKeys":[],"activeAccount":0,"chainId":4217},"version":0}}"#;
+            fs::write(&store_path, original_store).unwrap();
 
             let session_id = B256::from([0xaa; 32]);
             upsert_session_entry(sample_entry_with_key(session_id, 200, SessionStatus::Active))
                 .unwrap();
             assert!(remove_session_entry(session_id).unwrap());
 
-            assert_eq!(fs::read_to_string(&keys_path).unwrap(), original_keys);
+            assert_eq!(fs::read_to_string(&store_path).unwrap(), original_store);
             assert!(read_session_record().unwrap().is_empty());
         });
     }
 
     #[test]
-    fn mark_expired_session_entries_persists_status_without_touching_keys_file() {
+    fn mark_expired_session_entries_does_not_touch_accounts_store() {
         with_tempo_home(|| {
-            let keys_path = crate::tempo::tempo_keys_path().unwrap();
-            fs::create_dir_all(keys_path.parent().unwrap()).unwrap();
-            let original_keys = "[[keys]]\nkey = \"0x1111\"\n";
-            fs::write(&keys_path, original_keys).unwrap();
+            let store_path = crate::tempo::tempo_accounts_store_path().unwrap();
+            fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+            let original_store = r#"{"tempo-cli.store":{"state":{"accounts":[],"accessKeys":[],"activeAccount":0,"chainId":4217},"version":0}}"#;
+            fs::write(&store_path, original_store).unwrap();
 
             let session_id = B256::from([0xbb; 32]);
             upsert_session_entry(sample_entry_with_key(session_id, 100, SessionStatus::Active))
@@ -1304,7 +1291,7 @@ key = "0x1111"
             assert_eq!(session.status, SessionStatus::Expired);
             assert!(session.key.is_none());
             assert!(read_live_session_key(session_id, 100).is_none());
-            assert_eq!(fs::read_to_string(&keys_path).unwrap(), original_keys);
+            assert_eq!(fs::read_to_string(&store_path).unwrap(), original_store);
         });
     }
 
