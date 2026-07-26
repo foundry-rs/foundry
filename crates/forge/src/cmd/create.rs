@@ -41,7 +41,7 @@ use foundry_config::{
     merge_impl_figment_convert,
 };
 use foundry_wallets::{
-    BrowserWalletOpts, TempoAccessKeyConfig, WalletSigner, wallet_browser::signer::BrowserSigner,
+    BrowserWalletOpts, TempoAccessKeyWallet, WalletSigner, wallet_browser::signer::BrowserSigner,
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
@@ -156,7 +156,7 @@ impl CreateArgs {
     async fn run_generic<N: Network>(
         mut self,
         pre_resolved_signer: Option<WalletSigner>,
-        access_key: Option<TempoAccessKeyConfig>,
+        access_key: Option<TempoAccessKeyWallet>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -227,7 +227,7 @@ impl CreateArgs {
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
-            self.tx.tempo.key_id = Some(ak.key_address);
+            self.tx.tempo.key_id = Some(ak.key_id());
         }
 
         // Resolve `--tempo.lane <name>` against the lanes file (default
@@ -283,12 +283,7 @@ impl CreateArgs {
             )
             .await
         } else if let Some(ak) = access_key {
-            // Tempo keychain mode: sign with access key and send raw
-            let signer = match pre_resolved_signer {
-                Some(s) => s,
-                None => self.eth.wallet.signer().await?,
-            };
-            let deployer_address = ak.wallet_address;
+            let deployer_address = ak.account();
             self.deploy(
                 abi,
                 bin,
@@ -298,7 +293,7 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                Some((signer, ak)),
+                Some(ak),
                 None,
                 resolved_lane,
                 expires_at,
@@ -422,7 +417,7 @@ impl CreateArgs {
         timeout: u64,
         id: ArtifactId,
         dry_run: bool,
-        tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
+        mut tempo_keychain: Option<TempoAccessKeyWallet>,
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,
@@ -471,12 +466,8 @@ impl CreateArgs {
             deployer.tx.convert_create_to_call();
         }
 
-        // For keychain mode, set key_id and nonce_key before gas estimation.
-        if let Some((_, ref ak)) = tempo_keychain {
-            deployer.tx.set_key_id(ak.key_address);
-            if deployer.tx.nonce_key().is_none() {
-                deployer.tx.set_nonce_key(U256::ZERO);
-            }
+        if tempo_keychain.is_some() && deployer.tx.nonce_key().is_none() {
+            deployer.tx.set_nonce_key(U256::ZERO);
         }
 
         // Fetch defaults from provider for values not specified by user.
@@ -486,16 +477,9 @@ impl CreateArgs {
 
         maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
 
-        if let Some((_, ref ak)) = tempo_keychain {
-            deployer
-                .tx
-                .prepare_access_key_authorization(
-                    provider.as_ref(),
-                    ak.wallet_address,
-                    ak.key_address,
-                    ak.key_authorization.as_ref(),
-                )
-                .await?;
+        if let Some(wallet) = tempo_keychain.as_ref() {
+            tempo_keychain =
+                Some(deployer.tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?);
         }
 
         if is_legacy {
@@ -650,18 +634,8 @@ impl CreateArgs {
                 .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
 
             (address, receipt)
-        } else if let Some((signer, ak)) = tempo_keychain {
-            // Tempo keychain mode: sign with access key provisioning and send raw
-            let raw_tx = deployer
-                .tx
-                .sign_with_access_key(
-                    &provider,
-                    &signer,
-                    ak.wallet_address,
-                    ak.key_address,
-                    ak.key_authorization.as_ref(),
-                )
-                .await?;
+        } else if let Some(wallet) = tempo_keychain {
+            let raw_tx = deployer.tx.sign_with_tempo_wallet(&wallet).await?;
 
             let receipt = provider
                 .send_raw_transaction(&raw_tx)

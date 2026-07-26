@@ -23,7 +23,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyWallet, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -563,21 +563,21 @@ where
     /// The access-key id is set before gas estimation. If the access key needs on-chain
     /// provisioning, its authorization is embedded before access-list/gas estimation and before
     /// any sponsor digest can be computed.
-    pub async fn build_with_access_key(
-        mut self,
-        sender: impl Into<SenderKind<'_>>,
-        access_key: &TempoAccessKeyConfig,
-    ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        self.tx.set_key_id(access_key.key_address);
+    pub async fn build_with_tempo_wallet(
+        self,
+        wallet: &TempoAccessKeyWallet,
+    ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccessKeyWallet)> {
         let fill = self.fill;
-        self._build(sender, fill, Some(access_key)).await
+        let mut prepared = wallet.clone();
+        let (tx, func) = self._build(wallet.account(), fill, Some(&mut prepared)).await?;
+        Ok((tx, func, prepared))
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
-        access_key: Option<&TempoAccessKeyConfig>,
+        tempo_wallet: Option<&mut TempoAccessKeyWallet>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         // prepare
         let sender = sender.into();
@@ -595,15 +595,8 @@ where
             let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
             self.resolve_auth(&sender, tx_nonce).await?;
         }
-        if let Some(access_key) = access_key {
-            self.tx
-                .prepare_access_key_authorization(
-                    &self.provider,
-                    access_key.wallet_address,
-                    access_key.key_address,
-                    access_key.key_authorization.as_ref(),
-                )
-                .await?;
+        if let Some(wallet) = tempo_wallet {
+            *wallet = self.tx.prepare_with_tempo_wallet(&self.provider, wallet).await?;
         }
         if fill {
             self.fill_fees().await?;

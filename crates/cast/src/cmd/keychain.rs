@@ -2936,25 +2936,28 @@ async fn run_key_auth_sign(
     }
 
     let (signer, tempo_access_key) = wallet.maybe_signer().await?;
-    let signer = signer.ok_or_else(|| {
-        eyre::eyre!(
-            "a signer is required to sign key authorizations; pass a signer with \
-             --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
-        )
-    })?;
-    let signer_address = signer.address();
+    let signer_address = match (&signer, &tempo_access_key) {
+        (Some(signer), None) => signer.address(),
+        (None, Some(wallet)) => wallet.key_id(),
+        _ => {
+            eyre::bail!(
+                "a signer is required to sign key authorizations; pass a signer with \
+                 --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+            );
+        }
+    };
 
     // Resolve the account this authorization is bound to (T6 replay protection).
     let bound_account = if let Some(access_key) = tempo_access_key.as_ref() {
         // The access key (an admin key) signs for its root, so bind to the root, not the signer.
         if let Some(explicit) = account {
             eyre::ensure!(
-                explicit == access_key.wallet_address,
+                explicit == access_key.account(),
                 "--bind-account {explicit} does not match the selected Tempo access key's root account {}",
-                access_key.wallet_address,
+                access_key.account(),
             );
         }
-        Some(access_key.wallet_address)
+        Some(access_key.account())
     } else {
         ensure_key_authorization_root_sender(signer_address, wallet.from)?;
         match account {
@@ -2967,7 +2970,13 @@ async fn run_key_auth_sign(
     let authorization = args.into_authorization(bound_account)?;
     let authorized_key_type = auth_signature_type_name(&authorization.key_type);
     let signature_hash = authorization.signature_hash();
-    let signature = signer.sign_hash(&signature_hash).await?;
+    let signature = match (signer.as_ref(), tempo_access_key.as_ref()) {
+        (Some(signer), None) => signer.sign_hash(&signature_hash).await?,
+        (None, Some(wallet)) => wallet.signer().sign_hash(&signature_hash).await?,
+        _ => {
+            eyre::bail!("exactly one signer is required to sign a key authorization");
+        }
+    };
     let signed = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
     print_signed_key_authorization(&signed, signature_hash, signer_address, authorized_key_type)
 }

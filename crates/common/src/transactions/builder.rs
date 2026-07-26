@@ -4,20 +4,17 @@ use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
-use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder};
+use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
 use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
-use alloy_signer::Signer;
 use eyre::Result;
+use foundry_wallets::TempoAccessKeyWallet;
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionRequest;
-use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
-use tempo_primitives::{
-    TempoSignature, TempoTxType,
-    transaction::{Call, KeychainSignature, PrimitiveSignature, SignedKeyAuthorization},
-};
+use tempo_alloy::TempoNetwork;
+use tempo_primitives::{TempoTxType, transaction::Call};
 
 /// Composite transaction builder trait for Foundry transactions.
 ///
@@ -255,28 +252,18 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         None
     }
 
-    /// Set the key authorization for a Tempo transaction.
-    ///
-    /// Embeds a [`SignedKeyAuthorization`] in the transaction body, provisioning the access key
-    /// on-chain as part of this transaction.
-    fn set_key_authorization(&mut self, _key_authorization: SignedKeyAuthorization) {}
-
-    /// Embeds key authorization before gas estimation/signing if the access key is not yet
-    /// provisioned on-chain.
-    ///
-    /// This mirrors the mutation performed by [`Self::sign_with_access_key`], but makes the final
-    /// transaction body available before fee-payer sponsor digests are computed.
-    fn prepare_access_key_authorization<'a>(
+    /// Prepare a Tempo access-key wallet before gas estimation or sponsorship.
+    fn prepare_with_tempo_wallet<'a>(
         &'a mut self,
         _provider: &'a impl Provider<N>,
-        _wallet_address: Address,
-        _key_address: Address,
-        _key_authorization: Option<&'a SignedKeyAuthorization>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a
+        _wallet: &'a TempoAccessKeyWallet,
+    ) -> impl Future<Output = Result<TempoAccessKeyWallet>> + Send + 'a
     where
         Self: Send,
     {
-        async { Ok(()) }
+        std::future::ready(Err(eyre::eyre!(
+            "Tempo access-key wallets are not supported for this network"
+        )))
     }
 
     /// Converts a CREATE transaction into an AA-compatible call entry.
@@ -294,23 +281,14 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// No-op for non-Tempo networks.
     fn clear_batch_to(&mut self) {}
 
-    /// Signs the transaction using an access key (keychain mode).
-    ///
-    /// If `key_authorization` is provided and the key is not yet provisioned on-chain,
-    /// embeds the authorization in the transaction before signing.
-    ///
-    /// The default implementation returns an error. Only `TempoNetwork` supports this.
-    fn sign_with_access_key(
+    /// Sign a prepared request using a Tempo access-key wallet.
+    fn sign_with_tempo_wallet(
         self,
-        _provider: &impl Provider<N>,
-        _signer: &(impl Signer + Sync),
-        _wallet_address: Address,
-        _key_address: Address,
-        _key_authorization: Option<&SignedKeyAuthorization>,
+        _wallet: &TempoAccessKeyWallet,
     ) -> impl Future<Output = Result<Vec<u8>>> + Send {
-        async {
-            eyre::bail!("access key signing is not supported for this network");
-        }
+        std::future::ready(Err(eyre::eyre!(
+            "Tempo access-key wallets are not supported for this network"
+        )))
     }
 }
 
@@ -491,37 +469,15 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         Some(tx.fee_payer_signature_hash(from))
     }
 
-    fn set_key_authorization(&mut self, key_authorization: SignedKeyAuthorization) {
-        self.key_authorization = Some(key_authorization);
-    }
-
-    fn prepare_access_key_authorization<'a>(
+    async fn prepare_with_tempo_wallet<'a>(
         &'a mut self,
         provider: &'a impl Provider<TempoNetwork>,
-        wallet_address: Address,
-        key_address: Address,
-        key_authorization: Option<&'a SignedKeyAuthorization>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a
+        wallet: &'a TempoAccessKeyWallet,
+    ) -> Result<TempoAccessKeyWallet>
     where
         Self: Send,
     {
-        let auth = key_authorization.cloned();
-
-        async move {
-            if let Some(auth) = auth {
-                let is_provisioned = provider
-                    .get_keychain_key(wallet_address, key_address)
-                    .await
-                    .map(|info| info.keyId != Address::ZERO)
-                    .unwrap_or(false);
-
-                if !is_provisioned {
-                    self.set_key_authorization(auth);
-                }
-            }
-
-            Ok(())
-        }
+        wallet.prepare_request(provider, self).await.map_err(Into::into)
     }
 
     fn convert_create_to_call(&mut self) {
@@ -542,47 +498,7 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         }
     }
 
-    fn sign_with_access_key(
-        mut self,
-        provider: &impl Provider<TempoNetwork>,
-        signer: &(impl Signer + Sync),
-        wallet_address: Address,
-        key_address: Address,
-        key_authorization: Option<&SignedKeyAuthorization>,
-    ) -> impl Future<Output = Result<Vec<u8>>> + Send {
-        let auth = key_authorization.cloned();
-        let provisioning_fut = provider.get_keychain_key(wallet_address, key_address);
-
-        async move {
-            if let Some(auth) = auth {
-                let is_provisioned =
-                    provisioning_fut.await.map(|info| info.keyId != Address::ZERO).unwrap_or(false);
-
-                if !is_provisioned && self.key_authorization.is_none() {
-                    if self.fee_payer_signature.is_some() {
-                        eyre::bail!(
-                            "cannot add Tempo key authorization after fee payer signature was attached"
-                        );
-                    }
-                    self.set_key_authorization(auth);
-                }
-            }
-
-            let tempo_tx = self
-                .build_aa()
-                .map_err(|e| eyre::eyre!("failed to build Tempo AA transaction: {e}"))?;
-
-            let sig_hash = tempo_tx.signature_hash();
-            let signing_hash = KeychainSignature::signing_hash(sig_hash, wallet_address);
-            let raw_sig = signer.sign_hash(&signing_hash).await?;
-
-            let keychain_sig =
-                KeychainSignature::new(wallet_address, PrimitiveSignature::Secp256k1(raw_sig));
-            let aa_signed = tempo_tx.into_signed(TempoSignature::Keychain(keychain_sig));
-
-            let mut buf = Vec::new();
-            aa_signed.encode_2718(&mut buf);
-            Ok(buf)
-        }
+    async fn sign_with_tempo_wallet(self, wallet: &TempoAccessKeyWallet) -> Result<Vec<u8>> {
+        wallet.sign_request(self).await.map(|envelope| envelope.encoded_2718()).map_err(Into::into)
     }
 }

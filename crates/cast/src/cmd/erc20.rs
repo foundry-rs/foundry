@@ -3,7 +3,7 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::{
         call_overrides::CallOverrideOpts,
-        send::{cast_send, cast_send_with_access_key},
+        send::{cast_send, cast_send_with_tempo_wallet},
     },
     format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
@@ -31,7 +31,7 @@ use foundry_common::{
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
-use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
+use foundry_wallets::{TempoAccessKeyWallet, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
 sol! {
@@ -301,7 +301,7 @@ impl Erc20Subcommand {
 
     async fn should_use_tempo_network(
         &self,
-        tempo_access_key: &Option<TempoAccessKeyConfig>,
+        tempo_access_key: &Option<TempoAccessKeyWallet>,
         has_session: bool,
     ) -> eyre::Result<bool> {
         if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
@@ -357,7 +357,7 @@ impl Erc20Subcommand {
     pub async fn run_generic<N: Network + RecommendedFillers>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
-        tempo_keychain: Option<TempoAccessKeyConfig>,
+        tempo_keychain: Option<TempoAccessKeyWallet>,
         has_session: bool,
     ) -> eyre::Result<()>
     where
@@ -406,16 +406,13 @@ impl Erc20Subcommand {
 
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
                 if let Some(ref access_key) = tempo_keychain {
-                    let signer = pre_resolved_signer
-                        .as_ref()
-                        .ok_or_else(|| eyre::eyre!("signer required for access key"))?;
                     let $provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
-                    tempo::fill_access_key_transaction(
+                    let prepared_access_key = tempo::fill_access_key_transaction(
                         &$provider,
                         &mut tx,
                         access_key,
@@ -435,7 +432,7 @@ impl Erc20Subcommand {
                                 .await?;
                             }
                             let hash = tx
-                                .compute_sponsor_hash(access_key.wallet_address)
+                                .compute_sponsor_hash(prepared_access_key.account())
                                 .ok_or_else(|| {
                                     eyre::eyre!(
                                         "This network does not support sponsored transactions"
@@ -455,16 +452,15 @@ impl Erc20Subcommand {
                             sponsor
                                 .attach_and_print::<TempoNetwork>(
                                     &mut tx,
-                                    access_key.wallet_address,
+                                    prepared_access_key.account(),
                                 )
                                 .await?;
                         }
                     }
-                    cast_send_with_access_key(
+                    cast_send_with_tempo_wallet(
                         &$provider,
                         tx,
-                        signer,
-                        access_key,
+                        &prepared_access_key,
                         tempo_sponsor.is_none().then_some(chain),
                         None,
                         $send_tx.cast_async,

@@ -91,11 +91,14 @@ pub fn to_channel_entry(ch: &Channel) -> Option<ChannelEntry> {
     let salt: B256 = ch.salt.parse().ok()?;
     let escrow_contract: Address = ch.escrow_contract.parse().ok()?;
     let cumulative_amount: u128 = ch.cumulative_amount.parse().ok()?;
+    let deposit: u128 = ch.deposit.parse().ok()?;
 
     Some(ChannelEntry {
         channel_id,
         salt,
         cumulative_amount,
+        deposit,
+        descriptor: None,
         escrow_contract,
         chain_id: ch.chain_id as u64,
         opened: ch.state == "active",
@@ -105,7 +108,6 @@ pub fn to_channel_entry(ch: &Channel) -> Option<ChannelEntry> {
 /// Create a `Channel` from a `ChannelEntry` with metadata.
 pub fn from_channel_entry(
     entry: &ChannelEntry,
-    deposit: u128,
     origin: &str,
     payer: &Address,
     payee: &Address,
@@ -126,7 +128,7 @@ pub fn from_channel_entry(
         payer: payer.to_string(),
         authorized_signer: authorized_signer.to_string(),
         salt: entry.salt.to_string(),
-        deposit: deposit.to_string(),
+        deposit: entry.deposit.to_string(),
         cumulative_amount: entry.cumulative_amount.to_string(),
         challenge_echo: String::new(),
         state: if entry.opened { "active" } else { "closed" }.to_string(),
@@ -256,6 +258,8 @@ mod tests {
             channel_id: B256::random(),
             salt: B256::random(),
             cumulative_amount: 42000,
+            deposit: 100_000,
+            descriptor: None,
             escrow_contract: Address::random(),
             chain_id: 42431,
             opened: true,
@@ -265,7 +269,7 @@ mod tests {
         let payee = Address::random();
         let token = Address::random();
         let persisted =
-            from_channel_entry(&entry, 100_000, "https://rpc.test", &payer, &payee, &token, &payer);
+            from_channel_entry(&entry, "https://rpc.test", &payer, &payee, &token, &payer);
         let restored = to_channel_entry(&persisted).expect("should parse back");
 
         assert_eq!(restored.channel_id, entry.channel_id);

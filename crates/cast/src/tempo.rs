@@ -5,9 +5,9 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_cli::{json::print_json_success, opts::TempoOpts};
-use foundry_common::{FoundryTransactionBuilder, shell};
+use foundry_common::shell;
 use foundry_config::{Chain, Eip1559FeeEstimatePreset};
-use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
+use foundry_wallets::{TempoAccessKeyWallet, WalletOpts, WalletSigner};
 use serde_json::Value;
 use tempo_alloy::TempoNetwork;
 
@@ -42,9 +42,9 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     tempo: &TempoOpts,
     wallet: &WalletOpts,
     chain_id: u64,
-) -> Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
+) -> Result<(Option<WalletSigner>, Option<TempoAccessKeyWallet>)> {
     match tempo.session_signer_for_wallet(wallet, chain_id)? {
-        Some(session) => Ok((Some(session.signer), Some(session.access_key))),
+        Some(session) => Ok((None, Some(session.access_key))),
         None => wallet.maybe_signer().await,
     }
 }
@@ -61,31 +61,23 @@ pub(crate) fn ensure_session_not_browser(tempo: &TempoOpts, browser: bool) -> Re
 pub(crate) async fn fill_access_key_transaction<P>(
     provider: &P,
     tx: &mut <TempoNetwork as Network>::TransactionRequest,
-    access_key: &TempoAccessKeyConfig,
+    access_key: &TempoAccessKeyWallet,
     chain: Chain,
     eip1559_fee_estimate: Eip1559FeeEstimatePreset,
-) -> Result<()>
+) -> Result<TempoAccessKeyWallet>
 where
     P: Provider<TempoNetwork>,
 {
-    tx.set_from(access_key.wallet_address);
     tx.set_chain_id(chain.id());
-    tx.set_key_id(access_key.key_address);
-    tx.prepare_access_key_authorization(
-        provider,
-        access_key.wallet_address,
-        access_key.key_address,
-        access_key.key_authorization.as_ref(),
-    )
-    .await?;
+    let prepared = access_key.prepare_request(provider, tx).await?;
 
     if tx.nonce().is_none() {
-        tx.set_nonce(provider.get_transaction_count(access_key.wallet_address).await?);
+        tx.set_nonce(provider.get_transaction_count(prepared.account()).await?);
     }
     fill_transaction_gas_fees(provider, tx, chain.is_legacy(), false, eip1559_fee_estimate).await?;
     if tx.gas_limit().is_none() {
         tx.set_gas_limit(provider.estimate_gas(tx.clone()).await?);
     }
 
-    Ok(())
+    Ok(prepared)
 }

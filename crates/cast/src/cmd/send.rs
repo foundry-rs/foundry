@@ -21,7 +21,7 @@ use foundry_common::{
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Chain;
-use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
+use foundry_wallets::{TempoAccessKeyWallet, WalletSigner};
 use tempo_alloy::{
     TempoNetwork,
     transport::{RelayConnector, SponsorshipMode},
@@ -120,8 +120,8 @@ impl SendTxArgs {
 
     pub async fn run_generic<N: Network>(
         self,
-        mut pre_resolved_signer: Option<WalletSigner>,
-        mut access_key: Option<TempoAccessKeyConfig>,
+        pre_resolved_signer: Option<WalletSigner>,
+        mut access_key: Option<TempoAccessKeyWallet>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -224,13 +224,12 @@ impl SendTxArgs {
                 get_chain(config.chain, &provider).await?.id(),
             )?
         {
-            pre_resolved_signer = Some(session.signer);
             access_key = Some(session.access_key);
         }
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
-            tx.tempo.key_id = Some(ak.key_address);
+            tx.tempo.key_id = Some(ak.key_id());
         }
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
@@ -245,8 +244,8 @@ impl SendTxArgs {
         if print_sponsor_hash {
             let chain = builder.chain();
             let (mut tx, from) = if let Some(ref ak) = access_key {
-                let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
-                (tx, ak.wallet_address)
+                let (tx, _, prepared) = builder.build_with_tempo_wallet(ak).await?;
+                (tx, prepared.account())
             } else {
                 // Use the pre-resolved signer to derive the actual sender address, since the
                 // sponsor hash commits to the sender.
@@ -400,16 +399,10 @@ impl SendTxArgs {
             let cast = CastTxSender::new(&provider);
             cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
                 .await?;
-        // Case 3:
-        // Tempo access key (keychain) signing. Uses `sign_with_access_key` which
-        // handles the provisioning check and embeds `key_authorization` when needed.
+        // Case 3: Tempo access-key wallet.
         } else if let Some(ak) = access_key {
-            let signer = match pre_resolved_signer {
-                Some(s) => s,
-                None => send_tx.eth.wallet.signer().await?,
-            };
             let chain = builder.chain();
-            let (mut tx_request, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
+            let (mut tx_request, _, prepared) = builder.build_with_tempo_wallet(&ak).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
                 tx_request.nonce().unwrap_or_default(),
@@ -422,13 +415,12 @@ impl SendTxArgs {
                         &mut tx_request,
                     )
                     .await?;
-                sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
+                sponsor.attach_and_print::<N>(&mut tx_request, prepared.account()).await?;
             }
-            cast_send_with_access_key(
+            cast_send_with_tempo_wallet(
                 &provider,
                 tx_request,
-                &signer,
-                &ak,
+                &prepared,
                 tempo_sponsor.is_none().then_some(chain),
                 None,
                 send_tx.cast_async,
@@ -574,18 +566,12 @@ where
     }
 }
 
-/// Signs a transaction with a Tempo access key and sends it via `send_raw_transaction`.
-///
-/// Sets `from` and `key_id` on the transaction before signing, making it idempotent for txs built
-/// with [`CastTxBuilder`] (fields already set) and also with sol!-bindings (fields not yet set).
-///
-/// NOTE: The default implementation returns an error. Only `TempoNetwork` supports this.
+/// Signs a prepared transaction with a Tempo wallet and sends it via `send_raw_transaction`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
+pub(crate) async fn cast_send_with_tempo_wallet<N: Network, P: Provider<N>>(
     provider: &P,
     mut tx: N::TransactionRequest,
-    signer: &WalletSigner,
-    access_key: &TempoAccessKeyConfig,
+    wallet: &TempoAccessKeyWallet,
     chain: Option<Chain>,
     fee_payer: Option<Address>,
     cast_async: bool,
@@ -597,8 +583,6 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    tx.set_from(access_key.wallet_address);
-    tx.set_key_id(access_key.key_address);
     let fee_token = resolve_and_set_fee_token(
         resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
@@ -607,15 +591,7 @@ where
     )
     .await?;
     maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(provider), fee_token).await?;
-    let raw_tx = tx
-        .sign_with_access_key(
-            provider,
-            signer,
-            access_key.wallet_address,
-            access_key.key_address,
-            access_key.key_authorization.as_ref(),
-        )
-        .await?;
+    let raw_tx = tx.sign_with_tempo_wallet(wallet).await?;
     let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
     CastTxSender::new(provider)
         .print_tx_result(tx_hash, cast_async, confirmations, timeout)

@@ -1,5 +1,5 @@
 use crate::{
-    cmd::send::{cast_send, cast_send_with_access_key, validate_sponsor_url},
+    cmd::send::{cast_send, cast_send_with_tempo_wallet, validate_sponsor_url},
     tempo,
     tx::{CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
@@ -19,7 +19,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
-use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
+use foundry_wallets::{TempoAccessKeyWallet, WalletSigner};
 use std::{str::FromStr, time::Duration};
 use tempo_alloy::{
     TempoNetwork,
@@ -183,7 +183,7 @@ impl Tip20Subcommand {
 pub(crate) async fn resolve_tip20_signer(
     send_tx: &SendTxOpts,
     tx_params: &TxParams,
-) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
+) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyWallet>)> {
     if tx_params.tempo.session_id()?.is_none() {
         return send_tx.eth.wallet.maybe_signer().await;
     }
@@ -203,7 +203,7 @@ pub(crate) async fn send_tip20_transaction(
     send_tx: SendTxOpts,
     tx_params: TxParams,
     pre_resolved_signer: Option<WalletSigner>,
-    access_key: Option<TempoAccessKeyConfig>,
+    access_key: Option<TempoAccessKeyWallet>,
 ) -> eyre::Result<()> {
     let mut tx_opts = tx_params.into_transaction_opts();
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
@@ -234,7 +234,7 @@ pub(crate) async fn send_tip20_transaction(
 
     let resolved_lane = resolve_lane(&mut tx_opts.tempo, &config.root)?;
     if let Some(ref ak) = access_key {
-        tx_opts.tempo.key_id = Some(ak.key_address);
+        tx_opts.tempo.key_id = Some(ak.key_id());
     }
 
     let builder = CastTxBuilder::new(&provider, tx_opts, &config)
@@ -250,8 +250,8 @@ pub(crate) async fn send_tip20_transaction(
         // `send_tip20_transaction` trips `clippy::large_stack_frames` by a small margin.
         return Box::pin(async {
             let (mut tx, from) = if let Some(ref ak) = access_key {
-                let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
-                (tx, ak.wallet_address)
+                let (tx, _, prepared) = builder.build_with_tempo_wallet(ak).await?;
+                (tx, prepared.account())
             } else {
                 let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
                     eyre::eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
@@ -313,10 +313,7 @@ pub(crate) async fn send_tip20_transaction(
             .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
             .await?;
     } else if let Some(ak) = access_key {
-        let signer = pre_resolved_signer
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("signer required for access key"))?;
-        let (mut tx, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
+        let (mut tx, _, prepared) = builder.build_with_tempo_wallet(&ak).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
             attach_sponsor(
@@ -324,15 +321,14 @@ pub(crate) async fn send_tip20_transaction(
                 (!config.eth_rpc_curl).then_some(&provider),
                 chain,
                 &mut tx,
-                ak.wallet_address,
+                prepared.account(),
             )
             .await?;
         }
-        cast_send_with_access_key(
+        cast_send_with_tempo_wallet(
             &provider,
             tx,
-            signer,
-            &ak,
+            &prepared,
             tempo_sponsor.is_none().then_some(chain),
             None,
             send_tx.cast_async,
