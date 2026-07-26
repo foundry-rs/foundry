@@ -257,7 +257,6 @@ dependencies = [
  "borsh",
  "k256",
  "serde",
- "serde_with",
  "thiserror 2.0.19",
 ]
 
@@ -2705,7 +2704,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.23.0",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -3192,7 +3191,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.19",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3351,7 +3350,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4426,7 +4425,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4698,7 +4697,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6032,7 +6031,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7042a768df6b2bf1434ea502b25609a0c8116990#7042a768df6b2bf1434ea502b25609a0c8116990"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=f5761029a2a6c092f4ec4a62fb14b6673e0905b4#f5761029a2a6c092f4ec4a62fb14b6673e0905b4"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -6266,8 +6265,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
 ]
 
 [[package]]
@@ -6702,7 +6701,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -7062,7 +7061,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7237,18 +7236,6 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "jsonrpsee-types"
-version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc88ff4688e43cc3fa9883a8a95c6fa27aa2e76c96e610b737b6554d650d7fd5"
-dependencies = [
- "http 1.4.2",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -7557,16 +7544,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "metrics"
-version = "0.24.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89550ee9f79e88fef3119de263694973a8adb26c21d75322164fb8c493039fe2"
-dependencies = [
- "portable-atomic",
- "rapidhash",
-]
-
-[[package]]
 name = "miette"
 version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7697,7 +7674,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.11.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=dce520a10519308a7262c898a731deb03d98dc0c#dce520a10519308a7262c898a731deb03d98dc0c"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=bb4655d1c0fcb0410e5f00013f03f8d847807344#bb4655d1c0fcb0410e5f00013f03f8d847807344"
 dependencies = [
  "alloy",
  "async-stream",
@@ -7717,8 +7694,6 @@ dependencies = [
  "sha2 0.11.0",
  "subtle",
  "tempo-alloy",
- "tempo-contracts",
- "tempo-primitives",
  "thiserror 2.0.19",
  "time",
  "tokio",
@@ -7875,7 +7850,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8190,7 +8165,7 @@ dependencies = [
  "alloy-serde",
  "derive_more",
  "op-alloy-consensus",
- "reth-rpc-traits 0.2.0",
+ "reth-rpc-traits",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -9024,7 +8999,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -9176,7 +9151,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9752,30 +9727,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-db-api"
-version = "2.4.1"
-source = "git+https://github.com/paradigmxyz/reth?rev=01d3400#01d3400ffa06ff8912ade8c693cdafce54d0c936"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "arrayvec",
- "bytes",
- "derive_more",
- "metrics",
- "modular-bitfield",
- "reth-codecs 0.5.2",
- "reth-db-models",
- "reth-ethereum-primitives",
- "reth-primitives-traits 0.5.2",
- "reth-prune-types",
- "reth-stages-types",
- "reth-storage-errors",
- "reth-trie-common",
- "roaring",
- "serde",
-]
-
-[[package]]
 name = "reth-db-models"
 version = "2.4.1"
 source = "git+https://github.com/paradigmxyz/reth?rev=01d3400#01d3400ffa06ff8912ade8c693cdafce54d0c936"
@@ -9783,7 +9734,6 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "bytes",
- "modular-bitfield",
  "reth-codecs 0.5.2",
  "reth-primitives-traits 0.5.2",
  "serde",
@@ -9958,11 +9908,9 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-trie",
- "byteorder",
  "bytes",
  "dashmap",
  "derive_more",
- "modular-bitfield",
  "once_cell",
  "quanta",
  "reth-codecs 0.5.2",
@@ -9981,7 +9929,6 @@ source = "git+https://github.com/paradigmxyz/reth?rev=01d3400#01d3400ffa06ff8912
 dependencies = [
  "alloy-primitives",
  "derive_more",
- "modular-bitfield",
  "reth-codecs 0.5.2",
  "serde",
  "strum 0.27.2",
@@ -10003,26 +9950,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-rpc-convert"
-version = "2.4.1"
-source = "git+https://github.com/paradigmxyz/reth?rev=01d3400#01d3400ffa06ff8912ade8c693cdafce54d0c936"
-dependencies = [
- "alloy-consensus",
- "alloy-evm",
- "alloy-json-rpc",
- "alloy-network",
- "alloy-primitives",
- "alloy-rpc-types-eth",
- "auto_impl",
- "dyn-clone",
- "jsonrpsee-types",
- "reth-evm",
- "reth-primitives-traits 0.5.2",
- "reth-rpc-traits 0.5.2",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "reth-rpc-traits"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10038,28 +9965,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-rpc-traits"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ace77dbcdd59c014fda4565ebfec76cd1fe6f5d98584b4655e8d22a947b9eee3"
-dependencies = [
- "alloy-consensus",
- "alloy-network",
- "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-signer",
- "reth-primitives-traits 0.5.2",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "reth-stages-types"
 version = "2.4.1"
 source = "git+https://github.com/paradigmxyz/reth?rev=01d3400#01d3400ffa06ff8912ade8c693cdafce54d0c936"
 dependencies = [
  "alloy-primitives",
  "bytes",
- "modular-bitfield",
  "reth-codecs 0.5.2",
  "reth-trie-common",
  "serde",
@@ -10489,16 +10400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roaring"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dedc5658c6ecb3bdb5ef5f3295bb9253f42dcf3fd1402c03f6b1f7659c3c4a9"
-dependencies = [
- "bytemuck",
- "byteorder",
-]
-
-[[package]]
 name = "ron"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10649,7 +10550,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10708,7 +10609,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -11567,7 +11468,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -11604,7 +11505,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -12048,13 +11949,13 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "tempo-alloy"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -12095,7 +11996,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12118,7 +12019,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy-contract",
  "alloy-primitives",
@@ -12130,7 +12031,7 @@ dependencies = [
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12142,7 +12043,7 @@ dependencies = [
 [[package]]
 name = "tempo-evm"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12173,7 +12074,7 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12185,7 +12086,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy",
  "alloy-evm",
@@ -12208,7 +12109,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -12219,28 +12120,23 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-evm",
- "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types-eth",
  "alloy-serde",
  "aws-lc-rs",
  "base64 0.22.1",
  "derive_more",
  "ed25519-consensus",
- "modular-bitfield",
  "once_cell",
  "p256",
  "reth-codecs 0.5.2",
- "reth-db-api",
  "reth-ethereum-primitives",
  "reth-primitives-traits 0.5.2",
- "reth-rpc-convert",
  "revm",
  "serde",
  "serde_json",
@@ -12251,7 +12147,7 @@ dependencies = [
 [[package]]
 name = "tempo-revm"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=187e419a80472bdce5bdc7289088c6de0686a488#187e419a80472bdce5bdc7289088c6de0686a488"
+source = "git+https://github.com/tempoxyz/tempo?rev=19915e655c2679f8c0f02400f88c10bb222d3912#19915e655c2679f8c0f02400f88c10bb222d3912"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12277,7 +12173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -13473,7 +13369,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -13621,7 +13517,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
