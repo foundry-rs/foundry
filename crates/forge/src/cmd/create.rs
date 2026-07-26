@@ -460,9 +460,10 @@ impl CreateArgs {
         // Apply user-provided gas, fee, nonce, and Tempo options.
         self.tx.apply::<N>(&mut deployer.tx, is_legacy);
 
-        // Convert the CREATE into an AA-compatible call entry since Tempo AA
-        // transactions use a `calls` list instead of `to`+`input`.
-        if chain.is_tempo() {
+        // Convert only AA CREATE transactions into a call entry. Plain Tempo
+        // CREATE transactions remain Ethereum transactions, while AA requests
+        // (for example, an expiring nonce) require a non-empty `calls` list.
+        if deployer.tx.is_tempo_aa() {
             deployer.tx.convert_create_to_call();
         }
 

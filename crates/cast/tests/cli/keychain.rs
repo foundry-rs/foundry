@@ -73,7 +73,9 @@ fn cast_send_session_script(path_usd: &str) -> String {
         r#"#!/bin/sh
 set -eu
 test -n "${{TEMPO_SESSION_ID:-}}"
-"${{CAST_BIN}}" send "{path_usd}" 'transfer(address,uint256)' "{recipient}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{path_usd}" --async
+tx_hash=$("${{CAST_BIN}}" send "{path_usd}" 'transfer(address,uint256)' "{recipient}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{path_usd}" --async)
+"${{CAST_BIN}}" receipt "$tx_hash" --rpc-url "${{RPC_URL}}" >/dev/null
+printf '%s\n' "$tx_hash"
 "#,
         recipient = accounts::ADDR3,
     )
@@ -105,6 +107,10 @@ fn create_session_with_scope(
             "10m",
             "--scope",
             scope,
+            "--spend-limit",
+            "PathUSD=1000000",
+            "--spend-limit",
+            "AlphaUSD=1000000",
             "--private-key",
             accounts::PK1,
         ])
@@ -190,7 +196,7 @@ casttest!(keychain_rl_json_is_object, async |_prj, cmd| {
             &path_usd,
             "--rpc-url",
             &rpc,
-            "--timeout",
+            "--rpc-timeout",
             "5",
             "--json",
         ])
@@ -1102,13 +1108,11 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj,
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure();
+        .assert_success();
     let stdout = assertion.get_output().stdout_lossy();
-    let stderr = assertion.get_output().stderr_lossy();
 
-    assert_async_tx_hash(&stdout, "child cast send");
-    assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "revoking");
+    assert_contains_tx_hash(&stdout, "child cast send");
+    assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj, cmd| {
@@ -1125,7 +1129,9 @@ casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj
             r#"#!/bin/sh
 set -eu
 test -n "${{TEMPO_SESSION_ID:-}}"
-"${{CAST_BIN}}" batch-send --call "{call}" --rpc-url "${{RPC_URL}}" --tempo.fee-token "{path_usd}" --async
+tx_hash=$("${{CAST_BIN}}" batch-send --call "{call}" --rpc-url "${{RPC_URL}}" --tempo.fee-token "{path_usd}" --async)
+"${{CAST_BIN}}" receipt "$tx_hash" --rpc-url "${{RPC_URL}}" >/dev/null
+printf '%s\n' "$tx_hash"
 "#,
         ),
     )
@@ -1156,13 +1162,11 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure();
+        .assert_success();
     let stdout = assertion.get_output().stdout_lossy();
-    let stderr = assertion.get_output().stderr_lossy();
 
-    assert_async_tx_hash(&stdout, "child cast batch-send");
-    assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "revoking");
+    assert_contains_tx_hash(&stdout, "child cast batch-send");
+    assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_run_for_forge_script_submits_with_session_key, async |prj, cmd| {
@@ -1217,7 +1221,9 @@ contract SessionForgeScript is Script {{
             "--selector",
             "transfer(address,uint256)",
             "--spend-limit",
-            "PathUSD=0",
+            "PathUSD=1000000",
+            "--spend-limit",
+            "AlphaUSD=1000000",
             "--for",
             &for_command,
             "--private-key",
@@ -1225,7 +1231,7 @@ contract SessionForgeScript is Script {{
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure();
+        .assert_success();
     let stdout = assertion.get_output().stdout_lossy();
     let stderr = assertion.get_output().stderr_lossy();
 
@@ -1259,8 +1265,7 @@ contract SessionForgeScript is Script {{
         tx["hash"].as_str().is_some_and(|hash| hash.starts_with("0x")),
         "forge broadcast tx should have a submitted hash: {tx}"
     );
-    assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "revoking");
+    assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
 casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
@@ -1981,13 +1986,11 @@ sh "$1"
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure();
+        .assert_success();
     let stdout = assertion.get_output().stdout_lossy();
-    let stderr = assertion.get_output().stderr_lossy();
 
-    assert_async_tx_hash(&stdout, "grandchild cast send");
-    assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "revoking");
+    assert_contains_tx_hash(&stdout, "grandchild cast send");
+    assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
 casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
