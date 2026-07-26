@@ -117,8 +117,9 @@ use foundry_evm::{
         TracingInspectorConfig,
     },
     utils::{
-        block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
+        apply_chain_specific_tx_replay_env_changes, block_env_from_header,
+        get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -817,6 +818,14 @@ impl<N: Network> Backend<N> {
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
+        evm_env
+    }
+
+    /// Returns the environment for replaying transactions from a historical block.
+    fn tx_replay_evm_env(&self, header: &impl BlockHeader) -> EvmEnv {
+        let mut evm_env = self.evm_env.read().clone();
+        evm_env.block_env = block_env_from_header(header);
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
         evm_env
     }
 
@@ -1563,7 +1572,7 @@ impl<N: Network> Backend<N> {
         gas_config: &PoolTxGasConfig,
         inspector_tx_config: &InspectorTxConfig,
         validator: &dyn Fn(
-            &PendingTransaction<FoundryTxEnvelope>,
+            &PoolTransaction<FoundryTxEnvelope>,
             &AccountInfo,
         ) -> Result<(), InvalidTransactionError>,
     ) -> (ExecutedPoolTransactions<FoundryTxEnvelope>, BlockExecutionResult<FoundryReceiptEnvelope>)
@@ -2250,9 +2259,7 @@ impl<N: Network> Backend<N> {
         let mut cache_db = CacheDB::new(Box::new(parent_state));
         let mut results = Vec::new();
 
-        // Configure the block environment
-        let mut evm_env = self.evm_env.read().clone();
-        evm_env.block_env = block_env_from_header(&block.header);
+        let evm_env = self.tx_replay_evm_env(&block.header);
 
         // Execute each transaction in the block with tracing
         for tx_envelope in &block.body.transactions {
@@ -3188,21 +3195,34 @@ where
                 // to ensure the timestamp is as close as possible to the actual execution.
                 evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
 
-                let spec_id = *evm_env.spec_id();
+                // Forced historical transactions bypass pool admission and are replayed while
+                // mining. Keep this exception local to the disposable mining environment.
+                let mut mining_evm_env = evm_env.clone();
+                if pool_transactions.iter().any(|tx| tx.is_replay) {
+                    apply_chain_specific_tx_replay_env_changes(&mut mining_evm_env);
+                }
+
+                let spec_id = *mining_evm_env.spec_id();
 
                 let inspector_tx_config = self.inspector_tx_config();
-                let gas_config = self.pool_tx_gas_config(&evm_env);
+                let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
                 let (pool_result, block_result) = self.execute_with_block_executor(
                     &mut **db,
-                    &evm_env,
+                    &mining_evm_env,
                     best_hash,
                     spec_id,
                     &pool_transactions,
                     &gas_config,
                     &inspector_tx_config,
-                    &|pending, account| {
-                        self.validate_pool_transaction_for(pending, account, &evm_env)
+                    &|pool_tx, account| {
+                        let validation_env =
+                            if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
+                        self.validate_pool_transaction_for(
+                            &pool_tx.pending_transaction,
+                            account,
+                            validation_env,
+                        )
                     },
                 );
 
@@ -3212,7 +3232,7 @@ where
 
                 let state_root = db.maybe_state_root().unwrap_or_default();
                 let block_info = self.build_block_info(
-                    &evm_env,
+                    &mining_evm_env,
                     best_hash,
                     block_number,
                     state_root,
@@ -3399,7 +3419,9 @@ where
             &pool_transactions,
             &gas_config,
             &inspector_tx_config,
-            &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
+            &|pool_tx, account| {
+                self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, &evm_env)
+            },
         );
 
         // Extract inner CacheDB (which implements MaybeFullDatabase)
@@ -3613,6 +3635,7 @@ where
                     requires: vec![],
                     provides: vec![],
                     priority: crate::eth::pool::transactions::TransactionPriority(0),
+                    is_replay: true,
                 })
             })
             .collect();
@@ -3621,8 +3644,7 @@ where
             let mut cache_db =
                 AnvilCacheDB::new(Box::new(parent_state) as Box<dyn MaybeFullDatabase + '_>);
 
-            let mut evm_env = self.evm_env.read().clone();
-            evm_env.block_env = block_env_from_header(&block.header);
+            let evm_env = self.tx_replay_evm_env(&block.header);
 
             let spec_id = *evm_env.spec_id();
             let inspector_tx_config = self.inspector_tx_config();
@@ -3636,7 +3658,13 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
-                &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
+                &|pool_tx, account| {
+                    self.validate_pool_transaction_for(
+                        &pool_tx.pending_transaction,
+                        account,
+                        &evm_env,
+                    )
+                },
             );
 
             let cache_db = cache_db.0;
@@ -4006,6 +4034,7 @@ where
                     requires: vec![],
                     provides: vec![],
                     priority: crate::eth::pool::transactions::TransactionPriority(0),
+                    is_replay: true,
                 })
             })
             .collect();
@@ -4013,10 +4042,7 @@ where
         let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
             let mut cache_db = AnvilCacheDB::new(Box::new(parent_state));
 
-            // configure the blockenv for the block of the transaction
-            let mut evm_env = self.evm_env.read().clone();
-
-            evm_env.block_env = block_env_from_header(&block.header);
+            let evm_env = self.tx_replay_evm_env(&block.header);
 
             let spec_id = *evm_env.spec_id();
 
@@ -4031,7 +4057,13 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
-                &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
+                &|pool_tx, account| {
+                    self.validate_pool_transaction_for(
+                        &pool_tx.pending_transaction,
+                        account,
+                        &evm_env,
+                    )
+                },
             );
 
             // Extract inner CacheDB to match the expected types for the target tx execution
@@ -4215,8 +4247,7 @@ where
             let mut cache_db = CacheDB::new(Box::new(parent_state));
             let mut transactions = Vec::with_capacity(block.body.transactions.len());
 
-            let mut evm_env = self.evm_env.read().clone();
-            evm_env.block_env = block_env_from_header(&block.header);
+            let evm_env = self.tx_replay_evm_env(&block.header);
 
             for tx_envelope in &block.body.transactions {
                 let mut inspector = OpcodeGasInspector::default();
@@ -4307,14 +4338,14 @@ where
                     requires: vec![],
                     provides: vec![],
                     priority: crate::eth::pool::transactions::TransactionPriority(0),
+                    is_replay: true,
                 })
             })
             .collect();
 
         let trace = |parent_state: &StateDb| -> Result<RpcAccountInfo, BlockchainError> {
             let mut cache_db = AnvilCacheDB::new(Box::new(parent_state));
-            let mut evm_env = self.evm_env.read().clone();
-            evm_env.block_env = block_env_from_header(&block.header);
+            let evm_env = self.tx_replay_evm_env(&block.header);
 
             let spec_id = *evm_env.spec_id();
             let inspector_tx_config = self.inspector_tx_config();
@@ -4328,7 +4359,13 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
-                &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
+                &|pool_tx, account| {
+                    self.validate_pool_transaction_for(
+                        &pool_tx.pending_transaction,
+                        account,
+                        &evm_env,
+                    )
+                },
             );
 
             let cache_db = cache_db.0;
@@ -5953,8 +5990,9 @@ where
                     return Err(InvalidTransactionError::FeeCapTooLow);
                 }
 
-                if let (Some(max_priority_fee_per_gas), max_fee_per_gas) =
-                    (tx.as_ref().max_priority_fee_per_gas(), tx.as_ref().max_fee_per_gas())
+                if !evm_env.cfg_env.disable_priority_fee_check
+                    && let (Some(max_priority_fee_per_gas), max_fee_per_gas) =
+                        (tx.as_ref().max_priority_fee_per_gas(), tx.as_ref().max_fee_per_gas())
                     && max_priority_fee_per_gas > max_fee_per_gas
                 {
                     debug!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);

@@ -4,7 +4,10 @@ use crate::{
         call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
     },
     traces::TraceKind,
-    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+    utils::{
+        apply_chain_and_block_specific_env_changes, apply_chain_specific_tx_replay_env_changes,
+        block_env_from_header,
+    },
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
@@ -365,6 +368,7 @@ impl RunArgs {
                 config.networks,
             );
         }
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
 
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)
