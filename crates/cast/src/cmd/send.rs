@@ -6,7 +6,6 @@ use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
-use alloy_rpc_client::BuiltInConnectionString;
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::{Result, eyre};
@@ -22,10 +21,7 @@ use foundry_common::{
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
-use tempo_alloy::{
-    TempoNetwork,
-    transport::{RelayConnector, SponsorshipMode},
-};
+use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 use crate::{
@@ -109,10 +105,11 @@ impl SendTxArgs {
             return self.run_generic::<TempoNetwork>(None, None).await;
         }
 
-        // Resolve the signer early so we know if it's a Tempo access key.
-        let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
+        let (is_tempo, signer, tempo_access_key) =
+            tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.send_tx.eth)
+                .await?;
 
-        if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
+        if is_tempo {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
             self.run_generic::<Ethereum>(signer, None).await
@@ -450,11 +447,7 @@ impl SendTxArgs {
             tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
 
             let wallet = EthereumWallet::from(signer);
-            let default_rpc = config.get_rpc_url_or_localhost_http()?.into_owned();
-            let default = BuiltInConnectionString::from_str(&default_rpc)?;
-            let relay = BuiltInConnectionString::from_str(&sponsor_url)?;
-            let connector =
-                RelayConnector::with_config(default, relay, SponsorshipMode::SignOnly, false);
+            let connector = tempo::sponsor_relay_connector(&provider, &sponsor_url)?;
             let provider = AlloyProviderBuilder::<_, _, N>::default()
                 .wallet(wallet)
                 .connect_with(&connector)

@@ -133,6 +133,13 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
+        if self.tx.tempo.sponsor_url.is_some() {
+            eyre::bail!(
+                "--sponsor-url is not supported by forge create; use --tempo.sponsor with \
+                 --tempo.sponsor-signer or --tempo.sponsor-sig"
+            );
+        }
+
         // Resolve chain early so we can dispatch to the correct network type.
         let chain = if let Some(chain) = self.chain_id() {
             chain
@@ -144,7 +151,13 @@ impl CreateArgs {
             self.eth.etherscan.chain = Some(chain);
             chain
         };
-        let (signer, tempo_access_key) = self.eth.wallet.maybe_signer_for_chain(chain.id()).await?;
+        let mut wallet = self.eth.wallet.clone();
+        if !chain.is_tempo() && !self.tx.tempo.is_tempo() {
+            // Do not let a matching entry in the Tempo Accounts store change an ordinary Ethereum
+            // deployment into a Tempo transaction.
+            wallet.from = None;
+        }
+        let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain.id()).await?;
 
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await

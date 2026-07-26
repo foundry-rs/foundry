@@ -326,25 +326,24 @@ impl Erc20Subcommand {
     pub async fn run(self) -> eyre::Result<()> {
         let has_session = self.has_tempo_session()?;
         // Resolve the signer once for state-changing variants.
-        let (signer, tempo_access_key) = match &self {
-            Self::Transfer { send_tx, .. }
-            | Self::Approve { send_tx, .. }
-            | Self::Mint { send_tx, .. }
-            | Self::Burn { send_tx, .. } => {
-                // Only attempt persistent Tempo lookup if --from is set (avoids unnecessary I/O).
+        let (resolved_tempo, signer, tempo_access_key) = match &self {
+            Self::Transfer { send_tx, tx, .. }
+            | Self::Approve { send_tx, tx, .. }
+            | Self::Mint { send_tx, tx, .. }
+            | Self::Burn { send_tx, tx, .. } => {
                 // Explicit Tempo sessions are resolved after network selection, once the chain is
                 // known.
-                if !has_session && send_tx.eth.wallet.from.is_some() {
-                    let (s, ak) = send_tx.eth.wallet.maybe_signer().await?;
-                    (s, ak)
+                if has_session {
+                    (true, None, None)
                 } else {
-                    (None, None)
+                    tempo::resolve_transaction_network_and_signer(&tx.tempo, &send_tx.eth).await?
                 }
             }
-            _ => (None, None),
+            _ => (false, None, None),
         };
 
-        let is_tempo = self.should_use_tempo_network(&tempo_access_key, has_session).await?;
+        let is_tempo =
+            resolved_tempo || self.should_use_tempo_network(&tempo_access_key, has_session).await?;
 
         if is_tempo {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await

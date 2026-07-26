@@ -137,10 +137,14 @@ impl SenderKind<'_> {
     /// If from is specified, returns it
     /// If from is not specified, but there is a signer configured, returns the signer's address
     /// If from is not specified and there is no signer configured, returns zero address
-    pub async fn from_wallet_opts(opts: WalletOpts) -> Result<Self> {
-        if let (Some(signer), _) = opts.maybe_signer().await? {
+    pub async fn from_wallet_opts(mut opts: WalletOpts) -> Result<Self> {
+        let from = opts.from.take();
+        let (signer, tempo_wallet) = opts.maybe_signer().await?;
+        if let Some(signer) = signer {
             Ok(Self::OwnedSigner(Box::new(signer)))
-        } else if let Some(from) = opts.from {
+        } else if let Some(tempo_wallet) = tempo_wallet {
+            Ok(tempo_wallet.account().into())
+        } else if let Some(from) = from {
             Ok(from.into())
         } else {
             Ok(Address::ZERO.into())

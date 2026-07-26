@@ -7,7 +7,6 @@ use alloy_ens::NameOrAddress;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
-use alloy_rpc_client::BuiltInConnectionString;
 use alloy_signer::Signer;
 use clap::Parser;
 use foundry_cli::{
@@ -21,10 +20,7 @@ use foundry_common::{
 };
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use std::{str::FromStr, time::Duration};
-use tempo_alloy::{
-    TempoNetwork,
-    transport::{RelayConnector, SponsorshipMode},
-};
+use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 mod create;
@@ -343,11 +339,7 @@ pub(crate) async fn send_tip20_transaction(
         tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
 
         let wallet = EthereumWallet::from(signer);
-        let default_rpc = config.get_rpc_url_or_localhost_http()?.into_owned();
-        let default = BuiltInConnectionString::from_str(&default_rpc)?;
-        let relay = BuiltInConnectionString::from_str(&sponsor_url)?;
-        let connector =
-            RelayConnector::with_config(default, relay, SponsorshipMode::SignOnly, false);
+        let connector = tempo::sponsor_relay_connector(&provider, &sponsor_url)?;
         let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
             .wallet(wallet)
             .connect_with(&connector)

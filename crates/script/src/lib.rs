@@ -344,6 +344,13 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
+        if self.tempo.sponsor_url.is_some() {
+            eyre::bail!(
+                "--sponsor-url is not supported by forge script; use --tempo.sponsor with \
+                 --tempo.sponsor-signer or --tempo.sponsor-sig"
+            );
+        }
+
         if self.wallet_session.enabled {
             return self.run_wallet_session_wrapper();
         }

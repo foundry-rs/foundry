@@ -446,7 +446,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .collect();
 
             let mut missing_addresses = Vec::new();
-            let accounts_wallet = TempoAccountsWallet::try_from_default_store()?;
+            let accounts_wallet = self
+                .script_config
+                .evm_opts
+                .networks
+                .is_tempo()
+                .then(TempoAccountsWallet::try_from_default_store)
+                .transpose()?
+                .flatten();
 
             for tx in &remaining_transactions {
                 let scope = tx.scope();
@@ -1057,8 +1064,9 @@ impl BundledState<TempoEvmNetwork> {
             if let Some(signer) = signers.remove(&sender) {
                 BatchSigner::Wallet(EthereumWallet::new(signer))
             } else {
-                // Try the Tempo Accounts store.
-                if let Some(wallet) = TempoAccountsWallet::try_from_default_store()?
+                // Try the Tempo Accounts store only for Tempo broadcasts.
+                if self.script_config.evm_opts.networks.is_tempo()
+                    && let Some(wallet) = TempoAccountsWallet::try_from_default_store()?
                     && wallet.has_account(sender)?
                 {
                     BatchSigner::TempoKeychain(Box::new(wallet.with_chain_id(chain_id)))

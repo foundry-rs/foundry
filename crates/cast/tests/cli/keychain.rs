@@ -1,5 +1,7 @@
 //! CLI tests for `cast keychain` subcommands.
 
+use alloy_consensus::TxEnvelope;
+use alloy_eips::Decodable2718;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
@@ -503,6 +505,46 @@ casttest!(send_with_authorized_access_key_succeeds, async |_prj, cmd| {
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 });
 
+casttest!(send_with_local_sponsor_reports_sponsor_as_fee_payer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            &path_usd,
+            "approve(address,uint256)",
+            accounts::ADDR3,
+            "0",
+            "--private-key",
+            accounts::PK1,
+            "--tempo.fee-token",
+            &path_usd,
+            "--tempo.sponsor",
+            accounts::ADDR2,
+            "--tempo.sponsor-signer",
+            &format!("private-key://{}", accounts::PK2),
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+    let fee_payer: alloy_primitives::Address =
+        receipt["feePayer"].as_str().expect("feePayer").parse().expect("valid feePayer");
+    assert_eq!(
+        fee_payer,
+        accounts::ADDR2.parse::<alloy_primitives::Address>().unwrap(),
+        "unexpected receipt: {output}"
+    );
+});
+
 casttest!(send_uses_access_key_from_accounts_store, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
@@ -546,6 +588,119 @@ casttest!(send_uses_access_key_from_accounts_store, async |_prj, cmd| {
     let receipt: serde_json::Value =
         serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+});
+
+casttest!(tempo_unlocked_send_does_not_require_accounts_store_entry, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+    let tempo_home = tempfile::tempdir().unwrap();
+    write_accounts_store(tempo_home.path(), 31337);
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let output = cmd
+        .args([
+            "send",
+            &path_usd,
+            "approve(address,uint256)",
+            accounts::ADDR3,
+            "0",
+            "--from",
+            accounts::ADDR2,
+            "--unlocked",
+            "--tempo.fee-token",
+            &path_usd,
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+});
+
+casttest!(tempo_accounts_store_does_not_change_ethereum_send_or_mktx, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    write_accounts_store(tempo_home.path(), 31337);
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let output = cmd
+        .args([
+            "send",
+            accounts::ADDR3,
+            "--value",
+            "1",
+            "--from",
+            accounts::ADDR1,
+            "--unlocked",
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value =
+        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let output = cmd
+        .args([
+            "mktx",
+            accounts::ADDR3,
+            "--value",
+            "1",
+            "--from",
+            accounts::ADDR1,
+            "--ethsign",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let raw = alloy_primitives::hex::decode(output.trim()).expect("decode raw transaction");
+    TxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode Ethereum transaction");
+});
+
+casttest!(corrupt_tempo_store_does_not_break_ethereum_unlocked_send, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let wallet_dir = tempo_home.path().join("wallet");
+    fs::create_dir_all(&wallet_dir).unwrap();
+    fs::write(wallet_dir.join("store.json"), b"not json").unwrap();
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.args([
+        "send",
+        accounts::ADDR3,
+        "--value",
+        "1",
+        "--from",
+        accounts::ADDR1,
+        "--unlocked",
+        "--rpc-url",
+        &rpc,
+    ])
+    .assert_success();
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.args(["call", accounts::ADDR3, "--from", accounts::ADDR1, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq("0x\n");
 });
 
 // On-chain (T6): a keychain signature from an authorized admin key passes `verify-admin`.

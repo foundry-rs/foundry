@@ -105,10 +105,9 @@ impl MakeTxArgs {
             return self.run_generic::<TempoNetwork>(None, None).await;
         }
 
-        // Resolve the signer before network selection so an explicit or persisted Tempo access key
-        // selects the Tempo transaction type without requiring an unrelated transaction flag.
-        let (signer, access_key) = self.eth.wallet.maybe_signer().await?;
-        if access_key.is_some() || self.tx.tempo.is_tempo() {
+        let (is_tempo, signer, access_key) =
+            tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
+        if is_tempo {
             self.run_generic::<TempoNetwork>(signer, access_key).await
         } else {
             self.run_generic::<Ethereum>(signer, None).await

@@ -4466,6 +4466,20 @@ contract ArbScript is Script {
     }
 );
 
+forgetest!(script_rejects_unsupported_remote_sponsor, |_prj, cmd| {
+    cmd.args([
+        "script",
+        "src/Counter.s.sol:CounterScript",
+        "--sponsor-url",
+        "https://sponsor.tempo.xyz/tp_test",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: --sponsor-url is not supported by forge script; use --tempo.sponsor with --tempo.sponsor-signer or --tempo.sponsor-sig
+
+"#]]);
+});
+
 forgetest_async!(script_batch_rejects_non_tempo_network, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
@@ -4626,6 +4640,56 @@ contract DeployTempoAA is Script {
         "0x20c0000000000000000000000000000000000000",
     ]);
     cmd.assert_success();
+});
+
+forgetest_async!(tempo_aa_script_broadcasts_with_local_sponsor, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "DeploySponsoredTempoAA.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SponsoredTempoAADeployment {}
+
+contract DeploySponsoredTempoAA is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SponsoredTempoAADeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+    let sender_key = format!("0x{}", hex::encode(wallets[0].credential().to_bytes()));
+    let sponsor_key =
+        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+    let sponsor = format!("{:?}", wallets[1].address());
+
+    let assert = cmd
+        .arg("script")
+        .arg(script)
+        .args([
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            &sender_key,
+            "--broadcast",
+            "--tempo.fee-token",
+            "PathUSD",
+            "--tempo.sponsor",
+            &sponsor,
+            "--tempo.sponsor-signer",
+            &sponsor_key,
+        ])
+        .assert_success();
+    let output = assert.get_output();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
 });
 
 // Helper: write a script that deploys `LargeRuntime` with runtime > default limit via

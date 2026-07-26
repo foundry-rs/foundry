@@ -4797,7 +4797,22 @@ where
         // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
         let mut inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
         if self.is_tempo() {
-            inner = inner.with_fee_payer(info.from);
+            let fee_payer = match &*transaction {
+                FoundryTxEnvelope::Tempo(tx) => match tx.tx().recover_fee_payer(info.from) {
+                    Ok(fee_payer) => fee_payer,
+                    Err(error) => {
+                        warn!(
+                            target: "backend",
+                            %error,
+                            tx_hash = ?info.transaction_hash,
+                            "failed to recover Tempo fee payer for mined receipt"
+                        );
+                        info.from
+                    }
+                },
+                _ => info.from,
+            };
+            inner = inner.with_fee_payer(fee_payer);
         }
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
