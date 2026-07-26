@@ -27,7 +27,6 @@ use crate::{
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
-        sign::build_impersonated,
     },
     mem::{
         inspector::{AnvilInspector, InspectorTxConfig},
@@ -5435,7 +5434,7 @@ impl Backend<FoundryNetwork> {
                         .build_unsigned()
                         .map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
 
-                    let tx = build_impersonated(typed_tx);
+                    let tx = typed_tx.into_impersonated();
                     let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
