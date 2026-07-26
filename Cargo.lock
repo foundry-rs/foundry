@@ -6031,7 +6031,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=47c7fc2dc8726212a120ff2c28b2e00e49f254f8#47c7fc2dc8726212a120ff2c28b2e00e49f254f8"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=1d3c2590fff578f0e5feca3c7724c82bcd91caa7#1d3c2590fff578f0e5feca3c7724c82bcd91caa7"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
