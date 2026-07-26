@@ -84,6 +84,28 @@ pub async fn next_nonce(
     Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
 }
 
+fn reject_access_key_create<N: Network>(
+    tx: &N::TransactionRequest,
+    uses_access_key: bool,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if uses_access_key && tx.tempo_calls().iter().any(|(to, _)| to.is_create()) {
+        bail!("Tempo access-key transactions cannot use CREATE");
+    }
+    Ok(())
+}
+
+fn convert_tempo_aa_create<N: Network>(tx: &mut N::TransactionRequest)
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if tx.is_tempo_aa() {
+        tx.convert_create_to_call();
+    }
+}
+
 /// Represents how to send a single transaction.
 #[derive(Clone)]
 pub enum SendTransactionKind<'a, N: Network> {
@@ -122,6 +144,8 @@ where
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
             Self::Signed(_) => return Ok(()),
         };
+
+        reject_access_key_create::<N>(tx, tempo_wallet.is_some())?;
 
         if sequential_broadcast {
             let from = tx.from().expect("no sender");
@@ -164,6 +188,11 @@ where
         } else {
             resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
         };
+
+        // A fee token, sponsor, validity window, or other Tempo field selects
+        // the AA transaction type. AA requests carry CREATE as their first
+        // call rather than as the Ethereum transaction `to` field.
+        convert_tempo_aa_create::<N>(tx);
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
@@ -1486,6 +1515,33 @@ mod tests {
             }
             _ => panic!("expected access key transaction"),
         }
+    }
+
+    #[test]
+    fn tempo_aa_create_moves_deployment_into_calls() {
+        let mut tx = TempoTransactionRequest {
+            inner: TransactionRequest { to: Some(TxKind::Create), ..Default::default() },
+            fee_token: Some(address!("0x20c0000000000000000000000000000000000000")),
+            ..Default::default()
+        };
+
+        convert_tempo_aa_create::<TempoNetwork>(&mut tx);
+
+        assert!(tx.inner.to.is_none());
+        assert_eq!(tx.calls.len(), 1);
+        assert!(tx.calls[0].to.is_create());
+    }
+
+    #[test]
+    fn tempo_access_key_create_is_rejected_before_preparation() {
+        let tx = TempoTransactionRequest {
+            inner: TransactionRequest { to: Some(TxKind::Create), ..Default::default() },
+            ..Default::default()
+        };
+
+        let error = reject_access_key_create::<TempoNetwork>(&tx, true).unwrap_err();
+
+        assert!(error.to_string().contains("Tempo access-key transactions cannot use CREATE"));
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {
