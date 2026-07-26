@@ -21,11 +21,11 @@ use std::{
     io::IsTerminal,
     process::{Command, Stdio},
     sync::{
-        Arc, LazyLock, Mutex,
+        Arc, LazyLock, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
     task,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tower::Service;
@@ -42,6 +42,12 @@ pub(crate) struct FundingContext {
     wallet_address: Option<alloy_primitives::Address>,
     token: Option<String>,
     chain_id: Option<Chain>,
+}
+
+struct PendingPayment<'a, P> {
+    challenge: &'a mpp::protocol::core::PaymentChallenge,
+    provider: &'a P,
+    credential: &'a mpp::protocol::core::PaymentCredential,
 }
 
 impl FundingContext {
@@ -243,6 +249,14 @@ fn format_mpp_payment_failure(
 static GLOBAL_PAY_LOCKS: LazyLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Recover locks whose prior holder panicked.
+///
+/// These mutexes only guard independently valid maps; a panic cannot leave a
+/// partially initialized provider or payment lock in either map.
+fn lock_map<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Production transport: lazily opens the Tempo Accounts wallet on
 /// first 402 response.
 pub type LazyMppHttpTransport = MppHttpTransport<LazyAccountsProvider>;
@@ -260,16 +274,14 @@ impl fmt::Debug for LazyAccountsProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LazyAccountsProvider")
             .field("origin", &self.origin)
-            .field("initialized_chains", &self.inner.lock().unwrap().keys())
+            .field("initialized_chains", &lock_map(&self.inner).keys())
             .finish()
     }
 }
 
 impl LazyAccountsProvider {
     pub(super) fn new(origin: String) -> Self {
-        let pay_lock = GLOBAL_PAY_LOCKS
-            .lock()
-            .unwrap()
+        let pay_lock = lock_map(&GLOBAL_PAY_LOCKS)
             .entry(origin.clone())
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone();
@@ -278,14 +290,14 @@ impl LazyAccountsProvider {
 
     /// Drop cached providers after the device-code flow updates `store.json`.
     fn invalidate(&self) {
-        self.inner.lock().unwrap().clear();
+        lock_map(&self.inner).clear();
     }
 
     pub(super) fn get_or_init(
         &self,
         chain_id: Option<u64>,
     ) -> TransportResult<TempoAccountsProvider> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = lock_map(&self.inner);
         if let Some(provider) = guard.get(&chain_id) {
             return Ok(provider.clone());
         }
@@ -383,28 +395,30 @@ where
         // No local key for any offered challenge → run device-code flow,
         // invalidate the cached provider, and fetch a fresh 402 (the original
         // may have expired during the browser/passkey flow).
-        let (resolved, challenge) =
-            if let Some(chain_id) = tempo_chain_needing_auth(&self.url, &resp) {
-                debug!(chain_id, "launching wallet.tempo authorization");
-                let cfg = crate::tempo::EnsureAccessKeyConfig::from_env(chain_id);
-                crate::tempo::ensure_access_key(cfg).await.map_err(|e| {
-                    TransportErrorKind::custom(io::Error::other(format!(
-                        "tempo access key authorization failed: {e}"
-                    )))
-                })?;
-                self.provider.invalidate_cached_provider();
-                self.fetch_fresh_challenge(&headers, &body).await?
-            } else {
-                Self::select_challenge(&resp, &self.provider)?
-            };
+        let (resolved, challenge) = if let Some(chain_id) =
+            tempo_chain_needing_auth(&self.url, &resp, &self.provider).await
+        {
+            debug!(chain_id, "launching wallet.tempo authorization");
+            let cfg = crate::tempo::EnsureAccessKeyConfig::from_env(chain_id);
+            crate::tempo::ensure_access_key(cfg).await.map_err(|e| {
+                TransportErrorKind::custom(io::Error::other(format!(
+                    "tempo access key authorization failed: {e}"
+                )))
+            })?;
+            self.provider.invalidate_cached_provider();
+            self.fetch_fresh_challenge(&headers, &body).await?
+        } else {
+            Self::select_challenge(&resp, &self.provider)?
+        };
         let funding_ctx = self.provider.funding_context(&challenge);
 
         debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP 402 challenge, paying");
 
-        let retry_resp =
+        let (retry_resp, credential) =
             self.pay_and_retry(&challenge, &resolved, &headers, &body, auto_fund_used).await?;
         self.handle_response_or_retry_after_fund(
             retry_resp,
+            PendingPayment { challenge: &challenge, provider: &resolved, credential: &credential },
             &headers,
             &body,
             &funding_ctx,
@@ -421,7 +435,7 @@ where
         headers: &reqwest::header::HeaderMap,
         body: &[u8],
         auto_fund_used: &AtomicBool,
-    ) -> TransportResult<reqwest::Response> {
+    ) -> TransportResult<(reqwest::Response, mpp::protocol::core::PaymentCredential)> {
         let funding_ctx = self.provider.funding_context(challenge);
         let credential = match provider.pay(challenge).await {
             Ok(credential) => credential,
@@ -442,13 +456,22 @@ where
             }
         };
 
-        let auth_header = format_authorization(&credential).map_err(|e| {
-            TransportErrorKind::custom(io::Error::other(format!(
-                "failed to format MPP credential: {e}"
-            )))
-        })?;
+        let auth_header = match format_authorization(&credential) {
+            Ok(auth_header) => auth_header,
+            Err(error) => {
+                provider.rollback_payment(challenge, &credential).await.map_err(|rollback| {
+                    TransportErrorKind::custom(io::Error::other(format!(
+                        "failed to format MPP credential ({error}); rollback failed: {rollback}"
+                    )))
+                })?;
+                return Err(TransportErrorKind::custom(io::Error::other(format!(
+                    "failed to format MPP credential: {error}"
+                ))));
+            }
+        };
 
-        self.client
+        let response = self
+            .client
             .post(self.url.clone())
             .timeout(MPP_RETRY_TIMEOUT)
             .headers(headers.clone())
@@ -457,33 +480,67 @@ where
             .body(body.to_vec())
             .send()
             .await
-            .map_err(TransportErrorKind::custom)
+            .map_err(TransportErrorKind::custom)?;
+        Ok((response, credential))
     }
 
     async fn handle_response_or_retry_after_fund(
         &self,
         resp: reqwest::Response,
+        payment: PendingPayment<'_, P::Provider>,
         headers: &reqwest::header::HeaderMap,
         body: &[u8],
         funding_ctx: &FundingContext,
         auto_fund_used: &AtomicBool,
     ) -> TransportResult<ResponsePacket> {
         if resp.status() != StatusCode::PAYMENT_REQUIRED {
+            payment.provider.commit_payment(payment.challenge, payment.credential).await.map_err(
+                |error| {
+                    TransportErrorKind::custom(io::Error::other(format!(
+                        "failed to commit MPP payment state: {error}"
+                    )))
+                },
+            )?;
             return Self::handle_response_with_funding(resp, Some(funding_ctx)).await;
         }
 
         let diagnostics = format_http_diagnostics(resp.headers());
         let status = resp.status();
+        payment.provider.rollback_payment(payment.challenge, payment.credential).await.map_err(
+            |error| {
+                TransportErrorKind::custom(io::Error::other(format!(
+                    "failed to roll back rejected MPP payment state: {error}"
+                )))
+            },
+        )?;
         let resp_body = resp.bytes().await.map_err(TransportErrorKind::custom)?;
 
         if should_suggest_tempo_fund(status, &resp_body)
             && maybe_auto_fund(auto_fund_used, funding_ctx).await?
         {
             let (resolved, fresh_challenge) = self.fetch_fresh_challenge(headers, body).await?;
-            let final_resp = self
+            let (final_resp, final_credential) = self
                 .pay_and_retry(&fresh_challenge, &resolved, headers, body, auto_fund_used)
                 .await?;
-            return Self::handle_response_with_funding(final_resp, Some(funding_ctx)).await;
+            let final_funding_ctx = self.provider.funding_context(&fresh_challenge);
+            if final_resp.status() == StatusCode::PAYMENT_REQUIRED {
+                resolved.rollback_payment(&fresh_challenge, &final_credential).await.map_err(
+                    |error| {
+                        TransportErrorKind::custom(io::Error::other(format!(
+                            "failed to roll back rejected MPP payment state: {error}"
+                        )))
+                    },
+                )?;
+            } else {
+                resolved.commit_payment(&fresh_challenge, &final_credential).await.map_err(
+                    |error| {
+                        TransportErrorKind::custom(io::Error::other(format!(
+                            "failed to commit MPP payment state: {error}"
+                        )))
+                    },
+                )?;
+            }
+            return Self::handle_response_with_funding(final_resp, Some(&final_funding_ctx)).await;
         }
 
         let mut error_text = format!("{}{diagnostics}", String::from_utf8_lossy(&resp_body));
@@ -619,11 +676,15 @@ where
 /// challenge's chain.
 /// The picked chain matches the first unresolved challenge — same iteration
 /// order [`MppHttpTransport::select_challenge`] uses.
-fn tempo_chain_needing_auth(url: &Url, resp: &reqwest::Response) -> Option<u64> {
+async fn tempo_chain_needing_auth<P: ResolveProvider>(
+    url: &Url,
+    resp: &reqwest::Response,
+    provider: &P,
+) -> Option<u64> {
     if !io::stderr().is_terminal() || env::var_os("CI").is_some() {
         return None;
     }
-    pick_chain_needing_auth(url, &parse_challenges(resp))
+    pick_chain_needing_auth(url, &parse_challenges(resp), provider).await
 }
 
 /// Extract all parseable MPP challenges from a 402 response's `WWW-Authenticate` headers.
@@ -638,41 +699,27 @@ fn parse_challenges(resp: &reqwest::Response) -> Vec<mpp::protocol::core::Paymen
 }
 
 /// Inner logic of [`tempo_chain_needing_auth`], factored out for testing.
-fn pick_chain_needing_auth(
+async fn pick_chain_needing_auth<P: ResolveProvider>(
     url: &Url,
     challenges: &[mpp::protocol::core::PaymentChallenge],
+    provider: &P,
 ) -> Option<u64> {
     if !crate::tempo::is_known_tempo_endpoint(url) {
         return None;
     }
 
-    let charge_chains = challenges.iter().filter_map(|challenge| {
-        (challenge.method.as_str() == "tempo" && challenge.intent.as_str() == "charge")
-            .then(|| extract_challenge_chain_and_currency(challenge).0)
-            .flatten()
-    });
-
-    charge_chains.into_iter().find(|chain_id| !accounts_store_has_key(*chain_id))
-}
-
-fn accounts_store_has_key(chain_id: u64) -> bool {
-    let Ok(Some(store)) = TempoAccountsStore::try_open_default() else {
-        return false;
-    };
-    let Ok(account) = store.active_account() else {
-        return false;
-    };
-    let Ok(keys) = store.access_keys() else {
-        return false;
-    };
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_secs());
-
-    keys.into_iter().any(|key| {
-        key.account() == account
-            && key.chain_id() == chain_id
-            && key.is_locally_signable()
-            && key.expiry().is_none_or(|expiry| expiry > now)
-    })
+    for challenge in challenges {
+        if challenge.method.as_str() != "tempo" || challenge.intent.as_str() != "charge" {
+            continue;
+        }
+        let Some(chain_id) = extract_challenge_chain_and_currency(challenge).0 else {
+            continue;
+        };
+        if provider.needs_authorization(challenge.clone()).await {
+            return Some(chain_id);
+        }
+    }
+    None
 }
 
 /// Extract `(chainId, currency)` from a parsed MPP challenge.
@@ -697,6 +744,15 @@ pub(crate) trait ResolveProvider {
     /// Drop any cached payment provider so the next `resolve_for` re-runs
     /// selection. Called after the device-code flow writes `store.json`.
     fn invalidate_cached_provider(&self) {}
+    fn needs_authorization(
+        &self,
+        challenge: mpp::protocol::core::PaymentChallenge,
+    ) -> impl Future<Output = bool> + Send {
+        async move {
+            let _ = challenge;
+            false
+        }
+    }
     fn funding_wallet_address(&self) -> Option<alloy_primitives::Address> {
         None
     }
@@ -737,10 +793,28 @@ impl ResolveProvider for LazyAccountsProvider {
         Self::invalidate(self)
     }
 
+    fn needs_authorization(
+        &self,
+        challenge: mpp::protocol::core::PaymentChallenge,
+    ) -> impl Future<Output = bool> + Send {
+        let provider = self.clone();
+        async move {
+            let (chain_id, _) = extract_challenge_chain_and_currency(&challenge);
+            let Some(chain_id) = chain_id else {
+                return false;
+            };
+            match provider.get_or_init(Some(chain_id)) {
+                Ok(accounts) => accounts
+                    .has_access_key_for_challenge(&challenge)
+                    .await
+                    .is_ok_and(|has_key| !has_key),
+                Err(_) => true,
+            }
+        }
+    }
+
     fn funding_wallet_address(&self) -> Option<alloy_primitives::Address> {
-        self.inner
-            .lock()
-            .unwrap()
+        lock_map(&self.inner)
             .values()
             .next()
             .and_then(|provider| provider.wallet().active_account().ok())
@@ -750,7 +824,7 @@ impl ResolveProvider for LazyAccountsProvider {
     }
 
     fn funding_chain_id(&self) -> Option<u64> {
-        self.inner.lock().unwrap().values().find_map(TempoAccountsProvider::expected_chain_id)
+        lock_map(&self.inner).values().find_map(TempoAccountsProvider::expected_chain_id)
     }
 
     fn lock_pay(&self) -> impl Future<Output = Option<OwnedMutexGuard<()>>> + Send {
@@ -793,6 +867,7 @@ mod tests {
     use super::*;
     use crate::provider::runtime_transport::RuntimeTransportBuilder;
     use alloy_json_rpc::{Id, Request, RequestMeta};
+    use alloy_sol_types::SolCall;
     use axum::{
         extract::State, http::StatusCode as AxumStatusCode, response::IntoResponse, routing::post,
     };
@@ -803,6 +878,8 @@ mod tests {
             format_www_authenticate, parse_authorization,
         },
     };
+    use std::sync::atomic::AtomicUsize;
+    use tempo_alloy::contracts::precompiles::ITIP20;
 
     #[derive(Clone, Debug)]
     struct MockPaymentProvider;
@@ -824,6 +901,49 @@ mod tests {
                     serde_json::json!({"action": "voucher", "channelId": "0xtest", "cumulativeAmount": "1000", "signature": "0xtest"}),
                 ))
             }
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct LifecyclePaymentProvider {
+        commits: Arc<AtomicUsize>,
+        rollbacks: Arc<AtomicUsize>,
+    }
+
+    impl LifecyclePaymentProvider {
+        fn counts(&self) -> (usize, usize) {
+            (self.commits.load(Ordering::SeqCst), self.rollbacks.load(Ordering::SeqCst))
+        }
+    }
+
+    impl PaymentProvider for LifecyclePaymentProvider {
+        fn supports(&self, method: &str, intent: &str) -> bool {
+            MockPaymentProvider.supports(method, intent)
+        }
+
+        fn pay(
+            &self,
+            challenge: &PaymentChallenge,
+        ) -> impl Future<Output = Result<PaymentCredential, MppError>> + Send {
+            MockPaymentProvider.pay(challenge)
+        }
+
+        async fn commit_payment(
+            &self,
+            _challenge: &PaymentChallenge,
+            _credential: &PaymentCredential,
+        ) -> Result<(), MppError> {
+            self.commits.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn rollback_payment(
+            &self,
+            _challenge: &PaymentChallenge,
+            _credential: &PaymentCredential,
+        ) -> Result<(), MppError> {
+            self.rollbacks.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -929,17 +1049,16 @@ mod tests {
         );
 
         let (base_url, handle) = spawn_server(app).await;
-        let mut transport = MppHttpTransport::new(
-            test_client(),
-            Url::parse(&base_url).unwrap(),
-            MockPaymentProvider,
-        );
+        let provider = LifecyclePaymentProvider::default();
+        let mut transport =
+            MppHttpTransport::new(test_client(), Url::parse(&base_url).unwrap(), provider.clone());
 
         let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
         match resp {
             ResponsePacket::Single(r) => assert!(r.is_success()),
             _ => panic!("expected single response"),
         }
+        assert_eq!(provider.counts(), (0, 0));
 
         handle.abort();
     }
@@ -991,17 +1110,16 @@ mod tests {
                 .with_state(state);
 
         let (base_url, handle) = spawn_server(app).await;
-        let mut transport = MppHttpTransport::new(
-            test_client(),
-            Url::parse(&base_url).unwrap(),
-            MockPaymentProvider,
-        );
+        let provider = LifecyclePaymentProvider::default();
+        let mut transport =
+            MppHttpTransport::new(test_client(), Url::parse(&base_url).unwrap(), provider.clone());
 
         let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
         match resp {
             ResponsePacket::Single(r) => assert!(r.is_success()),
             _ => panic!("expected single response"),
         }
+        assert_eq!(provider.counts(), (1, 0));
 
         handle.abort();
     }
@@ -1218,11 +1336,9 @@ mod tests {
         );
 
         let (base_url, handle) = spawn_server(app).await;
-        let mut transport = MppHttpTransport::new(
-            test_client(),
-            Url::parse(&base_url).unwrap(),
-            MockPaymentProvider,
-        );
+        let provider = LifecyclePaymentProvider::default();
+        let mut transport =
+            MppHttpTransport::new(test_client(), Url::parse(&base_url).unwrap(), provider.clone());
 
         let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
         let msg = err.to_string();
@@ -1231,6 +1347,7 @@ mod tests {
             !msg.contains("Tempo wallet payment could not be funded"),
             "verification-failed must not be classified as fundable; got: {msg}"
         );
+        assert_eq!(provider.counts(), (0, 1));
 
         handle.abort();
     }
@@ -1425,14 +1542,15 @@ mod tests {
         assert_eq!(extract(vec![&no_details]), vec![(None, Some("0x20c0".into()))]);
     }
 
-    #[test]
-    fn pick_chain_needing_auth_reads_accounts_store() {
-        let _g = crate::tempo::test_env_mutex().blocking_lock();
+    #[tokio::test]
+    async fn pick_chain_needing_auth_checks_the_charge_intent() {
+        let _g = crate::tempo::test_env_mutex().lock().await;
         let dir = tempfile::tempdir().unwrap();
         write_accounts_store(dir.path(), 4217, None);
         unsafe { std::env::set_var(crate::tempo::TEMPO_HOME_ENV, dir.path()) };
 
         let url = Url::parse("https://rpc.mpp.tempo.xyz").unwrap();
+        let provider = LazyAccountsProvider::new(url.to_string());
         let mk = |chain_id: u64| -> PaymentChallenge {
             PaymentChallenge {
                 id: "x".into(),
@@ -1442,7 +1560,7 @@ mod tests {
                 request: Base64UrlJson::from_value(&serde_json::json!({
                     "amount": "1",
                     "currency": "0x20c0000000000000000000000000000000000000",
-                    "recipient": "0xabc",
+                    "recipient": "0x0000000000000000000000000000000000000002",
                     "methodDetails": { "chainId": chain_id }
                 }))
                 .unwrap(),
@@ -1453,19 +1571,38 @@ mod tests {
             }
         };
 
-        assert_eq!(pick_chain_needing_auth(&url, &[mk(4217)]), None);
-        assert_eq!(pick_chain_needing_auth(&url, &[mk(42431)]), Some(42431));
+        assert_eq!(pick_chain_needing_auth(&url, &[mk(4217)], &provider).await, None);
+
+        let store_path = dir.path().join("wallet/store.json");
+        let mut store: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&store_path).unwrap()).unwrap();
+        store["tempo-cli.store"]["state"]["accessKeys"][0]["scopes"] = serde_json::json!([{
+            "address": "0x20c0000000000000000000000000000000000000",
+            "selector": alloy_primitives::hex::encode_prefixed(
+                ITIP20::transferWithMemoCall::SELECTOR
+            ),
+            "recipients": ["0x0000000000000000000000000000000000000003"],
+        }]);
+        std::fs::write(&store_path, serde_json::to_vec(&store).unwrap()).unwrap();
+        assert_eq!(pick_chain_needing_auth(&url, &[mk(4217)], &provider).await, Some(4217));
+
+        store["tempo-cli.store"]["state"]["accessKeys"][0]["scopes"][0]["recipients"] =
+            serde_json::json!(["0x0000000000000000000000000000000000000002"]);
+        std::fs::write(&store_path, serde_json::to_vec(&store).unwrap()).unwrap();
+        assert_eq!(pick_chain_needing_auth(&url, &[mk(4217)], &provider).await, None);
+
+        assert_eq!(pick_chain_needing_auth(&url, &[mk(42431)], &provider).await, Some(42431));
 
         write_accounts_store(dir.path(), 4217, Some(1));
-        assert_eq!(pick_chain_needing_auth(&url, &[mk(4217)]), Some(4217));
+        assert_eq!(pick_chain_needing_auth(&url, &[mk(4217)], &provider).await, Some(4217));
 
         let mut session = mk(4217);
         session.intent = IntentName::new("session");
-        assert_eq!(pick_chain_needing_auth(&url, &[session]), None);
+        assert_eq!(pick_chain_needing_auth(&url, &[session], &provider).await, None);
 
         // Non-Tempo host → never triggers, even without a key.
         let stripe_url = Url::parse("https://api.stripe.com").unwrap();
-        assert_eq!(pick_chain_needing_auth(&stripe_url, &[mk(42431)]), None);
+        assert_eq!(pick_chain_needing_auth(&stripe_url, &[mk(42431)], &provider).await, None);
 
         unsafe { std::env::remove_var(crate::tempo::TEMPO_HOME_ENV) };
     }

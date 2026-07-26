@@ -30,7 +30,9 @@ use tokio_tungstenite::{
 };
 use tracing::debug;
 
-use super::transport::{LazyAccountsProvider, extract_challenge_chain_and_currency};
+use super::transport::{
+    LazyAccountsProvider, ResolveProvider, extract_challenge_chain_and_currency,
+};
 
 type TungsteniteStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -159,6 +161,10 @@ impl MppWsConnect {
 
         debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP WS challenge, paying");
 
+        // Match HTTP payment serialization for the complete challenge →
+        // credential → acknowledgement lifecycle.
+        let _pay_guard = provider.lock_pay().await;
+
         // Resolve the Charge provider from the Tempo Accounts store.
         let (chain_id, _) = extract_challenge_chain_and_currency(&challenge);
         let charge = provider.get_or_init(chain_id).map_err(|e| {
@@ -171,19 +177,38 @@ impl MppWsConnect {
             TransportErrorKind::custom(io::Error::other(format!("MPP WS payment failed: {e}")))
         })?;
 
-        let auth_header = format_authorization(&credential).map_err(|e| {
-            TransportErrorKind::custom(io::Error::other(format!(
-                "failed to format MPP credential: {e}"
-            )))
-        })?;
+        let auth_header = match format_authorization(&credential) {
+            Ok(auth_header) => auth_header,
+            Err(error) => {
+                charge.rollback_payment(&challenge, &credential).await.map_err(|rollback| {
+                    TransportErrorKind::custom(io::Error::other(format!(
+                        "failed to format MPP credential ({error}); rollback failed: {rollback}"
+                    )))
+                })?;
+                return Err(TransportErrorKind::custom(io::Error::other(format!(
+                    "failed to format MPP credential: {error}"
+                ))));
+            }
+        };
 
         // Send credential as a WS message.
         let cred_msg = WsClientMessage::Credential { credential: auth_header };
-        let cred_text = serde_json::to_string(&cred_msg).map_err(|e| {
-            TransportErrorKind::custom(io::Error::other(format!(
-                "failed to serialize credential message: {e}"
-            )))
-        })?;
+        let cred_text = match serde_json::to_string(&cred_msg) {
+            Ok(cred_text) => cred_text,
+            Err(error) => {
+                charge
+                    .rollback_payment(&challenge, &credential)
+                    .await
+                    .map_err(|rollback| {
+                        TransportErrorKind::custom(io::Error::other(format!(
+                            "failed to serialize credential message ({error}); rollback failed: {rollback}"
+                        )))
+                    })?;
+                return Err(TransportErrorKind::custom(io::Error::other(format!(
+                    "failed to serialize credential message: {error}"
+                ))));
+            }
+        };
 
         socket.send(Message::Text(cred_text.into())).await.map_err(|e| {
             TransportErrorKind::custom(io::Error::other(format!(
@@ -191,8 +216,18 @@ impl MppWsConnect {
             )))
         })?;
 
-        // Wait for server acknowledgement (receipt or data).
-        let ack = timeout(Duration::from_secs(30), socket.next()).await.map_err(|_| {
+        // Wait for an acknowledgement-bearing message. WebSocket control
+        // frames are not evidence that the server accepted the credential.
+        let ack = timeout(Duration::from_secs(30), async {
+            loop {
+                match socket.next().await {
+                    Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+                    ack => return ack,
+                }
+            }
+        })
+        .await
+        .map_err(|_| {
             TransportErrorKind::custom(io::Error::other(
                 "timeout waiting for MPP server acknowledgement",
             ))
@@ -212,9 +247,29 @@ impl MppWsConnect {
                             debug!("MPP WS handshake complete (receipt received)");
                         }
                         WsServerMessage::Error { error } => {
+                            charge.rollback_payment(&challenge, &credential).await.map_err(
+                                |rollback| {
+                                    TransportErrorKind::custom(io::Error::other(format!(
+                                        "MPP WS server error ({error}); rollback failed: {rollback}"
+                                    )))
+                                },
+                            )?;
                             return Err(TransportErrorKind::custom(io::Error::other(format!(
                                 "MPP WS server error: {error}"
                             ))));
+                        }
+                        WsServerMessage::Challenge { .. } => {
+                            charge
+                                .rollback_payment(&challenge, &credential)
+                                .await
+                                .map_err(|rollback| {
+                                    TransportErrorKind::custom(io::Error::other(format!(
+                                        "MPP WS credential was rejected; rollback failed: {rollback}"
+                                    )))
+                                })?;
+                            return Err(TransportErrorKind::custom(io::Error::other(
+                                "MPP WS server returned another challenge after payment",
+                            )));
                         }
                         _ => {
                             buffered_messages.push(t.to_string());
@@ -229,9 +284,23 @@ impl MppWsConnect {
                     "WebSocket closed after sending credential",
                 )));
             }
-            Some(Ok(_)) => {}
+            Some(Ok(Message::Binary(_))) => {
+                return Err(TransportErrorKind::custom(io::Error::other(
+                    "unexpected binary frame after sending MPP credential",
+                )));
+            }
+            Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {
+                return Err(TransportErrorKind::custom(io::Error::other(
+                    "WebSocket control frame escaped MPP acknowledgement filter",
+                )));
+            }
         }
 
+        charge.commit_payment(&challenge, &credential).await.map_err(|error| {
+            TransportErrorKind::custom(io::Error::other(format!(
+                "failed to commit MPP WS payment state: {error}"
+            )))
+        })?;
         Ok(buffered_messages)
     }
 }
@@ -281,6 +350,10 @@ mod tests {
     use super::*;
     use alloy_json_rpc::{Id, Request, RequestMeta, RequestPacket, ResponsePacket};
     use mpp::protocol::core::{Base64UrlJson, IntentName, MethodName, parse_authorization};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     use tokio::task::JoinHandle;
     use tokio_tungstenite::accept_async;
     use tower::Service;
@@ -348,6 +421,45 @@ mod tests {
             handler(ws).await;
         });
         (format!("ws://{addr}"), handle)
+    }
+
+    #[tokio::test]
+    async fn handshake_ignores_control_frames_before_receipt() {
+        let _guard = crate::tempo::test_env_mutex().lock().await;
+        let tempo_home = tempfile::tempdir().unwrap();
+        write_accounts_store(tempo_home.path());
+        unsafe { std::env::set_var(crate::tempo::TEMPO_HOME_ENV, tempo_home.path()) };
+
+        let challenge_json = serde_json::to_value(test_challenge()).unwrap();
+        let receipt_sent = Arc::new(AtomicBool::new(false));
+        let server_receipt_sent = receipt_sent.clone();
+        let (url, server) = spawn_ws_server(move |mut socket| async move {
+            let challenge = WsServerMessage::Challenge { challenge: challenge_json, error: None };
+            socket
+                .send(Message::Text(serde_json::to_string(&challenge).unwrap().into()))
+                .await
+                .unwrap();
+            let credential = socket.next().await.unwrap().unwrap();
+            assert!(matches!(credential, Message::Text(_)));
+            socket.send(Message::Ping(Vec::new().into())).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            server_receipt_sent.store(true, Ordering::SeqCst);
+            let receipt = WsServerMessage::Receipt { receipt: serde_json::json!({}) };
+            socket
+                .send(Message::Text(serde_json::to_string(&receipt).unwrap().into()))
+                .await
+                .unwrap();
+        })
+        .await;
+
+        let (mut socket, _) = connect_async(&url).await.unwrap();
+        let provider = LazyAccountsProvider::new(url);
+        let buffered = MppWsConnect::try_mpp_handshake(&mut socket, &provider).await.unwrap();
+        assert!(buffered.is_empty());
+        assert!(receipt_sent.load(Ordering::SeqCst));
+
+        server.await.unwrap();
+        unsafe { std::env::remove_var(crate::tempo::TEMPO_HOME_ENV) };
     }
 
     /// Plain WS server (no MPP) — connect and send a JSON-RPC request.
