@@ -286,7 +286,9 @@ async fn register(
             .await
         }
     } else {
-        eyre::bail!("cast vaddr create requires a signer (for example --private-key or --from)")
+        Err(eyre::eyre!(
+            "cast vaddr create requires a signer (for example --private-key or --from)"
+        ))
     }
 }
 
