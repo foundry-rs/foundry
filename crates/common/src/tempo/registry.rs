@@ -8,9 +8,10 @@ use std::{
 
 /// Shared TOML registry helpers for Tempo local state.
 ///
-/// We keep the read/parse and atomic write logic here so `keys.toml`,
-/// `sessions.toml`, and any future Tempo registry files all use the same
-/// persistence semantics instead of duplicating the same boilerplate.
+/// We keep the read/parse and atomic write logic here so `sessions.toml` and
+/// any future Foundry-owned Tempo registry files use the same persistence
+/// semantics instead of duplicating the same boilerplate. Tempo Accounts data
+/// itself is owned by its `store.json`.
 ///
 /// Strict readers return `Ok(None)` only when the file is missing.
 /// Corruption and I/O failures bubble up so mutating paths can fail closed.
