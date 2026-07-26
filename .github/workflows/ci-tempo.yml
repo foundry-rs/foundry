@@ -125,6 +125,7 @@ jobs:
         if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.network == 'devnet' || github.event.inputs.network == 'all')
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          TEMPO_HOME: ${{ runner.temp }}/tempo-wallet
         run: ./.github/scripts/tempo-wallet.sh
 
   # If the nightly run fails, this will create an issue to signal so.
