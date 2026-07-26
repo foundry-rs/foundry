@@ -5,6 +5,7 @@ use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 use path_slash::PathExt;
 use std::{fs, path::Path};
+use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
 
 /// Anvil test accounts (standard mnemonic).
@@ -711,6 +712,51 @@ casttest!(key_authorization_sign_admin_access_key_binds_root_account, |_prj, cmd
         Some(accounts::ADDR1.to_lowercase()),
         "got: {output}"
     );
+});
+
+casttest!(tempo_import_access_key_writes_accounts_store, |prj, cmd| {
+    let tempo_home = prj.root().join("tempo-home");
+    let authorization = cmd
+        .args([
+            "key-authorization",
+            "sign",
+            accounts::ADDR2,
+            "--chain-id",
+            "42431",
+            "--private-key",
+            accounts::PK1,
+            "--bind-account",
+            accounts::ADDR1,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_owned();
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", &tempo_home);
+    cmd.args([
+        "tempo",
+        "import-access-key",
+        "--account",
+        accounts::ADDR1,
+        "--access-key",
+        accounts::PK2,
+        "--authorization",
+        &authorization,
+    ])
+    .assert_success();
+
+    let store = TempoAccountsStore::open(tempo_home.join("wallet/store.json"))
+        .expect("open Accounts store");
+    assert_eq!(store.active_account().unwrap().to_string(), accounts::ADDR1);
+    let keys = store.access_keys().expect("read imported access key");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].address().to_string(), accounts::ADDR2);
+    assert_eq!(keys[0].chain_id(), 42431);
+    assert!(keys[0].key_authorization().is_some());
+    assert!(keys[0].is_locally_signable());
 });
 
 casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
