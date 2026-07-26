@@ -33,11 +33,13 @@ toml.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
 foundry-compilers.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 tracing.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 semver.workspace = true
 futures.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "time"] }
+tempfile.workspace = true
 
 itertools.workspace = true
 parking_lot.workspace = true
@@ -62,7 +64,6 @@ tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 anvil.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
