@@ -620,7 +620,9 @@ async fn run_revoke_with_policy(
             .await?
         {
             KeychainTxOutcome::Submitted => {}
-            KeychainTxOutcome::PrintedSponsorHash => eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR),
+            KeychainTxOutcome::PrintedSponsorHash => {
+                eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+            }
         }
         Ok(())
     }
@@ -651,7 +653,7 @@ fn handle_unprovisioned_revoke(
                 "session key is not provisioned on-chain yet; pending transactions from the \
                  wrapped command may still provision it. Wait for pending transactions to settle, \
                  then run `cast wallet session revoke {session_id}`."
-            )
+            );
         }
     }
 }
@@ -747,7 +749,7 @@ async fn build_session_entry(
         eyre::bail!("--from must match --root for cast wallet session create");
     }
 
-    let signer = resolve_root_signer(wallet, root_account).await?;
+    let signer = resolve_root_signer(wallet, root_account, chain_id).await?;
     let session_key = GeneratedSessionKey::random();
     let session_id = B256::random();
     let now = now_unix_timestamp()?;
@@ -773,8 +775,12 @@ async fn build_session_entry(
     prepared.into_active_entry(session_key, &signed_authorization)
 }
 
-async fn resolve_root_signer(wallet: WalletOpts, root_account: Address) -> Result<WalletSigner> {
-    let (signer, tempo_access_key) = wallet.maybe_signer().await?;
+async fn resolve_root_signer(
+    wallet: WalletOpts,
+    root_account: Address,
+    chain_id: u64,
+) -> Result<WalletSigner> {
+    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
     if tempo_access_key.is_some() {
         eyre::bail!(
             "Tempo access keys cannot authorize Tempo sessions; use a persistent root signer"

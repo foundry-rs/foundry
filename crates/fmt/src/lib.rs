@@ -167,7 +167,7 @@ fn format_inner(
     }
 
     assert!(
-        !first_result.is_ok() || second_result.is_ok() || DEBUG,
+        !(first_result.is_ok() && second_result.is_err() && !DEBUG),
         "failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}"
     );
     first_result

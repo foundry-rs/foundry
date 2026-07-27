@@ -1,42 +1,18 @@
-use alloy_primitives::{Address, U256};
-use alloy_sol_types::SolValue;
+use alloy_primitives::{Address, U256, map::HashMap};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
+use foundry_evm_traces::RevertDiagnostic as DetailedRevertReason;
 use revm::{
     Inspector,
     bytecode::opcode,
     context::{ContextTr, JournalTr},
-    interpreter::{
-        CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
-        interpreter_types::{Jumps, LoopControl},
-    },
+    interpreter::{CallInputs, CallOutcome, CallScheme, Interpreter, interpreter_types::Jumps},
 };
-use std::fmt;
 
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
 /// Checks if the call scheme corresponds to any sort of delegate call
 pub const fn is_delegatecall(scheme: CallScheme) -> bool {
     matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum DetailedRevertReason {
-    CallToNonContract(Address),
-    DelegateCallToNonContract(Address),
-}
-
-impl fmt::Display for DetailedRevertReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CallToNonContract(addr) => {
-                write!(f, "call to non-contract address {addr}")
-            }
-            Self::DelegateCallToNonContract(addr) => write!(
-                f,
-                "delegatecall to non-contract address {addr} (usually an unliked library)"
-            ),
-        }
-    }
 }
 
 /// An inspector that tracks call context to enhances revert diagnostics.
@@ -63,6 +39,12 @@ pub struct RevertDiagnostic {
     non_contract_size_check: Option<(Address, usize)>,
     /// Whether the step opcode is EXTCODESIZE or not.
     is_extcodesize_step: bool,
+    /// Diagnostic detected for the currently executing frame.
+    pending: Option<DetailedRevertReason>,
+    /// Trace nodes for active frames. `None` means the tracer did not create a node.
+    active_trace_nodes: Vec<Option<usize>>,
+    /// Presentation-only revert diagnostics keyed by trace node.
+    diagnostics: HashMap<usize, DetailedRevertReason>,
 }
 
 impl RevertDiagnostic {
@@ -92,22 +74,41 @@ impl RevertDiagnostic {
         None
     }
 
-    /// Injects the revert diagnostic into the debug traces. Should only be called after a revert.
-    fn broadcast_diagnostic(&self, interpreter: &mut Interpreter) {
-        if let Some(reason) = self.reason() {
-            interpreter.bytecode.set_action(InterpreterAction::new_return(
-                InstructionResult::Revert,
-                reason.to_string().abi_encode().into(),
-                interpreter.gas,
-            ));
+    /// Starts tracking a frame before its inspectors can short-circuit execution.
+    pub fn frame_start(&mut self) {
+        self.active_trace_nodes.push(None);
+    }
+
+    /// Associates the active frame with the node created by the tracer.
+    pub fn set_trace_node(&mut self, trace_node: usize) {
+        let frame = self.active_trace_nodes.last_mut();
+        debug_assert!(frame.is_some(), "missing active revert diagnostic frame");
+        if let Some(frame) = frame {
+            *frame = Some(trace_node);
         }
     }
 
-    /// When a `REVERT` opcode with zero data size occurs:
-    ///  - if `non_contract_call` was set at the current depth, `broadcast_diagnostic` is called.
-    ///    Otherwise, it is cleared.
-    ///  - if `non_contract_size_check` was set at the current depth, `broadcast_diagnostic` is
-    ///    called. Otherwise, it is cleared.
+    /// Finishes tracking a frame and associates any pending diagnostic with its trace node.
+    pub fn frame_end(&mut self) {
+        let frame = self.active_trace_nodes.pop();
+        debug_assert!(frame.is_some(), "revert diagnostic frame stack underflow");
+        let diagnostic = self.pending.take();
+        if let Some(node_idx) = frame.flatten()
+            && let Some(diagnostic) = diagnostic
+        {
+            self.diagnostics.insert(node_idx, diagnostic);
+        }
+    }
+
+    /// Consumes the inspector and returns its presentation-only diagnostics.
+    pub fn into_diagnostics(self) -> HashMap<usize, DetailedRevertReason> {
+        debug_assert!(self.active_trace_nodes.is_empty(), "unclosed revert diagnostic frames");
+        self.diagnostics
+    }
+
+    /// When a `REVERT` opcode with zero data size occurs, records a diagnostic if a matching
+    /// non-contract call or size check was observed at the current depth. Stale observations from
+    /// other depths are cleared.
     #[cold]
     fn handle_revert<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
         // REVERT (offset, size)
@@ -117,7 +118,7 @@ impl RevertDiagnostic {
             // Check empty revert with same depth as a non-contract call
             if let Some((_, _, depth)) = self.non_contract_call {
                 if ctx.journal_ref().depth() == depth {
-                    self.broadcast_diagnostic(interp);
+                    self.pending = self.reason();
                 } else {
                     self.non_contract_call = None;
                 }
@@ -127,7 +128,7 @@ impl RevertDiagnostic {
             // Check empty revert with same depth as a non-contract size check
             if let Some((_, depth)) = self.non_contract_size_check {
                 if depth == ctx.journal_ref().depth() {
-                    self.broadcast_diagnostic(interp);
+                    self.pending = self.reason();
                 } else {
                     self.non_contract_size_check = None;
                 }

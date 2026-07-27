@@ -128,6 +128,7 @@ impl<'gcx> SourceVisitor<'gcx> {
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
                     loc: reference_item.loc.clone(),
+                    anchor_loc: None,
                     hits: 0,
                 });
             }
@@ -141,13 +142,15 @@ impl<'gcx> SourceVisitor<'gcx> {
 
     /// Creates a coverage item for a given kind and source location. Pushes item to the internal
     /// collection (plus additional coverage line if item is a statement).
-    fn push_item_kind(&mut self, kind: CoverageItemKind, span: Span) {
-        let item = CoverageItem { kind, loc: self.source_location_for(span), hits: 0 };
+    fn push_item_kind(&mut self, kind: CoverageItemKind, span: Span) -> &mut CoverageItem {
+        let item =
+            CoverageItem { kind, loc: self.source_location_for(span), anchor_loc: None, hits: 0 };
 
         debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
         self.all_lines.push(item.loc.lines.start);
 
         self.items.push(item);
+        self.items.last_mut().unwrap()
     }
 
     fn source_location_for(&self, mut span: Span) -> SourceLocation {
@@ -259,18 +262,15 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         then_stmt.span,
                     );
-                    if else_stmt.is_some() {
-                        // We use `stmt.span`, which includes `else_stmt.span`, since we need to
-                        // include the condition so that this can be marked as covered.
-                        // Initially implemented in https://github.com/foundry-rs/foundry/pull/3094.
+                    if let Some(else_stmt) = else_stmt {
+                        let is_first_opcode = stmt_has_statements(else_stmt);
+                        let anchor_loc =
+                            is_first_opcode.then(|| self.source_location_for(else_stmt.span));
                         self.push_item_kind(
-                            CoverageItemKind::Branch {
-                                branch_id,
-                                path_id: 1,
-                                is_first_opcode: false,
-                            },
+                            CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode },
                             stmt.span,
-                        );
+                        )
+                        .anchor_loc = anchor_loc;
                     }
                 }
             }

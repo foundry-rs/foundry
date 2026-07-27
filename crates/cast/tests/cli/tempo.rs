@@ -760,6 +760,24 @@ casttest!(tip20_logo_commands_expose_browser_and_remote_sponsor_options, |_prj, 
     }
 });
 
+casttest!(mktx_rejects_remote_sponsor_instead_of_ignoring_it, |_prj, cmd| {
+    let stderr = cmd
+        .cast_fuse()
+        .args([
+            "mktx",
+            "0x0000000000000000000000000000000000000001",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--sponsor-url",
+            "http://localhost:1",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("--sponsor-url is not supported by cast mktx"), "{stderr}");
+});
+
 casttest!(tip20_logo_check_accepts_valid_values, |_prj, cmd| {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {
         cmd.cast_fuse().args(["tip20", "logo-check", uri]).assert_success();

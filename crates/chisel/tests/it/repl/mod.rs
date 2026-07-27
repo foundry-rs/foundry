@@ -1,5 +1,33 @@
 mod session;
+use chisel::session::ChiselSession as CachedChiselSession;
+use foundry_evm::core::evm::EthEvmNetwork;
 use session::ChiselSession;
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+struct CacheCleanup(Vec<String>);
+
+impl Drop for CacheCleanup {
+    fn drop(&mut self) {
+        for id in &self.0 {
+            let _ = CachedChiselSession::<EthEvmNetwork>::remove_cached_session(id);
+        }
+    }
+}
+
+fn unique_cache_id(prefix: &str) -> String {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    format!("{prefix}-{}-{timestamp}", std::process::id())
+}
+
+fn cache_file(id: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "{}chisel-{id}.json",
+        CachedChiselSession::<EthEvmNetwork>::cache_dir().unwrap()
+    ))
+}
 
 macro_rules! repl_test {
     ($name:ident, | $cmd:ident | $test:expr) => {
@@ -22,6 +50,75 @@ macro_rules! repl_test {
 repl_test!(repl_help, |repl| {
     repl.sendln_raw("!h");
     repl.expect("Chisel help");
+    repl.expect_prompt();
+});
+
+repl_test!(save_renamed_session_removes_stale_cache, |repl| {
+    let old_id = unique_cache_id("rename-old");
+    let new_id = unique_cache_id("rename-new");
+    let _cleanup = CacheCleanup(vec![old_id.clone(), new_id.clone()]);
+
+    repl.sendln(&format!("!save {old_id}"));
+    repl.sendln(&format!("!save {new_id}"));
+    repl.sendln_raw("!list");
+    repl.expect(&format!("chisel-{new_id}.json"));
+    repl.expect_prompt();
+
+    // A renamed session must not leave the previous cache entry loadable.
+    repl.sendln_raw(&format!("!load {old_id}"));
+    repl.expect("failed to load session");
+    repl.expect_prompt();
+
+    repl.sendln_raw(&format!("!load {new_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {new_id})"));
+    repl.expect_prompt();
+});
+
+repl_test!(save_case_only_rename_preserves_destination, |repl| {
+    let old_id = unique_cache_id("rename-case").to_ascii_lowercase();
+    let new_id = old_id.to_ascii_uppercase();
+    let _cleanup = CacheCleanup(vec![old_id.clone(), new_id.clone()]);
+
+    repl.sendln(&format!("!save {old_id}"));
+    let old_cache_file = cache_file(&old_id);
+    let new_cache_file = cache_file(&new_id);
+    let paths_alias =
+        std::fs::canonicalize(&old_cache_file).ok() == std::fs::canonicalize(&new_cache_file).ok();
+
+    repl.sendln(&format!("!save {new_id}"));
+
+    // On case-insensitive filesystems, both IDs resolve to the same cache path.
+    repl.sendln_raw(&format!("!load {new_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {new_id})"));
+    repl.expect_prompt();
+
+    if !paths_alias {
+        repl.sendln_raw(&format!("!load {old_id}"));
+        repl.expect("failed to load session");
+        repl.expect_prompt();
+    }
+});
+
+repl_test!(failed_save_restores_previous_session_id, |repl| {
+    let first_id = unique_cache_id("failed-save-first");
+    let second_id = unique_cache_id("failed-save-second");
+    let _cleanup = CacheCleanup(vec![first_id.clone(), second_id.clone()]);
+    let invalid_id = format!("{}/id", unique_cache_id("failed-save-invalid"));
+
+    repl.sendln(&format!("!save {first_id}"));
+    // The nested path makes the write fail without touching the existing cache file.
+    repl.sendln_raw(&format!("!save {invalid_id}"));
+    repl.expect("No such file or directory");
+    repl.expect_prompt();
+
+    // A failed rename must not lose the ID of the last successfully saved file.
+    repl.sendln(&format!("!save {second_id}"));
+    repl.sendln_raw("!list");
+    repl.expect(&format!("chisel-{second_id}.json"));
+    repl.expect_prompt();
+
+    repl.sendln_raw(&format!("!load {first_id}"));
+    repl.expect("failed to load session");
     repl.expect_prompt();
 });
 

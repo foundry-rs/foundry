@@ -174,6 +174,17 @@ impl FeeManager {
         if self.base_fee() == 0 {
             return 0;
         }
+        self.calculate_next_block_base_fee_per_gas(gas_used, gas_limit, last_fee_per_gas)
+    }
+
+    /// Calculates the next block base fee from the parent block without applying the configured
+    /// zero-fee sentinel.
+    pub(crate) fn calculate_next_block_base_fee_per_gas(
+        &self,
+        gas_used: u64,
+        gas_limit: u64,
+        last_fee_per_gas: u64,
+    ) -> u64 {
         // Tempo replaces EIP-1559 with its own hardfork-specific base fee rules.
         if let Some(hardfork) = self.tempo_hardfork() {
             return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);

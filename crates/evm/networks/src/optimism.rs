@@ -10,7 +10,7 @@ impl NetworkConfigs {
     }
 
     pub const fn is_optimism(&self) -> bool {
-        matches!(self.resolved_network(), Some(NetworkVariant::Optimism))
+        if let Some(network) = self.resolved_network() { network.is_optimism() } else { false }
     }
 
     /// Optimism-specific base fee parameters, picking Canyon vs pre-Canyon based on `timestamp`.

@@ -1994,6 +1994,44 @@ async fn test_tempo_aa_transaction_basic() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_preserves_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let calls = [
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xde, 0xad]),
+        },
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xbe, 0xef]),
+        },
+    ];
+
+    let hash = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "calls": calls,
+            }),),
+        )
+        .await
+        .unwrap();
+
+    let transaction = provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionByHash".into(), (hash,))
+        .await
+        .unwrap();
+    assert_eq!(transaction["type"], "0x76");
+    assert_eq!(transaction["calls"], serde_json::to_value(calls).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_aa_transaction_with_2d_nonce() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
@@ -3432,12 +3470,32 @@ async fn test_tempo_aa_transaction_receipt_fields() {
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
     let recipient = accounts[1];
     let signer = dev_key(0);
 
     let token = IERC20::new(PATH_USD, &provider);
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
+
+    let ordinary_call = token.transfer(recipient, U256::from(50_000));
+    let ordinary_tx = TransactionRequest::default()
+        .from(sender)
+        .to(PATH_USD)
+        .with_input(ordinary_call.calldata().clone())
+        .with_gas_limit(TIP20_TRANSFER_GAS)
+        .max_fee_per_gas(base_fee * 2)
+        .max_priority_fee_per_gas(base_fee / 10);
+    let ordinary_receipt = provider
+        .send_transaction(WithOtherFields::new(ordinary_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let ordinary_receipt = serde_json::to_value(ordinary_receipt).unwrap();
+    assert_eq!(ordinary_receipt["feePayer"], format!("{sender:#x}"));
+    assert_eq!(ordinary_receipt["feeToken"], format!("{ALPHA_USD:#x}"));
 
     let transfer_call = token.transfer(recipient, U256::from(50_000));
     let calldata: Bytes = transfer_call.calldata().clone();
@@ -3474,6 +3532,9 @@ async fn test_tempo_aa_transaction_receipt_fields() {
     assert!(receipt.status(), "Transaction should succeed");
     assert!(receipt.gas_used > 0, "Gas used should be non-zero");
     assert!(!receipt.inner.logs().is_empty(), "Should have Transfer event logs");
+    let receipt = serde_json::to_value(receipt).unwrap();
+    assert_eq!(receipt["feePayer"], format!("{sender:#x}"));
+    assert_eq!(receipt["feeToken"], format!("{ALPHA_USD:#x}"));
 }
 
 // ============================================================================

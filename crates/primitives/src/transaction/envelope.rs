@@ -69,6 +69,50 @@ pub enum FoundryTxEnvelope {
 }
 
 impl FoundryTxEnvelope {
+    /// Returns `true` if this is a legacy transaction.
+    #[inline]
+    pub const fn is_legacy(&self) -> bool {
+        matches!(self, Self::Legacy(_))
+    }
+
+    /// Returns `true` if this is an EIP-2930 transaction.
+    #[inline]
+    pub const fn is_eip2930(&self) -> bool {
+        matches!(self, Self::Eip2930(_))
+    }
+
+    /// Returns `true` if this is an EIP-1559 transaction.
+    #[inline]
+    pub const fn is_eip1559(&self) -> bool {
+        matches!(self, Self::Eip1559(_))
+    }
+
+    /// Returns `true` if this is an EIP-4844 transaction.
+    #[inline]
+    pub const fn is_eip4844(&self) -> bool {
+        matches!(self, Self::Eip4844(_))
+    }
+
+    /// Returns `true` if this is an EIP-7702 transaction.
+    #[inline]
+    pub const fn is_eip7702(&self) -> bool {
+        matches!(self, Self::Eip7702(_))
+    }
+
+    /// Returns `true` if this is an OP stack deposit transaction.
+    #[cfg(feature = "optimism")]
+    #[inline]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns `true` if this is an OP stack post-execution synthetic transaction.
+    #[cfg(feature = "optimism")]
+    #[inline]
+    pub const fn is_post_exec(&self) -> bool {
+        matches!(self, Self::PostExec(_))
+    }
+
     /// Converts the transaction into an Ethereum [`TxEnvelope`].
     ///
     /// Returns an error if the transaction is not part of the standard Ethereum transaction types.
@@ -142,6 +186,44 @@ impl FoundryTxEnvelope {
             Self::PostExec(tx) => tx.inner().signer_address(),
             Self::Tempo(tx) => tx.signature().recover_signer(&tx.signature_hash())?,
         })
+    }
+}
+
+impl FoundryTxType {
+    /// Returns `true` if this is an OP stack deposit transaction type.
+    #[cfg(feature = "optimism")]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit)
+    }
+
+    /// Returns `true` if this is an OP stack post-execution synthetic transaction type.
+    #[cfg(feature = "optimism")]
+    pub const fn is_post_exec(&self) -> bool {
+        matches!(self, Self::PostExec)
+    }
+
+    /// Returns `true` if this is a Tempo transaction type.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo)
+    }
+}
+
+impl FoundryTypedTx {
+    /// Returns `true` if this is an OP stack deposit transaction.
+    #[cfg(feature = "optimism")]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns `true` if this is an OP stack post-execution synthetic transaction.
+    #[cfg(feature = "optimism")]
+    pub const fn is_post_exec(&self) -> bool {
+        matches!(self, Self::PostExec(_))
+    }
+
+    /// Returns `true` if this is a Tempo transaction.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo(_))
     }
 }
 
@@ -398,6 +480,64 @@ mod tests {
     use alloy_signer::Signature;
 
     use super::*;
+
+    fn signed<T>(tx: T) -> Signed<T> {
+        Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO)
+    }
+
+    #[test]
+    fn tx_type_predicates() {
+        assert!(FoundryTxType::Legacy.is_legacy());
+        assert!(FoundryTxType::Eip2930.is_eip2930());
+        assert!(FoundryTxType::Eip1559.is_eip1559());
+        assert!(FoundryTxType::Eip4844.is_eip4844());
+        assert!(FoundryTxType::Eip7702.is_eip7702());
+        assert!(FoundryTxType::Tempo.is_tempo());
+        assert!(!FoundryTxType::Tempo.is_legacy());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(FoundryTxType::Deposit.is_deposit());
+            assert!(FoundryTxType::PostExec.is_post_exec());
+            assert!(!FoundryTxType::Deposit.is_post_exec());
+        }
+    }
+
+    #[test]
+    fn typed_tx_predicates() {
+        assert!(FoundryTypedTx::Legacy(TxLegacy::default()).is_legacy());
+        assert!(FoundryTypedTx::Eip2930(TxEip2930::default()).is_eip2930());
+        assert!(FoundryTypedTx::Eip1559(TxEip1559::default()).is_eip1559());
+        assert!(
+            FoundryTypedTx::Eip4844(TxEip4844Variant::TxEip4844(Default::default())).is_eip4844()
+        );
+        assert!(FoundryTypedTx::Eip7702(TxEip7702::default()).is_eip7702());
+        assert!(FoundryTypedTx::Tempo(TempoTransaction::default()).is_tempo());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(FoundryTypedTx::Deposit(TxDeposit::default()).is_deposit());
+            assert!(FoundryTypedTx::PostExec(TxPostExec::default()).is_post_exec());
+        }
+    }
+
+    #[test]
+    fn tx_envelope_predicates() {
+        assert!(FoundryTxEnvelope::Legacy(signed(TxLegacy::default())).is_legacy());
+        assert!(FoundryTxEnvelope::Eip2930(signed(TxEip2930::default())).is_eip2930());
+        assert!(FoundryTxEnvelope::Eip1559(signed(TxEip1559::default())).is_eip1559());
+        assert!(
+            FoundryTxEnvelope::Eip4844(signed(TxEip4844Variant::TxEip4844(Default::default())))
+                .is_eip4844()
+        );
+        assert!(FoundryTxEnvelope::Eip7702(signed(TxEip7702::default())).is_eip7702());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit::default())).is_deposit());
+            assert!(FoundryTxEnvelope::PostExec(Sealed::new(TxPostExec::default())).is_post_exec());
+        }
+    }
 
     #[test]
     fn test_decode_call() {

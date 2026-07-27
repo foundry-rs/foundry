@@ -23,7 +23,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -137,10 +137,14 @@ impl SenderKind<'_> {
     /// If from is specified, returns it
     /// If from is not specified, but there is a signer configured, returns the signer's address
     /// If from is not specified and there is no signer configured, returns zero address
-    pub async fn from_wallet_opts(opts: WalletOpts) -> Result<Self> {
-        if let (Some(signer), _) = opts.maybe_signer().await? {
+    pub async fn from_wallet_opts(mut opts: WalletOpts) -> Result<Self> {
+        let from = opts.from.take();
+        let (signer, tempo_wallet) = opts.maybe_signer().await?;
+        if let Some(signer) = signer {
             Ok(Self::OwnedSigner(Box::new(signer)))
-        } else if let Some(from) = opts.from {
+        } else if let Some(tempo_wallet) = tempo_wallet {
+            Ok(tempo_wallet.account().into())
+        } else if let Some(from) = from {
             Ok(from.into())
         } else {
             Ok(Address::ZERO.into())
@@ -189,7 +193,7 @@ The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
-            )
+            );
     }
     Ok(())
 }
@@ -343,7 +347,7 @@ where
                     // if the async flag is provided, immediately exit if no tx is found, otherwise
                     // try to poll for it
                     if cast_async {
-                        eyre::bail!("tx not found: {:?}", tx_hash)
+                        eyre::bail!("tx not found: {:?}", tx_hash);
                     }
                     PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
                         .with_required_confirmations(confs)
@@ -563,21 +567,21 @@ where
     /// The access-key id is set before gas estimation. If the access key needs on-chain
     /// provisioning, its authorization is embedded before access-list/gas estimation and before
     /// any sponsor digest can be computed.
-    pub async fn build_with_access_key(
-        mut self,
-        sender: impl Into<SenderKind<'_>>,
-        access_key: &TempoAccessKeyConfig,
-    ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        self.tx.set_key_id(access_key.key_address);
+    pub async fn build_with_tempo_wallet(
+        self,
+        wallet: &TempoAccountsWallet,
+    ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccountsWallet)> {
         let fill = self.fill;
-        self._build(sender, fill, Some(access_key)).await
+        let mut prepared = wallet.clone();
+        let (tx, func) = self._build(wallet.account(), fill, Some(&mut prepared)).await?;
+        Ok((tx, func, prepared))
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
-        access_key: Option<&TempoAccessKeyConfig>,
+        tempo_wallet: Option<&mut TempoAccountsWallet>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         // prepare
         let sender = sender.into();
@@ -595,15 +599,8 @@ where
             let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
             self.resolve_auth(&sender, tx_nonce).await?;
         }
-        if let Some(access_key) = access_key {
-            self.tx
-                .prepare_access_key_authorization(
-                    &self.provider,
-                    access_key.wallet_address,
-                    access_key.key_address,
-                    access_key.key_authorization.as_ref(),
-                )
-                .await?;
+        if let Some(wallet) = tempo_wallet {
+            *wallet = self.tx.prepare_with_tempo_wallet(&self.provider, wallet).await?;
         }
         if fill {
             self.fill_fees().await?;
@@ -752,10 +749,10 @@ where
                         && let Some(data) = &payload.data
                         && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
                     {
-                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
+                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error);
                     }
                 }
-                eyre::bail!("Failed to estimate gas: {}", err)
+                eyre::bail!("Failed to estimate gas: {}", err);
             }
         }
     }

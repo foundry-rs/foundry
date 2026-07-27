@@ -2700,6 +2700,11 @@ impl TestResult {
         extend!(self, call_result, TraceKind::Execution);
     }
 
+    /// Merges the given pre-test setup result into `self`.
+    pub(crate) fn extend_setup<FEN: FoundryEvmNetwork>(&mut self, call_result: RawCallResult<FEN>) {
+        extend!(self, call_result, TraceKind::Setup);
+    }
+
     /// Merges the given coverage result into `self`.
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.line_coverage, other_coverage);

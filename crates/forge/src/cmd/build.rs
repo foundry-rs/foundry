@@ -112,7 +112,7 @@ impl BuildArgs {
                 files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
             if files.is_empty() {
-                eyre::bail!("No source files found in specified build paths.")
+                eyre::bail!("No source files found in specified build paths.");
             }
         }
 

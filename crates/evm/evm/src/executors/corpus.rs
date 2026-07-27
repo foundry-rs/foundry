@@ -1535,10 +1535,10 @@ impl WorkerCorpus {
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
         function: &Function,
-    ) -> Result<Bytes> {
+    ) -> Result<BasicTxDetails> {
         // Early return if not running with coverage guided fuzzing.
         if !self.config.is_coverage_guided() {
-            return Ok(self.new_tx(test_runner)?.call_details.calldata);
+            return self.new_tx(test_runner);
         }
 
         self.cull_corpus()?;
@@ -1581,14 +1581,14 @@ impl WorkerCorpus {
                 None => {
                     // Stateless fuzz inputs cannot apply sequence-level mutation strategies.
                     self.current_mutated_index = None;
-                    return Ok(self.new_tx(test_runner)?.call_details.calldata);
+                    return self.new_tx(test_runner);
                 }
                 _ => {}
             }
             tx
         };
 
-        Ok(tx.call_details.calldata)
+        Ok(tx)
     }
 
     /// Generates single call from corpus strategy.
@@ -2490,7 +2490,9 @@ mod tests {
     fn stateless_new_input_honors_fresh_sequence_weight() {
         let mut config = corpus_config(temp_corpus_dir());
         config.corpus_random_sequence_weight = 100;
-        let generated = basic_tx_with_calldata(vec![0x22]);
+        let mut generated = basic_tx_with_calldata(vec![0x22]);
+        generated.call_details.value = Some(U256::from(7));
+        let generated_value = generated.call_details.value;
         let seed = WorkerCorpusSeed {
             in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0x11])])],
             ..Default::default()
@@ -2501,7 +2503,8 @@ mod tests {
 
         let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
 
-        assert_eq!(input, Bytes::from(vec![0x22]));
+        assert_eq!(input.call_details.calldata, Bytes::from(vec![0x22]));
+        assert_eq!(input.call_details.value, generated_value);
         assert!(manager.current_mutated_index.is_none());
     }
 
@@ -2529,7 +2532,8 @@ mod tests {
 
         let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
 
-        assert_eq!(input, Bytes::from(vec![0x44]));
+        assert_eq!(input.call_details.calldata, Bytes::from(vec![0x44]));
+        assert_eq!(input.call_details.value, None);
         assert!(manager.current_mutated_index.is_none());
     }
 

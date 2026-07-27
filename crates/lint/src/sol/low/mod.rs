@@ -18,6 +18,9 @@ use empty_block::EMPTY_BLOCK;
 pub(crate) mod incorrect_modifier;
 use incorrect_modifier::INCORRECT_MODIFIER;
 
+mod inconsistent_type_names;
+use inconsistent_type_names::INCONSISTENT_TYPE_NAMES;
+
 mod msg_value_loop;
 use msg_value_loop::MSG_VALUE_LOOP;
 
@@ -51,6 +54,7 @@ register_lints!(
     (DeprecatedOzFunction, late, (DEPRECATED_OZ_FUNCTION)),
     (EmptyBlock, early, (EMPTY_BLOCK)),
     (IncorrectModifier, late, (INCORRECT_MODIFIER)),
+    (InconsistentTypeNames, project, (INCONSISTENT_TYPE_NAMES)),
     (MsgValueLoop, late, (MSG_VALUE_LOOP)),
     (MissingEventsAccessControl, late, (MISSING_EVENTS_ACCESS_CONTROL)),
     (MissingEventsArithmetic, late, (MISSING_EVENTS_ARITHMETIC)),

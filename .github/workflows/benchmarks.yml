@@ -172,6 +172,21 @@ jobs:
           jq -s 'add' "${base_parts[@]}" > benches/base-summary.json
           jq -s 'add' "${cand_parts[@]}" > benches/candidate-summary.json
 
+      - name: Build benchmark manifest
+        if: steps.prep.outputs.is_source_comparison == 'true'
+        run: |
+          shopt -s nullglob
+          manifests=( benches/*_bench-manifest.json )
+          if [[ ${#manifests[@]} -eq 0 ]]; then
+            echo "::error::Missing benchmark suite manifests."
+            exit 1
+          fi
+          python3 .github/scripts/benchmark_clickhouse.py manifest \
+            --output benches/benchmark-manifest.json \
+            --baseline "$(cat benches/baseline-ref.txt)" \
+            --candidate "$(cat benches/candidate-ref.txt)" \
+            "${manifests[@]}"
+
       - name: Upload benchmark results as artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -187,6 +202,7 @@ jobs:
             benches/base-summary.json
             benches/candidate-summary.json
             benches/common/
+            benches/benchmark-manifest.json
             benches/baseline-ref.txt
             benches/candidate-ref.txt
             benches/behind-count.txt
