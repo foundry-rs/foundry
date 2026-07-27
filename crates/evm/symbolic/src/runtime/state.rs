@@ -1932,7 +1932,7 @@ impl SymbolicWorld {
         to: Address,
         value: SymExpr,
     ) {
-        if value.as_const().is_some_and(|value| value.is_zero()) {
+        if from == to || value.as_const().is_some_and(|value| value.is_zero()) {
             return;
         }
         let from_balance = self.balance_word_for_address(cx, executor, from);
