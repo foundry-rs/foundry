@@ -1052,26 +1052,7 @@ impl WorkerCorpus {
             self.optimization_best_value.is_none_or(|best| *value > best)
         });
 
-        // Update stats of current mutated primary corpus.
-        if let Some(index) = self.current_mutated_index.take() {
-            let should_credit = new_coverage || improved_optimization;
-            if let Some(corpus) = self.in_memory_corpus.get_mut(index) {
-                corpus.total_mutations += 1;
-                if should_credit {
-                    corpus.new_finds_produced += 1
-                }
-                let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
-                    > FAVORABILITY_THRESHOLD;
-                self.metrics.update_favored(is_favored, corpus.is_favored);
-                corpus.is_favored = is_favored;
-
-                trace!(
-                    target: "corpus",
-                    "updated corpus {}, total mutations: {}, new finds: {}",
-                    corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
-                );
-            }
-        }
+        self.current_mutated_index = None;
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1378,9 +1359,9 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    let start = rng.random_range(0..corpus.tx_seq.len());
-                    let end = rng.random_range(start..corpus.tx_seq.len());
-                    let item_idx = rng.random_range(0..corpus.tx_seq.len());
+                    let start = test_runner.rng().random_range(0..corpus.tx_seq.len());
+                    let end = test_runner.rng().random_range(start..corpus.tx_seq.len());
+                    let item_idx = test_runner.rng().random_range(0..corpus.tx_seq.len());
                     let repeated = corpus.tx_seq[item_idx].clone();
 
                     new_seq.reserve(corpus.tx_seq.len());
@@ -1416,7 +1397,7 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    let prefix_len = rng.random_range(0..=corpus.tx_seq.len());
+                    let prefix_len = test_runner.rng().random_range(0..=corpus.tx_seq.len());
                     new_seq.reserve(corpus.tx_seq.len());
                     for _ in 0..prefix_len {
                         new_seq.push(self.new_tx(test_runner)?);
@@ -1433,7 +1414,7 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    let suffix_len = rng.random_range(0..corpus.tx_seq.len());
+                    let suffix_len = test_runner.rng().random_range(0..corpus.tx_seq.len());
                     let retained_len = corpus.tx_seq.len() - suffix_len;
                     new_seq.reserve(corpus.tx_seq.len());
                     new_seq.extend_from_slice(&corpus.tx_seq[..retained_len]);
