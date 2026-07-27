@@ -59,12 +59,30 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     pub config: Arc<RwLock<ClientForkConfig<N>>>,
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
+    /// Resolved runtime values that are not configuration overrides.
+    runtime: Arc<RwLock<ForkRuntimeInfo>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ForkRuntimeInfo {
+    gas_price: u128,
+    gas_limit: u64,
 }
 
 impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
-        Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
+        Self {
+            storage: Default::default(),
+            config: Arc::new(RwLock::new(config)),
+            database,
+            runtime: Default::default(),
+        }
+    }
+
+    pub(crate) fn with_runtime_info(self, gas_price: u128, gas_limit: u64) -> Self {
+        *self.runtime.write() = ForkRuntimeInfo { gas_price, gas_limit };
+        self
     }
 
     /// Removes all data cached from previous responses
@@ -101,6 +119,14 @@ impl<N: Network> ClientFork<N> {
 
     pub fn base_fee(&self) -> Option<u128> {
         self.config.read().base_fee
+    }
+
+    pub fn gas_price(&self) -> u128 {
+        self.runtime.read().gas_price
+    }
+
+    pub fn gas_limit(&self) -> u64 {
+        self.runtime.read().gas_limit
     }
 
     pub fn block_hash(&self) -> B256 {
@@ -456,6 +482,7 @@ impl<N: Network> ClientFork<N> {
         let block_hash = block.header().hash();
         let timestamp = block.header().timestamp();
         let base_fee = block.header().base_fee_per_gas();
+        let gas_limit = block.header().gas_limit();
         let total_difficulty = block.header().difficulty();
 
         let number = block.header().number();
@@ -466,6 +493,9 @@ impl<N: Network> ClientFork<N> {
             base_fee.map(|g| g as u128),
             total_difficulty,
         );
+        let gas_price =
+            provider.get_gas_price().await.unwrap_or_else(|_| self.runtime.read().gas_price);
+        *self.runtime.write() = ForkRuntimeInfo { gas_price, gas_limit };
 
         self.clear_cached_storage();
 
