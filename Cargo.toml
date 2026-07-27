@@ -511,7 +511,10 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "3fdec6a9178a3e507a740285a4314429323bec94", default-features = false, features = [
+alloy-transport-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "9c19671d6723de5ef1b4e6e2c048fe7619896763", default-features = false, features = [
+    "aws-lc-rs",
+] }
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "9c19671d6723de5ef1b4e6e2c048fe7619896763", default-features = false, features = [
     "tempo",
     "client",
     "reqwest-rustls-tls",

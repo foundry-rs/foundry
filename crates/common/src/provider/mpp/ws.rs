@@ -30,9 +30,7 @@ use tokio_tungstenite::{
 };
 use tracing::debug;
 
-use super::transport::{
-    LazyAccountsProvider, ResolveProvider, extract_challenge_chain_and_currency,
-};
+use super::transport::{LazyAccountsProvider, extract_challenge_chain_and_currency};
 
 type TungsteniteStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -163,7 +161,7 @@ impl MppWsConnect {
 
         // Match HTTP payment serialization for the complete challenge →
         // credential → acknowledgement lifecycle.
-        let _pay_guard = provider.lock_pay().await;
+        let _pay_guard = provider.lock_ws_payment().await;
 
         // Resolve the Charge provider from the Tempo Accounts store.
         let (chain_id, _) = extract_challenge_chain_and_currency(&challenge);

@@ -1043,6 +1043,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-transport-mpp"
+version = "0.2.0"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=9c19671d6723de5ef1b4e6e2c048fe7619896763#9c19671d6723de5ef1b4e6e2c048fe7619896763"
+dependencies = [
+ "alloy-json-rpc",
+ "alloy-pubsub",
+ "alloy-transport",
+ "alloy-transport-ws",
+ "futures",
+ "http 1.4.2",
+ "mpp",
+ "reqwest 0.13.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "time",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tower-service",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "alloy-transport-ws"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2704,7 +2729,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.20.11",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -5440,6 +5465,7 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-ipc",
+ "alloy-transport-mpp",
  "alloy-transport-ws",
  "anstream",
  "anstyle",
@@ -7674,7 +7700,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.11.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=3fdec6a9178a3e507a740285a4314429323bec94#3fdec6a9178a3e507a740285a4314429323bec94"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=9c19671d6723de5ef1b4e6e2c048fe7619896763#9c19671d6723de5ef1b4e6e2c048fe7619896763"
 dependencies = [
  "alloy",
  "async-stream",
