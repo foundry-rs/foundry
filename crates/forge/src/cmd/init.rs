@@ -82,7 +82,7 @@ impl InitArgs {
             empty,
             no_commit: _,
         } = self;
-        let DependencyInstallOpts { shallow, no_git, commit } = install;
+        let DependencyInstallOpts { shallow, no_git, commit, .. } = install;
 
         let tempo = network.is_some_and(|network| network.is_tempo());
 

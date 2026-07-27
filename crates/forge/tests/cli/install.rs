@@ -3,7 +3,7 @@
 use forge::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
 use foundry_cli::utils::{Git, Submodules};
 use foundry_compilers::artifacts::Remapping;
-use foundry_config::Config;
+use foundry_config::{Config, SolcReq};
 use foundry_test_utils::util::{
     ExtTester, FORGE_STD_REVISION, OutputExt, TestCommand, pretty_err, read_string,
 };
@@ -21,6 +21,96 @@ fn lockfile_get(root: &Path, dep_path: &Path) -> Option<DepIdentifier> {
     let mut l = Lockfile::new(root);
     l.read().unwrap();
     l.get(dep_path).cloned()
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git").current_dir(dir).args(args).output().unwrap();
+    assert!(
+        output.status.success(),
+        "git {} failed\nstdout:\n{}\nstderr:\n{}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn create_local_dep_repo(prj_root: &Path) -> PathBuf {
+    let dep = prj_root
+        .parent()
+        .unwrap()
+        .join(format!("{}-localdep-repo", prj_root.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&dep);
+    fs::create_dir_all(dep.join("src")).unwrap();
+    fs::write(
+        dep.join("src/Helper.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+library Helper {
+    function value() internal pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+    git(&dep, &["init"]);
+    git(&dep, &["add", "."]);
+    git(
+        &dep,
+        &[
+            "-c",
+            "user.name=Foundry Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "init",
+        ],
+    );
+    dep
+}
+
+fn add_missing_local_dep(prj_root: &Path) {
+    let dep = create_local_dep_repo(prj_root);
+    git(prj_root, &["init"]);
+    git(
+        prj_root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            dep.to_str().unwrap(),
+            "lib/localdep",
+        ],
+    );
+    fs::remove_dir_all(prj_root.join("lib/localdep")).unwrap();
+}
+
+fn add_broken_missing_local_dep(prj_root: &Path) {
+    let dep = create_local_dep_repo(prj_root);
+    git(prj_root, &["init"]);
+    git(
+        prj_root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            dep.to_str().unwrap(),
+            "lib/localdep",
+        ],
+    );
+    fs::remove_dir_all(prj_root.join("lib/localdep")).unwrap();
+    fs::remove_dir_all(dep).unwrap();
+    fs::remove_dir_all(prj_root.join(".git/modules/lib/localdep")).unwrap();
+}
+
+fn use_installed_solc(prj: &foundry_test_utils::util::TestProject) {
+    prj.update_config(|config| {
+        config.solc = Some(SolcReq::Version(Version::parse("0.8.30").unwrap()));
+    });
 }
 
 // checks missing dependencies are auto installed
@@ -91,6 +181,133 @@ Missing dependencies found. Installing now...
     // assert lockfile
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
+});
+
+forgetest_init!(can_install_missing_deps_script, |prj, cmd| {
+    prj.clear();
+    use_installed_solc(&prj);
+    add_missing_local_dep(prj.root());
+
+    let script = prj.add_raw_script(
+        "AutoInstall.s.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import {Helper} from "localdep/Helper.sol";
+
+contract AutoInstall {
+    function run() external pure returns (uint256) {
+        return Helper.value();
+    }
+}
+"#,
+    );
+
+    let out = cmd.arg("script").arg(script).assert_success().get_output().stdout_lossy();
+
+    assert!(out.contains("Missing dependencies found. Installing now..."), "{out}");
+    assert!(prj.root().join("lib/localdep/src/Helper.sol").exists());
+});
+
+forgetest_init!(script_aborts_if_missing_dep_install_fails, |prj, cmd| {
+    prj.clear();
+    use_installed_solc(&prj);
+    add_broken_missing_local_dep(prj.root());
+
+    let script = prj.add_raw_script(
+        "BrokenInstall.s.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import {Helper} from "localdep/Helper.sol";
+
+contract BrokenInstall {
+    function run() external pure returns (uint256) {
+        return Helper.value();
+    }
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).assert_failure();
+    assert!(!prj.root().join("lib/localdep/src/Helper.sol").exists());
+});
+
+forgetest_init!(can_install_missing_deps_verify_contract, |prj, cmd| {
+    prj.clear();
+    use_installed_solc(&prj);
+    add_missing_local_dep(prj.root());
+
+    prj.add_raw_source(
+        "VerifyMissingDep.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import {Helper} from "localdep/Helper.sol";
+
+contract VerifyMissingDep {
+    function answer() external pure returns (uint256) {
+        return Helper.value();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .arg("verify-contract")
+        .args([
+            "0x0000000000000000000000000000000000000001",
+            "src/VerifyMissingDep.sol:VerifyMissingDep",
+            "--compiler-version",
+            "0.8.30",
+            "--show-standard-json-input",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let out = output.stdout_lossy();
+    let err = output.stderr_lossy();
+
+    assert!(!out.contains("Missing dependencies found. Installing now..."), "{out}");
+    assert!(err.contains("Missing dependencies found. Installing now..."), "{err}");
+    serde_json::from_str::<serde_json::Value>(&out).unwrap();
+    assert!(out.contains("\"src/VerifyMissingDep.sol\""), "{out}");
+    assert!(out.contains("\"lib/localdep/src/Helper.sol\""), "{out}");
+    assert!(out.contains("\"localdep/=lib/localdep/src/\""), "{out}");
+    assert!(prj.root().join("lib/localdep/src/Helper.sol").exists());
+});
+
+forgetest_init!(verify_contract_aborts_if_missing_dep_install_fails, |prj, cmd| {
+    prj.clear();
+    use_installed_solc(&prj);
+    add_broken_missing_local_dep(prj.root());
+
+    prj.add_raw_source(
+        "BrokenVerify.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import {Helper} from "localdep/Helper.sol";
+
+contract BrokenVerify {
+    function answer() external pure returns (uint256) {
+        return Helper.value();
+    }
+}
+"#,
+    );
+
+    cmd.arg("verify-contract")
+        .args([
+            "0x0000000000000000000000000000000000000001",
+            "src/BrokenVerify.sol:BrokenVerify",
+            "--compiler-version",
+            "0.8.30",
+            "--show-standard-json-input",
+        ])
+        .assert_failure()
+        .stdout_eq("");
+    assert!(!prj.root().join("lib/localdep/src/Helper.sol").exists());
 });
 
 // test to check that install/remove works properly
