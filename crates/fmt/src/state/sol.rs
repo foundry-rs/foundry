@@ -1413,6 +1413,8 @@ impl<'ast> State<'_, 'ast> {
                             true
                         } else {
                             !s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()))
+                                && s.peek_comment_between(member_expr.span.hi(), ident.span.lo())
+                                    .is_none()
                                 && s.member_suffix_emits_break(expr, member_expr)
                         };
                         if break_before_suffix {

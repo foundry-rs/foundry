@@ -17,4 +17,11 @@ contract MethodChain {
             .first()
             .second();
     }
+
+    function standaloneCommentChain() external {
+        factory().
+            // preserve
+            first()
+            .second();
+    }
 }

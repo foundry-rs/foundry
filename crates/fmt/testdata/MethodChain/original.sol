@@ -12,4 +12,10 @@ function commentedChain() external {
 factory() // preserve
 .first().second();
 }
+
+function standaloneCommentChain() external {
+factory()
+// preserve
+.first().second();
+}
 }
