@@ -749,7 +749,7 @@ async fn build_session_entry(
         eyre::bail!("--from must match --root for cast wallet session create");
     }
 
-    let signer = resolve_root_signer(wallet, root_account).await?;
+    let signer = resolve_root_signer(wallet, root_account, chain_id).await?;
     let session_key = GeneratedSessionKey::random();
     let session_id = B256::random();
     let now = now_unix_timestamp()?;
@@ -775,8 +775,12 @@ async fn build_session_entry(
     prepared.into_active_entry(session_key, &signed_authorization)
 }
 
-async fn resolve_root_signer(wallet: WalletOpts, root_account: Address) -> Result<WalletSigner> {
-    let (signer, tempo_access_key) = wallet.maybe_signer().await?;
+async fn resolve_root_signer(
+    wallet: WalletOpts,
+    root_account: Address,
+    chain_id: u64,
+) -> Result<WalletSigner> {
+    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
     if tempo_access_key.is_some() {
         eyre::bail!(
             "Tempo access keys cannot authorize Tempo sessions; use a persistent root signer"

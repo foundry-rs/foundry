@@ -90,20 +90,31 @@ impl CoverageReporter for CoverageSummaryReporter {
 }
 
 fn format_cell(hits: usize, total: usize) -> Cell {
-    let percentage = if total == 0 { 1. } else { hits as f64 / total as f64 };
-
-    let mut cell =
-        Cell::new(format!("{:.2}% ({hits}/{total})", percentage * 100.)).fg(match percentage {
-            _ if total == 0 => Color::Grey,
-            _ if percentage < 0.5 => Color::Red,
-            _ if percentage < 0.75 => Color::Yellow,
-            _ => Color::Green,
-        });
-
     if total == 0 {
-        cell = cell.add_attribute(Attribute::Dim);
+        return Cell::new(format!("N/A ({hits}/{total})"))
+            .fg(Color::Grey)
+            .add_attribute(Attribute::Dim);
     }
-    cell
+
+    let percentage = hits as f64 / total as f64;
+    Cell::new(format!("{:.2}% ({hits}/{total})", percentage * 100.)).fg(match percentage {
+        _ if percentage < 0.5 => Color::Red,
+        _ if percentage < 0.75 => Color::Yellow,
+        _ => Color::Green,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_summary_cell_is_not_applicable() {
+        assert_eq!(
+            format_cell(0, 0),
+            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
+        );
+    }
 }
 
 /// Writes the coverage report in [LCOV]'s [tracefile format].

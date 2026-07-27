@@ -2,9 +2,8 @@ use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
         corpus::{
-            DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
-            finalize_corpus_after_campaign, persist_campaign_optimization,
-            prepare_corpus_for_campaign,
+            CorpusInsertionMode, DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
+            finalize_corpus_after_campaign, prepare_corpus_for_campaign,
         },
     },
     inspectors::Fuzzer,
@@ -332,16 +331,22 @@ fn campaign_seed_and_corpus_seed_for_worker(
     include_cmp_seq: bool,
     focus_seed: Option<U256>,
 ) -> (InvariantCampaignSeed, WorkerCorpusSeed) {
-    let worker_corpus_seed =
-        corpus_seed.clone_for_worker(plan.worker_id as usize, worker_count, include_cmp_seq);
     let Some(worker_campaign_seed) =
         focused_campaign_seed_for_worker(campaign_seed, plan, worker_count, focus_seed)
     else {
-        return (campaign_seed.clone(), worker_corpus_seed);
+        return (
+            campaign_seed.clone(),
+            corpus_seed.clone_for_worker(plan.worker_id as usize, worker_count, include_cmp_seq),
+        );
     };
 
-    let mut worker_corpus_seed = worker_corpus_seed;
-    worker_corpus_seed.retain_replayable(&worker_campaign_seed.targeted_contracts);
+    let mut focused_corpus_seed = corpus_seed.clone();
+    focused_corpus_seed.retain_replayable(&worker_campaign_seed.targeted_contracts);
+    let worker_corpus_seed = focused_corpus_seed.clone_for_worker(
+        plan.worker_id as usize,
+        worker_count,
+        include_cmp_seq,
+    );
     (worker_campaign_seed, worker_corpus_seed)
 }
 
@@ -427,6 +432,20 @@ fn invariant_focus_seed(
         let mut rng = runner.new_rng();
         Some(U256::from_be_bytes(rng.random::<[u8; 32]>()))
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InvariantCorpusPersistence {
+    /// Preserve the legacy single-worker behavior: each interesting input is written immediately.
+    Live,
+    /// Parallel workers write corpus entries locally and defer shared optimization persistence.
+    Deferred,
+}
+
+impl InvariantCorpusPersistence {
+    const fn is_deferred(self) -> bool {
+        matches!(self, Self::Deferred)
+    }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -813,6 +832,20 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     }
 }
 
+fn finalize_call_corpus_metadata(
+    inputs_len: usize,
+    cmp_seq: &mut Vec<Vec<crate::inspectors::CmpOperands>>,
+    call_cmp_values: Vec<crate::inspectors::CmpOperands>,
+    corpus_edges: &mut Vec<usize>,
+    corpus_edges_len: usize,
+) {
+    if cmp_seq.len() < inputs_len {
+        cmp_seq.push(call_cmp_values);
+    } else {
+        corpus_edges.truncate(corpus_edges_len);
+    }
+}
+
 /// Wrapper around any [`Executor`] implementer which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `invariant_fuzz` will proceed to hammer the deployed smart
@@ -940,6 +973,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 dynamic: Some(&dynamic),
             },
         )?;
+        let corpus_persistence = if actual_worker_count > 1 {
+            InvariantCorpusPersistence::Deferred
+        } else {
+            InvariantCorpusPersistence::Live
+        };
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -949,7 +987,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
-        let worker_outputs = if actual_worker_count > 1 {
+        let worker_outputs = if corpus_persistence.is_deferred() {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
@@ -997,6 +1035,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         &campaign_state,
                         worker_campaign_seed,
                         worker_corpus_seed,
+                        corpus_persistence,
                         actual_worker_count,
                         gas_report_samples,
                     );
@@ -1037,6 +1076,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 &campaign_state,
                 worker_campaign_seed,
                 worker_corpus_seed,
+                corpus_persistence,
                 actual_worker_count,
                 gas_report_samples,
             )?]
@@ -1046,16 +1086,27 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         for worker_output in worker_outputs {
             aggregator.push(worker_output);
         }
-        let result = if campaign_state.is_timed_campaign() {
-            aggregator.finish_partial()?
+        let (result, corpus_entries) = if campaign_state.is_timed_campaign() {
+            aggregator.finish_partial_with_corpus_entries()?
         } else {
-            aggregator.finish_campaign()?
+            aggregator.finish_with_corpus_entries()?
         };
-        persist_campaign_optimization(
-            &self.config.corpus,
-            result.optimization_best_value,
-            &result.optimization_best_sequence,
-        );
+        if corpus_persistence.is_deferred() {
+            let dynamic_target_ctx = self.dynamic_target_ctx();
+            corpus_seed.persist_filtered_campaign_outputs(
+                &self.config.corpus,
+                corpus_entries,
+                &self.executor,
+                ReplayTarget {
+                    stateless: None,
+                    fuzzed_contracts: Some(&replay_targets),
+                    dynamic: Some(&dynamic_target_ctx),
+                },
+                result
+                    .optimization_best_value
+                    .map(|value| (value, result.optimization_best_sequence.as_slice())),
+            )?;
+        }
         finalize_corpus_after_campaign(&self.config.corpus)?;
         Ok(result)
     }
@@ -1076,6 +1127,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         campaign_state: &InvariantCampaignState,
         campaign_seed: InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
+        corpus_persistence: InvariantCorpusPersistence,
         worker_count: usize,
         gas_report_samples: usize,
     ) -> Result<InvariantWorkerOutput> {
@@ -1097,6 +1149,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &campaign_seed,
             corpus_seed,
         )?;
+        let mut corpus_entries = Vec::new();
+
         let mut runs = 0;
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
 
@@ -1203,6 +1257,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     None
                 };
                 // Collect edge coverage and set the flag in the current run.
+                let corpus_edges_len = current_run.corpus_edges.len();
                 let new_call_coverage = corpus_manager.merge_edge_coverage_with_edges_into(
                     &mut call_result,
                     &mut current_run.corpus_edges,
@@ -1220,6 +1275,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                 if discarded {
                     current_run.inputs.pop();
+                    finalize_call_corpus_metadata(
+                        current_run.inputs.len(),
+                        &mut current_run.cmp_seq,
+                        call_cmp_values,
+                        &mut current_run.corpus_edges,
+                        corpus_edges_len,
+                    );
                     current_run.rejects += 1;
                     if current_run.rejects > config.max_assume_rejects {
                         invariant_test.set_error(
@@ -1378,9 +1440,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                     // Keep `cmp_seq` parallel to `inputs`: only push when the input survived the
                     // pop branch above.
-                    if current_run.cmp_seq.len() < current_run.inputs.len() {
-                        current_run.cmp_seq.push(call_cmp_values);
-                    }
+                    finalize_call_corpus_metadata(
+                        current_run.inputs.len(),
+                        &mut current_run.cmp_seq,
+                        call_cmp_values,
+                        &mut current_run.corpus_edges,
+                        corpus_edges_len,
+                    );
 
                     if !continues || current_run.depth == run_depth - 1 {
                         current_run.save_last_run_inputs = true;
@@ -1461,12 +1527,20 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
             }
 
+            let insertion_mode = if corpus_persistence.is_deferred() {
+                CorpusInsertionMode::Deferred
+            } else {
+                CorpusInsertionMode::Live
+            };
             for (observed_calls, parent_tx) in observed_call_entries {
-                corpus_manager.hoist_observed_calls(
+                if let Some(entry) = corpus_manager.hoist_observed_calls(
                     &observed_calls,
                     &parent_tx,
                     &invariant_test.targeted_contracts,
-                );
+                    insertion_mode,
+                ) {
+                    corpus_entries.push(entry);
+                }
             }
 
             // Extend corpus only after the run and its optional hook have completed.
@@ -1474,13 +1548,25 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
             });
-            corpus_manager.process_inputs(
-                &current_run.inputs,
-                &current_run.cmp_seq,
-                current_run.new_coverage,
-                std::mem::take(&mut current_run.corpus_edges),
-                optimization,
-            );
+            if corpus_persistence.is_deferred() {
+                if let Some(input) = corpus_manager.process_inputs_for_campaign(
+                    &current_run.inputs,
+                    &current_run.cmp_seq,
+                    current_run.new_coverage,
+                    std::mem::take(&mut current_run.corpus_edges),
+                    optimization,
+                ) {
+                    corpus_entries.push(input);
+                }
+            } else {
+                corpus_manager.process_inputs(
+                    &current_run.inputs,
+                    &current_run.cmp_seq,
+                    current_run.new_coverage,
+                    std::mem::take(&mut current_run.corpus_edges),
+                    optimization,
+                );
+            }
 
             // End current invariant test run.
             if current_run.save_last_run_inputs {
@@ -1543,8 +1629,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("⚠ {handler_bugs} handler bug(s)"));
                     }
-                    let msg =
-                        if worker_count > 1 { format!("[w{}] {msg}", plan.worker_id) } else { msg };
+                    let msg = if corpus_persistence.is_deferred() {
+                        format!("[w{}] {msg}", plan.worker_id)
+                    } else {
+                        msg
+                    };
                     progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
@@ -1621,7 +1710,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // `first_global_run` offsets were computed from the original partition.
             plan
         };
-        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result })
+        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result, corpus_entries })
     }
 
     fn shrink_handler_failures(
@@ -2348,6 +2437,39 @@ mod tests {
         any::<u64>().new_tree(runner).unwrap().current()
     }
 
+    #[test]
+    fn assumed_calls_do_not_retain_corpus_edges() {
+        let mut cmp_seq = vec![Vec::new()];
+        let mut corpus_edges = vec![1, 2, 3, 4];
+
+        finalize_call_corpus_metadata(1, &mut cmp_seq, Vec::new(), &mut corpus_edges, 2);
+
+        assert_eq!(cmp_seq.len(), 1);
+        assert_eq!(corpus_edges, [1, 2]);
+    }
+
+    #[test]
+    fn reverted_calls_do_not_retain_corpus_edges() {
+        let mut cmp_seq = vec![Vec::new(), Vec::new()];
+        let mut corpus_edges = vec![1, 2, 3, 4, 5];
+
+        finalize_call_corpus_metadata(2, &mut cmp_seq, Vec::new(), &mut corpus_edges, 3);
+
+        assert_eq!(cmp_seq.len(), 2);
+        assert_eq!(corpus_edges, [1, 2, 3]);
+    }
+
+    #[test]
+    fn retained_calls_append_cmp_metadata_without_truncating_edges() {
+        let mut cmp_seq = vec![Vec::new()];
+        let mut corpus_edges = vec![1, 2, 3, 4];
+
+        finalize_call_corpus_metadata(2, &mut cmp_seq, Vec::new(), &mut corpus_edges, 2);
+
+        assert_eq!(cmp_seq.len(), 2);
+        assert_eq!(corpus_edges, [1, 2, 3, 4]);
+    }
+
     fn test_runner() -> TestRunner {
         TestRunner::new(Config { failure_persistence: None, ..Default::default() })
     }
@@ -2771,6 +2893,7 @@ mod tests {
                     &campaign_state,
                     campaign_seed,
                     WorkerCorpusSeed::default(),
+                    InvariantCorpusPersistence::Live,
                     1,
                     1,
                 );
@@ -2797,6 +2920,7 @@ mod tests {
         assert!(output.result.line_coverage.is_none());
         assert!(output.result.metrics.is_empty());
         assert!(output.result.optimization_best_value.is_none());
+        assert!(output.corpus_entries.is_empty());
     }
 
     #[test]
