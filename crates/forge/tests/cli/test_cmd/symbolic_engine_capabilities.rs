@@ -611,3 +611,42 @@ Ran 1 test for test/PrankedValueTransfer.t.sol:PrankedValueTransfer
 ...
 "#]]);
 });
+
+forgetest_init!(pranked_self_value_transfer, |prj, cmd| {
+    skip_unless_z3!("pranked_self_value_transfer");
+
+    prj.add_test(
+        "PrankedSelfValueTransfer.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract PrankedSelfValueTransfer is Test {
+    address constant ALICE = address(0xA11CE);
+
+    function checkSelfTransferPreservesBalance(uint96 amount) public {
+        vm.deal(ALICE, amount);
+
+        vm.prank(ALICE);
+        (bool ok,) = ALICE.call{value: amount}("");
+
+        assertTrue(ok);
+        assertEq(ALICE.balance, amount);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSelfTransferPreservesBalance",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/PrankedSelfValueTransfer.t.sol:PrankedSelfValueTransfer
+[PASS] checkSelfTransferPreservesBalance(uint96) ([METRICS])
+...
+"#]]);
+});
