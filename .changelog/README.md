@@ -41,3 +41,25 @@ changelogs doctor
 changelogs status
 changelogs version --dry-run
 ```
+
+## Pull requests
+
+Pull requests must add or update a `.changelog/*.md` entry unless a maintainer applies
+the existing `L-ignore` label. Use the exemption for changes that should not appear in
+release notes, such as CI-only or repository-maintenance changes.
+
+Each entry maps one or more workspace package names to `patch`, `minor`, or `major` and
+includes a non-empty release note:
+
+```md
+---
+forge: minor
+cast: patch
+---
+
+Added a Forge feature and fixed the related Cast behavior.
+```
+
+PR validation is deterministic and independent of the advisory AI suggestion. It rejects
+malformed frontmatter, unknown packages, invalid bump values, empty package mappings,
+empty notes, and entries that are only deleted.
