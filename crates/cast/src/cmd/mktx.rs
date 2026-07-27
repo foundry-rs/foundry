@@ -101,6 +101,13 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
+        if self.tx.tempo.sponsor_url.is_some() {
+            eyre::bail!(
+                "--sponsor-url is not supported by cast mktx; use --tempo.sponsor with \
+                 --tempo.sponsor-signer or --tempo.sponsor-sig"
+            );
+        }
+
         if self.tx.tempo.session_id()?.is_some() {
             return self.run_generic::<TempoNetwork>(None, None).await;
         }

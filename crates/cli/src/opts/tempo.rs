@@ -125,7 +125,7 @@ pub struct TempoOpts {
     /// This option is supported by `cast send` and `cast erc20`. Forge commands currently support
     /// local sponsorship through `--tempo.sponsor` and `--tempo.sponsor-signer` instead.
     ///
-    /// Example: `cast send 0x... --sponsor-url https://sponsor.tempo.xyz/tp_abc123`
+    /// Example: `cast send 0x... --sponsor-url https://sponsor.moderato.tempo.xyz`
     #[arg(
         long = "sponsor-url",
         alias = "tempo.sponsor-url",

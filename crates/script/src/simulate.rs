@@ -19,7 +19,10 @@ use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell};
+use foundry_common::{
+    ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell,
+    tempo::known_fee_token_symbol,
+};
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
     traces::{decode_trace_arena, prune_trace_depth, render_trace_arena_inner},
@@ -375,11 +378,22 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
 
-                // Get the native token symbol for the chain using NamedChain
-                let token_symbol = NamedChain::try_from(provider_info.chain)
-                    .unwrap_or_default()
-                    .native_currency_symbol()
-                    .unwrap_or("ETH");
+                let token_symbol = if self.script_config.evm_opts.networks.is_tempo() {
+                    self.args.tempo.fee_token.map_or_else(
+                        || "TIP-20".to_string(),
+                        |fee_token| {
+                            known_fee_token_symbol(fee_token)
+                                .map(str::to_string)
+                                .unwrap_or_else(|| fee_token.to_string())
+                        },
+                    )
+                } else {
+                    NamedChain::try_from(provider_info.chain)
+                        .unwrap_or_default()
+                        .native_currency_symbol()
+                        .unwrap_or("ETH")
+                        .to_string()
+                };
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.

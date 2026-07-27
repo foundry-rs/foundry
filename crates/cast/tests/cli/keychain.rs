@@ -250,6 +250,30 @@ casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
 });
 
+casttest!(keychain_rejects_remote_sponsor_instead_of_ignoring_it, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    let stderr = cmd
+        .cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+            "--sponsor-url",
+            "http://localhost:1",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("--sponsor-url is not supported by cast keychain"), "{stderr}");
+});
+
 // TODO: remove this check once browser supports T5/T6 KeyAuthorization fields
 casttest!(key_authorization_sign_rejects_browser_witness_before_browser_run, |_prj, cmd| {
     let stderr = cmd
@@ -541,6 +565,13 @@ casttest!(send_with_local_sponsor_reports_sponsor_as_fee_payer, async |_prj, cmd
     assert_eq!(
         fee_payer,
         accounts::ADDR2.parse::<alloy_primitives::Address>().unwrap(),
+        "unexpected receipt: {output}"
+    );
+    let fee_token: alloy_primitives::Address =
+        receipt["feeToken"].as_str().expect("feeToken").parse().expect("valid feeToken");
+    assert_eq!(
+        fee_token,
+        path_usd.parse::<alloy_primitives::Address>().unwrap(),
         "unexpected receipt: {output}"
     );
 });

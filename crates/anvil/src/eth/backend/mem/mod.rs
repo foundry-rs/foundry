@@ -4813,6 +4813,15 @@ where
                 _ => info.from,
             };
             inner = inner.with_fee_payer(fee_payer);
+
+            // Match Tempo's receipt conversion: the final log of every non-free
+            // transaction is the fee token transfer to TIPFeeManager.
+            if inner.effective_gas_price() > 0
+                && inner.gas_used() > 0
+                && let Some(fee_token) = inner.0.inner.logs().last().map(|log| log.address())
+            {
+                inner = inner.with_fee_token(fee_token);
+            }
         }
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
