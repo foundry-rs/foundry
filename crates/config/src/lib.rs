@@ -5998,6 +5998,7 @@ mod tests {
             assert_eq!(config.verbosity, 4);
             assert_eq!(config.tracing.verbosity, 0);
             assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 5);
 
             Ok(())
         });
