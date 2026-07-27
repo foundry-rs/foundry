@@ -97,7 +97,7 @@ contract Issue6636Test is Issue6636Assertions {
 
     /// forge-config: default.fuzz.runs = 2
     function testFuzzLibraryDeploymentRecordedPerInput(uint256 value) public {
-        value = vm.bound(value, 0, type(uint256).max - 1);
+        value = bound(value, 0, type(uint256).max - 1);
         assertLibraryDeployment(recordLibraryCall(value));
     }
 }
