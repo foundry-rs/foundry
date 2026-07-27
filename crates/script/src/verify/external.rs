@@ -1,6 +1,6 @@
 //! Acquisition, compilation, and matching of external Solidity sources.
 
-use alloy_dyn_abi::JsonAbiExt;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Constructor;
 use alloy_primitives::{Address, Bytes, keccak256};
 use eyre::{Result, bail, eyre};
@@ -761,6 +761,33 @@ fn sanitize_remote(message: &[u8]) -> String {
     if clean.is_empty() { "no diagnostic".to_string() } else { clean }
 }
 
+fn is_canonical_value(value: &DynSolValue) -> bool {
+    match value {
+        DynSolValue::Uint(value, bits) => value.bit_len() <= *bits,
+        DynSolValue::Int(value, bits) => {
+            if *bits == 0 || *bits > 256 || bits % 8 != 0 {
+                return false;
+            }
+            let bytes = value.to_be_bytes::<32>();
+            let value_start = 32 - bits / 8;
+            let extension = if bytes[value_start] & 0x80 == 0 { 0 } else { 0xff };
+            bytes[..value_start].iter().all(|byte| *byte == extension)
+        }
+        DynSolValue::FixedBytes(value, size) => {
+            *size <= value.len() && value[*size..].iter().all(|byte| *byte == 0)
+        }
+        DynSolValue::Array(values)
+        | DynSolValue::FixedArray(values)
+        | DynSolValue::Tuple(values) => values.iter().all(is_canonical_value),
+        DynSolValue::CustomStruct { tuple, .. } => tuple.iter().all(is_canonical_value),
+        DynSolValue::Bool(_)
+        | DynSolValue::Address(_)
+        | DynSolValue::Function(_)
+        | DynSolValue::Bytes(_)
+        | DynSolValue::String(_) => true,
+    }
+}
+
 pub(super) fn match_candidates<'a>(
     observed: &[u8],
     candidates: impl IntoIterator<Item = &'a Candidate>,
@@ -773,13 +800,14 @@ pub(super) fn match_candidates<'a>(
         }
         let Some(suffix) = observed.strip_prefix(bytecode) else { continue };
         let valid = match &candidate.constructor {
-            None => suffix.is_empty(),
-            Some(constructor) if constructor.inputs.is_empty() => suffix.is_empty(),
+            None => true,
+            Some(constructor) if constructor.inputs.is_empty() => true,
             Some(constructor) => constructor
                 .abi_decode_input(suffix)
                 .ok()
+                .filter(|values| values.iter().all(is_canonical_value))
                 .and_then(|values| constructor.abi_encode_input(&values).ok())
-                .is_some_and(|encoded| encoded == suffix),
+                .is_some_and(|encoded| suffix.starts_with(&encoded)),
         };
         if valid
             && !matches.iter().any(|item: &ExternalMatch| {
@@ -1207,7 +1235,7 @@ mod tests {
     }
 
     #[test]
-    fn constructor_matching_is_canonical() {
+    fn static_constructor_matching_accepts_trailing_data_and_preserves_full_suffix() {
         let constructor: JsonAbi = serde_json::from_value(json!([{
             "type": "constructor", "inputs": [{"name":"n", "type":"uint256"}]
         }]))
@@ -1216,30 +1244,113 @@ mod tests {
         let mut observed = vec![0x60, 0x00];
         observed.extend([0; 31]);
         observed.push(7);
+        observed.extend([0xaa, 0xbb]);
         let MatchResult::Unique(found) =
             match_candidates(&observed, std::slice::from_ref(&candidate))
         else {
             panic!("expected match")
         };
-        assert_eq!(found.constructor_args.len(), 32);
+        assert_eq!(found.constructor_args.as_ref(), &observed[2..]);
         assert!(matches!(match_candidates(&[0x60, 0x00, 7], &[candidate]), MatchResult::None));
     }
 
     #[test]
-    fn no_constructor_and_zero_inputs_require_empty_suffix() {
+    fn dynamic_constructor_matching_requires_a_canonical_prefix() {
+        let constructor: JsonAbi = serde_json::from_value(json!([{
+            "type": "constructor",
+            "inputs": [{"name":"n", "type":"uint256"}, {"name":"data", "type":"bytes"}]
+        }]))
+        .unwrap();
+        let candidate = candidate("A.sol:A", constructor);
+        let mut args = vec![0; 128];
+        args[31] = 7;
+        args[63] = 64;
+        args[95] = 2;
+        args[96..98].copy_from_slice(&[0xaa, 0xbb]);
+        let mut observed = candidate.creation_bytecode.to_vec();
+        observed.extend_from_slice(&args);
+        observed.extend([0xcc, 0xdd, 0xee]);
+        let MatchResult::Unique(matched) =
+            match_candidates(&observed, std::slice::from_ref(&candidate))
+        else {
+            panic!("expected match")
+        };
+        assert_eq!(matched.constructor_args.as_ref(), &observed[2..]);
+
+        args[127] = 1;
+        let mut noncanonical = candidate.creation_bytecode.to_vec();
+        noncanonical.extend(args);
+        assert!(matches!(match_candidates(&noncanonical, &[candidate]), MatchResult::None));
+    }
+
+    #[test]
+    fn narrow_constructor_values_require_canonical_words() {
+        let constructor: JsonAbi = serde_json::from_value(json!([{
+            "type": "constructor", "inputs": [{"name":"n", "type":"uint8"}]
+        }]))
+        .unwrap();
+        let candidate = candidate("A.sol:A", constructor);
+        let mut observed = candidate.creation_bytecode.to_vec();
+        observed.extend([0; 31]);
+        observed.push(7);
+        assert!(matches!(
+            match_candidates(&observed, std::slice::from_ref(&candidate)),
+            MatchResult::Unique(_)
+        ));
+
+        observed[2] = 1;
+        assert!(matches!(match_candidates(&observed, &[candidate]), MatchResult::None));
+    }
+
+    #[test]
+    fn struct_constructor_values_require_canonical_words() {
+        let constructor: JsonAbi = serde_json::from_value(json!([{
+            "type": "constructor",
+            "inputs": [{
+                "name": "s",
+                "type": "tuple",
+                "internalType": "struct A.S",
+                "components": [{"name": "n", "type": "uint8", "internalType": "uint8"}]
+            }]
+        }]))
+        .unwrap();
+        let candidate = candidate("A.sol:A", constructor);
+        let mut observed = candidate.creation_bytecode.to_vec();
+        observed.extend([0; 31]);
+        observed.push(7);
+        assert!(matches!(
+            match_candidates(&observed, std::slice::from_ref(&candidate)),
+            MatchResult::Unique(_)
+        ));
+
+        observed[2] = 1;
+        assert!(matches!(match_candidates(&observed, &[candidate]), MatchResult::None));
+    }
+
+    #[test]
+    fn no_constructor_and_zero_inputs_accept_and_preserve_suffixes() {
         let none = candidate("A.sol:A", JsonAbi::default());
         assert!(matches!(
             match_candidates(&[0x60, 0x00], std::slice::from_ref(&none)),
             MatchResult::Unique(_)
         ));
-        assert!(matches!(match_candidates(&[0x60, 0x00, 0], &[none]), MatchResult::None));
+        let MatchResult::Unique(matched) = match_candidates(&[0x60, 0x00, 0xaa], &[none]) else {
+            panic!("expected match")
+        };
+        assert_eq!(matched.constructor_args.as_ref(), &[0xaa]);
 
         let zero: JsonAbi =
             serde_json::from_value(json!([{"type":"constructor","inputs":[]}])).unwrap();
         assert!(matches!(
-            match_candidates(&[0x60, 0x00], &[candidate("B.sol:B", zero)]),
+            match_candidates(&[0x60, 0x00], &[candidate("B.sol:B", zero.clone())]),
             MatchResult::Unique(_)
         ));
+        let MatchResult::Unique(matched) =
+            match_candidates(&[0x60, 0x00, 0xbb], &[candidate("B.sol:B", zero)])
+        else {
+            panic!("expected match")
+        };
+        assert_eq!(matched.constructor_args.as_ref(), &[0xbb]);
     }
 
     #[test]
