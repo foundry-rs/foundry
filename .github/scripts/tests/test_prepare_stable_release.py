@@ -113,6 +113,32 @@ class ManifestTests(unittest.TestCase):
                 prepare_stable_release.repair_solar_alias(manifest, original, "1.7.2")
 
 
+class ChangelogTests(unittest.TestCase):
+    def test_accepts_expected_release_heading_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            changelog = Path(directory) / "CHANGELOG.md"
+            prepare_stable_release.verify_release_heading_count(changelog, "1.7.2", 0)
+            changelog.write_text("# Changelog\n\n## 1.7.2 (2026-07-27)\n\n- Added a feature.\n")
+            prepare_stable_release.verify_release_heading_count(changelog, "1.7.2", 1)
+
+    def test_rejects_unexpected_release_heading_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            changelog = Path(directory) / "CHANGELOG.md"
+            cases = [
+                ("## 1.7.2 (2026-07-27)\n", 0, 1),
+                ("## 1.7.1 (2026-07-20)\n", 1, 0),
+                ("## 1.7.2 (2026-07-27)\n\n## 1.7.2 (2026-07-28)\n", 1, 2),
+            ]
+            for content, expected, actual in cases:
+                with self.subTest(expected=expected, actual=actual):
+                    changelog.write_text(content)
+                    error = f"contains {actual}.*expected {expected}"
+                    with self.assertRaisesRegex(prepare_stable_release.ReleaseError, error):
+                        prepare_stable_release.verify_release_heading_count(
+                            changelog, "1.7.2", expected
+                        )
+
+
 class WorkspaceTests(unittest.TestCase):
     def test_verifies_every_workspace_member(self) -> None:
         metadata = {

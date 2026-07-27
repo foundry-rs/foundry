@@ -108,6 +108,16 @@ def pending_fragments(root: Path) -> list[Path]:
     )
 
 
+def verify_release_heading_count(changelog: Path, candidate: str, expected: int) -> None:
+    content = changelog.read_text() if changelog.exists() else ""
+    heading = re.compile(rf"^## {re.escape(candidate)} \([^\n)]+\)$", re.MULTILINE)
+    count = len(heading.findall(content))
+    if count != expected:
+        raise ReleaseError(
+            f"root CHANGELOG.md contains {count} {candidate} release heading(s), expected {expected}"
+        )
+
+
 def verify_workspace_versions(metadata: dict, expected: str) -> int:
     members = set(metadata["workspace_members"])
     packages_by_id = {package["id"]: package for package in metadata["packages"]}
@@ -205,6 +215,7 @@ def verify_changed_paths(root: Path, fragments: list[Path]) -> None:
 
 def prepare(root: Path, changelogs: Path) -> None:
     manifest = root / "Cargo.toml"
+    changelog = root / "CHANGELOG.md"
     original_manifest = manifest.read_text()
     candidate = workspace_version(manifest)
     candidate_version = parse_version(candidate)
@@ -213,6 +224,8 @@ def prepare(root: Path, changelogs: Path) -> None:
         set_output("changed", "false")
         print("No pending changelog fragments.")
         return
+
+    verify_release_heading_count(changelog, candidate, 0)
 
     tags = run(["git", "tag", "--list", "v*"], root, capture_output=True).stdout
     stable_tag, stable_version = latest_stable_tag(tags)
@@ -264,9 +277,7 @@ def prepare(root: Path, changelogs: Path) -> None:
     if any(path.exists() for path in fragments):
         raise ReleaseError("changelogs CLI did not consume every pending fragment")
 
-    changelog = root / "CHANGELOG.md"
-    if not changelog.exists() or f"## {candidate} (" not in changelog.read_text():
-        raise ReleaseError(f"root CHANGELOG.md does not contain a {candidate} release heading")
+    verify_release_heading_count(changelog, candidate, 1)
 
     run(["cargo", "generate-lockfile"], root)
     metadata = json.loads(
