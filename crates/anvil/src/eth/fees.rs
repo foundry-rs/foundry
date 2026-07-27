@@ -11,7 +11,7 @@ use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::Blob
 use alloy_network::Network;
 use alloy_primitives::B256;
 use futures::StreamExt;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
@@ -38,32 +38,38 @@ pub const MIN_SUGGESTED_PRIORITY_FEE: u128 = 1e9 as u128;
 /// Stores the fee related information
 #[derive(Clone, Debug)]
 pub struct FeeManager {
-    /// Hardfork identifier
+    state: Arc<RwLock<FeeState>>,
+    /// Whether the minimum suggested priority fee is enforced
+    is_min_priority_fee_enforced: bool,
+    /// Network-specific base fee params for EIP-1559 calculations
+    base_fee_params: BaseFeeParams,
+}
+
+/// Mutable fee state that must change atomically when switching forks.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeeState {
+    /// Hardfork identifier.
     spec_id: SpecId,
-    /// The blob params that determine blob fees
-    blob_params: Arc<RwLock<BlobParams>>,
+    /// The blob params that determine blob fees.
+    blob_params: BlobParams,
     /// Tracks the base fee for the next block post London
     ///
     /// This value will be updated after a new block was mined
-    base_fee: Arc<RwLock<u64>>,
-    /// Whether the minimum suggested priority fee is enforced
-    is_min_priority_fee_enforced: bool,
+    base_fee: u64,
     /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
     ///
     /// This value will be updated after a new block was mined
-    blob_excess_gas_and_price: Arc<RwLock<BlobExcessGasAndPrice>>,
+    blob_excess_gas_and_price: BlobExcessGasAndPrice,
     /// The base price to use Pre London
     ///
     /// This will be constant value unless changed manually
-    gas_price: Arc<RwLock<u128>>,
-    elasticity: Arc<RwLock<f64>>,
-    /// Network-specific base fee params for EIP-1559 calculations
-    base_fee_params: BaseFeeParams,
+    gas_price: u128,
+    elasticity: f64,
     /// The active Tempo hardfork, set only when running a Tempo chain.
     ///
     /// Tempo replaces EIP-1559: pre-T7 the base fee is fixed, and T7+ uses the TIP-1067 dynamic
     /// controller. It is updated once after a fork's hardfork is auto-detected.
-    tempo_hardfork: Arc<RwLock<Option<TempoHardfork>>>,
+    tempo_hardfork: Option<TempoHardfork>,
 }
 
 impl FeeManager {
@@ -80,48 +86,75 @@ impl FeeManager {
     ) -> Self {
         let elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
         Self {
-            spec_id,
-            blob_params: Arc::new(RwLock::new(blob_params)),
-            base_fee: Arc::new(RwLock::new(base_fee)),
+            state: Arc::new(RwLock::new(FeeState {
+                spec_id,
+                blob_params,
+                base_fee,
+                blob_excess_gas_and_price,
+                gas_price,
+                elasticity,
+                tempo_hardfork,
+            })),
             is_min_priority_fee_enforced,
-            gas_price: Arc::new(RwLock::new(gas_price)),
-            blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
-            elasticity: Arc::new(RwLock::new(elasticity)),
             base_fee_params,
-            tempo_hardfork: Arc::new(RwLock::new(tempo_hardfork)),
         }
+    }
+
+    /// Returns a detached copy whose mutations are not visible to this manager.
+    pub(crate) fn detached(&self) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(self.snapshot())),
+            is_min_priority_fee_enforced: self.is_min_priority_fee_enforced,
+            base_fee_params: self.base_fee_params,
+        }
+    }
+
+    /// Returns a snapshot of all mutable fee state.
+    pub(crate) fn snapshot(&self) -> FeeState {
+        *self.state.read()
+    }
+
+    /// Locks all mutable fee state for an atomic replacement.
+    pub(crate) fn write_state(&self) -> RwLockWriteGuard<'_, FeeState> {
+        self.state.write()
     }
 
     /// Returns the active Tempo hardfork, if running a Tempo chain.
     pub fn tempo_hardfork(&self) -> Option<TempoHardfork> {
-        *self.tempo_hardfork.read()
+        self.state.read().tempo_hardfork
     }
 
-    /// Sets the active Tempo hardfork, used after a fork's hardfork is auto-detected.
+    /// Sets the active Tempo hardfork after fork auto-detection.
     pub fn set_tempo_hardfork(&self, hardfork: Option<TempoHardfork>) {
-        *self.tempo_hardfork.write() = hardfork;
+        self.state.write().tempo_hardfork = hardfork;
     }
 
     pub fn elasticity(&self) -> f64 {
-        *self.elasticity.read()
+        self.state.read().elasticity
     }
 
     /// Returns true for post London
-    pub const fn is_eip1559(&self) -> bool {
-        (self.spec_id as u8) >= (SpecId::LONDON as u8)
+    pub fn is_eip1559(&self) -> bool {
+        (self.state.read().spec_id as u8) >= (SpecId::LONDON as u8)
     }
 
-    pub const fn is_eip4844(&self) -> bool {
-        (self.spec_id as u8) >= (SpecId::CANCUN as u8)
+    pub fn is_eip4844(&self) -> bool {
+        (self.state.read().spec_id as u8) >= (SpecId::CANCUN as u8)
     }
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
-        if self.is_eip4844() { self.base_fee_per_blob_gas() } else { 0 }
+        let state = self.state.read();
+        if (state.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            state.blob_excess_gas_and_price.blob_gasprice
+        } else {
+            0
+        }
     }
 
     pub fn base_fee(&self) -> u64 {
-        if self.is_eip1559() { *self.base_fee.read() } else { 0 }
+        let state = self.state.read();
+        if (state.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 }
     }
 
     pub const fn is_min_priority_fee_enforced(&self) -> bool {
@@ -130,35 +163,38 @@ impl FeeManager {
 
     /// Raw base gas price
     pub fn raw_gas_price(&self) -> u128 {
-        *self.gas_price.read()
+        self.state.read().gas_price
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        self.is_eip4844().then(|| *self.blob_excess_gas_and_price.read())
+        let state = self.state.read();
+        ((state.spec_id as u8) >= (SpecId::CANCUN as u8)).then_some(state.blob_excess_gas_and_price)
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
-        if self.is_eip4844() { self.blob_excess_gas_and_price.read().blob_gasprice } else { 0 }
+        let state = self.state.read();
+        if (state.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            state.blob_excess_gas_and_price.blob_gasprice
+        } else {
+            0
+        }
     }
 
     /// Returns the current gas price
     pub fn set_gas_price(&self, price: u128) {
-        let mut gas = self.gas_price.write();
-        *gas = price;
+        self.state.write().gas_price = price;
     }
 
     /// Returns the current base fee
     pub fn set_base_fee(&self, fee: u64) {
         trace!(target: "backend::fees", "updated base fee {:?}", fee);
-        let mut base = self.base_fee.write();
-        *base = fee;
+        self.state.write().base_fee = fee;
     }
 
     /// Sets the current blob excess gas and price
     pub fn set_blob_excess_gas_and_price(&self, blob_excess_gas_and_price: BlobExcessGasAndPrice) {
         trace!(target: "backend::fees", "updated blob base fee {:?}", blob_excess_gas_and_price);
-        let mut base = self.blob_excess_gas_and_price.write();
-        *base = blob_excess_gas_and_price;
+        self.state.write().blob_excess_gas_and_price = blob_excess_gas_and_price;
     }
 
     /// Calculates the base fee for the next block
@@ -168,13 +204,19 @@ impl FeeManager {
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
+        let state = self.state.read();
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if self.base_fee() == 0 {
+        if state.base_fee == 0 {
             return 0;
         }
-        self.calculate_next_block_base_fee_per_gas(gas_used, gas_limit, last_fee_per_gas)
+        self.calculate_next_block_base_fee_per_gas_with_state(
+            &state,
+            gas_used,
+            gas_limit,
+            last_fee_per_gas,
+        )
     }
 
     /// Calculates the next block base fee from the parent block without applying the configured
@@ -185,11 +227,26 @@ impl FeeManager {
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
-        if !self.is_eip1559() {
+        self.calculate_next_block_base_fee_per_gas_with_state(
+            &self.state.read(),
+            gas_used,
+            gas_limit,
+            last_fee_per_gas,
+        )
+    }
+
+    fn calculate_next_block_base_fee_per_gas_with_state(
+        &self,
+        state: &FeeState,
+        gas_used: u64,
+        gas_limit: u64,
+        last_fee_per_gas: u64,
+    ) -> u64 {
+        if (state.spec_id as u8) < (SpecId::LONDON as u8) {
             return 0;
         }
         // Tempo replaces EIP-1559 with its own hardfork-specific base fee rules.
-        if let Some(hardfork) = self.tempo_hardfork() {
+        if let Some(hardfork) = state.tempo_hardfork {
             return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
         }
         calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, self.base_fee_params)
@@ -197,27 +254,27 @@ impl FeeManager {
 
     /// Calculates the next block blob base fee.
     pub fn get_next_block_blob_base_fee_per_gas(&self) -> u128 {
-        self.blob_params().calc_blob_fee(self.blob_excess_gas_and_price.read().excess_blob_gas)
+        let state = self.state.read();
+        state.blob_params.calc_blob_fee(state.blob_excess_gas_and_price.excess_blob_gas)
     }
 
     /// Calculates the next block blob excess gas, using the provided parent blob excess gas and
     /// parent blob gas used
     pub fn get_next_block_blob_excess_gas(&self, blob_excess_gas: u64, blob_gas_used: u64) -> u64 {
-        self.blob_params().next_block_excess_blob_gas_osaka(
-            blob_excess_gas,
-            blob_gas_used,
-            self.base_fee(),
-        )
+        let state = self.state.read();
+        let base_fee =
+            if (state.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 };
+        state.blob_params.next_block_excess_blob_gas_osaka(blob_excess_gas, blob_gas_used, base_fee)
     }
 
     /// Configures the blob params
     pub fn set_blob_params(&self, blob_params: BlobParams) {
-        *self.blob_params.write() = blob_params;
+        self.state.write().blob_params = blob_params;
     }
 
     /// Returns the active [`BlobParams`]
     pub fn blob_params(&self) -> BlobParams {
-        *self.blob_params.read()
+        self.state.read().blob_params
     }
 }
 

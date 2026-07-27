@@ -1423,6 +1423,11 @@ latest block number: {latest_block}"
             ..block_env_from_header(&block.header)
         };
 
+        // Preserve whether the chain ID was configured explicitly before remote discovery. The
+        // resolved value is stored on this config for the active fork, while the fork metadata
+        // retains the override provenance for later URL changes and fork clearing.
+        let override_chain_id = self.chain_id;
+
         // Determine chain_id early so we can use it consistently
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
@@ -1503,7 +1508,6 @@ latest block number: {latest_block}"
 
         let block_hash = block.header.hash;
 
-        let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
         apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
             evm_env,

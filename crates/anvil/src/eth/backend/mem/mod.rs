@@ -2598,144 +2598,94 @@ impl<N: Network> Backend<N> {
         Ok(())
     }
 
+    /// Applies fork-specific genesis state to a detached database.
+    fn apply_fork_genesis(&self, db: &mut dyn Db) -> DatabaseResult<()> {
+        for address in self.genesis.accounts.iter().copied() {
+            let mut info = db.basic_ref(address)?.unwrap_or_default();
+            info.balance = self.genesis.balance;
+            db.insert_account(address, info);
+        }
+        self.genesis.apply_genesis_json_alloc_to(db)
+    }
+
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
-        if !self.is_fork() {
-            if let Some(eth_rpc_url) = forking.json_rpc_url.clone() {
-                let mut evm_env = self.evm_env.read().clone();
-
-                let (db, config) = {
-                    let mut node_config = self.node_config.write().await;
-
-                    // we want to force the correct base fee for the next block during
-                    // `setup_fork_db_config`
-                    node_config.base_fee.take();
-                    node_config.fork_urls = vec![eth_rpc_url.clone()];
-                    node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
-
-                    node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
-                };
-
-                *self.db.write().await = Box::new(db);
-
-                let fork = ClientFork::new(config, Arc::clone(&self.db));
-
-                *self.evm_env.write() = evm_env;
-                *self.fork.write() = Some(fork);
-            } else {
-                return Err(RpcError::invalid_params(
+        let current_fork = self.get_fork();
+        let target_rpc_url = forking
+            .json_rpc_url
+            .clone()
+            .or_else(|| current_fork.as_ref().and_then(ClientFork::eth_rpc_url))
+            .ok_or_else(|| {
+                RpcError::invalid_params(
                     "Forking not enabled and RPC URL not provided to start forking",
                 )
-                .into());
-            }
-        }
-
-        if let Some(fork) = self.get_fork() {
-            let block_number =
-                forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
-            // reset the fork entirely and reapply the genesis config
-            let reset_urls =
-                forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
-            let target_rpc_url = forking.json_rpc_url.clone().or_else(|| fork.eth_rpc_url());
-            let rpc_url_changed = target_rpc_url != fork.database_rpc_url();
-            fork.prepare_reset(reset_urls, block_number.into()).await?;
-            if rpc_url_changed {
-                // Clear state fetched from the previous RPC URL before persisting the cache.
-                fork.database.write().await.clear_into_state_snapshot();
-            }
-            // Persist fetched remote state before rebuilding the fork database so the new
-            // block-specific database can load it from disk.
+            })?;
+        if let Some(fork) = &current_fork {
             fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
-            let fork_block_number = fork.block_number();
-            if rpc_url_changed {
-                let cache_dir = {
-                    let config = self.node_config.read().await;
-                    if config.no_storage_caching || config.fork_urls.is_empty() {
-                        None
-                    } else {
-                        foundry_config::Config::foundry_chain_cache_dir(config.get_chain_id())
-                    }
-                };
-                if let Some(cache_dir) = cache_dir
-                    && let Err(err) = std::fs::remove_dir_all(&cache_dir)
-                    && err.kind() != std::io::ErrorKind::NotFound
-                {
-                    return Err(BlockchainError::Internal(format!(
-                        "failed to invalidate fork cache at {}: {err}",
-                        cache_dir.display()
-                    )));
-                }
-            }
-            let fork_block = fork
-                .block_by_number(fork_block_number)
-                .await?
-                .ok_or(BlockchainError::BlockNotFound)?;
-            // update all settings related to the forked block
-            {
-                if let Some(fork_url) = forking.json_rpc_url {
-                    self.reset_block_number(fork_url, fork_block_number).await?;
-                } else {
-                    // If rpc url is unspecified, then update the fork with the new block number and
-                    // existing rpc url, this updates the cache path
-                    if let Some(fork_url) = target_rpc_url.clone() {
-                        self.reset_block_number(fork_url, fork_block_number).await?;
-                    }
-
-                    let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
-                    let mut env = self.evm_env.write();
-
-                    env.cfg_env.chain_id = fork.chain_id();
-                    env.block_env = BlockEnv {
-                        number: U256::from(fork_block_number),
-                        timestamp: U256::from(fork_block.header.timestamp()),
-                        gas_limit,
-                        difficulty: fork_block.header.difficulty(),
-                        prevrandao: Some(fork_block.header.mix_hash().unwrap_or_default()),
-                        // Keep previous `beneficiary` and `basefee` value
-                        beneficiary: env.block_env.beneficiary,
-                        basefee: env.block_env.basefee,
-                        ..env.block_env.clone()
-                    };
-
-                    // this is the base fee of the current block, but we need the base fee of
-                    // the next block
-                    let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                        fork_block.header.gas_used(),
-                        gas_limit,
-                        fork_block.header.base_fee_per_gas().unwrap_or_default(),
-                    );
-
-                    self.fees.set_base_fee(next_block_base_fee);
-                }
-
-                // reset the time to the timestamp of the forked block
-                self.time.reset(fork_block.header.timestamp());
-                // drop any pending next-block prevrandao override so it does not leak into a block
-                self.cheats.clear_next_block_prevrandao();
-
-                // also reset the total difficulty
-                self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
-            }
-            // reset storage
-            *self.blockchain.storage.write() = BlockchainStorage::forked(
-                fork.block_number(),
-                fork.block_hash(),
-                fork.total_difficulty(),
-            );
-            self.states.write().clear();
-            self.apply_genesis().await?;
-            fork.set_database_rpc_url(target_rpc_url);
-
-            trace!(target: "backend", "reset fork");
-
-            Ok(())
-        } else {
-            Err(RpcError::invalid_params("Forking not enabled").into())
         }
+
+        let mut node_config = self.node_config.read().await.clone();
+        if let Some(fork) = &current_fork {
+            // The active config contains the remotely resolved chain ID. Restore its provenance so
+            // a new endpoint is queried unless the user explicitly forced a chain ID.
+            node_config.set_chain_id(fork.override_chain_id());
+        }
+        node_config.fork_urls = vec![target_rpc_url.clone()];
+        node_config.fork_choice =
+            forking.block_number.map(|number| ForkChoice::Block(number as i128));
+
+        let mut evm_env = self.evm_env.read().clone();
+        node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
+        let candidate_fees = self.fees.detached();
+        let (mut db, config) =
+            node_config.setup_fork_db_config(target_rpc_url, &mut evm_env, &candidate_fees).await?;
+        self.apply_fork_genesis(&mut db)?;
+        let candidate_fee_state = candidate_fees.snapshot();
+        let fork = ClientFork::new(config, Arc::clone(&self.db));
+
+        let _mining_guard = self.mining.lock().await;
+
+        // Acquire every live-state guard before publishing the prepared fork. No fallible or
+        // asynchronous work occurs while these guards are held, so setup failures cannot expose a
+        // partially prepared fee spec while the old fork is still active.
+        {
+            let mut live_node_config = self.node_config.write().await;
+            let mut live_db = self.db.write().await;
+            let mut live_env = self.evm_env.write();
+            let mut live_fork = self.fork.write();
+            let mut live_fee_state = self.fees.write_state();
+            *live_node_config = node_config;
+            *live_db = Box::new(db);
+            *live_env = evm_env;
+            *live_fork = Some(fork.clone());
+            *live_fee_state = candidate_fee_state;
+        }
+
+        self.time.reset(fork.timestamp());
+        self.cheats.clear_next_block_prevrandao();
+        *self.blockchain.storage.write() = BlockchainStorage::forked(
+            fork.block_number(),
+            fork.block_hash(),
+            fork.total_difficulty(),
+        );
+        self.states.write().clear();
+
+        trace!(target: "backend", "reset fork");
+        Ok(())
     }
 
     /// Resets the backend to a fresh in-memory state, clearing all existing data
     pub async fn reset_to_in_mem(&self) -> Result<(), BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
+        let fallback_chain_id = {
+            let current_fork = self.get_fork();
+            let mut config = self.node_config.write().await;
+            if let Some(fork) = &current_fork {
+                config.set_chain_id(fork.override_chain_id());
+            }
+            config.get_chain_id()
+        };
+
         // Clear the fork if any exists
         *self.fork.write() = None;
 
@@ -2751,6 +2701,7 @@ impl<N: Network> Backend<N> {
         // Reset environment to genesis state
         {
             let mut env = self.evm_env.write();
+            env.cfg_env.chain_id = fallback_chain_id;
             env.block_env.number = U256::from(genesis_number);
             env.block_env.timestamp = U256::from(genesis_timestamp);
             // Reset other block env fields to their defaults
@@ -2800,28 +2751,6 @@ impl<N: Network> Backend<N> {
         self.apply_genesis().await?;
 
         trace!(target: "backend", "reset to fresh in-memory state");
-
-        Ok(())
-    }
-
-    async fn reset_block_number(
-        &self,
-        fork_url: String,
-        fork_block_number: u64,
-    ) -> Result<(), BlockchainError> {
-        let mut node_config = self.node_config.write().await;
-        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
-        // Update fork_urls so setup_fork_db_config uses the correct URL set
-        node_config.fork_urls = vec![fork_url.clone()];
-
-        let mut evm_env = self.evm_env.read().clone();
-        let (forked_db, client_fork_config) =
-            node_config.setup_fork_db_config(fork_url, &mut evm_env, &self.fees).await?;
-
-        *self.db.write().await = Box::new(forked_db);
-        let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-        *self.fork.write() = Some(fork);
-        *self.evm_env.write() = evm_env;
 
         Ok(())
     }
@@ -6390,6 +6319,7 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 #[cfg(test)]
 mod tests {
     use crate::{NodeConfig, spawn};
+    use alloy_rpc_types::anvil::Forking;
 
     #[tokio::test]
     async fn test_deterministic_block_mining() {
@@ -6443,5 +6373,46 @@ mod tests {
             block_a_1.header.hash, block_a_2.header.hash,
             "Different blocks should have different hashes"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reset_waits_for_active_mining() {
+        let (source_api, source_handle) = spawn(NodeConfig::test()).await;
+        source_api.mine_one().await;
+        let (api, _) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+                .with_fork_block_number(Some(1u64)),
+        )
+        .await;
+
+        let mining_guard = api.backend.mining.lock().await;
+        let reset_api = api.clone();
+        let reset = tokio::spawn(async move {
+            reset_api
+                .anvil_reset(Some(Forking {
+                    json_rpc_url: Some(source_handle.http_endpoint()),
+                    block_number: Some(1u64),
+                }))
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!reset.is_finished());
+
+        drop(mining_guard);
+        reset.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reset_to_in_memory_waits_for_active_mining() {
+        let (api, _) = spawn(NodeConfig::test()).await;
+        let mining_guard = api.backend.mining.lock().await;
+        let reset_api = api.clone();
+        let reset = tokio::spawn(async move { reset_api.anvil_reset(None).await });
+        tokio::task::yield_now().await;
+        assert!(!reset.is_finished());
+
+        drop(mining_guard);
+        reset.await.unwrap().unwrap();
     }
 }

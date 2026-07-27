@@ -1403,6 +1403,138 @@ async fn test_anvil_reset_fork_to_non_fork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_fork_refreshes_inferred_chain_id() {
+    let (source_a_api, source_a_handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    source_a_api.mine_one().await;
+    let (source_b_api, source_b_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(56u64))).await;
+    source_b_api.mine_one().await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source_a_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert_eq!(api.chain_id(), 1);
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source_b_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(api.chain_id(), 56);
+    let sender = api.accounts().unwrap()[0];
+    handle
+        .http_provider()
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(Address::random())
+                .with_value(U256::from(1u64)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    api.anvil_reset(None).await.unwrap();
+    assert_eq!(api.chain_id(), 31337);
+    handle
+        .http_provider()
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(Address::random())
+                .with_value(U256::from(1u64)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source_a_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64))
+            .with_chain_id(Some(31337u64)),
+    )
+    .await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source_b_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(api.chain_id(), 31337);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_failed_fork_reset_preserves_live_state() {
+    let (source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::London.into()))
+            .with_base_fee(Some(1_000u64))
+            .with_genesis_timestamp(Some(1_628_166_823u64)),
+    )
+    .await;
+    source_api.evm_set_next_block_timestamp(1_628_166_824u64).unwrap();
+    source_api.mine_one().await;
+
+    let (other_api, other_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::London.into())),
+    )
+    .await;
+    other_api.mine_one().await;
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let node_info = api.anvil_node_info().await.unwrap();
+    let fork = api.get_fork().unwrap();
+    let fork_url = fork.eth_rpc_url();
+    let fork_block_number = fork.block_number();
+    let fork_block_hash = fork.block_hash();
+    let hardfork = api.backend.hardfork();
+    let spec_id = api.backend.spec_id();
+    let base_fee = api.backend.base_fee();
+    let gas_price = api.gas_price();
+    let instance_id = api.instance_id();
+    let overridden = Address::random();
+    let overridden_balance = U256::from(123_456u64);
+    api.anvil_set_balance(overridden, overridden_balance).await.unwrap();
+
+    let result = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(other_handle.http_endpoint()),
+            block_number: Some(999u64),
+        }))
+        .await;
+    assert!(result.is_err());
+
+    assert_eq!(api.anvil_node_info().await.unwrap(), node_info);
+    let fork = api.get_fork().unwrap();
+    assert_eq!(fork.eth_rpc_url(), fork_url);
+    assert_eq!(fork.block_number(), fork_block_number);
+    assert_eq!(fork.block_hash(), fork_block_hash);
+    assert_eq!(api.backend.hardfork(), hardfork);
+    assert_eq!(api.backend.spec_id(), spec_id);
+    assert_eq!(api.backend.base_fee(), base_fee);
+    assert_eq!(api.gas_price(), gas_price);
+    assert_eq!(api.instance_id(), instance_id);
+    assert_eq!(api.balance(overridden, None).await.unwrap(), overridden_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t0() {
     let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
     let (api, handle) = spawn(config).await;
