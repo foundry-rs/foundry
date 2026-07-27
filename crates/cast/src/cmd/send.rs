@@ -47,7 +47,7 @@ pub struct SendTxArgs {
     #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
-    /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
+    /// Raw hex-encoded data for the transaction. Used instead of `SIG` and `ARGS`.
     #[arg(
         long,
         conflicts_with_all = &["sig", "args"]
