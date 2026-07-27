@@ -434,24 +434,47 @@ contract ForgeFuzzReplayFailureTest {
         prj.root().join("cache/fuzz/failures/ForgeFuzzReplayFailureTest/testFuzz_reverts");
     let mut failure: Value =
         serde_json::from_str(&std::fs::read_to_string(&failure_path).unwrap()).unwrap();
+    let persisted_failure: BaseCounterExample = serde_json::from_value(failure.clone()).unwrap();
+    let persisted_value = U256::from_be_slice(&persisted_failure.calldata[4..]);
     let failure = failure.as_object_mut().unwrap();
     failure.remove("sender");
     failure.remove("addr");
     failure.remove("value");
     std::fs::write(&failure_path, serde_json::to_vec_pretty(failure).unwrap()).unwrap();
 
-    let replay = cmd
-        .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
-        .assert_failure();
-    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.contains("[FAIL: EvmError: Revert; counterexample: calldata=0x")
-            && stdout.contains("args=[200]] testFuzz_reverts(uint256) (runs: 0,"),
-        "{stdout}"
+    let expected = format!(
+        r#"No files changed, compilation skipped
+
+Ran 2 tests for test/ForgeFuzzReplayFailure.t.sol:ForgeFuzzReplayFailureTest
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[{persisted_value}]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+Traces:
+  [..] ForgeFuzzReplayFailureTest::testFuzz_reverts({persisted_value})
+    └─ ← [Revert] EvmError: Revert
+
+Backtrace:
+  at ForgeFuzzReplayFailureTest.testFuzz_reverts
+
+[SKIP: not runnable in replay mode] test_unit() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 1 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForgeFuzzReplayFailure.t.sol:ForgeFuzzReplayFailureTest
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[{persisted_value}]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+"#
     );
-    assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
-    assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(expected);
 });
 
 forgetest_init!(stateless_fuzz_preserves_payable_value, |prj, cmd| {
@@ -590,7 +613,7 @@ contract ForgeFuzzReplayAssumeRejectTest {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     function testFuzz_reverts(uint256 value) public {
-        vm.assume(value != 200);
+        vm.assume(value > 200);
         require(false, "fresh unrelated failure");
     }
 }
