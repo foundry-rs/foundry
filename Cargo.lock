@@ -6031,7 +6031,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=b937e7ea997e07937ab340e0d8e9c700c641a330#b937e7ea997e07937ab340e0d8e9c700c641a330"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=0634adf765123f985f2993f548cd8f1116a7235b#0634adf765123f985f2993f548cd8f1116a7235b"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -7674,7 +7674,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.11.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=3ea54e5eca3d93069f1e282733b84ee6aa425944#3ea54e5eca3d93069f1e282733b84ee6aa425944"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=3fdec6a9178a3e507a740285a4314429323bec94#3fdec6a9178a3e507a740285a4314429323bec94"
 dependencies = [
  "alloy",
  "async-stream",
