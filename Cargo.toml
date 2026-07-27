@@ -543,10 +543,9 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-# Solar PR 1025.
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "b904198a61d128a1ea3b667e94de6df63b9ba26d" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "b904198a61d128a1ea3b667e94de6df63b9ba26d" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "b904198a61d128a1ea3b667e94de6df63b9ba26d" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 
 ## foundry-core
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
