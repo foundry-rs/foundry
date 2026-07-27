@@ -997,6 +997,36 @@ impl<N: Network> Backend<N> {
         evm_env
     }
 
+    /// Creates the database and environment for replaying a locally mined block.
+    ///
+    /// An empty block execution applies protocol-level pre-execution changes, such as the
+    /// EIP-2935 parent hash system call, through the same network-specific executor used while
+    /// mining.
+    fn prepare_block_replay<'a>(
+        &self,
+        block: &Block,
+        parent_state: &'a StateDb,
+    ) -> (CacheDB<&'a StateDb>, EvmEnv) {
+        let mut cache_db = AnvilCacheDB::new(parent_state);
+        let evm_env = self.tx_replay_evm_env(&block.header);
+        let spec_id = *evm_env.spec_id();
+        let inspector_tx_config = self.inspector_tx_config();
+        let gas_config = self.pool_tx_gas_config(&evm_env);
+
+        let _ = self.execute_with_block_executor(
+            &mut cache_db,
+            &evm_env,
+            block.header.parent_hash,
+            spec_id,
+            &[],
+            &gas_config,
+            &inspector_tx_config,
+            &|_, _| Ok(()),
+        );
+
+        (cache_db.0, evm_env)
+    }
+
     /// Builds [`Inspector`] with the configured options.
     fn build_inspector(&self) -> AnvilInspector {
         let mut inspector = AnvilInspector::default();
@@ -2620,10 +2650,8 @@ impl<N: Network> Backend<N> {
         trace_config: TracingInspectorConfig,
         trace_types: &HashSet<TraceType>,
     ) -> Option<Vec<TraceResultsWithTransactionHash>> {
-        let mut cache_db = CacheDB::new(Box::new(parent_state));
+        let (mut cache_db, evm_env) = self.prepare_block_replay(block, parent_state);
         let mut results = Vec::new();
-
-        let evm_env = self.tx_replay_evm_env(&block.header);
 
         // Execute each transaction in the block with tracing
         for tx_envelope in &block.body.transactions {
@@ -4611,10 +4639,8 @@ where
         let parent_hash = block.header.parent_hash;
 
         let trace = |parent_state: &StateDb| -> Result<Vec<TransactionOpcodeGas>, BlockchainError> {
-            let mut cache_db = CacheDB::new(Box::new(parent_state));
+            let (mut cache_db, evm_env) = self.prepare_block_replay(block, parent_state);
             let mut transactions = Vec::with_capacity(block.body.transactions.len());
-
-            let evm_env = self.tx_replay_evm_env(&block.header);
 
             for tx_envelope in &block.body.transactions {
                 let mut inspector = OpcodeGasInspector::default();
