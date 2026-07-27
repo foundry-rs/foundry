@@ -241,7 +241,7 @@ impl CorpusEntry {
 struct CachedDiskCorpus {
     descriptors: Vec<CorpusDirEntry>,
     descriptor_indices: HashMap<Uuid, usize>,
-    cache: VecDeque<CorpusEntry>,
+    cache: VecDeque<Arc<CorpusEntry>>,
     cache_max_len: usize,
 }
 
@@ -270,7 +270,15 @@ impl CachedDiskCorpus {
         }
     }
 
-    fn cache_entry(&mut self, corpus: CorpusEntry) {
+    fn remove_descriptor_at(&mut self, index: usize) {
+        let removed = self.descriptors.swap_remove(index);
+        self.descriptor_indices.remove(&removed.uuid);
+        if let Some(moved) = self.descriptors.get(index) {
+            self.descriptor_indices.insert(moved.uuid, index);
+        }
+    }
+
+    fn cache_entry(&mut self, corpus: Arc<CorpusEntry>) {
         if self.cache_max_len == 0 {
             return;
         }
@@ -283,29 +291,82 @@ impl CachedDiskCorpus {
         }
     }
 
+    fn retain_replayable(&mut self, is_replayable: impl Fn(&[BasicTxDetails]) -> bool) {
+        let cached_replayability = self
+            .cache
+            .iter()
+            .map(|entry| (entry.uuid, is_replayable(&entry.tx_seq)))
+            .collect::<HashMap<_, _>>();
+        self.cache.retain(|entry| is_replayable(&entry.tx_seq));
+        self.descriptors.retain(|descriptor| {
+            cached_replayability.get(&descriptor.uuid).copied().unwrap_or_else(|| {
+                descriptor
+                    .read_tx_seq()
+                    .is_ok_and(|tx_seq| !tx_seq.is_empty() && is_replayable(&tx_seq))
+            })
+        });
+        self.descriptor_indices.clear();
+        self.descriptor_indices
+            .extend(self.descriptors.iter().enumerate().map(|(index, entry)| (entry.uuid, index)));
+    }
+
     fn random_entry(
         &mut self,
         rng: &mut TestRng,
-    ) -> foundry_common::fs::Result<Option<CorpusEntry>> {
-        if self.cache.is_empty() && self.descriptors.is_empty() {
-            return Ok(None);
-        }
+    ) -> foundry_common::fs::Result<Option<Arc<CorpusEntry>>> {
+        loop {
+            if self.cache.is_empty() && self.descriptors.is_empty() {
+                return Ok(None);
+            }
 
-        if !self.cache.is_empty() && (self.descriptors.is_empty() || rng.random::<bool>()) {
-            let index = rng.random_range(0..self.cache.len());
-            return Ok(self.cache.get(index).cloned());
-        }
+            if self.descriptors.is_empty() {
+                let index = rng.random_range(0..self.cache.len());
+                return Ok(self.cache.get(index).cloned());
+            }
 
-        let descriptor = &self.descriptors[rng.random_range(0..self.descriptors.len())];
-        let tx_seq = descriptor.read_tx_seq()?;
-        if tx_seq.is_empty() {
-            return Ok(None);
+            let descriptor_index = rng.random_range(0..self.descriptors.len());
+            let descriptor = self.descriptors[descriptor_index].clone();
+            if let Some(cached) = self.cache.iter().find(|entry| entry.uuid == descriptor.uuid) {
+                return Ok(Some(Arc::clone(cached)));
+            }
+
+            let tx_seq = match descriptor.read_tx_seq() {
+                Ok(tx_seq) if !tx_seq.is_empty() => tx_seq,
+                Ok(_) => {
+                    self.remove_descriptor_at(descriptor_index);
+                    continue;
+                }
+                Err(err) => {
+                    debug!(target: "corpus", path=%descriptor.path.display(), %err, "removing unreadable corpus donor");
+                    self.remove_descriptor_at(descriptor_index);
+                    continue;
+                }
+            };
+            let mut corpus = CorpusEntry::new_with_cmp_and_edges(
+                tx_seq,
+                Vec::new(),
+                Vec::new(),
+                descriptor.uuid,
+            );
+            corpus.timestamp = descriptor.timestamp;
+            let corpus = Arc::new(corpus);
+            self.cache_entry(Arc::clone(&corpus));
+            return Ok(Some(corpus));
         }
-        let mut corpus =
-            CorpusEntry::new_with_cmp_and_edges(tx_seq, Vec::new(), Vec::new(), descriptor.uuid);
-        corpus.timestamp = descriptor.timestamp;
-        self.cache_entry(corpus.clone());
-        Ok(Some(corpus))
+    }
+}
+
+enum MutationCorpus {
+    InMemory(usize),
+    Disk(Arc<CorpusEntry>),
+}
+
+impl MutationCorpus {
+    fn get<'a>(&'a self, in_memory: &'a [CorpusEntry]) -> &'a CorpusEntry {
+        match self {
+            Self::InMemory(index) => &in_memory[*index],
+            Self::Disk(entry) => entry,
+        }
     }
 }
 
@@ -487,9 +548,17 @@ impl WorkerCorpusSeed {
         let is_replayable =
             |tx_seq: &[BasicTxDetails]| tx_seq.iter().all(|tx| targeted_contracts.can_replay(tx));
         self.in_memory_corpus.retain(|entry| is_replayable(&entry.tx_seq));
+        self.disk_corpus.retain_replayable(is_replayable);
+        self.top_rated.clear();
+        for entry in &self.in_memory_corpus {
+            WorkerCorpus::update_top_rated_in(&mut self.top_rated, entry);
+        }
         self.metrics.corpus_count = self.in_memory_corpus.len();
-        self.metrics.favored_items =
-            self.in_memory_corpus.iter().filter(|entry| entry.is_favored).count();
+        WorkerCorpus::recompute_favored_for_entries(
+            &self.top_rated,
+            &mut self.in_memory_corpus,
+            &mut self.metrics,
+        );
 
         if !self.optimization_best_sequence.is_empty()
             && !is_replayable(&self.optimization_best_sequence)
@@ -529,7 +598,6 @@ impl WorkerCorpusSeed {
         let mut seen_entries =
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
         for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
-            seed.disk_corpus.push_descriptor(entry.clone());
             // A corrupt or truncated corpus file (e.g. a process killed mid-write, since entries
             // are persisted non-atomically) must not abort the whole campaign startup: skip it
             // and keep loading the rest of the corpus.
@@ -563,6 +631,7 @@ impl WorkerCorpusSeed {
                 continue;
             }
 
+            seed.disk_corpus.push_descriptor(entry.clone());
             seed.metrics.corpus_count += 1;
             debug!(
                 target: "corpus",
@@ -1149,22 +1218,19 @@ impl WorkerCorpus {
     fn random_mutation_corpus(
         &mut self,
         rng: &mut TestRng,
-    ) -> foundry_common::fs::Result<Option<(Option<usize>, CorpusEntry)>> {
+    ) -> foundry_common::fs::Result<Option<MutationCorpus>> {
         if self.in_memory_corpus.is_empty() {
-            return self
-                .disk_corpus
-                .random_entry(rng)
-                .map(|entry| entry.map(|entry| (None, entry)));
+            return self.disk_corpus.random_entry(rng).map(|entry| entry.map(MutationCorpus::Disk));
         }
 
         if rng.random::<bool>()
             && let Some(entry) = self.disk_corpus.random_entry(rng)?
         {
-            return Ok(Some((None, entry)));
+            return Ok(Some(MutationCorpus::Disk(entry)));
         }
 
         let index = rng.random_range(0..self.in_memory_corpus.len());
-        Ok(Some((Some(index), self.in_memory_corpus[index].clone())))
+        Ok(Some(MutationCorpus::InMemory(index)))
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -1315,17 +1381,17 @@ impl WorkerCorpus {
         };
 
         if !self.in_memory_corpus.is_empty() || !self.disk_corpus.is_empty() {
-            self.cull_corpus()?;
-
             let mutation_type =
                 weighted_mutation_type(test_runner.rng(), &self.mutation_distribution);
 
-            let Some((_, primary)) = self.random_mutation_corpus(test_runner.rng())? else {
+            let Some(primary) = self.random_mutation_corpus(test_runner.rng())? else {
                 return Ok(vec![self.new_tx(test_runner)?]);
             };
-            let Some((_, secondary)) = self.random_mutation_corpus(test_runner.rng())? else {
+            let Some(secondary) = self.random_mutation_corpus(test_runner.rng())? else {
                 return Ok(vec![self.new_tx(test_runner)?]);
             };
+            let primary = primary.get(&self.in_memory_corpus);
+            let secondary = secondary.get(&self.in_memory_corpus);
 
             match mutation_type {
                 MutationType::Splice => {
@@ -1487,8 +1553,6 @@ impl WorkerCorpus {
             return self.new_tx(test_runner);
         }
 
-        self.cull_corpus()?;
-
         let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
         let generate_fresh = (self.in_memory_corpus.is_empty() && self.disk_corpus.is_empty())
             || (fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100));
@@ -1496,9 +1560,10 @@ impl WorkerCorpus {
         let tx = if generate_fresh {
             self.new_tx(test_runner)?
         } else {
-            let Some((_, corpus)) = self.random_mutation_corpus(test_runner.rng())? else {
+            let Some(corpus) = self.random_mutation_corpus(test_runner.rng())? else {
                 return self.new_tx(test_runner);
             };
+            let corpus = corpus.get(&self.in_memory_corpus);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
@@ -1695,12 +1760,21 @@ impl WorkerCorpus {
         let mut old_to_new = vec![None; self.in_memory_corpus.len()];
         let mut retained = Vec::with_capacity(self.in_memory_corpus.len());
         let mut evicted_uuids = HashSet::new();
+        let unsynced_uuids = self
+            .new_entry_indices
+            .iter()
+            .filter_map(|&index| self.in_memory_corpus.get(index).map(|entry| entry.uuid))
+            .collect::<HashSet<_>>();
 
         for (old_index, corpus) in self.in_memory_corpus.drain(..).enumerate() {
-            if !corpus.is_favored && remaining_removals > 0 {
+            if !corpus.is_favored
+                && !unsynced_uuids.contains(&corpus.uuid)
+                && remaining_removals > 0
+            {
                 trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
-                self.disk_corpus.cache_entry(corpus.clone());
-                evicted_uuids.insert(corpus.uuid);
+                let uuid = corpus.uuid;
+                self.disk_corpus.cache_entry(Arc::new(corpus));
+                evicted_uuids.insert(uuid);
                 remaining_removals -= 1;
             } else {
                 old_to_new[old_index] = Some(retained.len());
@@ -2962,12 +3036,36 @@ mod tests {
         let foo_selector = foo.selector();
         let foo_tx = tx_for_function(target, &foo, &[]);
         let bar_tx = tx_for_function(target, &bar, &[]);
-        let mut foo_entry = CorpusEntry::new(vec![foo_tx.clone()]);
+        let mut foo_entry = CorpusEntry::new_with_cmp_and_edges(
+            vec![foo_tx.clone()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
         foo_entry.is_favored = true;
-        let mut bar_entry = CorpusEntry::new(vec![bar_tx.clone()]);
+        let mut bar_entry = CorpusEntry::new_with_cmp_and_edges(
+            vec![bar_tx.clone()],
+            Vec::new(),
+            vec![2],
+            Uuid::new_v4(),
+        );
         bar_entry.is_favored = true;
+        let foo_uuid = foo_entry.uuid;
+        let bar_uuid = bar_entry.uuid;
+        let corpus_dir = temp_corpus_dir();
+        let bar_path = corpus_dir.join(format!("{bar_uuid}-1.json"));
+        std::fs::write(&bar_path, serde_json::to_vec(&vec![bar_tx.clone()]).unwrap()).unwrap();
+        let mut disk_corpus = CachedDiskCorpus::default();
+        disk_corpus.push_descriptor(CorpusDirEntry {
+            path: bar_path,
+            uuid: bar_uuid,
+            timestamp: 1,
+        });
+        disk_corpus.cache_entry(Arc::new(bar_entry.clone()));
         let mut seed = WorkerCorpusSeed {
             in_memory_corpus: vec![foo_entry, bar_entry],
+            disk_corpus,
+            top_rated: HashMap::from([(1, (foo_uuid, 1)), (2, (bar_uuid, 1))]),
             metrics: CorpusMetrics { corpus_count: 2, favored_items: 2, ..Default::default() },
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: vec![bar_tx],
@@ -2991,6 +3089,9 @@ mod tests {
         );
         assert_eq!(seed.metrics.corpus_count, 1);
         assert_eq!(seed.metrics.favored_items, 1);
+        assert!(seed.disk_corpus.descriptors.is_empty());
+        assert!(seed.disk_corpus.cache.is_empty());
+        assert_eq!(seed.top_rated, HashMap::from([(1, (foo_uuid, 1))]));
         assert!(seed.optimization_best_value.is_none());
         assert!(seed.optimization_best_sequence.is_empty());
     }
@@ -3340,6 +3441,28 @@ mod tests {
     }
 
     #[test]
+    fn culling_keeps_unsynced_entries_until_export() {
+        let mut favored = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
+        favored.is_favored = true;
+        let unsynced = CorpusEntry::new(vec![basic_tx()]);
+        let unsynced_uuid = unsynced.uuid;
+        let mut manager = seeded_worker_corpus(1, temp_corpus_dir(), vec![favored, unsynced]);
+        manager.new_entry_indices.push(1);
+
+        manager.cull_corpus().unwrap();
+        assert!(manager.in_memory_corpus.iter().any(|entry| entry.uuid == unsynced_uuid));
+
+        manager.new_entry_indices.clear();
+        manager.cull_corpus().unwrap();
+        assert!(!manager.in_memory_corpus.iter().any(|entry| entry.uuid == unsynced_uuid));
+    }
+
+    #[test]
     fn cached_disk_corpus_bounds_evicted_entries() {
         let mut cache = CachedDiskCorpus { cache_max_len: 2, ..CachedDiskCorpus::default() };
 
@@ -3350,13 +3473,29 @@ mod tests {
         let second_uuid = second.uuid;
         let third_uuid = third.uuid;
 
-        cache.cache_entry(first);
-        cache.cache_entry(second);
-        cache.cache_entry(third);
+        cache.cache_entry(Arc::new(first));
+        cache.cache_entry(Arc::new(second));
+        cache.cache_entry(Arc::new(third));
 
         assert_eq!(cache.cache.len(), 2);
         assert!(!cache.cache.iter().any(|entry| entry.uuid == first_uuid));
         assert!(cache.cache.iter().any(|entry| entry.uuid == second_uuid));
         assert!(cache.cache.iter().any(|entry| entry.uuid == third_uuid));
+    }
+
+    #[test]
+    fn cached_disk_corpus_prunes_unreadable_descriptors() {
+        let uuid = Uuid::new_v4();
+        let mut cache = CachedDiskCorpus::default();
+        cache.push_descriptor(CorpusDirEntry {
+            path: temp_corpus_dir().join(format!("{uuid}-1.json")),
+            uuid,
+            timestamp: 1,
+        });
+
+        let mut runner = TestRunner::default();
+        assert!(cache.random_entry(runner.rng()).unwrap().is_none());
+        assert!(cache.descriptors.is_empty());
+        assert!(cache.descriptor_indices.is_empty());
     }
 }
