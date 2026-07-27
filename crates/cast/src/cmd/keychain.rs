@@ -3559,6 +3559,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     root_signer: KeychainRootSigner,
     before_submit: impl FnOnce() -> Result<()>,
 ) -> Result<KeychainTxOutcome> {
+    if tx_opts.tempo.sponsor_url.is_some() {
+        eyre::bail!(
+            "--sponsor-url is not supported by cast keychain; use --tempo.sponsor with \
+             --tempo.sponsor-signer or --tempo.sponsor-sig"
+        );
+    }
+
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let sponsor_fee_payer = tx_opts.tempo.sponsor;
     let expires_at = tx_opts.tempo.resolve_expires();

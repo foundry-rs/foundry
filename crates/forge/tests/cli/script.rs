@@ -4688,6 +4688,11 @@ contract DeploySponsoredTempoAA is Script {
         .assert_success();
     let output = assert.get_output();
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Estimated amount required:"), "{stdout}");
+    assert!(stdout.contains(" PathUSD"), "{stdout}");
+    assert!(!stdout.contains(" ETH"), "{stdout}");
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
 });

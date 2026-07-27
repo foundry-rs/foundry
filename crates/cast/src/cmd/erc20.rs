@@ -3,7 +3,7 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::{
         call_overrides::CallOverrideOpts,
-        send::{cast_send, cast_send_with_tempo_wallet},
+        send::{cast_send, cast_send_with_tempo_wallet, validate_sponsor_url},
     },
     format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
@@ -13,7 +13,9 @@ use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, fillers::RecommendedFillers};
+use alloy_provider::{
+    Provider, ProviderBuilder as AlloyProviderBuilder, fillers::RecommendedFillers,
+};
 use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
 use clap::Parser;
@@ -33,6 +35,7 @@ use foundry_common::{
 pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use tempo_alloy::TempoNetwork;
+use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 sol! {
     #[sol(rpc)]
@@ -395,11 +398,25 @@ impl Erc20Subcommand {
                         (pre_resolved_signer, tempo_keychain)
                     };
                 let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+                let sponsor_url = tx_opts.tempo.sponsor_url.clone();
                 let sponsor_fee_payer = tx_opts.tempo.sponsor;
                 let expires_at = tx_opts.tempo.resolve_expires();
-                let tempo_sponsor =
-                    if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
-                let needs_sponsor_payload = print_sponsor_hash || tempo_sponsor.is_some();
+                let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
+                    None
+                } else {
+                    tx_opts.tempo.sponsor_config().await?
+                };
+                let needs_sponsor_payload =
+                    print_sponsor_hash || tempo_sponsor.is_some() || sponsor_url.is_some();
+                if let Some(ref url) = sponsor_url {
+                    validate_sponsor_url(url)?;
+                    if $send_tx.browser.browser {
+                        eyre::bail!("--sponsor-url cannot be combined with --browser");
+                    }
+                    if tempo_keychain.is_some() {
+                        eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
+                    }
+                }
                 if let Some(ts) = expires_at {
                     sh_status!("Transaction expires at unix timestamp {ts}")?;
                 }
@@ -538,7 +555,12 @@ impl Erc20Subcommand {
                 } else {
                     let signer = pre_resolved_signer.unwrap_or($send_tx.eth.wallet.signer().await?);
                     let from = signer.address();
-                    let $provider = build_provider_with_signer::<N>(&$send_tx, signer)?;
+                    let wallet = EthereumWallet::from(signer);
+                    let $provider = ProviderBuilder::<N>::from_config(&config)?
+                        .build_with_wallet(wallet.clone())?;
+                    if let Some(interval) = $send_tx.poll_interval {
+                        $provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
@@ -590,18 +612,39 @@ impl Erc20Subcommand {
                         )
                         .await?;
                     }
-                    cast_send(
-                        $provider,
-                        tx,
-                        tempo_sponsor.is_none().then_some(chain),
-                        None,
-                        $send_tx.cast_async,
-                        $send_tx.sync,
-                        $send_tx.confirmations,
-                        timeout,
-                        tempo_sponsor.is_none() && !config.eth_rpc_curl,
-                    )
-                    .await?;
+                    if let Some(sponsor_url) = sponsor_url {
+                        tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+                        let connector = tempo::sponsor_relay_connector(&$provider, &sponsor_url)?;
+                        let provider = AlloyProviderBuilder::<_, _, N>::default()
+                            .wallet(wallet)
+                            .connect_with(&connector)
+                            .await?;
+                        cast_send(
+                            provider,
+                            tx,
+                            None,
+                            None,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                            false,
+                        )
+                        .await?;
+                    } else {
+                        cast_send(
+                            $provider,
+                            tx,
+                            tempo_sponsor.is_none().then_some(chain),
+                            None,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                            tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                        )
+                        .await?;
+                    }
                 }
             }};
         }
