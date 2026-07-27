@@ -867,7 +867,8 @@ impl CallTraceDecoder {
                         .collect(),
                 )
             }
-            "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
+            "addr" | "createWallet" | "deriveKey" | "publicKeyEd25519" | "publicKeyP256" |
+            "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
             }
@@ -1021,7 +1022,7 @@ impl CallTraceDecoder {
     fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
-            "createWallet" | "deriveKey" => Some("<pk>"),
+            "createEd25519Key" | "createWallet" | "deriveKey" => Some("<pk>"),
             "promptSecret" | "promptSecretUint" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
@@ -1600,6 +1601,8 @@ mod tests {
             ("deriveKey(string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("publicKeyEd25519(bytes32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("publicKeyP256(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("rememberKey(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             //
             // Should redact private key from traces in specific cases with exceptions:
@@ -1917,6 +1920,7 @@ mod tests {
         // [function_signature, expected]
         let cheatcode_output_test_cases = vec![
             // Should redact private key on output in all cases:
+            ("createEd25519Key(bytes32)", Some("<pk>".to_string())),
             ("createWallet(string)", Some("<pk>".to_string())),
             ("deriveKey(string,uint32)", Some("<pk>".to_string())),
             // Should redact RPC URL if defined, except if referenced by an alias:
