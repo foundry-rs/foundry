@@ -881,17 +881,26 @@ impl CallTraceDecoder {
                 // getNonce(Wallet)
                 (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
-            "sign" | "signP256" => {
+            "sign" | "signCompact" | "signP256" | "signWithNonceUnsafe" | "signKeychain" |
+            "signKeychainAdmin" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
 
-                // Redact private key and replace in trace
-                // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32)
+                // Redact private key and replace in trace when the first parameter is a raw
+                // private key (uint256) or a Wallet struct (tuple); digest-only and
+                // signer-address overloads carry no key material and are left as-is.
                 if !decoded.is_empty() &&
                     (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
                 {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
 
+                Some(decoded.iter().map(format_token).collect())
+            }
+            "signEd25519" => {
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                // Redact private key and replace in trace for
+                // signEd25519(bytes namespace, bytes message, bytes32 privateKey)
+                decoded[2] = DynSolValue::String("<pk>".to_string());
                 Some(decoded.iter().map(format_token).collect())
             }
             "signDelegation" | "signAndAttachDelegation" => {
@@ -1642,6 +1651,147 @@ mod tests {
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
                         .to_string(),
                 ]),
+            ),
+            (
+                "signCompact(uint256,bytes32)",
+                hex!(
+                    "
+                    cc2a781f
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // signCompact(Wallet,bytes32)
+                "signCompact((address,uint256,uint256,uint256),bytes32)",
+                hex!(
+                    "
+                    3d0e292f
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000002
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // Ignore: `private key` is not passed, digest is signed by the script signer.
+                "signCompact(bytes32)",
+                hex!(
+                    "
+                    a282dc4b
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // Ignore: `signer` is a public address.
+                "signCompact(address,bytes32)",
+                hex!(
+                    "
+                    8e2f97bf
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "0x1111111111111111111111111111111111111111".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                "signWithNonceUnsafe(uint256,bytes32,uint256)",
+                hex!(
+                    "
+                    2012783a
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000001
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                    "1".to_string(),
+                ]),
+            ),
+            (
+                "signKeychain(uint256,address,bytes32)",
+                hex!(
+                    "
+                    5804c690
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x1111111111111111111111111111111111111111".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                "signKeychainAdmin(uint256,address,bytes32)",
+                hex!(
+                    "
+                    bc5fb2f7
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x1111111111111111111111111111111111111111".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "signEd25519(bytes,bytes,bytes32)" "0x6e73" "0x6d7367"
+                // 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                "signEd25519(bytes,bytes,bytes32)",
+                hex!(
+                    "
+                    ef609c65
+                    0000000000000000000000000000000000000000000000000000000000000060
+                    00000000000000000000000000000000000000000000000000000000000000a0
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000002
+                    6e73000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000003
+                    6d73670000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec!["0x6e73".to_string(), "0x6d7367".to_string(), "\"<pk>\"".to_string()]),
             ),
             (
                 // cast calldata "createFork(string)" "https://eth-mainnet.g.alchemy.com/v2/api_key"
