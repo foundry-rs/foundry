@@ -3282,7 +3282,7 @@ where
                 if let Some(contract) = &info.contract_address {
                     node_info!("    Contract created: {contract}");
                 }
-                node_info!("    Gas used: {}", receipt.cumulative_gas_used());
+                node_info!("    Gas used: {}", info.gas_used);
                 if !info.exit.is_ok() {
                     let r = RevertDecoder::new().decode(
                         info.out.as_ref().map(|b| &b[..]).unwrap_or_default(),
@@ -4631,10 +4631,7 @@ where
                                     |_, _, inspector, _, _| {
                                         inspector
                                             .geth_builder()
-                                            .geth_call_traces(
-                                                call_config,
-                                                tx.receipt.cumulative_gas_used(),
-                                            )
+                                            .geth_call_traces(call_config, tx.info.gas_used)
                                             .into()
                                     },
                                 )?;
@@ -4680,11 +4677,7 @@ where
 
         // default structlog tracer
         Ok(GethTraceBuilder::new(tx.info.traces.clone())
-            .geth_traces(
-                tx.receipt.cumulative_gas_used(),
-                tx.info.out.clone().unwrap_or_default(),
-                config,
-            )
+            .geth_traces(tx.info.gas_used, tx.info.out.clone().unwrap_or_default(), config)
             .into())
     }
 
