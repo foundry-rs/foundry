@@ -3033,11 +3033,11 @@ impl BasicConfig {
             let mut endpoints = toml::value::Table::new();
             endpoints.insert(
                 "tempo".to_string(),
-                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::TEMPO_RPC_URL.to_string()),
             );
             endpoints.insert(
                 "moderato".to_string(),
-                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::MODERATO_RPC_URL.to_string()),
             );
             document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
         }

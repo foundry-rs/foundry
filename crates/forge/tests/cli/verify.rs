@@ -2,15 +2,28 @@
 //! and Sourcify.
 
 use crate::utils::{self, EnvExternalities};
-use alloy_primitives::hex;
+use alloy_network::Ethereum;
+use alloy_primitives::{Address, U256, hex};
 use anvil::{NodeConfig, spawn};
-use axum::{Router, extract::Query};
+use axum::{
+    Router,
+    extract::Query,
+    http::{StatusCode, header},
+    response::IntoResponse,
+};
+use forge_script_sequence::ScriptSequence;
 use foundry_common::retry::Retry;
+use foundry_compilers::PathStyle;
+use foundry_evm::traces::CallKind;
 use foundry_test_utils::{
     forgetest, forgetest_async, str,
-    util::{OutputExt, TestCommand, TestProject},
+    util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::net::TcpListener;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
@@ -699,6 +712,313 @@ contract Deploy is Script {
 
     let stderr = output.stderr_lossy();
     assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
+});
+
+// Regression test for <https://github.com/foundry-rs/foundry/issues/10164>. The contract created
+// by the script is compiled in a different project and can only be identified from its factory's
+// verified Standard JSON input.
+forgetest_async!(script_verifies_external_create2_contract, |prj, cmd| {
+    const SUBMISSION_KEY: &str = "submission-key";
+    const GUID: &str = "external-create2-guid";
+
+    foundry_test_utils::util::initialize(prj.root());
+    let external = TestProject::new("external-create2", PathStyle::Dapptools);
+    foundry_test_utils::util::initialize(external.root());
+    external.add_source(
+        "External.sol",
+        r#"
+contract Child { uint256 public immutable value; constructor(uint256 value_) { value = value_; } }
+contract Executor {
+    function deploy(bytes memory initCode) external returns (address deployed) {
+        assembly { deployed := create2(0, add(initCode, 32), mload(initCode), 0) }
+        require(deployed != address(0));
+    }
+}
+contract ExternalFactory {
+    Executor public immutable executor;
+    constructor() { executor = new Executor(); }
+    function deployChild(uint256 value) external returns (address) {
+        return executor.deploy(abi.encodePacked(type(Child).creationCode, abi.encode(value)));
+    }
+}
+"#,
+    );
+    external.write_config(foundry_config::Config {
+        solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
+        optimizer: Some(true),
+        optimizer_runs: Some(777),
+        ..Default::default()
+    });
+
+    let (_api, anvil) = spawn(NodeConfig::test()).await;
+    let wallet = anvil.dev_wallets().next().unwrap();
+    let private_key = hex::encode(wallet.credential().to_bytes());
+    let rpc = anvil.http_endpoint();
+    let create = external
+        .forge_command()
+        .forge_fuse()
+        .args([
+            "create",
+            "src/External.sol:ExternalFactory",
+            "--broadcast",
+            "--json",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            private_key.as_str(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let create: serde_json::Value = serde_json::from_str(&create).unwrap();
+    let factory = create["deployedTo"].as_str().unwrap().to_string();
+    let selector = &alloy_primitives::keccak256("executor()")[..4];
+    let call: serde_json::Value = reqwest::Client::new()
+        .post(rpc.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "eth_call",
+            "params": [{"to": factory, "data": format!("0x{}", hex::encode(selector))}, "latest"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let executor_result = call["result"].as_str().unwrap();
+    let executor = format!("0x{}", &executor_result[executor_result.len() - 40..]);
+
+    let standard_json = external
+        .forge_command()
+        .forge_fuse()
+        .args([
+            "verify-contract",
+            factory.as_str(),
+            "src/External.sol:ExternalFactory",
+            "--show-standard-json-input",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let standard_json: serde_json::Value = serde_json::from_str(standard_json.trim()).unwrap();
+    assert_eq!(standard_json["settings"]["optimizer"]["runs"], 777);
+
+    // Use the compiler build recorded by Forge's artifact, not a guessed release suffix.
+    let artifact: serde_json::Value = serde_json::from_reader(
+        std::fs::File::open(external.artifacts().join("External.sol/ExternalFactory.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_str(artifact["rawMetadata"].as_str().unwrap()).unwrap();
+    let compiler_version = format!("v{}", metadata["compiler"]["version"].as_str().unwrap());
+
+    #[derive(Default)]
+    struct Requests {
+        sources: Vec<HashMap<String, String>>,
+        submissions: Vec<HashMap<String, String>>,
+    }
+    let requests = Arc::new(Mutex::new(Requests::default()));
+    let state = requests.clone();
+    let source_json = standard_json.clone();
+    let factory_for_server = factory.to_lowercase();
+    let compiler_version_for_server = compiler_version.clone();
+
+    // Verification requests are trusted and must retain normal redirect handling. External source
+    // discovery uses the same selected endpoint, but remains on the non-redirecting client.
+    let redirect_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let redirect_url = format!("http://{}", redirect_listener.local_addr().unwrap());
+    let redirect_state = requests.clone();
+    let redirect_app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = redirect_state.clone();
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned().collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("verifysourcecode") => {
+                    state.lock().unwrap().submissions.push(form);
+                    format!(r#"{{"status":"1","message":"OK","result":"{GUID}"}}"#)
+                }
+                Some("checkverifystatus") => {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#.to_string()
+                }
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.to_string(),
+            }
+        }
+    });
+    let _redirect_server =
+        tokio::spawn(async move { axum::serve(redirect_listener, redirect_app).await.unwrap() });
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let verifier_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = state.clone();
+        let source_json = source_json.clone();
+        let factory = factory_for_server.clone();
+        let compiler_version = compiler_version_for_server.clone();
+        let redirect_url = redirect_url.clone();
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned().collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("getsourcecode") => {
+                    state.lock().unwrap().sources.push(form.clone());
+                    if form.get("address").is_some_and(|address| address.to_lowercase() == factory) {
+                        serde_json::json!({"status":"1","message":"OK","result":[{
+                            "SourceCode": source_json.to_string(), "CompilerVersion": compiler_version,
+                            "ContractName": "ExternalFactory", "ABI": "[]",
+                            "OptimizationUsed": "1", "OptimizationRuns": "777",
+                            "ConstructorArguments": "", "EVMVersion": "osaka", "IsProxy": "0"
+                        }]}).to_string().into_response()
+                    } else {
+                        r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.into_response()
+                    }
+                }
+                Some("verifysourcecode" | "checkverifystatus") => (
+                    StatusCode::TEMPORARY_REDIRECT,
+                    [(header::LOCATION, redirect_url)],
+                )
+                    .into_response(),
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#.into_response(),
+            }
+        }
+    });
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    prj.add_source(
+        "IExternalFactory.sol",
+        "interface IExternalFactory { function deployChild(uint256) external returns (address); }",
+    );
+    prj.add_script("Deploy.s.sol", &format!(r#"
+import "forge-std/Script.sol";
+import {{IExternalFactory}} from "../src/IExternalFactory.sol";
+contract Deploy is Script {{
+    function run() external {{ vm.startBroadcast(); IExternalFactory({factory}).deployChild(42); vm.stopBroadcast(); }}
+}}
+"#));
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "script",
+            "script/Deploy.s.sol:Deploy",
+            "--broadcast",
+            "--verify",
+            "--verify-external",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            SUBMISSION_KEY,
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            private_key.as_str(),
+        ])
+        .execute();
+    assert!(output.status.success(), "script failed: {}", output.stderr_lossy());
+
+    assert!(!prj.root().join("src/External.sol").exists());
+    assert!(!prj.artifacts().join("External.sol/Child.json").exists());
+    let submission = {
+        let requests = requests.lock().unwrap();
+        assert!(requests.sources.len() >= 2, "source requests: {:?}", requests.sources);
+        let source_addresses = requests
+            .sources
+            .iter()
+            .map(|request| request["address"].to_lowercase())
+            .collect::<Vec<_>>();
+        let expected = [executor.to_lowercase(), factory.to_lowercase()];
+        assert!(
+            source_addresses.windows(2).any(|addresses| addresses == expected),
+            "source request order: {source_addresses:?}"
+        );
+        assert!(requests.sources.iter().all(|request| request["apikey"] == SUBMISSION_KEY));
+        assert_eq!(requests.submissions.len(), 1, "script stderr: {}", output.stderr_lossy());
+        requests.submissions[0].clone()
+    };
+    assert_eq!(submission["apikey"], SUBMISSION_KEY);
+    assert_eq!(submission["contractname"], "src/External.sol:Child");
+    assert_eq!(submission["codeformat"], "solidity-standard-json-input");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&submission["sourceCode"]).unwrap(),
+        standard_json
+    );
+    assert_eq!(submission["compilerversion"], compiler_version);
+    assert_eq!(submission["constructorArguements"], format!("{:064x}", 42));
+    let broadcast_path = prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json");
+    let broadcast = std::fs::read_to_string(&broadcast_path).unwrap();
+    let mut sequence: ScriptSequence<Ethereum> = serde_json::from_str(&broadcast).unwrap();
+    let child_address = submission["contractaddress"].parse::<Address>().unwrap();
+    let child = sequence
+        .transactions
+        .iter()
+        .flat_map(|transaction| &transaction.additional_contracts)
+        .find(|contract| contract.address == child_address)
+        .expect("submitted contract is not a traced nested creation");
+    assert_eq!(child.call_kind, CallKind::Create2);
+    assert_eq!(
+        &child.creator_code_addresses[..2],
+        &[executor.parse::<Address>().unwrap(), factory.parse::<Address>().unwrap()]
+    );
+
+    let value_selector = &alloy_primitives::keccak256("value()")[..4];
+    let value: serde_json::Value = reqwest::Client::new()
+        .post(rpc.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "eth_call",
+            "params": [{"to": child_address, "data": format!("0x{}", hex::encode(value_selector))}, "latest"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(value["result"].as_str().unwrap().parse::<U256>().unwrap(), U256::from(42));
+
+    // Old broadcast logs do not contain creator provenance. An explicitly requested external
+    // verification must report that skipped attempt as a failure rather than `All (0)` success.
+    sequence
+        .transactions
+        .iter_mut()
+        .flat_map(|transaction| &mut transaction.additional_contracts)
+        .find(|contract| contract.address == child_address)
+        .unwrap()
+        .creator_code_addresses
+        .clear();
+    std::fs::write(&broadcast_path, serde_json::to_vec_pretty(&sequence).unwrap()).unwrap();
+
+    let failed = prj
+        .forge_command()
+        .forge_fuse()
+        .args([
+            "script",
+            "script/Deploy.s.sol:Deploy",
+            "--broadcast",
+            "--resume",
+            "--verify",
+            "--verify-external",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            SUBMISSION_KEY,
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            private_key.as_str(),
+        ])
+        .execute();
+    assert!(!failed.status.success(), "resume unexpectedly succeeded: {}", failed.stderr_lossy());
+    let stderr = failed.stderr_lossy();
+    assert!(stderr.contains("creator provenance is unavailable"), "{stderr}");
+    assert!(stderr.contains("Not all (0 / 1) contracts were verified"), "{stderr}");
+    assert!(!stderr.contains("All (0) contracts were verified"), "{stderr}");
 });
 
 // Tests that the preflight check passes (does not block deploy) when the verifier responds

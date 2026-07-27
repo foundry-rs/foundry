@@ -51,7 +51,7 @@ fn has_available_script_signers(
 
     let session_scope = tempo
         .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.wallet_address));
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
 
     Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
 }

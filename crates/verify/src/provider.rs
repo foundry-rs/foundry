@@ -18,8 +18,11 @@ use foundry_config::{Chain, Config, EtherscanConfigError};
 use semver::Version;
 use std::{
     fmt,
+    future::Future as StdFuture,
     path::{Path, PathBuf},
+    pin::Pin,
     str::FromStr,
+    sync::Arc,
 };
 
 /// Container with data required for contract verification.
@@ -31,6 +34,15 @@ pub struct VerificationContext {
     pub target_name: String,
     pub compiler_version: Version,
     pub compiler_settings: MultiCompilerSettings,
+}
+
+/// Caller-provided source material used to verify a contract.
+#[derive(Debug, Clone)]
+pub struct ExternalVerificationContext {
+    pub config: Config,
+    pub compiler_version: Version,
+    pub standard_json_input: Arc<serde_json::Value>,
+    pub target: String,
 }
 
 impl VerificationContext {
@@ -118,6 +130,17 @@ pub trait VerificationProvider {
         args: VerifyArgs,
         context: VerificationContext,
     ) -> Result<Option<VerifyCheckArgs>>;
+
+    /// Submits caller-provided Standard JSON input.
+    fn submit_external(
+        &mut self,
+        _args: VerifyArgs,
+        _context: ExternalVerificationContext,
+    ) -> Pin<Box<dyn StdFuture<Output = Result<Option<VerifyCheckArgs>>> + '_>> {
+        Box::pin(async {
+            Err(eyre::eyre!("external verification is unsupported by this provider"))
+        })
+    }
 
     /// Convenience wrapper: [`Self::submit`]s and, if `args.watch` is set, polls
     /// [`Self::check`] until completion.
