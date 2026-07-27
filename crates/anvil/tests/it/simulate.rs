@@ -801,6 +801,26 @@ async fn test_simulate_scopes_block_overrides_and_derives_base_fee_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_pre_london_blocks_keep_base_fee_disabled_rpc() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{}, {}],
+            "validation": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    let blocks = response["result"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert!(blocks.iter().all(|block| block["baseFeePerGas"] == "0x0"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_derives_from_historical_base_rpc() {
     let (api, handle) = spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
     api.mine_one().await;
