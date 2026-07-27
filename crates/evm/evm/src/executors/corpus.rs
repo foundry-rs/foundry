@@ -724,7 +724,6 @@ pub struct WorkerCorpus {
     /// Weighted ABI/CMP argument mutation distribution used by stateless fuzzing.
     arg_mutation_distribution: Option<WeightedIndex<u32>>,
     /// Identifier of current mutated entry for this worker.
-    current_mutated_index: Option<usize>,
     /// Config
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
@@ -986,7 +985,6 @@ impl WorkerCorpus {
             mutation_weights,
             mutation_distribution,
             arg_mutation_distribution,
-            current_mutated_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1052,7 +1050,6 @@ impl WorkerCorpus {
             self.optimization_best_value.is_none_or(|best| *value > best)
         });
 
-        self.current_mutated_index = None;
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1323,21 +1320,16 @@ impl WorkerCorpus {
             let mutation_type =
                 weighted_mutation_type(test_runner.rng(), &self.mutation_distribution);
 
-            let Some((primary_index, primary)) = self.random_mutation_corpus(test_runner.rng())?
-            else {
+            let Some((_, primary)) = self.random_mutation_corpus(test_runner.rng())? else {
                 return Ok(vec![self.new_tx(test_runner)?]);
             };
-            let Some((secondary_index, secondary)) =
-                self.random_mutation_corpus(test_runner.rng())?
-            else {
+            let Some((_, secondary)) = self.random_mutation_corpus(test_runner.rng())? else {
                 return Ok(vec![self.new_tx(test_runner)?]);
             };
 
             match mutation_type {
                 MutationType::Splice => {
                     trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
-
-                    self.current_mutated_index = Some(primary_index);
 
                     let start1 = test_runner.rng().random_range(0..primary.tx_seq.len());
                     let end1 = test_runner.rng().random_range(start1..primary.tx_seq.len());
@@ -1350,14 +1342,9 @@ impl WorkerCorpus {
                     new_seq.extend_from_slice(&secondary.tx_seq[start2..end2]);
                 }
                 MutationType::Repeat => {
-                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
-                        (primary_index, &primary)
-                    } else {
-                        (secondary_index, &secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
 
                     let start = test_runner.rng().random_range(0..corpus.tx_seq.len());
                     let end = test_runner.rng().random_range(start..corpus.tx_seq.len());
@@ -1374,8 +1361,6 @@ impl WorkerCorpus {
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
 
-                    self.current_mutated_index = Some(primary_index);
-
                     new_seq.reserve(primary.tx_seq.len().min(secondary.tx_seq.len()));
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
                         // TODO: chunks?
@@ -1388,14 +1373,9 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Prefix => {
-                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
-                        (primary_index, &primary)
-                    } else {
-                        (secondary_index, &secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
 
                     let prefix_len = test_runner.rng().random_range(0..=corpus.tx_seq.len());
                     new_seq.reserve(corpus.tx_seq.len());
@@ -1405,14 +1385,9 @@ impl WorkerCorpus {
                     new_seq.extend_from_slice(&corpus.tx_seq[prefix_len..]);
                 }
                 MutationType::Suffix => {
-                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
-                        (primary_index, &primary)
-                    } else {
-                        (secondary_index, &secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
 
                     let suffix_len = test_runner.rng().random_range(0..corpus.tx_seq.len());
                     let retained_len = corpus.tx_seq.len() - suffix_len;
@@ -1424,14 +1399,9 @@ impl WorkerCorpus {
                 }
                 MutationType::Abi => {
                     let targets = targeted_contracts.targets();
-                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
-                        (primary_index, &primary)
-                    } else {
-                        (secondary_index, &secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
 
@@ -1447,14 +1417,9 @@ impl WorkerCorpus {
                 }
                 MutationType::Cmp => {
                     let targets = targeted_contracts.targets();
-                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
-                        (primary_index, &primary)
-                    } else {
-                        (secondary_index, &secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "cmp mutate args of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     let mut mutated = false;
@@ -1529,15 +1494,11 @@ impl WorkerCorpus {
             || (fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100));
 
         let tx = if generate_fresh {
-            self.current_mutated_index = None;
             self.new_tx(test_runner)?
         } else {
-            let Some((corpus_index, corpus)) = self.random_mutation_corpus(test_runner.rng())?
-            else {
-                self.current_mutated_index = None;
-                return Ok(self.new_tx(test_runner)?.call_details.calldata);
+            let Some((_, corpus)) = self.random_mutation_corpus(test_runner.rng())? else {
+                return self.new_tx(test_runner);
             };
-            self.current_mutated_index = Some(corpus_index);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
@@ -1561,7 +1522,6 @@ impl WorkerCorpus {
                 }
                 None => {
                     // Stateless fuzz inputs cannot apply sequence-level mutation strategies.
-                    self.current_mutated_index = None;
                     return self.new_tx(test_runner);
                 }
                 _ => {}
@@ -2486,7 +2446,6 @@ mod tests {
 
         assert_eq!(input.call_details.calldata, Bytes::from(vec![0x22]));
         assert_eq!(input.call_details.value, generated_value);
-        assert!(manager.current_mutated_index.is_none());
     }
 
     #[test]
@@ -2515,7 +2474,6 @@ mod tests {
 
         assert_eq!(input.call_details.calldata, Bytes::from(vec![0x44]));
         assert_eq!(input.call_details.value, None);
-        assert!(manager.current_mutated_index.is_none());
     }
 
     #[test]
