@@ -1035,7 +1035,7 @@ impl WorkerCorpus {
             self.optimization_best_value.is_none_or(|best| *value > best)
         });
 
-        self.current_mutated_index.take();
+        self.current_mutated_index = None;
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
