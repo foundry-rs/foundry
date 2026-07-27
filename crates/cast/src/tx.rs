@@ -595,15 +595,46 @@ where
         // resolve
         // Read-only calls do not need a nonce unless it is required to sign an authorization.
         // Avoid an otherwise unused `eth_getTransactionCount` request for raw transactions.
-        if fill || !self.auth.is_empty() {
-            let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
+        let resolve_in_parallel =
+            fill && self.auth.is_empty() && tempo_wallet.is_none() && !self.chain.is_tempo();
+        let tx_nonce = if resolve_in_parallel {
+            let nonce = self.tx.nonce();
+            let (tx_nonce, ()) = tokio::try_join!(
+                Self::resolve_nonce(&self.provider, sender.address(), nonce),
+                Self::fill_fees(
+                    &self.provider,
+                    &mut self.tx,
+                    self.blob,
+                    self.legacy,
+                    self.browser,
+                    self.eip1559_fee_estimate,
+                ),
+            )?;
+            Some(tx_nonce)
+        } else if fill || !self.auth.is_empty() {
+            Some(Self::resolve_nonce(&self.provider, sender.address(), self.tx.nonce()).await?)
+        } else {
+            None
+        };
+        if let Some(tx_nonce) = tx_nonce {
+            if fill {
+                self.tx.set_nonce(tx_nonce);
+            }
             self.resolve_auth(&sender, tx_nonce).await?;
         }
         if let Some(wallet) = tempo_wallet {
             *wallet = self.tx.prepare_with_tempo_wallet(&self.provider, wallet).await?;
         }
-        if fill {
-            self.fill_fees().await?;
+        if fill && !resolve_in_parallel {
+            Self::fill_fees(
+                &self.provider,
+                &mut self.tx,
+                self.blob,
+                self.legacy,
+                self.browser,
+                self.eip1559_fee_estimate,
+            )
+            .await?;
         }
         self.resolve_access_list().await?;
         if fill {
@@ -627,17 +658,12 @@ where
         self.tx.set_chain_id(self.chain.id());
     }
 
-    /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the
-    /// provider. Only sets it on the transaction when `fill` is true.
-    async fn resolve_nonce(&mut self, from: Address, fill: bool) -> Result<u64> {
-        if let Some(nonce) = self.tx.nonce() {
+    /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the provider.
+    async fn resolve_nonce(provider: &P, from: Address, nonce: Option<u64>) -> Result<u64> {
+        if let Some(nonce) = nonce {
             Ok(nonce)
         } else {
-            let nonce = self.provider.get_transaction_count(from).await?;
-            if fill {
-                self.tx.set_nonce(nonce);
-            }
-            Ok(nonce)
+            Ok(provider.get_transaction_count(from).await?)
         }
     }
 
@@ -710,19 +736,19 @@ where
     /// Fills gas price, EIP-1559 fees, and blob fees from the provider.
     ///
     /// Only fills values that haven't been explicitly set by the user.
-    async fn fill_fees(&mut self) -> Result<()> {
-        if self.blob && self.tx.max_fee_per_blob_gas().is_none() {
-            self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
+    async fn fill_fees(
+        provider: &P,
+        tx: &mut N::TransactionRequest,
+        blob: bool,
+        legacy: bool,
+        browser: bool,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset,
+    ) -> Result<()> {
+        if blob && tx.max_fee_per_blob_gas().is_none() {
+            tx.set_max_fee_per_blob_gas(provider.get_blob_base_fee().await?)
         }
 
-        fill_transaction_gas_fees(
-            &self.provider,
-            &mut self.tx,
-            self.legacy,
-            self.browser,
-            self.eip1559_fee_estimate,
-        )
-        .await
+        fill_transaction_gas_fees(provider, tx, legacy, browser, eip1559_fee_estimate).await
     }
 
     /// Fills gas limit from the provider.
@@ -856,9 +882,99 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::Ethereum;
     use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_rpc_client::RpcClient;
+    use alloy_transport::{TransportFut, mock::MockTransport};
     use clap::Parser;
+    use std::{
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+    };
+    use tokio::{sync::Barrier, time::timeout};
+    use tower::Service;
+
+    #[derive(Clone)]
+    struct BarrierTransport {
+        inner: MockTransport,
+        barrier: Arc<Barrier>,
+        fill_methods: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Service<RequestPacket> for BarrierTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let fill_method = match &req {
+                RequestPacket::Single(req)
+                    if matches!(req.method(), "eth_getTransactionCount" | "eth_gasPrice") =>
+                {
+                    Some(req.method().to_string())
+                }
+                _ => None,
+            };
+            let Some(fill_method) = fill_method else {
+                return self.inner.call(req);
+            };
+            self.fill_methods.lock().unwrap().push(fill_method);
+
+            let barrier = self.barrier.clone();
+            let mut inner = self.inner.clone();
+            Box::pin(async move {
+                barrier.wait().await;
+                inner.call(req).await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn filled_build_fetches_nonce_and_fees_concurrently() {
+        let asserter = Asserter::new();
+        for _ in 0..3 {
+            asserter.push_success(&U64::from(1));
+        }
+        let fill_methods = Arc::new(Mutex::new(Vec::new()));
+        let transport = BarrierTransport {
+            inner: MockTransport::new(asserter),
+            barrier: Arc::new(Barrier::new(2)),
+            fill_methods: fill_methods.clone(),
+        };
+        let provider = ProviderBuilder::new_with_network::<Ethereum>()
+            .connect_client(RpcClient::new(transport, true));
+        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
+
+        let builder = CastTxBuilder::new(
+            &provider,
+            TransactionOpts::parse_from(["test", "--legacy"]),
+            &config,
+        )
+        .await
+        .unwrap()
+        .with_to(Some(Address::repeat_byte(0x11).into()))
+        .await
+        .unwrap()
+        .with_code_sig_and_args(None, None, Vec::new())
+        .await
+        .unwrap();
+        let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
+            .await
+            .expect("nonce and fee requests were not in flight together")
+            .unwrap();
+
+        assert_eq!(tx.nonce, Some(1));
+        assert_eq!(tx.gas_price, Some(1));
+        assert_eq!(tx.gas, Some(1));
+        let mut fill_methods = fill_methods.lock().unwrap().clone();
+        fill_methods.sort();
+        assert_eq!(fill_methods, ["eth_gasPrice", "eth_getTransactionCount"]);
+    }
 
     #[tokio::test]
     async fn raw_build_skips_nonce_request() {
