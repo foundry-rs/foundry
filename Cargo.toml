@@ -329,7 +329,7 @@ foundry-evm-symbolic = { path = "crates/evm/symbolic", default-features = false 
 foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils", default-features = false }
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "b937e7ea997e07937ab340e0d8e9c700c641a330", default-features = false }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "0634adf765123f985f2993f548cd8f1116a7235b", default-features = false }
 foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
@@ -510,7 +510,7 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "3ea54e5eca3d93069f1e282733b84ee6aa425944", default-features = false, features = [
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "3fdec6a9178a3e507a740285a4314429323bec94", default-features = false, features = [
     "tempo",
     "client",
     "reqwest-rustls-tls",
