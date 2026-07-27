@@ -442,7 +442,8 @@ mod tests {
             let credential = socket.next().await.unwrap().unwrap();
             assert!(matches!(credential, Message::Text(_)));
             socket.send(Message::Ping(Vec::new().into())).await.unwrap();
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            let pong = socket.next().await.unwrap().unwrap();
+            assert!(matches!(pong, Message::Pong(_)));
             server_receipt_sent.store(true, Ordering::SeqCst);
             let receipt = WsServerMessage::Receipt { receipt: serde_json::json!({}) };
             socket
