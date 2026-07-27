@@ -124,9 +124,11 @@ impl FeeManager {
         self.state.read().tempo_hardfork
     }
 
-    /// Sets the active Tempo hardfork after fork auto-detection.
-    pub fn set_tempo_hardfork(&self, hardfork: Option<TempoHardfork>) {
-        self.state.write().tempo_hardfork = hardfork;
+    /// Sets the EVM and Tempo hardfork identifiers atomically.
+    pub fn set_hardfork(&self, spec_id: SpecId, tempo_hardfork: Option<TempoHardfork>) {
+        let mut state = self.state.write();
+        state.spec_id = spec_id;
+        state.tempo_hardfork = tempo_hardfork;
     }
 
     pub fn elasticity(&self) -> f64 {

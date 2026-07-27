@@ -1634,7 +1634,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork().into()),
                 evm_env.block_env.clone(),
             );
             let mut evm =
@@ -2566,9 +2566,8 @@ impl<N: Network> Backend<N> {
             }
         }
 
-        let db = self.db.write().await;
         // apply the genesis.json alloc
-        self.genesis.apply_genesis_json_alloc(db)?;
+        self.genesis.apply_genesis_json_alloc(self.db.write().await)?;
 
         // Initialize Tempo precompiles and fee tokens when in Tempo mode (not in fork mode).
         // In fork mode, precompiles are inherited from the forked origin.
@@ -2640,7 +2639,8 @@ impl<N: Network> Backend<N> {
             node_config.setup_fork_db_config(target_rpc_url, &mut evm_env, &candidate_fees).await?;
         self.apply_fork_genesis(&mut db)?;
         let candidate_fee_state = candidate_fees.snapshot();
-        let fork = ClientFork::new(config, Arc::clone(&self.db));
+        let fork = ClientFork::new(config, Arc::clone(&self.db))
+            .with_runtime_info(candidate_fees.raw_gas_price(), evm_env.block_env.gas_limit);
 
         let _mining_guard = self.mining.lock().await;
 
@@ -2676,33 +2676,60 @@ impl<N: Network> Backend<N> {
     /// Resets the backend to a fresh in-memory state, clearing all existing data
     pub async fn reset_to_in_mem(&self) -> Result<(), BlockchainError> {
         let _mining_guard = self.mining.lock().await;
-        let fallback_chain_id = {
-            let current_fork = self.get_fork();
+        let current_fork = self.get_fork();
+        let (
+            fallback_chain_id,
+            fallback_hardfork,
+            fallback_base_fee,
+            fallback_gas_price,
+            fallback_gas_limit,
+            fallback_blob_excess_gas_and_price,
+            fallback_blob_params,
+        ) = {
             let mut config = self.node_config.write().await;
             if let Some(fork) = &current_fork {
                 config.set_chain_id(fork.override_chain_id());
             }
-            config.get_chain_id()
+            (
+                config.get_chain_id(),
+                config.get_hardfork(),
+                config.get_base_fee(),
+                config.get_gas_price(),
+                config.gas_limit(),
+                config.get_blob_excess_gas_and_price(),
+                config.get_blob_params(),
+            )
         };
+        let fallback_spec_id = SpecId::from(fallback_hardfork);
 
         // Clear the fork if any exists
         *self.fork.write() = None;
 
+        // Restore the configured non-fork hardfork after clearing an inferred fork. Explicit
+        // hardfork overrides remain pinned, while auto-detected fork hardforks fall back to the
+        // local node default.
+        self.fees.set_hardfork(
+            fallback_spec_id,
+            self.is_tempo().then(|| TempoHardfork::from(fallback_hardfork)),
+        );
+        self.fees.set_base_fee(fallback_base_fee);
+        self.fees.set_gas_price(fallback_gas_price);
+        self.fees.set_blob_excess_gas_and_price(fallback_blob_excess_gas_and_price);
+        self.fees.set_blob_params(fallback_blob_params);
+
         let genesis_timestamp = self.genesis.timestamp;
         let genesis_number = self.genesis.number;
 
-        // Tempo chains seed the hardfork's own fixed base fee on reset; other chains keep the
-        // pre-reset base fee for the genesis block, as before. Computed up front so the env,
-        // storage, and fee manager all agree.
-        let reset_base_fee = self.fees.tempo_hardfork().map(crate::config::tempo_default_base_fee);
-        let genesis_base_fee = reset_base_fee.unwrap_or_else(|| self.fees.base_fee());
+        let genesis_base_fee = fallback_base_fee;
 
         // Reset environment to genesis state
         {
             let mut env = self.evm_env.write();
             env.cfg_env.chain_id = fallback_chain_id;
+            env.cfg_env.set_spec_and_mainnet_gas_params(fallback_spec_id);
             env.block_env.number = U256::from(genesis_number);
             env.block_env.timestamp = U256::from(genesis_timestamp);
+            env.block_env.gas_limit = fallback_gas_limit;
             // Reset other block env fields to their defaults
             env.block_env.basefee = genesis_base_fee;
             env.block_env.prevrandao = Some(B256::ZERO);
@@ -2727,24 +2754,14 @@ impl<N: Network> Backend<N> {
         // drop any pending next-block prevrandao override so it does not leak into a block
         self.cheats.clear_next_block_prevrandao();
 
-        // Seed the next block's base fee. On Tempo the genesis keeps its fixed default while the
-        // next block already follows the hardfork's rule (e.g. T7 clamps to the cap); other chains
-        // use Anvil's Ethereum default.
-        if self.fees.is_eip1559() {
-            let next_base_fee = match reset_base_fee {
-                Some(genesis_base_fee) => {
-                    // Seed the fixed genesis fee first so the next-block computation is not
-                    // affected by any manually zeroed base fee, then advance one block per Tempo.
-                    self.fees.set_base_fee(genesis_base_fee);
-                    let gas_limit = self.evm_env.read().block_env.gas_limit;
-                    self.fees.get_next_block_base_fee_per_gas(0, gas_limit, genesis_base_fee)
-                }
-                None => crate::eth::fees::INITIAL_BASE_FEE,
-            };
+        // Tempo advances its configured genesis seed according to the active hardfork. Other
+        // networks retain the configured local base fee for the first block after reset.
+        if self.fees.tempo_hardfork().is_some() {
+            let gas_limit = self.evm_env.read().block_env.gas_limit;
+            let next_base_fee =
+                self.fees.get_next_block_base_fee_per_gas(0, gas_limit, genesis_base_fee);
             self.fees.set_base_fee(next_base_fee);
         }
-
-        self.fees.set_gas_price(crate::eth::fees::INITIAL_GAS_PRICE);
 
         // Reapply genesis configuration
         self.apply_genesis().await?;
