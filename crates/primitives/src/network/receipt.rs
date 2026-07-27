@@ -37,6 +37,12 @@ impl FoundryTxReceipt {
         self
     }
 
+    /// Adds a `feeToken` field to the receipt.
+    pub fn with_fee_token(mut self, fee_token: Address) -> Self {
+        self.0.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
+        self
+    }
+
     /// Get block timestamp from other fields if present.
     pub fn block_timestamp(&self) -> Option<u64> {
         self.0.other.get_deserialized::<u64>("blockTimestamp").transpose().ok().flatten()

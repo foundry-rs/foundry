@@ -25,7 +25,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
-use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast batch-mktx`.
@@ -111,9 +111,9 @@ impl BatchMakeTxArgs {
         sh_status!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
         tempo::print_expires(expires_at)?;
 
-        // Preserve key_id for modes that do not call build_with_access_key, such as raw unsigned.
+        // Preserve key_id for modes that do not call build_with_tempo_wallet, such as raw unsigned.
         if let Some(ref access_key) = tempo_access_key {
-            tx.tempo.key_id = Some(access_key.key_address);
+            tx.tempo.key_id = Some(access_key.key_id()?);
         }
 
         // Build transaction request with calls
@@ -167,35 +167,24 @@ impl BatchMakeTxArgs {
             return Ok(());
         }
 
-        // Default: use local signer
-        let signer = match signer {
-            Some(s) => s,
-            None => eth.wallet.signer().await?,
-        };
-
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
-            let (mut tx, _) =
-                tx_builder.build_with_access_key(access_key.wallet_address, access_key).await?;
+            let (mut tx, _, prepared) = tx_builder.build_with_tempo_wallet(access_key).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(access_key.wallet_address),
+                Some(prepared.account()),
             )
             .await?;
             maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
-            let raw_tx = tx
-                .sign_with_access_key(
-                    &provider,
-                    &signer,
-                    access_key.wallet_address,
-                    access_key.key_address,
-                    access_key.key_authorization.as_ref(),
-                )
-                .await?;
+            let raw_tx = tx.sign_with_tempo_wallet(&prepared).await?;
             alloy_primitives::hex::encode(raw_tx)
         } else {
+            let signer = match signer {
+                Some(s) => s,
+                None => eth.wallet.signer().await?,
+            };
             tx::validate_from_address(eth.wallet.from, Signer::address(&signer))?;
             let (mut tx, _) = tx_builder.build(&signer).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
@@ -222,9 +211,9 @@ async fn resolve_signer(
     wallet: &WalletOpts,
     chain_id: u64,
     raw_unsigned: bool,
-) -> Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
+) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     if raw_unsigned {
-        let (_, access_key) = wallet.maybe_signer().await?;
+        let (_, access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
         return Ok((None, access_key));
     }
 
@@ -255,11 +244,11 @@ mod tests {
             assert!(signer.is_none());
             let access_key = access_key.expect("access-key metadata");
             assert_eq!(
-                access_key.wallet_address,
+                access_key.account(),
                 address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
             );
             assert_eq!(
-                access_key.key_address,
+                access_key.key_id().unwrap(),
                 address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
             );
         });

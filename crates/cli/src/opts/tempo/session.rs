@@ -81,7 +81,7 @@ impl TempoOpts {
         };
         ensure_no_explicit_multi_wallet_signer(wallets)?;
         let resolved = resolve_session(session_id)?;
-        ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+        ensure_expected_sender(expected_sender, resolved.access_key.account())?;
         Ok(Some(resolved))
     }
 
@@ -97,7 +97,7 @@ impl TempoOpts {
     ) -> Result<Option<Address>> {
         Ok(self
             .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-            .map(|resolved| resolved.access_key.wallet_address))
+            .map(|resolved| resolved.access_key.account()))
     }
 }
 
@@ -120,7 +120,7 @@ fn resolve_session_signer(
         );
     }
 
-    ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+    ensure_expected_sender(expected_sender, resolved.access_key.account())?;
     Ok(resolved)
 }
 
@@ -430,7 +430,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(session.session.chain_id, 4217);
-            assert_eq!(session.access_key.wallet_address, Address::from([0x11; 20]));
+            assert_eq!(session.access_key.account(), Address::from([0x11; 20]));
         });
     }
 
