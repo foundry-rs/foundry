@@ -329,16 +329,22 @@ fn campaign_seed_and_corpus_seed_for_worker(
     include_cmp_seq: bool,
     focus_seed: Option<U256>,
 ) -> (InvariantCampaignSeed, WorkerCorpusSeed) {
-    let worker_corpus_seed =
-        corpus_seed.clone_for_worker(plan.worker_id as usize, worker_count, include_cmp_seq);
     let Some(worker_campaign_seed) =
         focused_campaign_seed_for_worker(campaign_seed, plan, worker_count, focus_seed)
     else {
-        return (campaign_seed.clone(), worker_corpus_seed);
+        return (
+            campaign_seed.clone(),
+            corpus_seed.clone_for_worker(plan.worker_id as usize, worker_count, include_cmp_seq),
+        );
     };
 
-    let mut worker_corpus_seed = worker_corpus_seed;
-    worker_corpus_seed.retain_replayable(&worker_campaign_seed.targeted_contracts);
+    let mut focused_corpus_seed = corpus_seed.clone();
+    focused_corpus_seed.retain_replayable(&worker_campaign_seed.targeted_contracts);
+    let worker_corpus_seed = focused_corpus_seed.clone_for_worker(
+        plan.worker_id as usize,
+        worker_count,
+        include_cmp_seq,
+    );
     (worker_campaign_seed, worker_corpus_seed)
 }
 
@@ -824,6 +830,20 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     }
 }
 
+fn finalize_call_corpus_metadata(
+    inputs_len: usize,
+    cmp_seq: &mut Vec<Vec<crate::inspectors::CmpOperands>>,
+    call_cmp_values: Vec<crate::inspectors::CmpOperands>,
+    corpus_edges: &mut Vec<usize>,
+    corpus_edges_len: usize,
+) {
+    if cmp_seq.len() < inputs_len {
+        cmp_seq.push(call_cmp_values);
+    } else {
+        corpus_edges.truncate(corpus_edges_len);
+    }
+}
+
 /// Wrapper around any [`Executor`] implementer which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `invariant_fuzz` will proceed to hammer the deployed smart
@@ -1231,6 +1251,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     None
                 };
                 // Collect edge coverage and set the flag in the current run.
+                let corpus_edges_len = current_run.corpus_edges.len();
                 let new_call_coverage = corpus_manager.merge_edge_coverage_with_edges_into(
                     &mut call_result,
                     &mut current_run.corpus_edges,
@@ -1248,6 +1269,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                 if discarded {
                     current_run.inputs.pop();
+                    finalize_call_corpus_metadata(
+                        current_run.inputs.len(),
+                        &mut current_run.cmp_seq,
+                        call_cmp_values,
+                        &mut current_run.corpus_edges,
+                        corpus_edges_len,
+                    );
                     current_run.rejects += 1;
                     if current_run.rejects > config.max_assume_rejects {
                         invariant_test.set_error(
@@ -1406,9 +1434,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                     // Keep `cmp_seq` parallel to `inputs`: only push when the input survived the
                     // pop branch above.
-                    if current_run.cmp_seq.len() < current_run.inputs.len() {
-                        current_run.cmp_seq.push(call_cmp_values);
-                    }
+                    finalize_call_corpus_metadata(
+                        current_run.inputs.len(),
+                        &mut current_run.cmp_seq,
+                        call_cmp_values,
+                        &mut current_run.corpus_edges,
+                        corpus_edges_len,
+                    );
 
                     if !continues || current_run.depth == run_depth - 1 {
                         current_run.save_last_run_inputs = true;
@@ -2436,6 +2468,39 @@ mod tests {
 
     fn first_generated_u64(runner: &mut TestRunner) -> u64 {
         any::<u64>().new_tree(runner).unwrap().current()
+    }
+
+    #[test]
+    fn assumed_calls_do_not_retain_corpus_edges() {
+        let mut cmp_seq = vec![Vec::new()];
+        let mut corpus_edges = vec![1, 2, 3, 4];
+
+        finalize_call_corpus_metadata(1, &mut cmp_seq, Vec::new(), &mut corpus_edges, 2);
+
+        assert_eq!(cmp_seq.len(), 1);
+        assert_eq!(corpus_edges, [1, 2]);
+    }
+
+    #[test]
+    fn reverted_calls_do_not_retain_corpus_edges() {
+        let mut cmp_seq = vec![Vec::new(), Vec::new()];
+        let mut corpus_edges = vec![1, 2, 3, 4, 5];
+
+        finalize_call_corpus_metadata(2, &mut cmp_seq, Vec::new(), &mut corpus_edges, 3);
+
+        assert_eq!(cmp_seq.len(), 2);
+        assert_eq!(corpus_edges, [1, 2, 3]);
+    }
+
+    #[test]
+    fn retained_calls_append_cmp_metadata_without_truncating_edges() {
+        let mut cmp_seq = vec![Vec::new()];
+        let mut corpus_edges = vec![1, 2, 3, 4];
+
+        finalize_call_corpus_metadata(2, &mut cmp_seq, Vec::new(), &mut corpus_edges, 2);
+
+        assert_eq!(cmp_seq.len(), 2);
+        assert_eq!(corpus_edges, [1, 2, 3, 4]);
     }
 
     fn test_runner() -> TestRunner {

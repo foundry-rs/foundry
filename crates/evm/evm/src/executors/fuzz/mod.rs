@@ -413,7 +413,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let frontier_new_coverage =
             self.config.corpus.collect_edge_coverage().then_some(new_coverage);
         frontier_recorder.capture_stateless_call(fuzz_run, &tx, &cmp_values, frontier_new_coverage);
-        coverage_metrics.process_inputs(
+        coverage_metrics.process_inputs_for_worker_sync(
             &[tx.clone()],
             &[cmp_values],
             new_coverage,
