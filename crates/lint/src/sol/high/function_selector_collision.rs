@@ -17,7 +17,7 @@ use solar::{
             self, BinOpKind, CallArgs, ContractId, ContractKind, Expr, ExprKind, ItemId, Stmt,
             StmtKind, TypeKind, Visit,
         },
-        ty::{ResolvedMember, Ty, TyKind},
+        ty::{Ty, TyKind},
     },
 };
 use std::{
@@ -803,7 +803,7 @@ fn selected_function_selector(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Selector>
     {
         return None;
     }
-    let ResolvedMember::Res(hir::Res::Item(ItemId::Function(function))) =
+    let hir::Res::Item(ItemId::Function(function)) =
         gcx.resolved_member(function.peel_parens().id)?
     else {
         return None;

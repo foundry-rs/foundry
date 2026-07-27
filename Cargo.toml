@@ -344,6 +344,7 @@ foundry-fork-db = { version = "0.27.0", features = ["zstd"] }
 imbl = "7"
 solar = { package = "solar-compiler", version = "=0.2.0", default-features = false }
 solar-cli = { version = "=0.2.0", default-features = false }
+solar-lint = { version = "=0.2.0", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
 ] }
@@ -542,6 +543,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+
 ## foundry-core
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
