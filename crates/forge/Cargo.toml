@@ -103,7 +103,7 @@ opener = "0.8"
 # soldeer
 soldeer-commands.workspace = true
 soldeer-core.workspace = true
-quick-junit = "0.6.0"
+quick-junit = "0.7.0"
 tempfile.workspace = true
 
 [dev-dependencies]
