@@ -703,15 +703,15 @@ impl<N: Network> EthApi<N> {
     ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
-        self.reset_instance_id();
         node_info!("anvil_reset");
         if let Some(forking) = forking {
-            // if we're resetting the fork we need to reset the instance id
             self.backend.reset_fork(forking).await?;
         } else {
             // Reset to a fresh in-memory state
             self.backend.reset_to_in_mem().await?;
         }
+        // Only publish the new instance identity after the backend reset commits successfully.
+        self.reset_instance_id();
         // Clear pending transactions since they reference the old chain state.
         self.pool.clear();
         Ok(())

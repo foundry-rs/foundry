@@ -107,7 +107,11 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
         sender: &Address,
         tx: FoundryTypedTx,
     ) -> Result<FoundryTxEnvelope, BlockchainError> {
-        let signer = self.accounts.get(sender).ok_or(BlockchainError::NoSignerAvailable)?;
+        let mut signer =
+            self.accounts.get(sender).ok_or(BlockchainError::NoSignerAvailable)?.clone();
+        // The transaction is filled from the backend's active chain ID. Do not retain the chain
+        // ID captured when the dev signer was created, because `anvil_reset` can switch chains.
+        signer.set_chain_id(None);
         let envelope = match tx {
             FoundryTypedTx::Legacy(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;
