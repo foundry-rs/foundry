@@ -1,3 +1,4 @@
+use super::install;
 use clap::{Parser, ValueHint};
 use eyre::{Result, eyre};
 use forge_lint::{
@@ -38,9 +39,16 @@ pub struct LintArgs {
 foundry_config::impl_figment_convert!(LintArgs, build);
 
 impl LintArgs {
-    pub fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         let format_json = shell::is_json();
-        let config = self.load_config()?;
+        let mut config = self.load_config()?;
+
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            // Need to re-configure here to also catch additional remappings.
+            config = self.load_config()?;
+        }
+
         let project = config.ephemeral_project()?;
         let path_config = config.project_paths();
 
