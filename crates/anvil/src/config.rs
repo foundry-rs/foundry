@@ -19,7 +19,9 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{Address, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{
+    Address, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
+};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -1068,16 +1070,23 @@ impl NodeConfig {
         Ok(())
     }
 
-    /// Returns the path where the cache file should be stored
+    /// Returns the endpoint-specific path where the cache file should be stored.
     ///
-    /// See also [ Config::foundry_block_cache_file()]
+    /// See also [`Config::foundry_block_cache_file`].
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
+        self.block_cache_path_for_rpc(block, self.fork_urls.first()?)
+    }
+
+    fn block_cache_path_for_rpc(&self, block: u64, rpc_url: &str) -> Option<PathBuf> {
         if self.no_storage_caching || self.fork_urls.is_empty() {
             return None;
         }
         let chain_id = self.get_chain_id();
-
-        Config::foundry_block_cache_file(chain_id, block)
+        let rpc_url_hash = hex::encode(keccak256(rpc_url));
+        Some(
+            Config::foundry_block_cache_file(chain_id, block)?
+                .with_file_name(format!("storage-{rpc_url_hash}.json")),
+        )
     }
 
     /// Sets whether to disable the default create2 deployer
@@ -1137,8 +1146,8 @@ impl NodeConfig {
 
     /// Sets the path where persisted states are cached (used with `max_persisted_states`).
     ///
-    /// Note: This does not control the fork RPC cache location (`storage.json`), which uses
-    /// `~/.foundry/cache/rpc/<chain>/<block>/` via [`Config::foundry_block_cache_file`].
+    /// Note: This does not control the fork RPC cache location, which uses endpoint-specific files
+    /// under `~/.foundry/cache/rpc/<chain>/<block>/`.
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
@@ -1513,9 +1522,12 @@ latest block number: {latest_block}"
 
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
-            BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
+            BlockchainDb::new_skip_check(
+                meta,
+                self.block_cache_path_for_rpc(fork_block_number, &eth_rpc_url),
+            )
         } else {
-            BlockchainDb::new(meta, self.block_cache_path(fork_block_number))
+            BlockchainDb::new(meta, self.block_cache_path_for_rpc(fork_block_number, &eth_rpc_url))
         };
 
         // After bootstrap, rebuild the provider with round-robin if multiple URLs are
@@ -1657,7 +1669,9 @@ async fn derive_block_and_transactions(
             // Convert the transactions to PoolTransactions
             let force_transactions = filtered_transactions
                 .iter()
-                .map(|&transaction| PoolTransaction::try_from(transaction.clone()))
+                .map(|&transaction| {
+                    PoolTransaction::try_from(transaction.clone()).map(PoolTransaction::with_replay)
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| eyre::eyre!("Err converting to pool transactions {e}"))?;
             Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))

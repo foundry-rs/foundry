@@ -17,7 +17,7 @@ use revm::{
 };
 
 impl<N: Network> Backend<N> {
-    /// Optimism path of [`Backend::transact_with_inspector_ref`].
+    /// Optimism path of [`Backend::transact_call_with_inspector_ref`].
     ///
     /// Creates an OP EVM, injects precompiles, transacts, and maps the
     /// OP-specific halt reason back to the shared [`HaltReason`].

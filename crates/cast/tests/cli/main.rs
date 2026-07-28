@@ -24,9 +24,12 @@ use foundry_test_utils::{
     util::OutputExt,
 };
 use serde_json::json;
-use std::{fs, path::Path, process::Command, str::FromStr};
+use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
-use tempo_primitives::TempoTxEnvelope;
+use tempo_primitives::{
+    TempoTxEnvelope,
+    transaction::{KeychainVersion, TempoSignature},
+};
 
 #[macro_use]
 extern crate foundry_test_utils;
@@ -71,6 +74,9 @@ Options:
           Number of threads to use. Specifying 0 defaults to the number of logical cores
 ...
           [alias: --jobs]
+
+      --profile <PROFILE>
+          The configuration profile to use
 
   -V, --version
           Print version
@@ -2668,6 +2674,53 @@ casttest!(mktx_tempo_lane_resolves_nonce_key, |prj, cmd| {
     assert_eq!(envelope.nonce_key(), Some(U256::from(42_u64)));
 });
 
+casttest!(mktx_tempo_access_key_uses_alloy_wallet, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let output = cmd
+        .args([
+            "mktx",
+            "0x0000000000000000000000000000000000000001",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--chain",
+            "31337",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "100000",
+            "--gas-price",
+            "20000000000",
+            "--priority-gas-price",
+            "1000000000",
+            "--tempo.fee-token",
+            "0x20C0000000000000000000000000000000000000",
+            "--tempo.access-key",
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            "--tempo.root-account",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw = hex::decode(stdout.trim().trim_start_matches("0x")).expect("decode raw transaction");
+    let TempoTxEnvelope::AA(signed) =
+        TempoTxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode Tempo AA transaction")
+    else {
+        panic!("expected a Tempo AA transaction");
+    };
+    let TempoSignature::Keychain(signature) = signed.signature() else {
+        panic!("expected an account access-key signature");
+    };
+    assert_eq!(signature.user_address, address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    assert_eq!(signature.version, KeychainVersion::V2);
+    assert_eq!(
+        signature.key_id(&signed.tx().signature_hash()).unwrap(),
+        address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+    );
+});
+
 // tests that the raw encoded transaction is returned
 casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -4053,8 +4106,20 @@ forgetest_async!(cast_run_debug_trace_transaction, |prj, cmd| {
     let endpoint = handle.http_endpoint();
     let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
 
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
     let assert = cmd
-        .cast_fuse()
         .args([
             "run",
             "--debug-trace-transaction",
@@ -4071,6 +4136,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
     assert!(
@@ -4375,6 +4444,67 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
+casttest!(cast_call_disables_external_identification, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    // Leave the listener unserved: correct flag propagation prevents a connection, while an
+    // enabled identifier connects before exhausting the configured timeout.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let etherscan_url = format!("http://{}", listener.local_addr().unwrap());
+    let target = Address::random().to_string();
+    let override_code = format!("{target}:0x60006000f3");
+    fs::write(
+        prj.root().join("foundry.toml"),
+        format!(
+            r#"[profile.default]
+etherscan_api_key = "local"
+eth_rpc_no_proxy = true
+offline = false
+
+[tracing]
+external_identification_timeout = 1
+
+[etherscan]
+local = {{ key = "test", url = "{etherscan_url}" }}
+"#,
+        ),
+    )
+    .unwrap();
+
+    for var in [
+        "ETHERSCAN_API_KEY",
+        "FOUNDRY_CONFIG",
+        "FOUNDRY_ETHERSCAN_API_KEY",
+        "FOUNDRY_OFFLINE",
+        "FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT",
+    ] {
+        cmd.unset_env(var);
+    }
+    let assert = cmd
+        .args([
+            "call",
+            &target,
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            &override_code,
+            "--trace",
+            "--disable-external-identification",
+        ])
+        .assert_success();
+    let stdout = assert.get_output().stdout_lossy().to_lowercase();
+    assert!(
+        stdout.contains("traces:") && stdout.contains(&target.to_lowercase()),
+        "expected trace for {target}, got:\n{stdout}"
+    );
+
+    match listener.accept() {
+        Err(err) if err.kind() == ErrorKind::WouldBlock => {}
+        Ok(_) => panic!("external identification made an Etherscan request"),
+        Err(err) => panic!("failed to inspect mock Etherscan listener: {err}"),
+    }
+});
+
 // https://github.com/foundry-rs/foundry/issues/10848
 forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -4481,10 +4611,23 @@ Transaction successfully executed.
 // `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
 // (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
 // targets the identity precompile so the test needs no deployed contract.
-casttest!(cast_call_debug_trace_call, async |_prj, cmd| {
+casttest!(cast_call_debug_trace_call, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    cmd.cast_fuse()
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd
         .args([
             "call",
             "0x0000000000000000000000000000000000000004",
@@ -4503,6 +4646,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
 });
