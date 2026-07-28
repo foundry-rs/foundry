@@ -881,8 +881,7 @@ impl CallTraceDecoder {
                 // getNonce(Wallet)
                 (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
-            "sign" | "signP256" | "signCompact" | "signWithNonceUnsafe" | "signKeychain" |
-            "signKeychainAdmin" => {
+            "sign" | "signP256" | "signCompact" | "signKeychain" | "signKeychainAdmin" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
 
                 // Redact private key and replace in trace when the first input is a raw
@@ -894,14 +893,24 @@ impl CallTraceDecoder {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
 
-                Some(decoded.iter().map(format_token).collect())
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
+            }
+            "signWithNonceUnsafe" => {
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                // Redact private key and nonce and replace in trace for
+                // signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce).
+                // The nonce is the raw ECDSA k value: together with the digest and the
+                // returned signature it allows recovering the private key.
+                decoded[0] = DynSolValue::String("<pk>".to_string());
+                decoded[2] = DynSolValue::String("<nonce>".to_string());
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
             }
             "signEd25519" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
                 // Redact private key and replace in trace for
                 // signEd25519(bytes namespace, bytes message, bytes32 privateKey)
                 decoded[2] = DynSolValue::String("<pk>".to_string());
-                Some(decoded.iter().map(format_token).collect())
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
             }
             "signDelegation" | "signAndAttachDelegation" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
@@ -1492,7 +1501,11 @@ mod tests {
 
     #[test]
     fn test_should_redact() {
-        let decoder = CallTraceDecoder::new();
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.labels.insert(
+            address!("0x2222222222222222222222222222222222222222"),
+            "compact-signer".to_string(),
+        );
 
         let expected_revert_bytes4 = vec![0xde, 0xad, 0xbe, 0xef];
         let expect_revert_bytes4_data = Function::parse("expectRevert(bytes4)")
@@ -1703,6 +1716,23 @@ mod tests {
                 ]),
             ),
             (
+                // Signer overload: no private key to redact, address labels are preserved.
+                "signCompact(address,bytes32)",
+                hex!(
+                    "
+                    8e2f97bf
+                    0000000000000000000000002222222222222222222222222222222222222222
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "compact-signer: [0x2222222222222222222222222222222222222222]".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
                 "signWithNonceUnsafe(uint256,bytes32,uint256)",
                 hex!(
                     "
@@ -1717,7 +1747,7 @@ mod tests {
                     "\"<pk>\"".to_string(),
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
                         .to_string(),
-                    "1".to_string(),
+                    "\"<nonce>\"".to_string(),
                 ]),
             ),
             (
