@@ -41,8 +41,6 @@ pub struct FeeManager {
     state: Arc<RwLock<FeeState>>,
     /// Whether the minimum suggested priority fee is enforced
     is_min_priority_fee_enforced: bool,
-    /// Network-specific base fee params for EIP-1559 calculations
-    base_fee_params: BaseFeeParams,
 }
 
 /// Mutable fee state that must change atomically when switching forks.
@@ -50,6 +48,8 @@ pub struct FeeManager {
 pub(crate) struct FeeState {
     /// Hardfork identifier.
     spec_id: SpecId,
+    /// Network-specific base fee params for EIP-1559 calculations.
+    base_fee_params: BaseFeeParams,
     /// The blob params that determine blob fees.
     blob_params: BlobParams,
     /// Tracks the base fee for the next block post London
@@ -88,6 +88,7 @@ impl FeeManager {
         Self {
             state: Arc::new(RwLock::new(FeeState {
                 spec_id,
+                base_fee_params,
                 blob_params,
                 base_fee,
                 blob_excess_gas_and_price,
@@ -96,7 +97,6 @@ impl FeeManager {
                 tempo_hardfork,
             })),
             is_min_priority_fee_enforced,
-            base_fee_params,
         }
     }
 
@@ -105,7 +105,6 @@ impl FeeManager {
         Self {
             state: Arc::new(RwLock::new(self.snapshot())),
             is_min_priority_fee_enforced: self.is_min_priority_fee_enforced,
-            base_fee_params: self.base_fee_params,
         }
     }
 
@@ -251,7 +250,7 @@ impl FeeManager {
         if let Some(hardfork) = state.tempo_hardfork {
             return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
         }
-        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, self.base_fee_params)
+        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, state.base_fee_params)
     }
 
     /// Calculates the next block blob base fee.
@@ -272,6 +271,13 @@ impl FeeManager {
     /// Configures the blob params
     pub fn set_blob_params(&self, blob_params: BlobParams) {
         self.state.write().blob_params = blob_params;
+    }
+
+    /// Configures the network-specific EIP-1559 parameters.
+    pub fn set_base_fee_params(&self, base_fee_params: BaseFeeParams) {
+        let mut state = self.state.write();
+        state.base_fee_params = base_fee_params;
+        state.elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
     }
 
     /// Returns the active [`BlobParams`]

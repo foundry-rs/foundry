@@ -1,17 +1,190 @@
 //! Tests for OP chain support.
 
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip2718::Encodable2718};
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest, anvil::Forking};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use foundry_evm_networks::NetworkConfigs;
 use op_alloy_consensus::TxDeposit;
 use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
+
+const CANYON_TIMESTAMP: u64 = 1_704_992_401;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_rejects_network_family_change_atomically() {
+    let (ethereum_api, ethereum_handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    ethereum_api.mine_one().await;
+    let (optimism_api, optimism_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64)),
+    )
+    .await;
+    optimism_api.mine_one().await;
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(ethereum_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let fork = api.get_fork().unwrap();
+    let fork_url = fork.eth_rpc_url();
+    let fork_hash = fork.block_hash();
+    let chain_id = api.chain_id();
+    let hardfork = api.backend.hardfork();
+    let spec_id = api.backend.spec_id();
+    let base_fee = api.backend.base_fee();
+    let gas_price = api.gas_price();
+    let elasticity = api.backend.elasticity();
+    let instance_id = api.instance_id();
+    let account = Address::random();
+    let balance = U256::from(123_456u64);
+    api.anvil_set_balance(account, balance).await.unwrap();
+
+    let err = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(optimism_handle.http_endpoint()),
+            block_number: Some(1u64),
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("network family"), "{err}");
+    let fork = api.get_fork().unwrap();
+    assert_eq!(fork.eth_rpc_url(), fork_url);
+    assert_eq!(fork.block_hash(), fork_hash);
+    assert_eq!(api.chain_id(), chain_id);
+    assert_eq!(api.backend.hardfork(), hardfork);
+    assert_eq!(api.backend.spec_id(), spec_id);
+    assert_eq!(api.backend.base_fee(), base_fee);
+    assert_eq!(api.gas_price(), gas_price);
+    assert_eq!(api.backend.elasticity(), elasticity);
+    assert_eq!(api.instance_id(), instance_id);
+    assert_eq!(api.balance(account, None).await.unwrap(), balance);
+
+    // Restoring the pre-discovery network config is required to detect this reverse transition:
+    // otherwise the inferred Optimism mode remains sticky when chain ID 1 is discovered.
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(optimism_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let err = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(ethereum_handle.http_endpoint()),
+            block_number: Some(1u64),
+        }))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("network family"), "{err}");
+
+    // An explicit network mode remains authoritative when changing endpoints.
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_eth_rpc_url(Some(optimism_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(ethereum_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+    assert!(api.backend.is_optimism());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_refreshes_optimism_base_fee_params() {
+    let pre_canyon_timestamp = CANYON_TIMESTAMP - 2;
+    let post_canyon_timestamp = CANYON_TIMESTAMP + 1;
+    let (pre_canyon_api, pre_canyon_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64))
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_genesis_timestamp(Some(pre_canyon_timestamp)),
+    )
+    .await;
+    pre_canyon_api.mine_one().await;
+    let (post_canyon_api, post_canyon_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64))
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_genesis_timestamp(Some(post_canyon_timestamp)),
+    )
+    .await;
+    post_canyon_api.mine_one().await;
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_genesis_timestamp(Some(post_canyon_timestamp))
+            .with_eth_rpc_url(Some(pre_canyon_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+
+    let parent =
+        pre_canyon_handle.http_provider().get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let expected = calc_next_block_base_fee(
+        parent.header.gas_used,
+        parent.header.gas_limit,
+        parent.header.base_fee_per_gas.unwrap(),
+        BaseFeeParams::optimism(),
+    );
+    assert_eq!(api.backend.base_fee(), expected);
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(post_canyon_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let parent =
+        post_canyon_handle.http_provider().get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let expected = calc_next_block_base_fee(
+        parent.header.gas_used,
+        parent.header.gas_limit,
+        parent.header.base_fee_per_gas.unwrap(),
+        BaseFeeParams::optimism_canyon(),
+    );
+    assert_eq!(api.backend.base_fee(), expected);
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(pre_canyon_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let parent =
+        pre_canyon_handle.http_provider().get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let expected = calc_next_block_base_fee(
+        parent.header.gas_used,
+        parent.header.gas_limit,
+        parent.header.base_fee_per_gas.unwrap(),
+        BaseFeeParams::optimism(),
+    );
+    assert_eq!(api.backend.base_fee(), expected);
+
+    api.anvil_reset(None).await.unwrap();
+    let gas_limit = api.backend.gas_limit();
+    api.mine_one().await;
+    let expected =
+        calc_next_block_base_fee(0, gas_limit, INITIAL_BASE_FEE, BaseFeeParams::optimism_canyon());
+    assert_eq!(api.backend.base_fee(), expected);
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {

@@ -1349,8 +1349,7 @@ impl NodeConfig {
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
         let (db, config) = self.setup_fork_db_config(eth_rpc_url, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
-        let fork = ClientFork::new(config, Arc::clone(&db))
-            .with_runtime_info(fees.raw_gas_price(), evm_env.block_env.gas_limit);
+        let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork)))
     }
 
@@ -1449,6 +1448,7 @@ latest block number: {latest_block}"
         // resolved value is stored on this config for the active fork, while the fork metadata
         // retains the override provenance for later URL changes and fork clearing.
         let override_chain_id = self.chain_id;
+        let override_networks = self.networks;
 
         // Determine chain_id early so we can use it consistently
         let chain_id = if let Some(chain_id) = self.chain_id {
@@ -1479,6 +1479,7 @@ latest block number: {latest_block}"
             spec_id,
             self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
         );
+        fees.set_base_fee_params(self.networks.base_fee_params(block.header.timestamp()));
 
         let fork_base_fee = self.base_fee.or_else(|| block.header.base_fee_per_gas());
         evm_env.block_env.basefee = fork_base_fee.unwrap_or_default();
@@ -1585,9 +1586,12 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
+            override_networks,
             hardfork: fork_hardfork,
             timestamp: block.header.timestamp(),
             base_fee: fork_base_fee.map(|g| g as u128),
+            gas_price,
+            gas_limit,
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,

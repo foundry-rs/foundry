@@ -36,6 +36,7 @@ use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
@@ -61,14 +62,6 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// The RPC URL associated with the state in the underlying database.
     database_rpc_url: Option<String>,
-    /// Resolved runtime values that are not configuration overrides.
-    runtime: Arc<RwLock<ForkRuntimeInfo>>,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct ForkRuntimeInfo {
-    gas_price: u128,
-    gas_limit: u64,
 }
 
 impl<N: Network> ClientFork<N> {
@@ -80,13 +73,7 @@ impl<N: Network> ClientFork<N> {
             config: Arc::new(RwLock::new(config)),
             database,
             database_rpc_url,
-            runtime: Default::default(),
         }
-    }
-
-    pub(crate) fn with_runtime_info(self, gas_price: u128, gas_limit: u64) -> Self {
-        *self.runtime.write() = ForkRuntimeInfo { gas_price, gas_limit };
-        self
     }
 
     /// Removes all data cached from previous responses
@@ -126,11 +113,11 @@ impl<N: Network> ClientFork<N> {
     }
 
     pub fn gas_price(&self) -> u128 {
-        self.runtime.read().gas_price
+        self.config.read().gas_price
     }
 
     pub fn gas_limit(&self) -> u64 {
-        self.runtime.read().gas_limit
+        self.config.read().gas_limit
     }
 
     pub fn block_hash(&self) -> B256 {
@@ -152,6 +139,11 @@ impl<N: Network> ClientFork<N> {
     /// Returns the user-configured chain ID override, if one was provided.
     pub(crate) fn override_chain_id(&self) -> Option<u64> {
         self.config.read().override_chain_id
+    }
+
+    /// Returns the user-configured network mode before remote chain discovery.
+    pub(crate) fn override_networks(&self) -> NetworkConfigs {
+        self.config.read().override_networks
     }
 
     fn provider(&self) -> Arc<RetryProvider<N>> {
@@ -493,17 +485,18 @@ impl<N: Network> ClientFork<N> {
         let gas_limit = block.header().gas_limit();
         let total_difficulty = block.header().difficulty();
 
-        let number = block.header().number();
-        self.config.write().update_block(
-            number,
+        let fallback_gas_price = self.config.read().gas_price;
+        let gas_price = provider.get_gas_price().await.unwrap_or(fallback_gas_price);
+        let mut config = self.config.write();
+        config.update_block(
+            block.header().number(),
             block_hash,
             timestamp,
             base_fee.map(|g| g as u128),
             total_difficulty,
         );
-        let gas_price =
-            provider.get_gas_price().await.unwrap_or_else(|_| self.runtime.read().gas_price);
-        *self.runtime.write() = ForkRuntimeInfo { gas_price, gas_limit };
+        config.gas_price = gas_price;
+        config.gas_limit = gas_limit;
 
         self.clear_cached_storage();
 
@@ -864,12 +857,18 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub provider: Arc<RetryProvider<N>>,
     pub chain_id: u64,
     pub override_chain_id: Option<u64>,
+    /// Network mode configured before remote chain discovery.
+    pub(crate) override_networks: NetworkConfigs,
     /// The hardfork resolved for the forked block, if known.
     pub hardfork: Option<FoundryHardfork>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block
     pub base_fee: Option<u128>,
+    /// The resolved gas price for the fork.
+    pub gas_price: u128,
+    /// The resolved block gas limit for the fork.
+    pub gas_limit: u64,
     /// Blob gas used of the forked block
     pub blob_gas_used: Option<u128>,
     /// Blob excess gas and price of the forked block

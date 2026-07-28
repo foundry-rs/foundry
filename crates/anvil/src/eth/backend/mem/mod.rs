@@ -2632,6 +2632,7 @@ impl<N: Network> Backend<N> {
             // The active config contains the remotely resolved chain ID. Restore its provenance so
             // a new endpoint is queried unless the user explicitly forced a chain ID.
             node_config.set_chain_id(fork.override_chain_id());
+            node_config.networks = fork.override_networks();
         }
         node_config.fork_urls = vec![target_rpc_url.clone()];
         node_config.fork_choice =
@@ -2642,10 +2643,17 @@ impl<N: Network> Backend<N> {
         let candidate_fees = self.fees.detached();
         let (mut db, config) =
             node_config.setup_fork_db_config(target_rpc_url, &mut evm_env, &candidate_fees).await?;
+        let active_network = self.networks.active_network_name().unwrap_or("ethereum");
+        let target_network = node_config.networks.active_network_name().unwrap_or("ethereum");
+        if active_network != target_network {
+            return Err(RpcError::invalid_params(format!(
+                "cannot reset from {active_network} to {target_network}: changing network family is not supported"
+            ))
+            .into());
+        }
         self.apply_fork_genesis(&mut db)?;
         let candidate_fee_state = candidate_fees.snapshot();
-        let fork = ClientFork::new(config, Arc::clone(&self.db))
-            .with_runtime_info(candidate_fees.raw_gas_price(), evm_env.block_env.gas_limit);
+        let fork = ClientFork::new(config, Arc::clone(&self.db));
 
         let _mining_guard = self.mining.lock().await;
 
@@ -2694,6 +2702,7 @@ impl<N: Network> Backend<N> {
             let mut config = self.node_config.write().await;
             if let Some(fork) = &current_fork {
                 config.set_chain_id(fork.override_chain_id());
+                config.networks = fork.override_networks();
             }
             (
                 config.get_chain_id(),
@@ -2723,6 +2732,7 @@ impl<N: Network> Backend<N> {
         self.fees.set_blob_params(fallback_blob_params);
 
         let genesis_timestamp = self.genesis.timestamp;
+        self.fees.set_base_fee_params(self.networks.base_fee_params(genesis_timestamp));
         let genesis_number = self.genesis.number;
 
         let genesis_base_fee = fallback_base_fee;
