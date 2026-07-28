@@ -1,11 +1,11 @@
 //! Foundry policy for the canonical MPP Alloy HTTP transport.
 
 use alloy_chains::Chain;
-use alloy_json_rpc::{RequestPacket, ResponsePacket};
-use alloy_transport::{TransportError, TransportFut};
+use alloy_json_rpc::{RequestPacket, ResponsePacket, RpcError};
+use alloy_transport::{TransportError, TransportErrorKind, TransportFut};
 use alloy_transport_mpp::{MppHttpTransport, MppWsConnect};
 use mpp::{
-    MppError,
+    MppError, PaymentErrorDetails,
     client::{
         PaymentContext, PaymentProvider, TempoAccountsProvider,
         tempo::{
@@ -69,7 +69,41 @@ impl Service<RequestPacket> for LazyMppHttpTransport {
     }
 
     fn call(&mut self, request: RequestPacket) -> Self::Future {
-        self.0.call(request)
+        let retry = request.clone();
+        let mut transport = self.0.clone();
+        let provider = self.0.payment_provider().clone();
+        Box::pin(async move {
+            match transport.call(request).await {
+                Err(error) => {
+                    let Some(problem) = insufficient_balance_details(&error)
+                        .filter(|problem| problem.problem_type.ends_with("/insufficient-balance"))
+                    else {
+                        return Err(error);
+                    };
+                    let context = provider.take_funding_context(problem.challenge_id.as_deref());
+                    if run_interactive_tempo_fund(&context)
+                        .await
+                        .map_err(TransportErrorKind::custom)?
+                    {
+                        match transport.call(retry).await {
+                            Err(error)
+                                if insufficient_balance_details(&error).is_some_and(
+                                    |problem| {
+                                        problem.problem_type.ends_with("/insufficient-balance")
+                                    },
+                                ) =>
+                            {
+                                Err(with_transport_funding_help(error, &context))
+                            }
+                            result => result,
+                        }
+                    } else {
+                        Err(with_transport_funding_help(error, &context))
+                    }
+                }
+                result => result,
+            }
+        })
     }
 }
 
@@ -96,6 +130,7 @@ pub(crate) fn lazy_mpp_ws_connect(url: &Url) -> MppWsConnect<LazyAccountsProvide
 #[derive(Clone)]
 pub struct LazyAccountsProvider {
     inner: Arc<Mutex<HashMap<Option<u64>, TempoAccountsProvider>>>,
+    funding_by_challenge: Arc<Mutex<HashMap<String, FundingContext>>>,
     origin: String,
 }
 
@@ -109,7 +144,11 @@ impl fmt::Debug for LazyAccountsProvider {
 
 impl LazyAccountsProvider {
     pub(super) fn new(origin: String) -> Self {
-        Self { inner: Arc::new(Mutex::new(HashMap::new())), origin }
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            funding_by_challenge: Arc::new(Mutex::new(HashMap::new())),
+            origin,
+        }
     }
 
     fn resolve(&self, chain_id: Option<u64>) -> Result<TempoAccountsProvider, MppError> {
@@ -155,34 +194,9 @@ impl LazyAccountsProvider {
         lock_map(&self.inner).clear();
     }
 
-    async fn provider_for(
-        &self,
-        challenge: &PaymentChallenge,
-    ) -> Result<TempoAccountsProvider, MppError> {
-        let (chain_id, _) = extract_challenge_chain_and_currency(challenge);
-        let provider = self.resolve(chain_id)?;
-        let Some(chain_id) = chain_id else {
-            return Ok(provider);
-        };
-        if !interactive_login_allowed()
-            || !Url::parse(&self.origin)
-                .is_ok_and(|origin| crate::tempo::is_known_tempo_endpoint(&origin))
-            || has_access_key_for_challenge(&provider, challenge, chain_id).await?
-        {
-            return Ok(provider);
-        }
-
-        let config = crate::tempo::EnsureAccessKeyConfig::from_env(chain_id);
-        crate::tempo::ensure_access_key(config).await.map_err(|error| {
-            MppError::InvalidConfig(format!("Tempo access key authorization failed: {error}"))
-        })?;
-        self.invalidate();
-        self.resolve(Some(chain_id))
-    }
-
     fn funding_context(&self, challenge: &PaymentChallenge) -> FundingContext {
         let (chain_id, token) = extract_challenge_chain_and_currency(challenge);
-        FundingContext {
+        let context = FundingContext {
             wallet_address: lock_map(&self.inner)
                 .values()
                 .next()
@@ -192,6 +206,52 @@ impl LazyAccountsProvider {
                 }),
             token,
             chain_id: chain_id.map(Chain::from_id),
+        };
+        let mut contexts = lock_map(&self.funding_by_challenge);
+        if contexts.len() >= 32
+            && !contexts.contains_key(&challenge.id)
+            && let Some(oldest) = contexts.keys().next().cloned()
+        {
+            contexts.remove(&oldest);
+        }
+        contexts.insert(challenge.id.clone(), context.clone());
+        context
+    }
+
+    fn take_funding_context(&self, challenge_id: Option<&str>) -> FundingContext {
+        let mut contexts = lock_map(&self.funding_by_challenge);
+        let context =
+            challenge_id.and_then(|challenge_id| contexts.remove(challenge_id)).or_else(|| {
+                (contexts.len() == 1)
+                    .then(|| contexts.keys().next().cloned())
+                    .flatten()
+                    .and_then(|challenge_id| contexts.remove(&challenge_id))
+            });
+        context.unwrap_or_else(|| FundingContext {
+            wallet_address: TempoAccountsStore::try_open_default()
+                .ok()
+                .flatten()
+                .and_then(|store| store.active_account().ok()),
+            ..Default::default()
+        })
+    }
+
+    async fn needs_access_key(
+        &self,
+        challenge: &PaymentChallenge,
+        chain_id: u64,
+    ) -> Result<bool, MppError> {
+        match TempoAccountsStore::try_open_default() {
+            Ok(None) => Ok(true),
+            Ok(Some(_)) => {
+                let provider = self.resolve(Some(chain_id))?;
+                has_access_key_for_challenge(&provider, challenge, chain_id)
+                    .await
+                    .map(|has_access_key| !has_access_key)
+            }
+            Err(error) => Err(MppError::InvalidConfig(format!(
+                "failed to inspect Tempo Accounts store: {error}"
+            ))),
         }
     }
 }
@@ -202,7 +262,8 @@ impl PaymentProvider for LazyAccountsProvider {
     }
 
     async fn pay(&self, challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
-        let provider = self.provider_for(challenge).await?;
+        let (chain_id, _) = extract_challenge_chain_and_currency(challenge);
+        let provider = self.resolve(chain_id)?;
         match provider.pay(challenge).await {
             Ok(credential) => Ok(credential),
             Err(error @ MppError::InsufficientBalance(_)) => {
@@ -222,7 +283,8 @@ impl PaymentProvider for LazyAccountsProvider {
         challenge: &PaymentChallenge,
         context: PaymentContext,
     ) -> Result<PaymentCredential, MppError> {
-        let provider = self.provider_for(challenge).await?;
+        let (chain_id, _) = extract_challenge_chain_and_currency(challenge);
+        let provider = self.resolve(chain_id)?;
         match provider.pay_with_context(challenge, context.clone()).await {
             Ok(credential) => Ok(credential),
             Err(error @ MppError::InsufficientBalance(_)) => {
@@ -237,11 +299,40 @@ impl PaymentProvider for LazyAccountsProvider {
         }
     }
 
+    async fn prepare_http_payment_challenge(
+        &self,
+        challenge: &PaymentChallenge,
+        _context: PaymentContext,
+    ) -> Result<Option<PaymentChallenge>, MppError> {
+        self.funding_context(challenge);
+        let (Some(chain_id), _) = extract_challenge_chain_and_currency(challenge) else {
+            return Ok(Some(challenge.clone()));
+        };
+        if !interactive_login_allowed()
+            || !Url::parse(&self.origin)
+                .is_ok_and(|origin| crate::tempo::is_known_tempo_endpoint(&origin))
+        {
+            return Ok(Some(challenge.clone()));
+        }
+
+        if !self.needs_access_key(challenge, chain_id).await? {
+            return Ok(Some(challenge.clone()));
+        }
+
+        let config = crate::tempo::EnsureAccessKeyConfig::from_env(chain_id);
+        crate::tempo::ensure_access_key(config).await.map_err(|error| {
+            MppError::InvalidConfig(format!("Tempo access key authorization failed: {error}"))
+        })?;
+        self.invalidate();
+        Ok(None)
+    }
+
     async fn commit_payment(
         &self,
         challenge: &PaymentChallenge,
         credential: &PaymentCredential,
     ) -> Result<(), MppError> {
+        lock_map(&self.funding_by_challenge).remove(&challenge.id);
         let (chain_id, _) = extract_challenge_chain_and_currency(challenge);
         self.resolve(chain_id)?.commit_payment(challenge, credential).await
     }
@@ -315,6 +406,24 @@ impl FundingContext {
 
 fn with_funding_help(error: MppError, context: &FundingContext) -> MppError {
     MppError::InsufficientBalance(Some(format!("{error}{}", context.help())))
+}
+
+fn insufficient_balance_details(error: &TransportError) -> Option<PaymentErrorDetails> {
+    let RpcError::Transport(kind) = error else {
+        return None;
+    };
+    let http = kind.as_http_error().filter(|http| http.status == 402)?;
+    let mut deserializer = serde_json::Deserializer::from_str(&http.body);
+    <PaymentErrorDetails as serde::Deserialize>::deserialize(&mut deserializer).ok()
+}
+
+fn with_transport_funding_help(error: TransportError, context: &FundingContext) -> TransportError {
+    match error {
+        RpcError::Transport(TransportErrorKind::HttpError(http)) => {
+            TransportErrorKind::http_error(http.status, format!("{}{}", http.body, context.help()))
+        }
+        error => error,
+    }
 }
 
 fn interactive_login_allowed() -> bool {
@@ -466,5 +575,88 @@ mod tests {
         assert!(!debug.contains("password"));
         assert!(!debug.contains("secret"));
         assert!(debug.contains("https://example.com/rpc"));
+    }
+
+    #[tokio::test]
+    async fn missing_accounts_store_is_detected_before_provider_resolution() {
+        let _guard = crate::tempo::test_env_mutex().lock().await;
+        let directory = tempfile::tempdir().unwrap();
+        // SAFETY: serialized with every other test that mutates TEMPO_HOME.
+        unsafe { env::set_var(crate::tempo::TEMPO_HOME_ENV, directory.path()) };
+
+        let provider = LazyAccountsProvider::new("https://rpc.mpp.tempo.xyz".to_owned());
+        assert!(provider.needs_access_key(&challenge("tempo", "charge"), 42431).await.unwrap());
+        assert!(lock_map(&provider.inner).is_empty());
+
+        // SAFETY: serialized with every other test that mutates TEMPO_HOME.
+        unsafe { env::remove_var(crate::tempo::TEMPO_HOME_ENV) };
+    }
+
+    #[test]
+    fn recognizes_structured_insufficient_balance_with_http_diagnostics() {
+        let error = TransportErrorKind::http_error(
+            402,
+            concat!(
+                r#"{"type":"https://paymentauth.org/problems/insufficient-balance","#,
+                r#""title":"Insufficient Balance","status":402,"detail":"fund me"}"#,
+                "\n\nHTTP diagnostics:\nserver: test"
+            )
+            .to_owned(),
+        );
+        let problem = insufficient_balance_details(&error).unwrap();
+        assert!(problem.problem_type.ends_with("/insufficient-balance"));
+    }
+
+    #[test]
+    fn appends_funding_help_to_structured_402() {
+        let error = TransportErrorKind::http_error(
+            402,
+            r#"{"type":"https://paymentauth.org/problems/insufficient-balance"}"#.to_owned(),
+        );
+        let error = with_transport_funding_help(
+            error,
+            &FundingContext {
+                token: Some("0x20c0000000000000000000000000000000000000".to_owned()),
+                chain_id: Some(Chain::from_id(42431)),
+                ..Default::default()
+            },
+        );
+        let RpcError::Transport(kind) = error else { panic!("expected transport error") };
+        let http = kind.as_http_error().expect("expected HTTP error");
+        assert_eq!(http.status, 402);
+        assert!(http.body.contains("insufficient-balance"));
+        assert!(http.body.contains("Requested payment token"));
+        assert!(http.body.contains("tempo wallet fund"));
+    }
+
+    #[test]
+    fn funding_contexts_are_selected_by_challenge_id() {
+        let provider = LazyAccountsProvider::new("https://rpc.mpp.tempo.xyz".to_owned());
+        let first = challenge("tempo", "charge");
+        let mut second = challenge("tempo", "charge");
+        second.id = "second".to_owned();
+        second.request = Base64UrlJson::from_value(&serde_json::json!({
+            "amount": "1",
+            "currency": "0x20c0000000000000000000000000000000000001",
+            "recipient": "0x0000000000000000000000000000000000000001",
+            "methodDetails": {"chainId": 4217}
+        }))
+        .unwrap();
+
+        provider.funding_context(&first);
+        provider.funding_context(&second);
+        let second_context = provider.take_funding_context(Some("second"));
+        let first_context = provider.take_funding_context(Some("test"));
+
+        assert_eq!(second_context.chain_id, Some(Chain::from_id(4217)));
+        assert_eq!(
+            second_context.token.as_deref(),
+            Some("0x20c0000000000000000000000000000000000001")
+        );
+        assert_eq!(first_context.chain_id, Some(Chain::from_id(42431)));
+        assert_eq!(
+            first_context.token.as_deref(),
+            Some("0x20c0000000000000000000000000000000000000")
+        );
     }
 }
