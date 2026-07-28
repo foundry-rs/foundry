@@ -88,6 +88,11 @@ impl TimeManager {
         self.interval.write().replace(interval);
     }
 
+    /// Returns the configured block timestamp interval.
+    pub(crate) fn block_timestamp_interval(&self) -> Option<u64> {
+        *self.interval.read()
+    }
+
     /// Removes the interval if it exists
     pub fn remove_block_timestamp_interval(&self) -> bool {
         if self.interval.write().take().is_some() {

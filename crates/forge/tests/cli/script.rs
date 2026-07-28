@@ -17,7 +17,17 @@ use foundry_test_utils::{
 };
 use regex::Regex;
 use serde_json::Value;
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
+fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
+    let path = foundry_common::fs::json_files(&root.join("broadcast"))
+        .find(|path| path.ends_with("dry-run/run-latest.json"))
+        .unwrap();
+    foundry_common::fs::read_json_file(&path).unwrap()
+}
 
 // Tests that fork cheat codes can be used in script
 forgetest_init!(
@@ -2169,6 +2179,10 @@ contract SimpleScript is Script {
 // Asserts that the script runs with expected non-output using `--quiet` flag
 forgetest_async!(adheres_to_json_flag, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.tracing.verbosity = 4;
+        config.tracing.trace_depth = Some(1);
+    });
     prj.add_script(
         "Foo",
         r#"
@@ -2205,6 +2219,41 @@ contract SimpleScript is Script {
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
+});
+
+forgetest!(script_json_trace_depth_removes_nested_nodes, |prj, cmd| {
+    prj.update_config(|config| {
+        config.verbosity = 0;
+        config.tracing.verbosity = 4;
+        config.tracing.trace_depth = Some(0);
+    });
+    prj.add_script(
+        "DepthScript",
+        r#"
+contract Child {
+    function call() external {}
+}
+
+contract DepthScript {
+    function run() external {
+        Child child = new Child();
+        child.call();
+    }
+}
+   "#,
+    );
+
+    let output =
+        cmd.args(["script", "DepthScript", "--json"]).assert_success().get_output().stdout.clone();
+    let output: Value = serde_json::from_slice(&output).unwrap();
+    let traces = output["traces"].as_array().unwrap();
+    assert!(!traces.is_empty());
+
+    for trace in traces {
+        let arena = trace[1]["arena"].as_array().unwrap();
+        assert_eq!(arena.len(), 1);
+        assert!(arena[0]["children"].as_array().unwrap().is_empty());
+    }
 });
 
 // https://github.com/foundry-rs/foundry/issues/10050
@@ -2684,6 +2733,11 @@ forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.verbosity = 0;
+        config.tracing.verbosity = 4;
+        config.tracing.trace_depth = Some(0);
+    });
     prj.add_script(
         "Script.s.sol",
         r#"
@@ -2708,21 +2762,13 @@ contract SimpleScript is Script {
             "#,
     );
 
-    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
+    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint()]);
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
   [..] SimpleScript::run()
-    ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return]
-    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    │   └─ ← [Return] 175 bytes of code
-    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [..] A::getValue() [staticcall]
-    │   │   └─ ← [Return] 100
-    │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
 
 
@@ -2736,8 +2782,6 @@ Simulated On-chain Traces:
     └─ ← [Return] 175 bytes of code
 
   [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [..] A::getValue() [staticcall]
-    │   └─ ← [Return] 100
     └─ ← [Return] 62 bytes of code
 ...
 "#]]);
@@ -3042,6 +3086,209 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 
 "#]]);
+});
+
+forgetest_async!(unused_libraries_conditional_6215, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "UnusedLibraries",
+        r#"
+import "forge-std/Script.sol";
+library Lib1 { function value() external pure returns (uint256) { return 1; } }
+library Lib2 { function value() external pure returns (uint256) { return 2; } }
+contract ContractUsingLib1 { function value() external view returns (uint256) { return Lib1.value(); } }
+contract ContractUsingLib2 { function value() external view returns (uint256) { return Lib2.value(); } }
+contract UnusedLibraries is Script {
+    function run(uint256 which) external {
+        vm.startBroadcast();
+        if (which == 1) new ContractUsingLib1();
+        else new ContractUsingLib2();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.arg("script")
+        .args(["UnusedLibraries", "--sig", "run(uint256)", "1", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .assert_success();
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["Lib1", "ContractUsingLib1"]);
+    assert_eq!(sequence.libraries.len(), 1);
+    assert!(sequence.libraries[0].contains(":Lib1:"));
+});
+
+forgetest_async!(wallet_signing_skips_library_optimization, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "WalletSigningLibraries",
+        r#"
+import "forge-std/Script.sol";
+library SignLib1 { function value() external pure returns (uint256) { return 1; } }
+library SignLib2 { function value() external pure returns (uint256) { return 2; } }
+contract UsesSignLib1 { function value() external view returns (uint256) { return SignLib1.value(); } }
+contract UsesSignLib2 { function value() external view returns (uint256) { return SignLib2.value(); } }
+contract WalletSigningLibraries is Script {
+    function run(uint256 overload) external {
+        bytes32 digest = keccak256("digest");
+        address signer = vm.rememberKey(1);
+        bytes32 r;
+        if (overload == 0) (, r,) = vm.sign(digest);
+        else if (overload == 1) (, r,) = vm.sign(signer, digest);
+        else if (overload == 2) (r,) = vm.signCompact(digest);
+        else (r,) = vm.signCompact(signer, digest);
+        require(r != bytes32(0));
+
+        vm.startBroadcast(1);
+        if (overload < 4) new UsesSignLib1();
+        else new UsesSignLib2();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    for overload in 0..4 {
+        cmd.forge_fuse()
+            .arg("script")
+            .args(["WalletSigningLibraries", "--sig", "run(uint256)"])
+            .arg(overload.to_string())
+            .args([
+                "--rpc-url",
+                handle.http_endpoint().as_str(),
+                "--sender",
+                "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            ])
+            .assert_success();
+        let sequence = latest_dry_run_sequence(prj.root());
+        let names = sequence
+            .transactions
+            .iter()
+            .filter_map(|tx| tx.contract_name.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["SignLib1", "SignLib2", "UsesSignLib1"], "overload {overload}");
+    }
+});
+
+forgetest_async!(candidate_rpc_side_effect_is_blocked, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    assert_eq!(
+        foundry_common::LIBRARY_DEPLOYER.create(0),
+        address!("0x5F65cD7D792E9746EF82929D60de9a1C526f93A5")
+    );
+    prj.add_source(
+        "CandidateRpcSideEffect",
+        r#"
+import "forge-std/Script.sol";
+library LocalLib { function value() external pure returns (uint256) { return 2; } }
+library RequiredLib { function value() external pure returns (uint256) { return 1; } }
+contract UsesRequiredLib { function value() external view returns (uint256) { return RequiredLib.value(); } }
+contract CandidateRpcSideEffect is Script {
+    address constant LOCAL_LIB = 0x5F65cD7D792E9746EF82929D60de9a1C526f93A5;
+    address constant MUTATED = 0x0000000000000000000000000000000000001234;
+
+    function run() external {
+        if (address(LocalLib) == LOCAL_LIB) {
+            vm.rpc("anvil_setBalance", string.concat("[\"", vm.toString(MUTATED), "\", \"0x1\"]"));
+        }
+        vm.startBroadcast();
+        new UsesRequiredLib();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.arg("script")
+        .args(["CandidateRpcSideEffect", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .assert_success();
+
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["LocalLib", "RequiredLib", "UsesRequiredLib"]);
+    let mutated = address!("0x0000000000000000000000000000000000001234");
+    assert_eq!(api.balance(mutated, None).await.unwrap(), U256::ZERO);
+});
+
+forgetest_async!(library_optimization_skips_changed_fork_block, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ChangedForkLibraries",
+        r#"
+import "forge-std/Script.sol";
+library ForkLib1 { function value() external pure returns (uint256) { return 1; } }
+library ForkLib2 { function value() external pure returns (uint256) { return 2; } }
+contract UsesForkLib1 { function value() external view returns (uint256) { return ForkLib1.value(); } }
+contract UsesForkLib2 { function value() external view returns (uint256) { return ForkLib2.value(); } }
+contract ChangedForkLibraries is Script {
+    function run(uint256 which) external {
+        vm.rollFork(block.number);
+        vm.startBroadcast();
+        if (which == 1) new UsesForkLib1();
+        else new UsesForkLib2();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.arg("script")
+        .args(["ChangedForkLibraries", "--sig", "run(uint256)", "1", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .assert_success();
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["ForkLib1", "ForkLib2", "UsesForkLib1"]);
+});
+
+forgetest_async!(unused_library_called_locally_before_direct_create, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "OutsideLibrary",
+        r#"
+import "forge-std/Script.sol";
+library OutsideLib { function value() external pure returns (uint256) { return 1; } }
+library RequiredLib { function value() external pure returns (uint256) { return 2; } }
+contract UsesRequiredLib { function value() external view returns (uint256) { return RequiredLib.value(); } }
+contract OutsideLibrary is Script {
+    function run() external {
+        OutsideLib.value();
+        vm.startBroadcast();
+        new UsesRequiredLib();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.arg("script")
+        .args(["OutsideLibrary", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .assert_success();
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["RequiredLib", "UsesRequiredLib"]);
+    assert_eq!(sequence.libraries.len(), 1);
+    assert!(sequence.libraries[0].contains(":RequiredLib:"));
 });
 
 // Tests warn when artifact source file no longer exists.
@@ -3628,7 +3875,8 @@ Traces:
 
 "#]])
     .stderr_eq(str![[r#"
-Error: script failed: call to non-contract address [..]
+Error: script failed: EvmError: Revert
+
 "#]]);
 });
 
@@ -3912,6 +4160,79 @@ contract CreationCodeScript is Script {
     cmd.args(["build"]).assert_success();
 });
 
+// Regression: tests and scripts must link shared libraries to the same CREATE2 address so that
+// `type(Consumer).creationCode` is stable across both commands.
+forgetest_init!(test_and_script_use_same_create2_library_linking, |prj, cmd| {
+    prj.update_config(|c| {
+        c.dynamic_test_linking = false;
+        c.create2_library_salt = alloy_primitives::B256::with_last_byte(0x42);
+    });
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+library ExternalLibrary {
+    function value() external pure returns (uint256) { return 42; }
+}
+
+contract Consumer {
+    function value() external pure returns (uint256) { return ExternalLibrary.value(); }
+}
+        "#,
+    );
+    prj.add_test(
+        "CreationCode.t.sol",
+        r#"
+import {Test, console2} from "forge-std/Test.sol";
+import {Consumer} from "../src/Consumer.sol";
+
+contract CreationCodeTest is Test {
+    function testCreationCodeHash() external {
+        console2.log("CREATION_CODE_HASH", vm.toString(keccak256(type(Consumer).creationCode)));
+        assertEq(new Consumer().value(), 42);
+    }
+}
+        "#,
+    );
+    prj.add_script(
+        "CreationCode.s.sol",
+        r#"
+import {Script, console2} from "forge-std/Script.sol";
+import {Consumer} from "../src/Consumer.sol";
+
+contract CreationCodeScript is Script {
+    function run() external {
+        console2.log("CREATION_CODE_HASH", vm.toString(keccak256(type(Consumer).creationCode)));
+        require(new Consumer().value() == 42);
+    }
+}
+        "#,
+    );
+
+    fn creation_code_hash(output: &[u8]) -> String {
+        let output = String::from_utf8_lossy(output);
+        let marker = "CREATION_CODE_HASH ";
+        let start = output.find(marker).expect("missing creation code hash marker") + marker.len();
+        output[start..].split_whitespace().next().unwrap().to_owned()
+    }
+
+    let test_output = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "testCreationCodeHash", "-vv"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let script_output = cmd
+        .forge_fuse()
+        .args(["script", "script/CreationCode.s.sol:CreationCodeScript", "-vv"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(creation_code_hash(&test_output), creation_code_hash(&script_output));
+});
+
 forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
@@ -4145,6 +4466,20 @@ contract ArbScript is Script {
     }
 );
 
+forgetest!(script_rejects_unsupported_remote_sponsor, |_prj, cmd| {
+    cmd.args([
+        "script",
+        "src/Counter.s.sol:CounterScript",
+        "--sponsor-url",
+        "https://sponsor.tempo.xyz/tp_test",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: --sponsor-url is not supported by forge script; use --tempo.sponsor with --tempo.sponsor-signer or --tempo.sponsor-sig
+
+"#]]);
+});
+
 forgetest_async!(script_batch_rejects_non_tempo_network, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
@@ -4270,6 +4605,96 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .arg("--root")
         .arg(prj.root())
         .assert_success();
+});
+
+forgetest_async!(tempo_aa_script_broadcast_deploys_with_fee_token, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "DeployTempoAA.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoAADeployment {}
+
+contract DeployTempoAA is Script {
+    function run() external {
+        vm.startBroadcast();
+        new TempoAADeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--tempo.fee-token",
+        "0x20c0000000000000000000000000000000000000",
+    ]);
+    cmd.assert_success();
+});
+
+forgetest_async!(tempo_aa_script_broadcasts_with_local_sponsor, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "DeploySponsoredTempoAA.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SponsoredTempoAADeployment {}
+
+contract DeploySponsoredTempoAA is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SponsoredTempoAADeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+    let sender_key = format!("0x{}", hex::encode(wallets[0].credential().to_bytes()));
+    let sponsor_key =
+        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+    let sponsor = format!("{:?}", wallets[1].address());
+
+    let assert = cmd
+        .arg("script")
+        .arg(script)
+        .args([
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            &sender_key,
+            "--broadcast",
+            "--tempo.fee-token",
+            "PathUSD",
+            "--tempo.sponsor",
+            &sponsor,
+            "--tempo.sponsor-signer",
+            &sponsor_key,
+        ])
+        .assert_success();
+    let output = assert.get_output();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Estimated amount required:"), "{stdout}");
+    assert!(stdout.contains(" PathUSD"), "{stdout}");
+    assert!(!stdout.contains(" ETH"), "{stdout}");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
 });
 
 // Helper: write a script that deploys `LargeRuntime` with runtime > default limit via

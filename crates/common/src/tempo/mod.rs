@@ -227,7 +227,7 @@ fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
-const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
+pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
     match fee_token {
         PATH_USD_ADDRESS => Some("PathUSD"),
         ALPHA_USD_ADDRESS => Some("AlphaUSD"),

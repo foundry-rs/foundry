@@ -1,7 +1,4 @@
-use crate::linter::{
-    EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
-    LinterConfig, ProjectLintEmitter, ProjectLintPass, ProjectSource,
-};
+use crate::linter::{Lint, LintPolicy, Linter};
 use foundry_common::{
     comments::{
         Comments,
@@ -15,19 +12,15 @@ use foundry_config::{
     DenyLevel,
     lint::{LintSpecificConfig, Severity},
 };
-use rayon::prelude::*;
 use solar::{
-    ast::{self as ast, visit::Visit as _},
+    ast::{self as ast},
     interface::{
-        Session,
-        diagnostics::{self, HumanEmitter, JsonEmitter, SilentEmitter},
-        source_map::SourceFile,
+        ColorChoice, Session,
+        diagnostics::{HumanEmitter, JsonEmitter, Level, SilentEmitter},
     },
-    sema::{
-        Compiler, Gcx,
-        hir::{self, Visit as _},
-    },
+    sema::Compiler,
 };
+use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSuite, run_lints};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
@@ -60,6 +53,90 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 
 static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
     LazyLock::new(LintSpecificConfig::default);
+
+struct OwnedLintPolicy {
+    inline: Option<InlineConfig<Vec<String>>>,
+    active: Vec<&'static str>,
+}
+
+impl LintPolicy for OwnedLintPolicy {
+    fn is_lint_enabled(&self, id: &str) -> bool {
+        self.active.contains(&id)
+    }
+
+    fn is_lint_suppressed(&self, id: &str, span: solar::interface::Span) -> bool {
+        self.inline.as_ref().is_some_and(|inline| inline.is_id_disabled(span, id))
+    }
+}
+
+/// A reusable collection of Forge lint passes and policy.
+#[derive(Clone)]
+pub struct ForgeLintSuite {
+    path_config: ProjectPathsConfig,
+    severity: Option<Vec<Severity>>,
+    lints_included: Option<Vec<SolLint>>,
+    lints_excluded: Option<Vec<SolLint>>,
+    registry: Arc<LintRegistry>,
+}
+
+impl std::fmt::Debug for ForgeLintSuite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ForgeLintSuite")
+            .field("path_config", &self.path_config)
+            .field("severity", &self.severity)
+            .field("lints_included", &self.lints_included)
+            .field("lints_excluded", &self.lints_excluded)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ForgeLintSuite {
+    fn include_lint(&self, lint: SolLint) -> bool {
+        self.severity.as_ref().is_none_or(|sev| sev.contains(&lint.severity()))
+            && self.lints_included.as_ref().is_none_or(|incl| incl.contains(&lint))
+            && self.lints_excluded.as_ref().is_none_or(|excl| !excl.contains(&lint))
+    }
+
+    fn active_lints(&self, path: Option<&Path>) -> Vec<&'static str> {
+        [
+            high::REGISTERED_LINTS,
+            med::REGISTERED_LINTS,
+            low::REGISTERED_LINTS,
+            info::REGISTERED_LINTS,
+            gas::REGISTERED_LINTS,
+            codesize::REGISTERED_LINTS,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|lint| {
+            self.include_lint(**lint)
+                && path.is_none_or(|path| {
+                    !self.path_config.is_test_or_script(path)
+                        || !matches!(lint.severity(), Severity::Gas | Severity::CodeSize)
+                })
+        })
+        .map(|lint| lint.id)
+        .collect()
+    }
+}
+
+impl LintSuite for ForgeLintSuite {
+    fn registry(&self) -> &LintRegistry {
+        &self.registry
+    }
+
+    fn source_policy(&self, source: LintSource<'_, '_>) -> Arc<dyn LintPolicy> {
+        let comments = Comments::new(source.file, source.session.source_map(), false, false, None);
+        Arc::new(OwnedLintPolicy {
+            inline: Some(parse_inline_config(source.session, &comments, source.ast)),
+            active: self.active_lints(Some(source.path)),
+        })
+    }
+
+    fn project_policy(&self) -> Arc<dyn LintPolicy> {
+        Arc::new(OwnedLintPolicy { inline: None, active: self.active_lints(None) })
+    }
+}
 
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.
@@ -125,180 +202,24 @@ impl<'a> SolidityLinter<'a> {
         self
     }
 
-    const fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
-        LinterConfig { inline, lint_specific: self.lint_specific }
-    }
+    /// Returns an owned lint suite suitable for CLI or LSP execution.
+    pub fn to_suite(&self) -> ForgeLintSuite {
+        let lint_specific = Arc::new(self.lint_specific.clone());
+        let mut registry = LintRegistry::new();
+        high::register_lints(&mut registry, &lint_specific);
+        med::register_lints(&mut registry, &lint_specific);
+        low::register_lints(&mut registry, &lint_specific);
+        info::register_lints(&mut registry, &lint_specific);
+        gas::register_lints(&mut registry, &lint_specific);
+        codesize::register_lints(&mut registry, &lint_specific);
 
-    fn include_lint(&self, lint: SolLint) -> bool {
-        self.severity.as_ref().is_none_or(|sev| sev.contains(&lint.severity()))
-            && self.lints_included.as_ref().is_none_or(|incl| incl.contains(&lint))
-            && self.lints_excluded.as_ref().is_none_or(|excl| !excl.contains(&lint))
-    }
-
-    fn process_source_ast<'gcx>(
-        &self,
-        sess: &'gcx Session,
-        ast: &'gcx ast::SourceUnit<'gcx>,
-        path: &Path,
-        inline_config: &InlineConfig<Vec<String>>,
-        source_file: Option<Arc<SourceFile>>,
-    ) -> Result<(), diagnostics::ErrorGuaranteed> {
-        // Declare all available passes and lints
-        let mut passes_and_lints = Vec::new();
-        passes_and_lints.extend(high::create_early_lint_passes());
-        passes_and_lints.extend(med::create_early_lint_passes());
-        passes_and_lints.extend(low::create_early_lint_passes());
-        passes_and_lints.extend(info::create_early_lint_passes());
-
-        // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
-        if !self.path_config.is_test_or_script(path) {
-            passes_and_lints.extend(gas::create_early_lint_passes());
-            passes_and_lints.extend(codesize::create_early_lint_passes());
+        ForgeLintSuite {
+            path_config: self.path_config.clone(),
+            severity: self.severity.clone(),
+            lints_included: self.lints_included.clone(),
+            lints_excluded: self.lints_excluded.clone(),
+            registry: Arc::new(registry),
         }
-
-        // Filter passes based on linter config
-        let (mut passes, lints): (Vec<Box<dyn EarlyLintPass<'_>>>, Vec<_>) = passes_and_lints
-            .into_iter()
-            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
-                let included_ids: Vec<_> = lints
-                    .iter()
-                    .filter_map(|lint| self.include_lint(*lint).then_some(lint.id))
-                    .collect();
-
-                if !included_ids.is_empty() {
-                    passes.push(pass);
-                    ids.extend(included_ids);
-                }
-
-                (passes, ids)
-            });
-
-        // Initialize and run the early lint visitor
-        let ctx = LintContext::new(
-            sess,
-            self.with_description,
-            self.with_json_emitter,
-            self.config(inline_config),
-            lints,
-            source_file,
-        );
-        let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
-        _ = early_visitor.visit_source_unit(ast);
-        early_visitor.post_source_unit(ast);
-
-        Ok(())
-    }
-
-    /// Runs all enabled project-wide lint passes against the given input sources.
-    fn process_project<'gcx>(&self, gcx: Gcx<'gcx>, input: &[PathBuf]) {
-        // Gather enabled project passes from every severity bucket.
-        let mut passes_and_lints: Vec<(Box<dyn ProjectLintPass<'_>>, &'static [SolLint])> =
-            Vec::new();
-        passes_and_lints.extend(high::create_project_lint_passes());
-        passes_and_lints.extend(med::create_project_lint_passes());
-        passes_and_lints.extend(low::create_project_lint_passes());
-        passes_and_lints.extend(info::create_project_lint_passes());
-        passes_and_lints.extend(gas::create_project_lint_passes());
-        passes_and_lints.extend(codesize::create_project_lint_passes());
-
-        let (mut passes, lint_ids): (Vec<Box<dyn ProjectLintPass<'_>>>, Vec<_>) = passes_and_lints
-            .into_iter()
-            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
-                let included: Vec<_> = lints
-                    .iter()
-                    .filter_map(|lint| self.include_lint(*lint).then_some(lint.id))
-                    .collect();
-                if !included.is_empty() {
-                    passes.push(pass);
-                    ids.extend(included);
-                }
-                (passes, ids)
-            });
-
-        if passes.is_empty() {
-            return;
-        }
-
-        // Pre-load every input source with its inline config, in input order.
-        let sources: Vec<ProjectSource<'_>> = input
-            .iter()
-            .filter_map(|path| {
-                let path = self.path_config.root.join(path);
-                let (_, source) = gcx.get_ast_source(&path)?;
-                let ast = source.ast.as_ref()?;
-                let comments =
-                    Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
-                let inline_config = parse_inline_config(gcx.sess, &comments, ast);
-                Some(ProjectSource { path, file: source.file.clone(), ast, inline_config })
-            })
-            .collect();
-
-        let emitter = ProjectLintEmitter::new(
-            gcx.sess,
-            gcx,
-            self.with_description,
-            self.with_json_emitter,
-            self.lint_specific,
-            lint_ids,
-        );
-        for pass in &mut passes {
-            pass.check_project(&emitter, &sources);
-        }
-    }
-
-    fn process_source_hir<'gcx>(
-        &self,
-        gcx: Gcx<'gcx>,
-        source_id: hir::SourceId,
-        path: &Path,
-        inline_config: &InlineConfig<Vec<String>>,
-        source_file: Option<Arc<SourceFile>>,
-    ) -> Result<(), diagnostics::ErrorGuaranteed> {
-        // Declare all available passes and lints
-        let mut passes_and_lints = Vec::new();
-        passes_and_lints.extend(high::create_late_lint_passes());
-        passes_and_lints.extend(med::create_late_lint_passes());
-        passes_and_lints.extend(low::create_late_lint_passes());
-        passes_and_lints.extend(info::create_late_lint_passes());
-
-        // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
-        if !self.path_config.is_test_or_script(path) {
-            passes_and_lints.extend(gas::create_late_lint_passes());
-            passes_and_lints.extend(codesize::create_late_lint_passes());
-        }
-
-        // Filter passes based on config
-        let (mut passes, lints): (Vec<Box<dyn LateLintPass<'_>>>, Vec<_>) = passes_and_lints
-            .into_iter()
-            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
-                let included_ids: Vec<_> = lints
-                    .iter()
-                    .filter_map(|lint| self.include_lint(*lint).then_some(lint.id))
-                    .collect();
-
-                if !included_ids.is_empty() {
-                    passes.push(pass);
-                    ids.extend(included_ids);
-                }
-
-                (passes, ids)
-            });
-
-        // Run late lint visitor
-        let ctx = LintContext::new(
-            gcx.sess,
-            self.with_description,
-            self.with_json_emitter,
-            self.config(inline_config),
-            lints,
-            source_file,
-        );
-        let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, gcx, &gcx.hir);
-
-        // Visit this specific source
-        let _ = late_visitor.visit_nested_source(source_id);
-
-        Ok(())
     }
 }
 
@@ -328,7 +249,9 @@ impl<'a> Linter for SolidityLinter<'a> {
             } else {
                 Box::new(std::io::BufWriter::new(std::io::stderr()))
             };
-            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(ui_testing);
+            let json_emitter = JsonEmitter::new(writer, sm, ColorChoice::Never)
+                .rustc_like(true)
+                .ui_testing(ui_testing);
             Box::new(json_emitter)
         } else {
             Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))
@@ -357,48 +280,40 @@ impl<'a> Linter for SolidityLinter<'a> {
             note_count_before = compiler.dcx().note_count();
 
             let gcx = compiler.gcx();
-
-            input.par_iter().for_each(|path| {
-                let path = &self.path_config.root.join(path);
-                let Some((_, ast_source)) = gcx.get_ast_source(path) else {
-                    // issue a warning rather than panicking, in case that some (but not all) of the
-                    // input files have old solidity versions which are not supported by solar.
+            let mut targets = Vec::with_capacity(input.len());
+            for path in input {
+                let path = self.path_config.root.join(path);
+                if gcx.get_ast_source(&path).is_none() {
+                    // Issue a warning rather than panicking when some input files use old
+                    // Solidity versions that Solar does not support.
                     _ = sh_warn!("AST source not found for {}", path.display());
-                    return;
-                };
-                let Some(ast) = &ast_source.ast else {
-                    panic!("AST missing for {}", path.display());
-                };
+                } else {
+                    targets.push(path);
+                }
+            }
 
-                // Parse inline config.
-                let file = &ast_source.file;
-                let comments = Comments::new(file, gcx.sess.source_map(), false, false, None);
-                let inline_config = parse_inline_config(gcx.sess, &comments, ast);
-
-                // Early lints.
-                let _ = self.process_source_ast(
-                    gcx.sess,
-                    ast,
-                    path,
-                    &inline_config,
-                    Some(file.clone()),
-                );
-
-                // Late lints.
-                let Some((hir_source_id, _)) = gcx.get_hir_source(path) else {
-                    panic!("HIR source not found for {}", path.display());
-                };
-                let _ = self.process_source_hir(
+            let suite = self.to_suite();
+            run_lints(
+                &suite,
+                LintRunContext {
                     gcx,
-                    hir_source_id,
-                    path,
-                    &inline_config,
-                    Some(file.clone()),
-                );
+                    targets: &targets,
+                    with_description: self.with_description,
+                    with_ansi_help: !self.with_json_emitter,
+                },
+            )
+            .unwrap_or_else(|error| match error {
+                LintRunError::MissingAstSource(path) => {
+                    unreachable!("prevalidated AST source missing for {}", path.display())
+                }
+                LintRunError::MissingAst(path) => {
+                    panic!("AST missing for {}", path.display())
+                }
+                LintRunError::MissingHir(path) => {
+                    panic!("HIR source not found for {}", path.display())
+                }
+                error => panic!("lint run failed: {error}"),
             });
-
-            // Project-wide lints, run once after all per-file passes.
-            self.process_project(gcx, input);
 
             Ok(())
         })?;
@@ -491,12 +406,18 @@ pub struct SolLint {
     severity: Severity,
 }
 
+impl SolLint {
+    pub const fn severity(self) -> Severity {
+        self.severity
+    }
+}
+
 impl Lint for SolLint {
     fn id(&self) -> &'static str {
         self.id
     }
-    fn severity(&self) -> Severity {
-        self.severity
+    fn level(&self) -> Level {
+        self.severity.into()
     }
     fn description(&self) -> &'static str {
         self.description

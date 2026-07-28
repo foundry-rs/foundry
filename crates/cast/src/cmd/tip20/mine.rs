@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         erc20::build_provider_with_signer,
-        send::{cast_send, cast_send_with_access_key},
+        send::{cast_send, cast_send_with_tempo_wallet},
     },
     tempo,
     tx::{SendTxOpts, TxParams, fill_transaction_gas_fees},
@@ -89,14 +89,17 @@ pub(super) async fn register(
     let (signer, tempo_access_key) =
         tempo::resolve_session_or_wallet_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id())
             .await?;
-    let signer = signer.ok_or_else(|| {
-        eyre::eyre!(
-            "--register requires a signer or Tempo keychain identity (for example --private-key or --from)"
-        )
-    })?;
-
-    let sender =
-        tempo_access_key.as_ref().map(|ak| ak.wallet_address).unwrap_or_else(|| signer.address());
+    let sender = match &tempo_access_key {
+        Some(wallet) => wallet.account(),
+        None => signer
+            .as_ref()
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "--register requires a signer or Tempo keychain identity (for example --private-key or --from)"
+                )
+            })?
+            .address(),
+    };
 
     if sender != master {
         eyre::bail!(
@@ -114,7 +117,7 @@ pub(super) async fn register(
     sh_status!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
 
     if let Some(ref access_key) = tempo_access_key {
-        tempo::fill_access_key_transaction(
+        let prepared = tempo::fill_access_key_transaction(
             &provider,
             &mut tx,
             access_key,
@@ -122,20 +125,20 @@ pub(super) async fn register(
             config.eip1559_fee_estimate,
         )
         .await?;
-        cast_send_with_access_key(
+        cast_send_with_tempo_wallet(
             &provider,
             tx,
-            &signer,
-            access_key,
+            &prepared,
             Some(chain),
             None,
             send_tx.cast_async,
+            send_tx.sync,
             send_tx.confirmations,
             timeout,
             !config.eth_rpc_curl,
         )
         .await?;
-    } else {
+    } else if let Some(signer) = signer {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         // Fill only the fees; the provider fills nonce and gas limit.
         fill_transaction_gas_fees(
@@ -158,6 +161,10 @@ pub(super) async fn register(
             !config.eth_rpc_curl,
         )
         .await?;
+    } else {
+        eyre::bail!(
+            "--register requires a signer or Tempo keychain identity (for example --private-key or --from)"
+        );
     }
 
     Ok(())
