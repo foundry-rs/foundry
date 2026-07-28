@@ -483,6 +483,79 @@ contract IndentedClose {
     );
 });
 
+// Once an indented marker closes a fence in MDX, subsequent fences must be parsed from that new
+// state. CommonMark keeps the first fence open until the next unindented marker, so patching only
+// its first reported range would preserve the final executable `export` by mistake.
+forgetest_init!(natspec_tracks_fences_after_indented_close, |prj, cmd| {
+    prj.add_source(
+        "AlternatingFences.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @notice Ex:
+ * ```
+ *     ```
+ * ```
+ * import insideSecondFence from "x";
+ * ```
+ * export const afterSecondFence = 1
+ */
+contract AlternatingFences {
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.AlternatingFences.mdx"))
+            .unwrap();
+    assert!(rendered.contains("import insideSecondFence from \"x\";"), "{rendered}");
+    assert!(!rendered.contains("&#105;mport insideSecondFence"), "{rendered}");
+    assert!(rendered.contains("&#101;xport const afterSecondFence = 1"), "{rendered}");
+    assert!(
+        !rendered.lines().any(|line| line.starts_with("export const afterSecondFence")),
+        "{rendered}"
+    );
+});
+
+// Fence state is scoped to Markdown containers. An unclosed or missed list-item fence must not
+// make a later top-level ESM statement look like code, and code inside the list fence stays exact.
+forgetest_init!(natspec_tracks_fences_inside_list_items, |prj, cmd| {
+    prj.add_source(
+        "ListFence.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @notice Ex:
+ * - ```
+ *   import insideListFence from "x";
+ *   ```
+ *
+ * export const afterListFence = 1
+ */
+contract ListFence {
+    function f() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ListFence.mdx")).unwrap();
+    assert!(rendered.contains("import insideListFence from \"x\";"), "{rendered}");
+    assert!(!rendered.contains("&#105;mport insideListFence"), "{rendered}");
+    assert!(rendered.contains("&#101;xport const afterListFence = 1"), "{rendered}");
+    assert!(
+        !rendered.lines().any(|line| line.starts_with("export const afterListFence")),
+        "{rendered}"
+    );
+});
+
 // MDX disables indented code blocks, so a fence indented by four or more spaces is still a
 // fence. Preserve ESM-looking lines through its matching closer or EOF without treating
 // ordinary indented prose as code.
