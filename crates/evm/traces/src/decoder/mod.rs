@@ -867,8 +867,8 @@ impl CallTraceDecoder {
                         .collect(),
                 )
             }
-            "addr" | "createWallet" | "deriveKey" | "publicKeyEd25519" | "publicKeyP256" |
-            "rememberKey" => {
+            "addr" | "createEd25519Key" | "createWallet" | "deriveKey" | "publicKeyEd25519" |
+            "publicKeyP256" | "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
             }
@@ -1595,6 +1595,7 @@ mod tests {
             ),
             // Should redact private key from traces in all cases:
             ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createEd25519Key(bytes32)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
