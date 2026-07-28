@@ -510,6 +510,7 @@ heck = "0.5"
 uuid = "1.19.0"
 flate2 = "1.1"
 ethereum_ssz = "0.10"
+fs2 = "0.4"
 
 # Tempo
 alloy-transport-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "db89c09221b82e906d9ad697e4bad92423b59643", default-features = false, features = [

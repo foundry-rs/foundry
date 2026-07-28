@@ -330,12 +330,10 @@ pub fn upsert_session_entry(entry: SessionEntry) -> eyre::Result<()> {
         .ok_or_else(|| eyre::eyre!("managed access key has no signed authorization"))?;
     let authorization = super::decode_key_authorization::<SignedKeyAuthorization>(encoded)?;
     validate_signed_session_authorization(&entry, SignatureType::Secp256k1, &authorization)?;
-    TempoAccountsStore::default_path()?.upsert_secp256k1_access_key(
-        entry.root_account,
-        &signer,
-        &authorization,
-    )?;
-    Ok(())
+    super::with_tempo_accounts_store_lock(|store| {
+        store.upsert_secp256k1_access_key(entry.root_account, &signer, &authorization)?;
+        Ok(())
+    })
 }
 
 /// Retire local signing material in `store.json` for the selected managed key.
@@ -343,29 +341,32 @@ pub fn upsert_session_entry(entry: SessionEntry) -> eyre::Result<()> {
 /// The non-secret account, chain, policy, and authorization witness remain available for
 /// on-chain revoke retries.
 pub fn retire_session_entry(session_id: B256) -> eyre::Result<bool> {
-    let Some(entry) = read_session_entry(session_id)? else {
-        return Ok(false);
-    };
-    TempoAccountsStore::open_default()?
-        .retire_access_key(entry.root_account, entry.chain_id, entry.key_address)
-        .map_err(Into::into)
+    super::with_tempo_accounts_store_lock(|store| {
+        let Some(entry) = read_session_entry(session_id)? else {
+            return Ok(false);
+        };
+        store
+            .retire_access_key(entry.root_account, entry.chain_id, entry.key_address)
+            .map_err(Into::into)
+    })
 }
 
 /// Retire expired managed access keys and return the number changed.
 pub fn mark_expired_session_entries(now: u64) -> eyre::Result<usize> {
-    let Some(entries) = read_session_entries(now)? else {
-        return Ok(0);
-    };
-    let store = TempoAccountsStore::open_default()?;
-    let mut retired = 0;
-    for entry in entries {
-        if entry.status == SessionStatus::Expired
-            && store.retire_access_key(entry.root_account, entry.chain_id, entry.key_address)?
-        {
-            retired += 1;
+    super::with_tempo_accounts_store_lock(|store| {
+        let Some(entries) = read_session_entries(now)? else {
+            return Ok(0);
+        };
+        let mut retired = 0;
+        for entry in entries {
+            if entry.status == SessionStatus::Expired
+                && store.retire_access_key(entry.root_account, entry.chain_id, entry.key_address)?
+            {
+                retired += 1;
+            }
         }
-    }
-    Ok(retired)
+        Ok(retired)
+    })
 }
 
 fn read_session_entries(now: u64) -> eyre::Result<Option<Vec<SessionEntry>>> {
