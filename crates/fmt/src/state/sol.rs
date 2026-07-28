@@ -1362,9 +1362,12 @@ impl<'ast> State<'_, 'ast> {
                             };
                         s.print_call_args(
                             call_args,
-                            list_format
-                                .without_ind(s.return_bin_expr)
-                                .with_delimiters(!s.call_with_opts_and_args),
+                            list_format.without_ind(s.return_bin_expr).with_delimiters(
+                                !s.call_with_opts_and_args
+                                    || s.call_stack
+                                        .last()
+                                        .is_some_and(|call| call.is_chained() && call.has_indent),
+                            ),
                             get_callee_head_size(call_expr),
                             callee_suffix_can_break,
                         );

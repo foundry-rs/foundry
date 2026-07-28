@@ -231,6 +231,7 @@ fmt_tests! {
     LiteralExpression,
     MappingType,
     MethodChain,
+    MethodChainCallOptions,
     ModifierDefinition,
     NamedCallArgsInChain,
     NamedFunctionCallExpression,
