@@ -164,6 +164,9 @@ pub trait FoundryEvmFactory:
     /// Whether transaction execution needs metadata from surrounding blocks.
     const NEEDS_BLOCK_CONTEXT: bool = false;
 
+    /// Whether canonical protocol system transactions must be included during fork replay.
+    const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = false;
+
     /// Whether this EVM family executes the EIP-4788 beacon-roots system call.
     const USES_EIP4788_BEACON_ROOTS: bool = true;
 

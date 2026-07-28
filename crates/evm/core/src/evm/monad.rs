@@ -116,6 +116,7 @@ where
 
 impl FoundryEvmFactory for MonadEvmFactory {
     const NEEDS_BLOCK_CONTEXT: bool = true;
+    const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = true;
     const USES_EIP4788_BEACON_ROOTS: bool = false;
 
     type ContextAux = MonadContextAux;

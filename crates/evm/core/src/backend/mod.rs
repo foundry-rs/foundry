@@ -1023,6 +1023,24 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         transactions.iter().map(TxEnvFor::<FEN>::from_any_rpc_transaction).collect()
     }
 
+    /// Converts a replayable transaction while preserving the established behavior of skipping
+    /// network system envelopes that this EVM factory does not execute.
+    fn replay_tx_env(
+        factory: &FEN::EvmFactory,
+        tx: &AnyRpcTransaction,
+    ) -> eyre::Result<Option<TxEnvFor<FEN>>> {
+        let is_system = is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE;
+        if is_system && !FEN::EvmFactory::REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS {
+            return Ok(None);
+        }
+
+        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+        if is_system && factory.protocol_system_call(&tx_env)?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(tx_env))
+    }
+
     /// Returns the transaction environments needed to construct exact block context.
     fn block_context_inputs(
         &self,
@@ -1130,13 +1148,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let factory = FEN::EvmFactory::default();
         let mut txs_to_replay = Vec::with_capacity(target_index);
         for (index, tx) in transactions[..target_index].iter().enumerate() {
-            let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
-            let is_protocol_system = factory.protocol_system_call(&tx_env)?.is_some();
-            if !is_protocol_system
-                && (is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE)
-            {
-                continue;
-            }
+            let Some(tx_env) = Self::replay_tx_env(&factory, tx)? else { continue };
             txs_to_replay.push((index, tx.clone(), tx_env));
         }
 
@@ -2554,10 +2566,16 @@ mod tests {
         fork::ForkId,
         opts::EvmOpts,
     };
-    use alloy_primitives::{U256, address};
+    use alloy_consensus::transaction::Recovered;
+    use alloy_network::{
+        AnyRpcTransaction, AnyTxEnvelope, AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
+    };
+    use alloy_primitives::{Address, B256, U256, address};
     use alloy_provider::Provider;
+    use alloy_rpc_types::Transaction as RpcTransaction;
+    use alloy_serde::WithOtherFields;
     use anvil::{NodeConfig, spawn};
-    use foundry_common::provider::get_http_provider;
+    use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
     use foundry_config::{Config, NamedChain};
     use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
     use revm::{
@@ -2576,6 +2594,39 @@ mod tests {
             let monad = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
             assert!(monad.inner.persistent_accounts.contains(&MONAD_CHEATCODE_ADDRESS));
         }
+    }
+
+    #[test]
+    fn ethereum_replay_skips_unknown_system_envelopes_before_conversion() {
+        let transaction = |ty| {
+            let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+                hash: B256::ZERO,
+                inner: UnknownTypedTransaction {
+                    ty: AnyTxType(ty),
+                    fields: Default::default(),
+                    memo: Default::default(),
+                },
+            });
+            AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
+                inner: Recovered::new_unchecked(unknown, Address::with_last_byte(0x42)),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }))
+        };
+
+        let factory = Default::default();
+        assert!(
+            Backend::<EthEvmNetwork>::replay_tx_env(
+                &factory,
+                &transaction(SYSTEM_TRANSACTION_TYPE)
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(Backend::<EthEvmNetwork>::replay_tx_env(&factory, &transaction(0xff)).is_err());
     }
 
     #[test]
