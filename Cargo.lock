@@ -1045,7 +1045,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-mpp"
 version = "0.2.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=8db15e428c26de62b4d6c473743011fbe1a1d086#8db15e428c26de62b4d6c473743011fbe1a1d086"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=6a4a0d1c7e5e13d688d39be4833216cb050b8d9c#6a4a0d1c7e5e13d688d39be4833216cb050b8d9c"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -2729,7 +2729,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.20.11",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -7741,7 +7741,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.11.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=8db15e428c26de62b4d6c473743011fbe1a1d086#8db15e428c26de62b4d6c473743011fbe1a1d086"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=6a4a0d1c7e5e13d688d39be4833216cb050b8d9c#6a4a0d1c7e5e13d688d39be4833216cb050b8d9c"
 dependencies = [
  "alloy",
  "async-stream",
