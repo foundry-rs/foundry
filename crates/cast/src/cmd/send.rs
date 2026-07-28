@@ -275,8 +275,8 @@ impl SendTxArgs {
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
-        // --sponsor-url is only valid with a local signer (Case 4). Bail early with a clear
-        // error rather than silently ignoring it in the other signing paths.
+        // --sponsor-url is valid with local signers and Tempo access keys. Bail early rather than
+        // silently ignoring it in signing paths that cannot produce a raw transaction locally.
         if let Some(ref url) = sponsor_url {
             validate_sponsor_url(url)?;
             if unlocked {
@@ -284,9 +284,6 @@ impl SendTxArgs {
             }
             if send_tx.browser.browser {
                 eyre::bail!("--sponsor-url cannot be combined with --browser");
-            }
-            if access_key.is_some() {
-                eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
             }
         }
 
@@ -414,18 +411,31 @@ impl SendTxArgs {
                     .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, prepared.account()).await?;
             }
-            cast_send_with_tempo_wallet(
-                &provider,
-                tx_request,
-                &prepared,
-                tempo_sponsor.is_none().then_some(chain),
-                None,
-                send_tx.cast_async,
-                send_tx.confirmations,
-                timeout,
-                tempo_sponsor.is_none() && !config.eth_rpc_curl,
-            )
-            .await?;
+            if let Some(sponsor_url) = sponsor_url.as_deref() {
+                cast_send_with_tempo_wallet_via_sponsor(
+                    &provider,
+                    tx_request,
+                    &prepared,
+                    sponsor_url,
+                    send_tx.cast_async,
+                    send_tx.confirmations,
+                    timeout,
+                )
+                .await?;
+            } else {
+                cast_send_with_tempo_wallet(
+                    &provider,
+                    tx_request,
+                    &prepared,
+                    tempo_sponsor.is_none().then_some(chain),
+                    None,
+                    send_tx.cast_async,
+                    send_tx.confirmations,
+                    timeout,
+                    tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                )
+                .await?;
+            }
         // Case 4:
         // Remote sponsor URL: sign locally, ask the sponsor service for a fee-payer signature,
         // then submit the fully-sponsored tx to the regular RPC.
@@ -590,6 +600,39 @@ where
         .print_tx_result(tx_hash, cast_async, confirmations, timeout)
         .await?;
     Ok(tx_hash)
+}
+
+/// Signs a prepared transaction with a Tempo wallet, obtains a remote fee-payer signature, and
+/// broadcasts the sponsored transaction through the original provider transport.
+pub(crate) async fn cast_send_with_tempo_wallet_via_sponsor<N: Network, P: Provider<N>>(
+    provider: &P,
+    mut tx: N::TransactionRequest,
+    wallet: &TempoAccountsWallet,
+    sponsor_url: &str,
+    cast_async: bool,
+    confirmations: u64,
+    timeout: u64,
+) -> Result<B256>
+where
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+    let connector = tempo::sponsor_relay_connector(provider, sponsor_url)?;
+    let sponsor_provider =
+        AlloyProviderBuilder::<_, _, N>::default().connect_with(&connector).await?;
+    cast_send_with_tempo_wallet(
+        &sponsor_provider,
+        tx,
+        wallet,
+        None,
+        None,
+        cast_async,
+        confirmations,
+        timeout,
+        false,
+    )
+    .await
 }
 
 /// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).

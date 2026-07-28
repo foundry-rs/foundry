@@ -1,19 +1,32 @@
 //! CLI tests for `cast keychain` subcommands.
 
-use alloy_consensus::TxEnvelope;
-use alloy_eips::Decodable2718;
+use alloy_consensus::{TxEnvelope, transaction::SignerRecoverable};
+use alloy_eips::{Decodable2718, Encodable2718};
+use alloy_primitives::{Address, hex};
+use alloy_rlp::{Header, PayloadView};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 use path_slash::PathExt;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    io::{Read, Write},
+    net::TcpListener,
+    path::Path,
+    thread,
+    time::Duration,
+};
 use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
+use tempo_primitives::TempoTxEnvelope;
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
     pub const PK1: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     pub const PK2: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+    pub const PK3: &str = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a";
     pub const ADDR1: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
     pub const ADDR2: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
     pub const ADDR3: &str = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
@@ -47,6 +60,110 @@ fn write_accounts_store(tempo_home: &Path, chain_id: u64) {
         serde_json::to_vec(&store).expect("serialize Tempo Accounts store"),
     )
     .expect("write Tempo Accounts store");
+}
+
+fn spawn_fee_payer_service(
+    fee_payer: PrivateKeySigner,
+    fee_token: Address,
+) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fee payer service");
+    let address = listener.local_addr().expect("fee payer service address");
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept fee payer request");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set fee payer service timeout");
+
+        let mut request = Vec::new();
+        let (body_offset, content_length) = loop {
+            let mut chunk = [0u8; 4096];
+            let read = stream.read(&mut chunk).expect("read fee payer request");
+            assert_ne!(read, 0, "fee payer request ended before its body");
+            request.extend_from_slice(&chunk[..read]);
+
+            let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+            else {
+                continue;
+            };
+            let headers =
+                std::str::from_utf8(&request[..header_end]).expect("HTTP headers are UTF-8");
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().expect("valid content length"))
+                })
+                .expect("fee payer request has content length");
+            let body_offset = header_end + 4;
+            if request.len() >= body_offset + content_length {
+                break (body_offset, content_length);
+            }
+        };
+
+        let rpc: serde_json::Value =
+            serde_json::from_slice(&request[body_offset..body_offset + content_length])
+                .expect("valid fee payer JSON-RPC request");
+        assert_eq!(rpc["method"], "eth_signRawTransaction");
+        let raw = rpc["params"][0].as_str().expect("raw transaction parameter");
+        let bytes = hex::decode(raw).expect("decode fee payer transaction");
+        assert_eq!(bytes.first(), Some(&0x76), "fee payer request is a Tempo AA transaction");
+        let mut encoded_fields = &bytes[1..];
+        let PayloadView::List(fields) =
+            Header::decode_raw(&mut encoded_fields).expect("decode fee payer transaction fields")
+        else {
+            panic!("fee payer request must contain an RLP list")
+        };
+        assert!(encoded_fields.is_empty(), "fee payer request has trailing bytes");
+        assert_eq!(fields[11], [0x00], "fee payer request has the signature placeholder");
+
+        // The fee-payer service encoding uses 0x00 as a signature marker. Normalize that
+        // sponsor-owned field to an empty value so the standard envelope decoder can recover the
+        // user signature before the mock sponsor fills it.
+        let mut payload = Vec::new();
+        for (index, field) in fields.into_iter().enumerate() {
+            if index == 11 {
+                payload.push(0x80);
+            } else {
+                payload.extend_from_slice(field);
+            }
+        }
+        let mut normalized = vec![0x76];
+        Header { list: true, payload_length: payload.len() }.encode(&mut normalized);
+        normalized.extend_from_slice(&payload);
+        let TempoTxEnvelope::AA(unsigned) =
+            TempoTxEnvelope::decode_2718(&mut normalized.as_slice())
+                .expect("decode Tempo transaction")
+        else {
+            panic!("fee payer request must contain a Tempo AA transaction")
+        };
+        let user = unsigned.recover_signer().expect("recover transaction signer");
+        let (mut tx, user_signature, _) = unsigned.into_parts();
+        tx.fee_token = Some(fee_token);
+        tx.fee_payer_signature = Some(
+            fee_payer
+                .sign_hash_sync(&tx.fee_payer_signature_hash(user))
+                .expect("sign fee payer authorization"),
+        );
+
+        let signed = TempoTxEnvelope::AA(tx.into_signed(user_signature));
+        let mut encoded = Vec::new();
+        signed.encode_2718(&mut encoded);
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": rpc["id"],
+            "result": hex::encode_prefixed(encoded),
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            response.len(),
+            response,
+        )
+        .expect("write fee payer response");
+    });
+    (format!("http://{address}"), handle)
 }
 
 const ADDRESS_REGISTRY: &str = "0xFDC0000000000000000000000000000000000000";
@@ -619,6 +736,64 @@ casttest!(send_uses_access_key_from_accounts_store, async |_prj, cmd| {
     let receipt: serde_json::Value =
         serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+});
+
+casttest!(send_with_accounts_store_and_remote_sponsor_succeeds, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    let fee_payer: PrivateKeySigner = accounts::PK3.parse().unwrap();
+    let (sponsor_url, sponsor) = spawn_fee_payer_service(fee_payer.clone(), PATH_USD_ADDRESS);
+    let tempo_home = tempfile::tempdir().unwrap();
+    write_accounts_store(tempo_home.path(), 31337);
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let output = cmd
+        .args([
+            "send",
+            &path_usd,
+            "approve(address,uint256)",
+            accounts::ADDR3,
+            "0",
+            "--from",
+            accounts::ADDR1,
+            "--rpc-url",
+            &rpc,
+            "--sponsor-url",
+            &sponsor_url,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    sponsor.join().expect("fee payer service completed");
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+    assert_eq!(
+        receipt["feePayer"].as_str().map(str::to_lowercase),
+        Some(fee_payer.address().to_string().to_lowercase()),
+        "unexpected receipt: {output}"
+    );
+    assert_eq!(
+        receipt["feeToken"].as_str().map(str::to_lowercase),
+        Some(path_usd.to_lowercase()),
+        "unexpected receipt: {output}"
+    );
 });
 
 casttest!(tempo_unlocked_send_does_not_require_accounts_store_entry, async |_prj, cmd| {
