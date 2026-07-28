@@ -286,6 +286,46 @@ Error: cannot generate flamegraph for FlamegraphNoExecutionTraceTest::setUp: no 
 "#]]);
 });
 
+forgetest_init!(flame_outputs_profile_test_after_before_test_setup, |prj, cmd| {
+    prj.add_test(
+        "FlameBeforeTestSetup.t.sol",
+        r#"
+contract FlameBeforeTestSetupTest {
+    function beforeTestSetup(bytes4 testSelector)
+        public
+        view
+        returns (bytes[] memory beforeTestCalldata)
+    {
+        if (testSelector == this.testProfile.selector) {
+            beforeTestCalldata = new bytes[](1);
+            beforeTestCalldata[0] = abi.encodeCall(this.beforeOnly, ());
+        }
+    }
+
+    function beforeOnly() public {}
+
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testProfile", "--flamegraph"]).assert_success();
+    let flamegraph = std::fs::read_to_string(
+        prj.root().join("cache/flamegraph_FlameBeforeTestSetupTest_testProfile.svg"),
+    )
+    .unwrap();
+    assert!(flamegraph.contains("FlameBeforeTestSetupTest.testProfile()"));
+    assert!(!flamegraph.contains("FlameBeforeTestSetupTest.beforeOnly()"));
+
+    cmd.forge_fuse().args(["test", "--match-test", "testProfile", "--flamechart"]).assert_success();
+    let flamechart = std::fs::read_to_string(
+        prj.root().join("cache/flamechart_FlameBeforeTestSetupTest_testProfile.svg"),
+    )
+    .unwrap();
+    assert!(flamechart.contains("FlameBeforeTestSetupTest.testProfile()"));
+    assert!(!flamechart.contains("FlameBeforeTestSetupTest.beforeOnly()"));
+});
+
 forgetest_init!(payment_failure, |prj, cmd| {
     prj.add_test(
         "PaymentFailure.t.sol",

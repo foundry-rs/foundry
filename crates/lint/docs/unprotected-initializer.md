@@ -1,11 +1,14 @@
 # Unprotected initializer
 
-`unprotected-initializer` flags upgradeable contracts whose public or external initializer can
-still be called directly on an implementation contract that exposes a destructive entry point.
+**Severity**: `High`
+**ID**: `unprotected-initializer`
 
-## What it detects
+Flags upgradeable contracts whose public or external initializer can still be called directly on an
+implementation contract that exposes a destructive entry point.
 
-This lint reports initializer-like functions that:
+## What it does
+
+Reports initializer-like functions that:
 
 - are public or external;
 - are marked with `initializer` or `reinitializer`;
@@ -14,7 +17,15 @@ This lint reports initializer-like functions that:
 - are in a contract with a public or external `delegatecall`, `callcode`, or `selfdestruct` path
   that is not restricted to proxy calls with `onlyProxy`.
 
-## Examples
+## Why is this bad?
+
+An attacker can initialize the implementation directly, take ownership, and invoke its destructive
+entry point. Destroying or corrupting an implementation can disable every proxy that delegates to
+it.
+
+## Example
+
+### Bad
 
 ```solidity
 contract Vault is Initializable {
@@ -31,7 +42,7 @@ contract Vault is Initializable {
 }
 ```
 
-Prefer locking the implementation contract during deployment:
+### Good
 
 ```solidity
 contract Vault is Initializable {
@@ -46,10 +57,6 @@ contract Vault is Initializable {
     }
 }
 ```
-
-## Configuration
-
-This lint has no additional configuration.
 
 ## Notes
 

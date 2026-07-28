@@ -9,9 +9,9 @@ result of a computation or state query is silently ignored.
 ## What it does
 
 Detects high-level external calls (member calls on contract-typed variables or interface-cast
-addresses) that return one or more values when those values are not captured in a variable or used
-in an expression. ERC20 `transfer` and `transferFrom` are excluded as they are handled by the
-separate `erc20-unchecked-transfer` lint.
+addresses) that return one or more values when the entire result is discarded or any slot of a
+tuple return is omitted. ERC20 `transfer` and `transferFrom` are excluded as they are handled by
+the separate `erc20-unchecked-transfer` lint.
 
 ## Why is this bad?
 

@@ -12,7 +12,7 @@ pub(crate) use hard_arith_fallback::{
 };
 #[cfg(test)]
 pub(crate) use monotonic_product::product_monotonic_unsat;
-use monotonic_product::product_monotonic_unsat_normalized;
+use monotonic_product::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
 pub(crate) use opt::normalize_constraints_for_solver;
 use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_smt_assertions};
 #[cfg(test)]
@@ -460,7 +460,7 @@ impl SmtLibSubprocessSolver {
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
         self.sat_queries += 1;
-        let smt_constraints = normalize_constraints_for_solver(cx, constraints);
+        let smt_constraints = normalize_sat_constraints(cx, constraints);
         let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
@@ -476,14 +476,14 @@ impl SmtLibSubprocessSolver {
         if defer_hard_arith_without_witness
             && let Some((condition, base)) = constraints.split_last()
             && {
-                let normalized_base = normalize_constraints_for_solver(cx, base);
+                let normalized_base = normalize_sat_constraints(cx, base);
                 self.sat_cache.get(&normalized_base) == Some(&true)
             }
             && {
                 let mut complement = Vec::with_capacity(constraints.len());
                 complement.extend(base.iter().cloned());
                 complement.push(condition.clone().not(cx));
-                let normalized_complement = normalize_constraints_for_solver(cx, &complement);
+                let normalized_complement = normalize_sat_constraints(cx, &complement);
                 self.has_cached_unsat_subset(&normalized_complement)
             }
         {
@@ -709,6 +709,11 @@ impl SmtLibSubprocessSolver {
         }
         result.output
     }
+}
+
+/// Normalizes satisfiability constraints and removes soundly implied nonlinear comparisons.
+fn normalize_sat_constraints(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> Vec<SymBoolExpr> {
+    remove_implied_monotonic_constraints(normalize_constraints_for_solver(cx, constraints))
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.

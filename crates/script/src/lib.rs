@@ -22,13 +22,13 @@ use alloy_primitives::{
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts},
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -61,7 +61,7 @@ use foundry_evm::{
     },
     opts::EvmOpts,
     revm::interpreter::InstructionResult,
-    traces::{TraceRequirements, Traces},
+    traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
@@ -71,6 +71,7 @@ use std::path::PathBuf;
 mod broadcast;
 mod build;
 mod execute;
+mod library_deployments;
 mod multi_sequence;
 mod progress;
 mod providers;
@@ -166,6 +167,14 @@ pub struct ScriptArgs {
     #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
+    /// Override the sender's initial nonce for script execution and transaction generation.
+    #[arg(
+        long,
+        value_name = "NONCE",
+        value_parser = RangedU64ValueParser::<u64>::new().range(..u64::MAX),
+    )]
+    pub sender_nonce: Option<u64>,
+
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
     #[arg(
         long,
@@ -220,9 +229,8 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub disable_code_size_limit: bool,
 
-    /// Disables the labels in the traces.
-    #[arg(long)]
-    pub disable_labels: bool,
+    #[command(flatten)]
+    pub tracing: TracingArgs,
 
     /// The Etherscan (or equivalent) API key
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
@@ -231,6 +239,10 @@ pub struct ScriptArgs {
     /// Verifies all the contracts found in the receipts of a script, if any.
     #[arg(long, requires = "broadcast")]
     pub verify: bool,
+
+    /// Opt-in verification of contracts deployed by external factories using explorer source.
+    #[arg(long, requires = "verify", conflicts_with_all = ["skip_simulation", "offline"])]
+    pub verify_external: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
     /// specified in wei, or as a string with a unit type.
@@ -286,7 +298,7 @@ impl ScriptArgs {
 
     async fn preprocess<FEN: FoundryEvmNetwork>(
         self,
-        config: Config,
+        mut config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
@@ -320,8 +332,10 @@ impl ScriptArgs {
         }
 
         tempo.resolve_expires();
+        config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
 
-        let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
+        let script_config =
+            ScriptConfig::new(config, evm_opts, args.batch, tempo, args.sender_nonce).await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
     }
 
@@ -329,6 +343,13 @@ impl ScriptArgs {
     #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
+
+        if self.tempo.sponsor_url.is_some() {
+            eyre::bail!(
+                "--sponsor-url is not supported by forge script; use --tempo.sponsor with \
+                 --tempo.sponsor-signer or --tempo.sponsor-sig"
+            );
+        }
 
         if self.wallet_session.enabled {
             return self.run_wallet_session_wrapper();
@@ -408,6 +429,8 @@ impl ScriptArgs {
                 .execute()
                 .await?
                 .prepare_simulation()
+                .await?
+                .optimize_library_deployments()
                 .await?;
 
             if pre_simulation.args.debug {
@@ -552,12 +575,16 @@ impl ScriptArgs {
             let matching_functions =
                 abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();
             match matching_functions.len() {
-                0 => eyre::bail!("Function `{}` not found in the ABI", self.sig),
+                0 => {
+                    eyre::bail!("Function `{}` not found in the ABI", self.sig);
+                }
                 1 => matching_functions[0],
-                2.. => eyre::bail!(
-                    "Multiple functions with the same name `{}` found in the ABI",
-                    self.sig
-                ),
+                2.. => {
+                    eyre::bail!(
+                        "Multiple functions with the same name `{}` found in the ABI",
+                        self.sig
+                    );
+                }
             }
         };
         let data = encode_function_args(func, &self.args)?;
@@ -740,20 +767,38 @@ impl<N: Network> ScriptResult<N> {
         self.traces
             .iter()
             .flat_map(|(_, traces)| {
-                traces.nodes().iter().filter_map(|node| {
-                    if node.trace.kind.is_any_create() {
-                        let init_code = node.trace.data.clone();
-                        let contract_name = known_contracts
-                            .find_by_creation_code(init_code.as_ref())
-                            .map(|artifact| artifact.0.name.clone());
-                        return Some(AdditionalContract {
-                            call_kind: node.trace.kind,
-                            address: node.trace.address,
-                            contract_name,
-                            init_code,
-                        });
+                let nodes = traces.nodes();
+                nodes.iter().filter_map(|node| {
+                    if !node.trace.kind.is_any_create() || !node.trace.success {
+                        return None;
                     }
-                    None
+
+                    let mut creator_code_addresses = Vec::new();
+                    let mut parent = node.parent;
+                    while let Some(parent_idx) = parent {
+                        let ancestor = &nodes[parent_idx];
+                        if !ancestor.trace.success {
+                            return None;
+                        }
+                        if !ancestor.trace.kind.is_any_create()
+                            && !creator_code_addresses.contains(&ancestor.trace.address)
+                        {
+                            creator_code_addresses.push(ancestor.trace.address);
+                        }
+                        parent = ancestor.parent;
+                    }
+
+                    let init_code = node.trace.data.clone();
+                    let contract_name = known_contracts
+                        .find_by_creation_code(init_code.as_ref())
+                        .map(|artifact| artifact.0.name.clone());
+                    Some(AdditionalContract {
+                        call_kind: node.trace.kind,
+                        address: node.trace.address,
+                        contract_name,
+                        init_code,
+                        creator_code_addresses,
+                    })
                 })
             })
             .collect()
@@ -774,6 +819,7 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: u64,
+    sender_nonce_override: Option<u64>,
     /// Maps a rpc url to a backend
     pub backends: HashMap<String, Backend<FEN>>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
@@ -785,23 +831,39 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     pub async fn new(
         config: Config,
-        evm_opts: EvmOpts,
+        mut evm_opts: EvmOpts,
         batch: bool,
         tempo: TempoOpts,
+        sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
-        let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
+        // Linking happens before runner construction, so pin now to ensure its CREATE2 factory
+        // lookup and all later environment/backend construction use the same fork block.
+        evm_opts.pin_fork_block().await?;
+        let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
+            sender_nonce
+        } else if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
         } else {
             // dapptools compatibility
             1
         };
 
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, tempo })
+        Ok(Self {
+            config,
+            evm_opts,
+            sender_nonce,
+            sender_nonce_override,
+            backends: HashMap::default(),
+            batch,
+            tempo,
+        })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
-        self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, None).await?
+        self.sender_nonce = if let Some(sender_nonce) = self.sender_nonce_override {
+            sender_nonce
+        } else if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
+            next_nonce(sender, fork_url, self.evm_opts.fork_block_number).await?
         } else {
             // dapptools compatibility
             1
@@ -824,7 +886,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     async fn get_runner(&mut self) -> Result<ScriptRunner<FEN>> {
-        self._get_runner(None, false).await
+        self._get_runner(None, false, false).await
     }
 
     async fn get_runner_with_cheatcodes(
@@ -833,17 +895,22 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         script_wallets: Wallets,
         debug: bool,
         target: ArtifactId,
+        restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
-        self._get_runner(Some((known_contracts, script_wallets, target)), debug).await
+        self._get_runner(Some((known_contracts, script_wallets, target)), debug, restricted).await
     }
 
     async fn _get_runner(
         &mut self,
         cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
+        restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
         let (evm_env, mut tx_env, fork_block) = self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
+        if self.evm_opts.fork_url.is_some() && self.evm_opts.fork_block_number.is_none() {
+            self.evm_opts.fork_block_number = fork_block;
+        }
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
@@ -868,9 +935,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
-                    .trace_requirements(
-                        TraceRequirements::none().with_calls(true).with_debug(debug),
-                    )
+                    .trace_requirements(script_trace_requirements(&self.config, debug))
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
@@ -880,18 +945,20 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         if let Some((known_contracts, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
+                let mut cheats_config = CheatsConfig::new(
+                    &self.config,
+                    self.evm_opts.clone(),
+                    Some(known_contracts),
+                    Some(target),
+                    self.tempo.fee_token,
+                    self.batch,
+                );
+                if restricted {
+                    cheats_config.blocked_cheatcodes =
+                        library_deployments::rerun_unsafe_cheatcode_selectors();
+                }
                 stack
-                    .cheatcodes(
-                        CheatsConfig::new(
-                            &self.config,
-                            self.evm_opts.clone(),
-                            Some(known_contracts),
-                            Some(target),
-                            self.tempo.fee_token,
-                            self.batch,
-                        )
-                        .into(),
-                    )
+                    .cheatcodes(cheats_config.into())
                     .wallets(script_wallets)
                     .enable_isolation(self.evm_opts.isolate)
             });
@@ -901,9 +968,28 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
-            .with_debug_bytecodes(debug))
+        let mut runner =
+            ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
+                .with_debug_bytecodes(debug);
+
+        if self.sender_nonce_override.is_some() {
+            runner.executor.set_nonce(self.evm_opts.sender, self.sender_nonce)?;
+        }
+
+        Ok(runner)
     }
+}
+
+const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
+    TraceRequirements::none()
+        .with_calls(true)
+        .with_debug(debug)
+        .with_verbosity(config.tracing.verbosity)
+        .with_decode_internal(if config.tracing.decode_internal {
+            InternalTraceMode::Full
+        } else {
+            InternalTraceMode::None
+        })
 }
 
 #[cfg(test)]
@@ -912,12 +998,18 @@ mod tests {
     use alloy_chains::NamedChain;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
+    use alloy_provider::Provider as _;
+    use alloy_rpc_types::TransactionRequest;
+    use anvil::{NodeConfig, spawn};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
     use foundry_common::tempo::{
         KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
+    use foundry_evm::traces::{
+        CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
+    };
     use std::{fs, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
@@ -928,6 +1020,118 @@ mod tests {
         "0x1111111111111111111111111111111111111111111111111111111111111111";
     const SESSION_ROOT_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn script_trace_requirements_honor_tracing_verbosity() {
+        let mut config = Config::default();
+        config.tracing.verbosity = 5;
+
+        let tracing = script_trace_requirements(&config, false).into_config().unwrap();
+        assert!(tracing.record_state_diff);
+    }
+
+    #[test]
+    fn created_contracts_include_successful_creator_code_ancestry() {
+        let root = Address::repeat_byte(0x11);
+        let implementation = Address::repeat_byte(0x22);
+        let helper = Address::repeat_byte(0x33);
+        let created = Address::repeat_byte(0x44);
+        let init_code = Bytes::from_static(&[0x60, 0x00]);
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut()[0].trace =
+            CallTrace { success: true, address: root, kind: CallKind::Call, ..Default::default() };
+        arena.nodes_mut().extend([
+            CallTraceNode {
+                parent: Some(0),
+                idx: 1,
+                trace: CallTrace {
+                    success: true,
+                    address: implementation,
+                    kind: CallKind::DelegateCall,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(1),
+                idx: 2,
+                trace: CallTrace {
+                    success: true,
+                    address: helper,
+                    kind: CallKind::Call,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(2),
+                idx: 3,
+                trace: CallTrace {
+                    success: true,
+                    address: created,
+                    kind: CallKind::Create2,
+                    data: init_code.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]);
+        let result = ScriptResult::<Ethereum> {
+            traces: vec![(
+                TraceKind::Execution,
+                SparsedTraceArena {
+                    arena,
+                    ignored: Default::default(),
+                    diagnostics: Default::default(),
+                },
+            )],
+            ..Default::default()
+        };
+
+        let contracts = result.get_created_contracts(&ContractsByArtifact::default());
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(contracts[0].address, created);
+        assert_eq!(contracts[0].init_code, init_code);
+        assert_eq!(contracts[0].creator_code_addresses, [helper, implementation, root]);
+    }
+
+    #[test]
+    fn created_contracts_exclude_creations_rolled_back_by_an_ancestor() {
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut()[0].trace = CallTrace { success: true, ..Default::default() };
+        arena.nodes_mut().extend([
+            CallTraceNode {
+                parent: Some(0),
+                idx: 1,
+                trace: CallTrace { success: false, kind: CallKind::Call, ..Default::default() },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(1),
+                idx: 2,
+                trace: CallTrace {
+                    success: true,
+                    kind: CallKind::Create,
+                    data: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]);
+        let result = ScriptResult::<Ethereum> {
+            traces: vec![(
+                TraceKind::Execution,
+                SparsedTraceArena {
+                    arena,
+                    ignored: Default::default(),
+                    diagnostics: Default::default(),
+                },
+            )],
+            ..Default::default()
+        };
+
+        assert!(result.get_created_contracts(&ContractsByArtifact::default()).is_empty());
+    }
 
     fn active_session_entry(
         session_id: B256,
@@ -987,6 +1191,96 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn verify_external_requires_verify() {
+        let err = ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--verify-external"])
+            .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--broadcast",
+            "--verify",
+            "--verify-external",
+        ])
+        .unwrap();
+        assert!(args.verify_external);
+    }
+
+    #[test]
+    fn verify_external_requires_simulation_and_online_mode() {
+        for conflicting_arg in ["--skip-simulation", "--offline"] {
+            let err = ScriptArgs::try_parse_from([
+                "foundry-cli",
+                "Contract.sol",
+                "--broadcast",
+                "--verify",
+                "--verify-external",
+                conflicting_arg,
+            ])
+            .unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+    }
+
+    #[test]
+    fn rejects_max_sender_nonce() {
+        let max_valid_nonce = (u64::MAX - 1).to_string();
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender-nonce",
+            &max_valid_nonce,
+        ])
+        .unwrap();
+        assert_eq!(args.sender_nonce, Some(u64::MAX - 1));
+
+        let max_nonce = u64::MAX.to_string();
+        let err = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender-nonce",
+            &max_nonce,
+        ])
+        .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_sender_uses_pinned_fork_nonce() {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        let original_sender = accounts[0].address();
+        let replacement_sender = accounts[1].address();
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            sender: original_sender,
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(config.evm_opts.fork_block_number, Some(0));
+
+        let provider = handle.http_provider();
+        let tx = TransactionRequest::default()
+            .from(replacement_sender)
+            .to(original_sender)
+            .value(U256::from(1));
+        provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+        assert_eq!(provider.get_transaction_count(replacement_sender).await.unwrap(), 1);
+
+        config.update_sender(replacement_sender).await.unwrap();
+        assert_eq!(config.sender_nonce, 0);
     }
 
     #[test]

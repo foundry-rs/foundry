@@ -38,8 +38,12 @@ use session::SessionArgs;
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    /// Create a new random keypair.
-    #[command(visible_alias = "n")]
+    /// Create a new random keypair
+    ///
+    /// Examples:
+    /// - cast wallet new (print a new private key and address)
+    /// - cast wallet new ~/.foundry/keystores dev (save to an encrypted keystore)
+    #[command(verbatim_doc_comment, visible_alias = "n")]
     New {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
         path: Option<String>,
@@ -102,7 +106,11 @@ pub enum WalletSubcommands {
     },
 
     /// Derive accounts from a mnemonic
-    #[command(visible_alias = "d")]
+    ///
+    /// Examples:
+    /// - cast wallet derive "test test test test test test test test test test test junk"
+    /// - cast wallet derive "$MNEMONIC" --accounts 5
+    #[command(verbatim_doc_comment, visible_alias = "d")]
     Derive {
         /// The accounts will be derived from the specified mnemonic phrase.
         #[arg(value_name = "MNEMONIC")]
@@ -117,8 +125,13 @@ pub enum WalletSubcommands {
         insecure: bool,
     },
 
-    /// Sign a message or typed data.
-    #[command(visible_alias = "s")]
+    /// Sign a message or typed data
+    ///
+    /// Examples:
+    /// - cast wallet sign "hello" --account dev
+    /// - cast wallet sign "hello" --private-key $PK
+    /// - cast wallet sign --data --from-file typed_data.json --ledger
+    #[command(verbatim_doc_comment, visible_alias = "s")]
     Sign {
         /// The message, typed data, or hash to sign.
         ///
@@ -176,8 +189,12 @@ pub enum WalletSubcommands {
         wallet: WalletOpts,
     },
 
-    /// Verify the signature of a message.
-    #[command(visible_alias = "v")]
+    /// Verify the signature of a message
+    ///
+    /// Examples:
+    /// - cast wallet verify --address $ADDRESS "hello" $SIGNATURE
+    /// - cast wallet verify --address $ADDRESS --no-hash $HASH $SIGNATURE
+    #[command(verbatim_doc_comment, visible_alias = "v")]
     Verify {
         /// The original message.
         ///
@@ -214,8 +231,13 @@ pub enum WalletSubcommands {
         no_hash: bool,
     },
 
-    /// Import a private key into an encrypted keystore.
-    #[command(visible_alias = "i")]
+    /// Import a private key into an encrypted keystore
+    ///
+    /// Examples:
+    /// - cast wallet import dev --interactive (prompt for the private key)
+    /// - cast wallet import dev --private-key $PK
+    /// - cast wallet import dev --mnemonic "$MNEMONIC" --mnemonic-index 1
+    #[command(verbatim_doc_comment, visible_alias = "i")]
     Import {
         /// The name for the account in the keystore.
         #[arg(value_name = "ACCOUNT_NAME")]
@@ -259,7 +281,12 @@ pub enum WalletSubcommands {
     },
 
     /// Derives private key from mnemonic
-    #[command(name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
+    ///
+    /// Examples:
+    /// - cast wallet private-key "test test test test test test test test test test test junk"
+    /// - cast wallet private-key "$MNEMONIC" 1 (derive the key at index 1)
+    /// - cast wallet private-key "$MNEMONIC" "m/44'/60'/0'/0/1" (use a custom path)
+    #[command(verbatim_doc_comment, name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
     PrivateKey {
         /// If provided, the private key will be derived from the specified mnemonic phrase.
         #[arg(value_name = "MNEMONIC")]
@@ -593,7 +620,9 @@ impl WalletSubcommands {
                                 }
                             }
                         }
-                        _ => eyre::bail!("Only local wallets are supported by this command"),
+                        _ => {
+                            eyre::bail!("Only local wallets are supported by this command");
+                        }
                     }
                 }
 
@@ -613,7 +642,9 @@ impl WalletSubcommands {
 
                 let public_key = match wallet {
                     WalletSigner::Local(wallet) => wallet.public_key(),
-                    _ => eyre::bail!("Only local wallets are supported by this command"),
+                    _ => {
+                        eyre::bail!("Only local wallets are supported by this command");
+                    }
                 };
 
                 print_scalar(format!("0x{}", hex::encode(public_key)))?;

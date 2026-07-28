@@ -49,7 +49,7 @@ jobs:
       contents: read
     steps:
       # Checkout the repository
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
@@ -69,7 +69,7 @@ jobs:
         env:
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
-          TEMPO_DEVNET_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          TEMPO_DEVNET_RPC_URL: ${{ vars.TEMPO_DEVNET_CI != 'false' && secrets.TEMPO_DEVNET_RPC_URL || '' }}
         run: |
           cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
 
@@ -109,11 +109,7 @@ jobs:
           fi
 
       - name: Run Tempo check on devnet
-        if: |
-          github.event_name == 'push' ||
-          github.event_name == 'pull_request' ||
-          github.event.inputs.network == 'devnet' ||
-          github.event.inputs.network == 'all'
+        if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.network == 'devnet' || github.event.inputs.network == 'all')
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
@@ -126,13 +122,10 @@ jobs:
           fi
 
       - name: Run Tempo wallet tests on devnet
-        if: |
-          github.event_name == 'push' ||
-          github.event_name == 'pull_request' ||
-          github.event.inputs.network == 'devnet' ||
-          github.event.inputs.network == 'all'
+        if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.network == 'devnet' || github.event.inputs.network == 'all')
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          TEMPO_HOME: ${{ runner.temp }}/tempo-wallet
         run: ./.github/scripts/tempo-wallet.sh
 
   # If the nightly run fails, this will create an issue to signal so.
@@ -145,7 +138,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2

@@ -31,6 +31,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -58,12 +59,20 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     pub config: Arc<RwLock<ClientForkConfig<N>>>,
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
+    /// The RPC URL associated with the state in the underlying database.
+    database_rpc_url: Arc<RwLock<Option<String>>>,
 }
 
 impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
-        Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
+        let database_rpc_url = config.eth_rpc_url().map(ToOwned::to_owned);
+        Self {
+            storage: Default::default(),
+            config: Arc::new(RwLock::new(config)),
+            database,
+            database_rpc_url: Arc::new(RwLock::new(database_rpc_url)),
+        }
     }
 
     /// Removes all data cached from previous responses
@@ -108,6 +117,14 @@ impl<N: Network> ClientFork<N> {
 
     pub fn eth_rpc_url(&self) -> Option<String> {
         self.config.read().eth_rpc_url().map(|s| s.to_string())
+    }
+
+    pub(crate) fn database_rpc_url(&self) -> Option<String> {
+        self.database_rpc_url.read().clone()
+    }
+
+    pub(crate) fn set_database_rpc_url(&self, url: Option<String>) {
+        *self.database_rpc_url.write() = url;
     }
 
     pub fn chain_id(&self) -> u64 {
@@ -380,9 +397,12 @@ impl<N: Network> ClientFork<N> {
         number: u64,
         trace_types: HashSet<TraceType>,
     ) -> Result<Vec<TraceResultsWithTransactionHash>, TransportError> {
-        // Forward to upstream provider for historical blocks
-        let params = (number, trace_types.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>());
-        self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
+        // Forward to upstream provider for historical blocks. Use the typed trace API so the block
+        // and trace types are serialized in the format upstream providers expect.
+        self.provider()
+            .trace_replay_block_transactions(BlockId::number(number))
+            .trace_types(trace_types)
+            .await
     }
 
     pub async fn trace_replay_transaction(
@@ -415,6 +435,21 @@ impl<N: Network> ClientFork<N> {
                 .map_err(BlockchainError::Internal)?;
         }
 
+        self.prepare_reset(urls, block_number).await?;
+
+        let number = self.block_number();
+        let block_hash = self.block_hash();
+        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
+
+        Ok(())
+    }
+
+    /// Updates the fork configuration for a reset without modifying the current database.
+    pub(crate) async fn prepare_reset(
+        &self,
+        urls: Vec<String>,
+        block_number: BlockId,
+    ) -> Result<(), BlockchainError> {
         if !urls.is_empty() {
             self.config.write().update_urls(urls)?;
             let override_chain_id = self.config.read().override_chain_id;
@@ -445,8 +480,6 @@ impl<N: Network> ClientFork<N> {
 
         self.clear_cached_storage();
 
-        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
-
         Ok(())
     }
 
@@ -474,15 +507,23 @@ impl<N: Network> ClientFork<N> {
             .await
     }
 
+    /// Sends `eth_callBundle`.
+    pub async fn call_bundle(
+        &self,
+        bundle: EthCallBundle,
+    ) -> Result<EthCallBundleResponse, TransportError> {
+        self.provider().raw_request("eth_callBundle".into(), (bundle,)).await
+    }
+
     /// Sends `eth_simulateV1`
     pub async fn simulate_v1(
         &self,
         request: &SimulatePayload,
-        block: Option<BlockNumber>,
+        block: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
         let mut simulate_call = self.provider().simulate(request);
-        if let Some(n) = block {
-            simulate_call = simulate_call.number(n.as_number().unwrap());
+        if let Some(block) = block {
+            simulate_call = simulate_call.block_id(block);
         }
 
         let res = simulate_call.await?;
@@ -633,6 +674,14 @@ impl<N: Network> ClientFork<N> {
         }
 
         self.fetch_full_block(block_number).await
+    }
+
+    /// Fetches a block selected by its original identifier directly from the fork provider.
+    pub async fn fetch_block(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        self.fetch_full_block(block_id).await
     }
 
     async fn fetch_full_block(

@@ -1,7 +1,10 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::{
-    cmd::send::{cast_send, cast_send_with_access_key},
+    cmd::{
+        call_overrides::CallOverrideOpts,
+        send::{cast_send, cast_send_with_tempo_wallet, validate_sponsor_url},
+    },
     format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
@@ -10,7 +13,9 @@ use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, fillers::RecommendedFillers};
+use alloy_provider::{
+    Provider, ProviderBuilder as AlloyProviderBuilder, fillers::RecommendedFillers,
+};
 use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
 use clap::Parser;
@@ -28,8 +33,9 @@ use foundry_common::{
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
-use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use tempo_alloy::TempoNetwork;
+use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 sol! {
     #[sol(rpc)]
@@ -86,6 +92,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        #[command(flatten)]
+        overrides: CallOverrideOpts,
     },
 
     /// Transfer ERC20 tokens.
@@ -295,7 +304,7 @@ impl Erc20Subcommand {
 
     async fn should_use_tempo_network(
         &self,
-        tempo_access_key: &Option<TempoAccessKeyConfig>,
+        tempo_access_key: &Option<TempoAccountsWallet>,
         has_session: bool,
     ) -> eyre::Result<bool> {
         if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
@@ -320,25 +329,24 @@ impl Erc20Subcommand {
     pub async fn run(self) -> eyre::Result<()> {
         let has_session = self.has_tempo_session()?;
         // Resolve the signer once for state-changing variants.
-        let (signer, tempo_access_key) = match &self {
-            Self::Transfer { send_tx, .. }
-            | Self::Approve { send_tx, .. }
-            | Self::Mint { send_tx, .. }
-            | Self::Burn { send_tx, .. } => {
-                // Only attempt persistent Tempo lookup if --from is set (avoids unnecessary I/O).
+        let (resolved_tempo, signer, tempo_access_key) = match &self {
+            Self::Transfer { send_tx, tx, .. }
+            | Self::Approve { send_tx, tx, .. }
+            | Self::Mint { send_tx, tx, .. }
+            | Self::Burn { send_tx, tx, .. } => {
                 // Explicit Tempo sessions are resolved after network selection, once the chain is
                 // known.
-                if !has_session && send_tx.eth.wallet.from.is_some() {
-                    let (s, ak) = send_tx.eth.wallet.maybe_signer().await?;
-                    (s, ak)
+                if has_session {
+                    (true, None, None)
                 } else {
-                    (None, None)
+                    tempo::resolve_transaction_network_and_signer(&tx.tempo, &send_tx.eth).await?
                 }
             }
-            _ => (None, None),
+            _ => (false, None, None),
         };
 
-        let is_tempo = self.should_use_tempo_network(&tempo_access_key, has_session).await?;
+        let is_tempo =
+            resolved_tempo || self.should_use_tempo_network(&tempo_access_key, has_session).await?;
 
         if is_tempo {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await
@@ -351,7 +359,7 @@ impl Erc20Subcommand {
     pub async fn run_generic<N: Network + RecommendedFillers>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
-        tempo_keychain: Option<TempoAccessKeyConfig>,
+        tempo_keychain: Option<TempoAccountsWallet>,
         has_session: bool,
     ) -> eyre::Result<()>
     where
@@ -375,41 +383,53 @@ impl Erc20Subcommand {
             ) => {{
                 let mut tx_opts = $tx_opts;
                 tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
-                let (pre_resolved_signer, tempo_keychain) = if has_session {
-                    let $provider =
-                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-                    let chain = get_chain(config.chain, &$provider).await?;
-                    tempo::resolve_session_or_wallet_signer(
-                        &tx_opts.tempo,
-                        &$send_tx.eth.wallet,
-                        chain.id(),
-                    )
-                    .await?
-                } else {
-                    (pre_resolved_signer, tempo_keychain)
-                };
+                let (pre_resolved_signer, tempo_keychain) =
+                    if has_session || tempo_keychain.is_some() {
+                        let $provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        let chain = get_chain(config.chain, &$provider).await?;
+                        tempo::resolve_session_or_wallet_signer(
+                            &tx_opts.tempo,
+                            &$send_tx.eth.wallet,
+                            chain.id(),
+                        )
+                        .await?
+                    } else {
+                        (pre_resolved_signer, tempo_keychain)
+                    };
                 let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+                let sponsor_url = tx_opts.tempo.sponsor_url.clone();
                 let sponsor_fee_payer = tx_opts.tempo.sponsor;
                 let expires_at = tx_opts.tempo.resolve_expires();
-                let tempo_sponsor =
-                    if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
-                let needs_sponsor_payload = print_sponsor_hash || tempo_sponsor.is_some();
+                let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
+                    None
+                } else {
+                    tx_opts.tempo.sponsor_config().await?
+                };
+                let needs_sponsor_payload =
+                    print_sponsor_hash || tempo_sponsor.is_some() || sponsor_url.is_some();
+                if let Some(ref url) = sponsor_url {
+                    validate_sponsor_url(url)?;
+                    if $send_tx.browser.browser {
+                        eyre::bail!("--sponsor-url cannot be combined with --browser");
+                    }
+                    if tempo_keychain.is_some() {
+                        eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
+                    }
+                }
                 if let Some(ts) = expires_at {
                     sh_status!("Transaction expires at unix timestamp {ts}")?;
                 }
 
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
                 if let Some(ref access_key) = tempo_keychain {
-                    let signer = pre_resolved_signer
-                        .as_ref()
-                        .ok_or_else(|| eyre::eyre!("signer required for access key"))?;
                     let $provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
-                    tempo::fill_access_key_transaction(
+                    let prepared_access_key = tempo::fill_access_key_transaction(
                         &$provider,
                         &mut tx,
                         access_key,
@@ -429,7 +449,7 @@ impl Erc20Subcommand {
                                 .await?;
                             }
                             let hash = tx
-                                .compute_sponsor_hash(access_key.wallet_address)
+                                .compute_sponsor_hash(prepared_access_key.account())
                                 .ok_or_else(|| {
                                     eyre::eyre!(
                                         "This network does not support sponsored transactions"
@@ -449,16 +469,15 @@ impl Erc20Subcommand {
                             sponsor
                                 .attach_and_print::<TempoNetwork>(
                                     &mut tx,
-                                    access_key.wallet_address,
+                                    prepared_access_key.account(),
                                 )
                                 .await?;
                         }
                     }
-                    cast_send_with_access_key(
+                    cast_send_with_tempo_wallet(
                         &$provider,
                         tx,
-                        signer,
-                        access_key,
+                        &prepared_access_key,
                         tempo_sponsor.is_none().then_some(chain),
                         None,
                         $send_tx.cast_async,
@@ -536,7 +555,12 @@ impl Erc20Subcommand {
                 } else {
                     let signer = pre_resolved_signer.unwrap_or($send_tx.eth.wallet.signer().await?);
                     let from = signer.address();
-                    let $provider = build_provider_with_signer::<N>(&$send_tx, signer)?;
+                    let wallet = EthereumWallet::from(signer);
+                    let $provider = ProviderBuilder::<N>::from_config(&config)?
+                        .build_with_wallet(wallet.clone())?;
+                    if let Some(interval) = $send_tx.poll_interval {
+                        $provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
@@ -588,18 +612,39 @@ impl Erc20Subcommand {
                         )
                         .await?;
                     }
-                    cast_send(
-                        $provider,
-                        tx,
-                        tempo_sponsor.is_none().then_some(chain),
-                        None,
-                        $send_tx.cast_async,
-                        $send_tx.sync,
-                        $send_tx.confirmations,
-                        timeout,
-                        tempo_sponsor.is_none() && !config.eth_rpc_curl,
-                    )
-                    .await?;
+                    if let Some(sponsor_url) = sponsor_url {
+                        tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+                        let connector = tempo::sponsor_relay_connector(&$provider, &sponsor_url)?;
+                        let provider = AlloyProviderBuilder::<_, _, N>::default()
+                            .wallet(wallet)
+                            .connect_with(&connector)
+                            .await?;
+                        cast_send(
+                            provider,
+                            tx,
+                            None,
+                            None,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                            false,
+                        )
+                        .await?;
+                    } else {
+                        cast_send(
+                            $provider,
+                            tx,
+                            tempo_sponsor.is_none().then_some(chain),
+                            None,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                            tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                        )
+                        .await?;
+                    }
                 }
             }};
         }
@@ -624,16 +669,15 @@ impl Erc20Subcommand {
                     sh_println!("{}", format_uint_exp(allowance))?;
                 }
             }
-            Self::Balance { token, owner, block, .. } => {
+            Self::Balance { token, owner, block, overrides, .. } => {
                 let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
 
-                let balance = IERC20::new(token, &provider)
-                    .balanceOf(owner)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let token = IERC20::new(token, &provider);
+                let balance_call = token.balanceOf(owner).block(block.unwrap_or_default());
+                let call = balance_call.call();
+                let balance = overrides.apply(call)?.await?;
 
                 if shell::is_json() {
                     print_json_success(balance.to_string())?;

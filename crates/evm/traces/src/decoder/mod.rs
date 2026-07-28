@@ -14,6 +14,7 @@ use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
 };
+use foundry_config::TracingConfig;
 use foundry_evm_core::{
     abi::{Vm, console},
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
@@ -31,9 +32,9 @@ use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
-    IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry,
-    IValidatorConfig,
+    CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
+    IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve,
+    ITIP20Factory, ITIP403Registry, IValidatorConfig,
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
@@ -96,6 +97,16 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Applies trace rendering settings.
+    #[inline]
+    pub fn with_tracing_config(mut self, config: &TracingConfig) -> Self {
+        self.decoder.labels.extend(config.labels.clone());
+        self.decoder.verbosity = config.verbosity;
+        self.decoder.disable_labels = config.disable_labels;
+        self.decoder.compact_labels = config.compact_labels;
+        self
+    }
+
     /// Sets the signature identifier for events and functions.
     #[inline]
     pub fn with_signature_identifier(mut self, identifier: SignaturesIdentifier) -> Self {
@@ -136,6 +147,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Hides addresses in trace parameters when a label is available.
+    #[inline]
+    pub const fn with_compact_labels(mut self, compact: bool) -> Self {
+        self.decoder.compact_labels = compact;
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -145,7 +163,8 @@ impl CallTraceDecoderBuilder {
 
     /// Build the decoder.
     #[inline]
-    pub fn build(self) -> CallTraceDecoder {
+    pub fn build(mut self) -> CallTraceDecoder {
+        self.decoder.base_labels = self.decoder.labels.clone();
         self.decoder
     }
 }
@@ -165,6 +184,8 @@ pub struct CallTraceDecoder {
     pub contracts: HashMap<Address, String>,
     /// Address labels.
     pub labels: HashMap<Address, String>,
+    /// Labels configured when the decoder was built.
+    base_labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
     pub receive_contracts: HashSet<Address>,
     /// Contract addresses that have fallback functions, mapped to function selectors of that
@@ -208,6 +229,9 @@ pub struct CallTraceDecoder {
 
     /// The Tempo hardfork, used to determine hardfork-specific precompiles.
     pub tempo_hardfork: Option<TempoHardfork>,
+
+    /// Hide addresses when a label is available, showing only the label.
+    pub compact_labels: bool,
 }
 
 impl CallTraceDecoder {
@@ -280,6 +304,7 @@ impl CallTraceDecoder {
                 (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
             ]),
+            base_labels: Default::default(),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
             non_fallback_contracts: Default::default(),
@@ -342,6 +367,8 @@ impl CallTraceDecoder {
             opcodes: Vec::new(),
 
             tempo_hardfork: None,
+
+            compact_labels: false,
         }
     }
 
@@ -349,9 +376,10 @@ impl CallTraceDecoder {
     pub fn clear_addresses(&mut self) {
         self.contracts.clear();
 
-        let default_labels = &Self::new().labels;
-        if self.labels.len() > default_labels.len() {
-            self.labels.clone_from(default_labels);
+        if self.base_labels.is_empty() {
+            self.labels.clone_from(&Self::new().labels);
+        } else {
+            self.labels.clone_from(&self.base_labels);
         }
 
         self.receive_contracts.clear();
@@ -443,11 +471,32 @@ impl CallTraceDecoder {
     }
 
     fn functions_for_selector(&self, address: Address, selector: &Selector) -> Option<&[Function]> {
+        if self.is_current_committee_active(address) {
+            static FUNCTIONS: OnceLock<HashMap<Selector, Vec<Function>>> = OnceLock::new();
+            if let Some(functions) = FUNCTIONS
+                .get_or_init(|| {
+                    ICurrentCommittee::abi::functions()
+                        .into_values()
+                        .flatten()
+                        .map(|function| (function.selector(), vec![function]))
+                        .collect()
+                })
+                .get(selector)
+            {
+                return Some(functions);
+            }
+        }
         self.functions_by_address
             .get(&address)
             .and_then(|functions| functions.get(selector))
             .or_else(|| self.functions.get(selector))
             .map(Vec::as_slice)
+    }
+
+    fn is_current_committee_active(&self, address: Address) -> bool {
+        address == CURRENT_COMMITTEE_ADDRESS
+            && self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t8())
+            && precompiles::is_known_precompile(address, self.chain_id, self.tempo_hardfork)
     }
 
     /// Selects the appropriate function from a list of functions with the same selector by
@@ -619,8 +668,15 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        let label =
-            if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
+        let label = if self.disable_labels {
+            None
+        } else if let Some(label) = self.labels.get(&trace.address) {
+            Some(label.clone())
+        } else if self.is_current_committee_active(trace.address) {
+            Some("CurrentCommittee".to_string())
+        } else {
+            None
+        };
 
         if trace.kind.is_any_create() {
             return DecodedCallTrace {
@@ -667,7 +723,8 @@ impl CallTraceDecoder {
                 let return_data = if trace.success {
                     None
                 } else {
-                    let revert_msg = self.decode_revert(&trace.output, trace.status).await;
+                    let revert_msg =
+                        self.decode_revert_at(trace.address, &trace.output, trace.status).await;
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                         Some(format!(
@@ -998,7 +1055,7 @@ impl CallTraceDecoder {
         if trace.status.is_none_or(|s| s.is_ok()) || trace.success {
             return None;
         }
-        Some(self.decode_revert(&trace.output, trace.status).await)
+        Some(self.decode_revert_at(trace.address, &trace.output, trace.status).await)
     }
 
     /// Decodes revert data into a human-readable representation.
@@ -1019,6 +1076,23 @@ impl CallTraceDecoder {
             return format!("{}({})", error.name, decoded.iter().map(format_token).format(", "));
         }
         self.revert_decoder.decode(output, status)
+    }
+
+    async fn decode_revert_at(
+        &self,
+        address: Address,
+        output: &[u8],
+        status: Option<InstructionResult>,
+    ) -> String {
+        if self.is_current_committee_active(address) {
+            static DECODER: OnceLock<RevertDecoder> = OnceLock::new();
+            let decoder = DECODER
+                .get_or_init(|| RevertDecoder::new().with_abi(&ICurrentCommittee::abi::contract()));
+            if let Some(reason) = decoder.maybe_decode_known(output) {
+                return reason;
+            }
+        }
+        self.decode_revert(output, status).await
     }
 
     /// Decodes an event.
@@ -1145,8 +1219,12 @@ impl CallTraceDecoder {
     /// Pretty-prints a value.
     fn format_value(&self, value: &DynSolValue) -> String {
         if let DynSolValue::Address(addr) = value
+            && !self.disable_labels
             && let Some(label) = self.labels.get(addr)
         {
+            if self.compact_labels {
+                return label.clone();
+            }
             return format!("{label}: [{addr}]");
         }
         format_token(value)
@@ -1333,6 +1411,43 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[test]
+    fn compact_labels_hide_address_in_trace_parameters() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let value = DynSolValue::Address(address);
+        let tracing = TracingConfig {
+            labels: AddressHashMap::from_iter([(address, "Alice".to_string())]),
+            ..Default::default()
+        };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        assert_eq!(decoder.format_value(&value), format!("Alice: [{address}]"));
+
+        let tracing = TracingConfig { compact_labels: true, ..tracing };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        assert_eq!(decoder.format_value(&value), "Alice");
+
+        let tracing = TracingConfig { disable_labels: true, ..tracing };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        assert_eq!(decoder.format_value(&value), address.to_string());
+    }
+
+    #[test]
+    fn configured_labels_survive_address_reset() {
+        let configured = address!("0x0000000000000000000000000000000000000100");
+        let discovered = address!("0x0000000000000000000000000000000000000200");
+        let tracing = TracingConfig {
+            labels: AddressHashMap::from_iter([(configured, "configured".to_string())]),
+            ..Default::default()
+        };
+        let mut decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        decoder.labels.insert(discovered, "discovered".to_string());
+
+        decoder.clear_addresses();
+
+        assert_eq!(decoder.labels.get(&configured).map(String::as_str), Some("configured"));
+        assert!(!decoder.labels.contains_key(&discovered));
     }
 
     #[tokio::test]
@@ -2189,6 +2304,77 @@ mod tests {
             Some(&"ReceivePolicyGuard".to_string())
         );
         assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_current_committee_decoding_is_durable_and_context_gated() {
+        let abi = ICurrentCommittee::abi::contract();
+        let function = abi.functions.get("getCommitteeMembers").unwrap().first().unwrap();
+        let output = function
+            .abi_encode_output(&[
+                DynSolValue::Uint(U256::from(7), 64),
+                DynSolValue::Array(vec![DynSolValue::FixedBytes(B256::with_last_byte(1), 32)]),
+            ])
+            .unwrap();
+        let trace = CallTrace {
+            address: CURRENT_COMMITTEE_ADDRESS,
+            data: function.selector().to_vec().into(),
+            output: output.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .build();
+        decoder.clear_addresses();
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("CurrentCommittee"));
+        assert_eq!(decoded.call_data.unwrap().signature, "getCommitteeMembers()");
+        assert_eq!(
+            decoded.return_data.unwrap(),
+            "7, [0x0000000000000000000000000000000000000000000000000000000000000001]"
+        );
+
+        for decoder in [
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(4217))
+                .with_tempo_hardfork(Some(TempoHardfork::T7))
+                .build(),
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(1))
+                .with_tempo_hardfork(Some(TempoHardfork::T8))
+                .build(),
+        ] {
+            let decoded = decoder.decode_function(&trace).await;
+            assert_ne!(decoded.label.as_deref(), Some("CurrentCommittee"));
+            assert!(decoded.call_data.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_current_committee_unauthorized_is_address_scoped() {
+        let output = ICurrentCommittee::Unauthorized {}.abi_encode();
+        let trace = CallTrace {
+            address: CURRENT_COMMITTEE_ADDRESS,
+            output: output.clone().into(),
+            success: false,
+            status: Some(InstructionResult::Revert),
+            ..Default::default()
+        };
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .build();
+        assert_eq!(
+            decoder.decode_function(&trace).await.return_data.as_deref(),
+            Some("Unauthorized()")
+        );
+
+        let unrelated = CallTrace { address: Address::ZERO, ..trace };
+        let baseline = CallTraceDecoder::new().decode_function(&unrelated).await;
+        assert_eq!(decoder.decode_function(&unrelated).await.return_data, baseline.return_data);
     }
 
     #[test]

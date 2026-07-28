@@ -32,28 +32,55 @@ pub struct Forge {
 
 #[derive(Subcommand)]
 pub enum ForgeSubcommand {
-    /// Run the project's tests.
-    #[command(visible_alias = "t")]
+    /// Run the project's tests
+    ///
+    /// Examples:
+    /// - forge test
+    /// - forge test --match-test test_Increment -vvvv (show traces for a matching test)
+    /// - forge test --match-contract CounterTest --fuzz-runs 1000
+    #[command(verbatim_doc_comment, visible_alias = "t")]
     Test(test::TestArgs),
 
     /// Run and manage Forge fuzzing corpora.
     Fuzz(FuzzArgs),
 
-    /// Run a smart contract as a script, building transactions that can be sent onchain.
+    /// Run a smart contract as a script, building transactions that can be sent onchain
+    ///
+    /// Examples:
+    /// - forge script script/Counter.s.sol (simulate the script locally)
+    /// - forge script script/Counter.s.sol --rpc-url $RPC_URL --broadcast --account dev
+    /// - forge script script/Counter.s.sol --rpc-url $RPC_URL --resume
+    #[command(verbatim_doc_comment)]
     Script(ScriptArgs),
 
-    /// Generate coverage reports.
+    /// Generate coverage reports
+    ///
+    /// Examples:
+    /// - forge coverage
+    /// - forge coverage --report lcov --report-file lcov.info
+    /// - forge coverage --match-contract CounterTest
+    #[command(verbatim_doc_comment)]
     Coverage(coverage::CoverageArgs),
 
     /// Generate Rust bindings for smart contracts.
     #[command(alias = "bi")]
     Bind(BindArgs),
 
-    /// Build the project's smart contracts.
-    #[command(visible_aliases = ["b", "compile"])]
+    /// Build the project's smart contracts
+    ///
+    /// Examples:
+    /// - forge build
+    /// - forge build --sizes (print a contract size report)
+    /// - forge build --watch (rebuild on file changes)
+    #[command(verbatim_doc_comment, visible_aliases = ["b", "compile"])]
     Build(BuildArgs),
 
-    /// Clone a contract from Etherscan.
+    /// Clone a contract from Etherscan
+    ///
+    /// Examples:
+    /// - forge clone $WETH weth --etherscan-api-key $KEY (clone WETH into ./weth)
+    /// - forge clone --chain sepolia --etherscan-api-key $KEY $ADDRESS my-contract
+    #[command(verbatim_doc_comment)]
     Clone(CloneArgs),
 
     /// Update one or multiple dependencies.
@@ -62,10 +89,15 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "u")]
     Update(update::UpdateArgs),
 
-    /// Install one or multiple dependencies.
+    /// Install one or multiple dependencies
     ///
     /// If no arguments are provided, then existing dependencies will be installed.
-    #[command(visible_aliases = ["i", "add"])]
+    ///
+    /// Examples:
+    /// - forge install (install all dependencies of the project)
+    /// - forge install openzeppelin/openzeppelin-contracts
+    /// - forge install openzeppelin/openzeppelin-contracts@v5.0.2 (pin a version)
+    #[command(verbatim_doc_comment, visible_aliases = ["i", "add"])]
     Install(InstallArgs),
 
     /// Remove one or multiple dependencies.
@@ -76,8 +108,12 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "re")]
     Remappings(RemappingArgs),
 
-    /// Verify smart contracts on Etherscan and Sourcify.
-    #[command(visible_alias = "v")]
+    /// Verify smart contracts on Etherscan and Sourcify
+    ///
+    /// Examples:
+    /// - forge verify-contract --chain sepolia $ADDRESS src/Counter.sol:Counter --watch
+    /// - forge verify-contract $ADDRESS src/Counter.sol:Counter --verifier sourcify
+    #[command(verbatim_doc_comment, visible_alias = "v")]
     VerifyContract(VerifyArgs),
 
     /// Check verification status on the selected verifier.
@@ -88,8 +124,12 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "vb")]
     VerifyBytecode(VerifyBytecodeArgs),
 
-    /// Deploy a smart contract.
-    #[command(visible_alias = "c")]
+    /// Deploy a smart contract
+    ///
+    /// Examples:
+    /// - forge create Counter --rpc-url $RPC_URL --account dev --broadcast
+    /// - forge create Token --private-key $PK --broadcast --constructor-args Token TKN
+    #[command(verbatim_doc_comment, visible_alias = "c")]
     Create(CreateArgs),
 
     /// Create a new Forge project.
@@ -116,8 +156,13 @@ pub enum ForgeSubcommand {
     /// Manage the Foundry cache.
     Cache(CacheArgs),
 
-    /// Create a gas snapshot of each test's gas usage.
-    #[command(visible_alias = "s")]
+    /// Create a gas snapshot of each test's gas usage
+    ///
+    /// Examples:
+    /// - forge snapshot
+    /// - forge snapshot --diff (compare against the existing .gas-snapshot file)
+    /// - forge snapshot --check (fail if gas usage does not match .gas-snapshot)
+    #[command(verbatim_doc_comment, visible_alias = "s")]
     Snapshot(snapshot::GasSnapshotArgs),
 
     /// Display the current config.
@@ -128,15 +173,26 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "f")]
     Flatten(flatten::FlattenArgs),
 
-    /// Format Solidity source files.
+    /// Format Solidity source files
+    ///
+    /// Examples:
+    /// - forge fmt
+    /// - forge fmt --check (report formatting issues without writing changes)
+    /// - forge fmt src/Counter.sol
+    #[command(verbatim_doc_comment)]
     Fmt(FmtArgs),
 
     /// Lint Solidity source files
     #[command(visible_alias = "l")]
     Lint(LintArgs),
 
-    /// Get specialized information about a smart contract.
-    #[command(visible_alias = "in")]
+    /// Get specialized information about a smart contract
+    ///
+    /// Examples:
+    /// - forge inspect Counter abi
+    /// - forge inspect Counter bytecode
+    /// - forge inspect src/Counter.sol:Counter storageLayout
+    #[command(verbatim_doc_comment, visible_alias = "in")]
     Inspect(inspect::InspectArgs),
 
     /// Display a tree visualization of the project's dependency graph.

@@ -9,7 +9,7 @@ use crate::{
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::get_blob_base_fee_update_fraction,
+    utils::{apply_chain_specific_tx_replay_env_changes, get_blob_base_fee_update_fraction},
 };
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
@@ -21,6 +21,7 @@ use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, 
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
+use foundry_evm_networks::NetworkConfigs;
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
     Database, DatabaseCommit, JournalEntry,
@@ -928,19 +929,36 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
     }
 
+    /// Applies replay changes using the targeted fork's chain rather than the active environment.
+    fn apply_fork_tx_replay_env_changes(
+        &self,
+        id: LocalForkId,
+        evm_env: &mut EvmEnvFor<FEN>,
+    ) -> eyre::Result<()> {
+        let fork_id = self.inner.ensure_fork_id(id).cloned()?;
+        let fork_evm_env = self
+            .forks
+            .get_evm_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{id}` does not exist"))?;
+        evm_env.cfg_env.chain_id = fork_evm_env.cfg_env.chain_id;
+        apply_chain_specific_tx_replay_env_changes(evm_env);
+        Ok(())
+    }
+
     /// Replays all the transactions at the forks current block that were mined before the `tx`
     ///
     /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
@@ -968,8 +986,15 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
             // Clone the fork's CacheDB once. The underlying SharedBackend is Arc-backed,
             // so only the local cache layer is actually duplicated.
+            let chain_id = evm_env.cfg_env.chain_id;
+            let timestamp = evm_env.block_env.timestamp().saturating_to();
             let replay_db = fork.db.clone();
             let mut evm = FEN::EvmFactory::default().create_evm(replay_db, evm_env);
+            NetworkConfigs::default().inject_chain_precompiles(
+                evm.precompiles_mut(),
+                chain_id,
+                timestamp,
+            );
 
             for tx in &txs_to_replay {
                 let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
@@ -1382,6 +1407,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         update_env_block(&mut evm_env, block.header());
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction::<FEN>(
@@ -1458,9 +1484,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
                 return Ok(id);
             }
-            eyre::bail!("Requested fork `{}` does not exist", id)
+            eyre::bail!("Requested fork `{}` does not exist", id);
         }
-        if let Some(id) = self.active_fork_id() { Ok(id) } else { eyre::bail!("No fork active") }
+        if let Some(id) = self.active_fork_id() {
+            Ok(id)
+        } else {
+            eyre::bail!("No fork active");
+        }
     }
 
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {

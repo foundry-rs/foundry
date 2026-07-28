@@ -20,6 +20,8 @@ use std::{
 pub struct CheatsConfig {
     /// Whether the FFI cheatcode is enabled.
     pub ffi: bool,
+    /// Cheatcode selectors rejected before dispatch for restricted executions.
+    pub blocked_cheatcodes: Vec<[u8; 4]>,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
     /// Rewrite plain CREATE to CREATE2 for `forge script --batch`.
@@ -80,9 +82,12 @@ impl CheatsConfig {
         // If user explicitly disabled safety checks, do not set available_artifacts
         let available_artifacts =
             if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
+        let mut labels = config.labels.clone();
+        labels.extend(config.tracing.labels.clone());
 
         Self {
             ffi: evm_opts.ffi,
+            blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             batch_rewrite_creates,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
@@ -96,7 +101,7 @@ impl CheatsConfig {
             broadcast: config.root.clone().join(&config.broadcast),
             isolate: config.isolate,
             evm_opts,
-            labels: config.labels.clone(),
+            labels,
             available_artifacts,
             running_artifact,
             assertions_revert: config.assertions_revert,
@@ -108,14 +113,16 @@ impl CheatsConfig {
 
     /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
     pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
-        Self::new(
+        let mut cloned = Self::new(
             config,
             evm_opts,
             self.available_artifacts.clone(),
             self.running_artifact.clone(),
             self.fee_token,
             self.batch_rewrite_creates,
-        )
+        );
+        cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
+        cloned
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -226,6 +233,7 @@ impl Default for CheatsConfig {
     fn default() -> Self {
         Self {
             ffi: false,
+            blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: false,
             batch_rewrite_creates: false,
             prompt_timeout: Duration::from_secs(120),
@@ -271,6 +279,7 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::address;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 
@@ -309,6 +318,18 @@ mod tests {
 
         let cloned = on.clone_with(&Config::default(), Default::default());
         assert!(cloned.batch_rewrite_creates);
+    }
+
+    #[test]
+    fn tracing_labels_override_legacy_labels() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let mut config = Config::default();
+        config.labels.insert(address, "legacy".to_string());
+        config.tracing.labels.insert(address, "canonical".to_string());
+
+        let config = CheatsConfig::new(&config, Default::default(), None, None, None, false);
+
+        assert_eq!(config.labels.get(&address).map(String::as_str), Some("canonical"));
     }
 
     #[test]

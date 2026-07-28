@@ -96,6 +96,12 @@ impl CallStack {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ChainedNamedCall {
+    callee: Span,
+    keep_inline: bool,
+}
+
 pub(super) struct State<'sess, 'ast> {
     // CORE COMPONENTS
     pub(super) s: pp::Printer,
@@ -125,6 +131,8 @@ pub(super) struct State<'sess, 'ast> {
     return_bin_expr: bool,
     // Whether inside a call with call options and at least one argument.
     call_with_opts_and_args: bool,
+    // Callee of the current chained call with named arguments, if any.
+    chained_named_call: Option<ChainedNamedCall>,
     // Whether to skip the index soft breaks because the callee fits inline.
     skip_index_break: bool,
     // Whether inside an `emit` or `revert` call with a qualified path, or not.
@@ -216,6 +224,7 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_with_opts_and_args: false,
+            chained_named_call: None,
             skip_index_break: false,
             binary_expr: None,
             return_bin_expr: false,
@@ -485,7 +494,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
-        // Intetionally no-op. Handled with `self.comments`.
+        // Intentionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
 
@@ -961,6 +970,13 @@ impl<'sess> State<'sess, '_> {
 
     fn has_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
         self.comments.iter().filter(|c| c.pos() > start_pos && c.pos() < end_pos).any(|_| true)
+    }
+
+    fn has_breakable_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
+        self.comments
+            .iter()
+            .filter(|comment| comment.pos() >= start_pos && comment.pos() < end_pos)
+            .any(|comment| !comment.style.is_blank())
     }
 
     pub(crate) fn next_comment(&mut self) -> Option<Comment> {

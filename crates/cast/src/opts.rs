@@ -8,6 +8,7 @@ use crate::cmd::{
     batch_send::BatchSendArgs,
     bind::BindArgs,
     call::CallArgs,
+    call_overrides::CallOverrideOpts,
     constructor_args::ConstructorArgsArgs,
     create2::Create2Args,
     creation_code::CreationCodeArgs,
@@ -258,7 +259,7 @@ pub enum CastSubcommand {
         base_out: String,
     },
 
-    /// Convert an ETH amount into another unit (ether, gwei or wei).
+    /// Convert an ETH amount into another unit (ether, gwei or wei)
     ///
     /// Examples:
     /// - 1ether wei
@@ -266,7 +267,7 @@ pub enum CastSubcommand {
     /// - 1ether
     /// - 1 gwei
     /// - 1gwei ether
-    #[command(visible_aliases = &["--to-unit", "tun", "2un"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--to-unit", "tun", "2un"])]
     ToUnit {
         /// The value to convert.
         value: Option<String>,
@@ -276,13 +277,13 @@ pub enum CastSubcommand {
         unit: String,
     },
 
-    /// Convert a number from decimal to smallest unit with arbitrary decimals.
+    /// Convert a number from decimal to smallest unit with arbitrary decimals
     ///
     /// Examples:
     /// - 1.0 6    (for USDC, result: 1000000)
     /// - 2.5 12   (for 12 decimals token, result: 2500000000000)
     /// - 1.23 3   (for 3 decimals token, result: 1230)
-    #[command(visible_aliases = &["--parse-units", "pun"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--parse-units", "pun"])]
     ParseUnits {
         /// The value to convert.
         value: Option<String>,
@@ -292,13 +293,13 @@ pub enum CastSubcommand {
         unit: u8,
     },
 
-    /// Format a number from smallest unit to decimal with arbitrary decimals.
+    /// Format a number from smallest unit to decimal with arbitrary decimals
     ///
     /// Examples:
     /// - 1000000 6       (for USDC, result: 1.0)
     /// - 2500000000000 12 (for 12 decimals, result: 2.5)
     /// - 1230 3          (for 3 decimals, result: 1.23)
-    #[command(visible_aliases = &["--format-units", "fun"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--format-units", "fun"])]
     FormatUnits {
         /// The value to format.
         value: Option<String>,
@@ -336,7 +337,7 @@ pub enum CastSubcommand {
         unit: String,
     },
 
-    /// RLP encodes hex data, or an array of hex data.
+    /// RLP encodes hex data, or an array of hex data
     ///
     /// Accepts a hex-encoded string, or an array of hex-encoded strings.
     /// Can be arbitrarily recursive.
@@ -346,7 +347,7 @@ pub enum CastSubcommand {
     /// - `cast to-rlp "0x22"` -> `0x22`
     /// - `cast to-rlp "[\"0x61\"]"` -> `0xc161`
     /// - `cast to-rlp "[\"0xf1\", \"f2\"]"` -> `0xc481f181f2`
-    #[command(visible_aliases = &["--to-rlp"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--to-rlp"])]
     ToRlp {
         /// The value to convert.
         ///
@@ -390,14 +391,27 @@ pub enum CastSubcommand {
         #[arg(value_name = "BASE")]
         base_out: Option<String>,
     },
-    /// Create an access list for a transaction.
-    #[command(visible_aliases = &["ac", "acl"])]
+    /// Create an access list for a transaction
+    ///
+    /// Examples:
+    /// - cast access-list vitalik.eth --value 0.1ether
+    /// - cast access-list $TOKEN "transfer(address,uint256)" vitalik.eth 100
+    #[command(verbatim_doc_comment, visible_aliases = &["ac", "acl"])]
     AccessList(AccessListArgs),
-    /// Get logs by signature or topic.
-    #[command(visible_alias = "l")]
+    /// Get logs by signature or topic
+    ///
+    /// Examples:
+    /// - cast logs "Transfer(address indexed from, address indexed to, uint256 value)"
+    /// - cast logs --address $TOKEN --from-block 21000000 --to-block latest $TOPIC_0
+    #[command(verbatim_doc_comment, visible_alias = "l")]
     Logs(LogsArgs),
-    /// Get information about a block.
-    #[command(visible_alias = "bl")]
+    /// Get information about a block
+    ///
+    /// Examples:
+    /// - cast block latest
+    /// - cast block 21000000 --field timestamp
+    /// - cast block latest --json
+    #[command(verbatim_doc_comment, visible_alias = "bl")]
     Block {
         /// The block height to query at.
         ///
@@ -432,8 +446,12 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Perform a call on an account without publishing a transaction.
-    #[command(visible_alias = "c")]
+    /// Perform a call on an account without publishing a transaction
+    ///
+    /// Examples:
+    /// - cast call $TOKEN "balanceOf(address)(uint256)" vitalik.eth
+    /// - cast call $TOKEN "transfer(address,uint256)" vitalik.eth 100 --trace
+    #[command(verbatim_doc_comment, visible_alias = "c")]
     Call(CallArgs),
 
     /// ABI-encode a function with arguments.
@@ -514,8 +532,12 @@ pub enum CastSubcommand {
         bytecode: Option<String>,
     },
 
-    /// Build and sign a transaction.
-    #[command(name = "mktx", visible_alias = "m")]
+    /// Build and sign a transaction
+    ///
+    /// Examples:
+    /// - cast mktx vitalik.eth --value 0.1ether --private-key $PK
+    /// - cast mktx $TOKEN "transfer(address,uint256)" vitalik.eth 100 --account dev
+    #[command(verbatim_doc_comment, name = "mktx", visible_alias = "m")]
     MakeTx(MakeTxArgs),
 
     /// Classify a raw transaction as Tempo T5 payment/general lane.
@@ -528,8 +550,13 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["na", "nh"])]
     Namehash { name: Option<String> },
 
-    /// Get information about a transaction.
-    #[command(visible_alias = "t")]
+    /// Get information about a transaction
+    ///
+    /// Examples:
+    /// - cast tx $TX_HASH
+    /// - cast tx $TX_HASH blockNumber (only print the blockNumber field)
+    /// - cast tx $TX_HASH --raw
+    #[command(verbatim_doc_comment, visible_alias = "t")]
     Tx {
         /// The transaction hash.
         tx_hash: Option<String>,
@@ -566,8 +593,12 @@ pub enum CastSubcommand {
         network: Option<NetworkVariant>,
     },
 
-    /// Get the transaction receipt for a transaction.
-    #[command(visible_alias = "re")]
+    /// Get the transaction receipt for a transaction
+    ///
+    /// Examples:
+    /// - cast receipt $TX_HASH
+    /// - cast receipt $TX_HASH status (only print the status field)
+    #[command(verbatim_doc_comment, visible_alias = "re")]
     Receipt {
         /// The transaction hash.
         tx_hash: String,
@@ -587,8 +618,13 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Sign and publish a transaction.
-    #[command(name = "send", visible_alias = "s")]
+    /// Sign and publish a transaction
+    ///
+    /// Examples:
+    /// - cast send vitalik.eth --value 0.1ether --private-key $PK (transfer ETH)
+    /// - cast send $TOKEN "transfer(address,uint256)" vitalik.eth 100 --account dev
+    /// - cast send --private-key $PK --create $BYTECODE (deploy a contract)
+    #[command(verbatim_doc_comment, name = "send", visible_alias = "s")]
     SendTx(SendTxArgs),
 
     /// Build and sign a batch transaction (Tempo).
@@ -613,15 +649,22 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Estimate the gas cost of a transaction.
-    #[command(visible_alias = "e")]
+    /// Estimate the gas cost of a transaction
+    ///
+    /// Examples:
+    /// - cast estimate vitalik.eth --value 0.1ether
+    /// - cast estimate $CONTRACT "deposit()" --value 1ether
+    #[command(verbatim_doc_comment, visible_alias = "e")]
     Estimate(EstimateArgs),
 
-    /// Decode ABI-encoded input data.
+    /// Decode ABI-encoded input data
     ///
-    /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
-    /// string
-    #[command(visible_aliases = &["calldata-decode", "--calldata-decode", "cdd"])]
+    /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`.
+    ///
+    /// Examples:
+    /// - cast decode-calldata "transfer(address,uint256)" $CALLDATA
+    /// - cast decode-calldata --json "transfer(address,uint256)" $CALLDATA
+    #[command(verbatim_doc_comment, visible_aliases = &["calldata-decode", "--calldata-decode", "cdd"])]
     DecodeCalldata {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -644,8 +687,12 @@ pub enum CastSubcommand {
         data: String,
     },
 
-    /// Decode event data.
-    #[command(visible_aliases = &["event-decode", "--event-decode", "ed"])]
+    /// Decode event data
+    ///
+    /// Examples:
+    /// - cast decode-event --sig "Transfer(address,address,uint256)" $DATA
+    /// - cast decode-event $DATA (topic0-prefixed data; looks up the signature)
+    #[command(verbatim_doc_comment, visible_aliases = &["event-decode", "--event-decode", "ed"])]
     DecodeEvent {
         /// The event signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
         #[arg(long, visible_alias = "event-sig")]
@@ -664,12 +711,16 @@ pub enum CastSubcommand {
         data: String,
     },
 
-    /// Decode ABI-encoded input or output data.
+    /// Decode ABI-encoded input or output data
     ///
     /// Defaults to decoding output data. To decode input data pass --input.
     ///
-    /// When passing `--input`, function selector must NOT be prefixed in `calldata` string
-    #[command(name = "decode-abi", visible_aliases = &["abi-decode", "--abi-decode", "ad"])]
+    /// When passing `--input`, function selector must NOT be prefixed in `calldata` string.
+    ///
+    /// Examples:
+    /// - cast decode-abi "balanceOf(address)(uint256)" $DATA
+    /// - cast decode-abi --input "transfer(address,uint256)" $CALLDATA
+    #[command(verbatim_doc_comment, name = "decode-abi", visible_aliases = &["abi-decode", "--abi-decode", "ad"])]
     DecodeAbi {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -682,8 +733,12 @@ pub enum CastSubcommand {
         input: bool,
     },
 
-    /// ABI encode the given function argument, excluding the selector.
-    #[command(visible_alias = "ae")]
+    /// ABI encode the given function argument, excluding the selector
+    ///
+    /// Examples:
+    /// - cast abi-encode "transfer(address,uint256)" $ADDRESS 100
+    /// - cast abi-encode --packed "f(string,uint64)" hello 100
+    #[command(verbatim_doc_comment, visible_alias = "ae")]
     AbiEncode {
         /// The function signature.
         sig: String,
@@ -835,8 +890,12 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the balance of an account in wei.
-    #[command(visible_alias = "b")]
+    /// Get the balance of an account in wei
+    ///
+    /// Examples:
+    /// - cast balance vitalik.eth --ether
+    /// - cast balance vitalik.eth --erc20 0x6B175474E89094C44Da98b954EedeAC495271d0F
+    #[command(verbatim_doc_comment, visible_alias = "b")]
     Balance {
         /// The block height to query at.
         ///
@@ -859,6 +918,9 @@ pub enum CastSubcommand {
         /// with '--erc721'
         #[arg(long, alias = "erc721")]
         erc20: Option<Address>,
+
+        #[command(flatten)]
+        overrides: CallOverrideOpts,
     },
 
     /// Get the basefee of a block.
@@ -873,8 +935,12 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the runtime bytecode of a contract.
-    #[command(visible_alias = "co")]
+    /// Get the runtime bytecode of a contract
+    ///
+    /// Examples:
+    /// - cast code 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+    /// - cast code 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 --disassemble
+    #[command(verbatim_doc_comment, visible_alias = "co")]
     Code {
         /// The block height to query at.
         ///
@@ -925,8 +991,13 @@ pub enum CastSubcommand {
         event_string: Option<String>,
     },
 
-    /// Hash arbitrary data using Keccak-256.
-    #[command(visible_aliases = &["k", "keccak256"])]
+    /// Hash arbitrary data using Keccak-256
+    ///
+    /// Examples:
+    /// - cast keccak "hello world"
+    /// - cast keccak 0xdeadbeef
+    /// - echo -n "some data" | cast keccak (hash data from stdin)
+    #[command(verbatim_doc_comment, visible_aliases = &["k", "keccak256"])]
     Keccak {
         /// The data to hash.
         data: Option<String>,
@@ -967,8 +1038,12 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the raw value of a contract's storage slot.
-    #[command(visible_alias = "st")]
+    /// Get the raw value of a contract's storage slot
+    ///
+    /// Examples:
+    /// - cast storage 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 0
+    /// - cast storage $TOKEN --etherscan-api-key $KEY (decode the full storage layout)
+    #[command(verbatim_doc_comment, visible_alias = "st")]
     Storage(StorageArgs),
 
     /// Generate a storage proof for a given storage slot.
@@ -1141,10 +1216,14 @@ pub enum CastSubcommand {
     #[command(visible_alias = "cra")]
     ConstructorArgs(ConstructorArgsArgs),
 
-    /// Generate a Solidity interface from a given ABI.
+    /// Generate a Solidity interface from a given ABI
     ///
     /// Currently does not support ABI encoder v2.
-    #[command(visible_alias = "i")]
+    ///
+    /// Examples:
+    /// - cast interface $TOKEN --etherscan-api-key $KEY (fetch the ABI from Etherscan)
+    /// - cast interface ./out/Counter.sol/Counter.json (load a local ABI file)
+    #[command(verbatim_doc_comment, visible_alias = "i")]
     Interface(InterfaceArgs),
 
     /// Generate a rust binding from a given ABI.
@@ -1155,8 +1234,12 @@ pub enum CastSubcommand {
     #[command(visible_alias = "b2e")]
     B2EPayload(B2EPayloadArgs),
 
-    /// Get the selector for a function.
-    #[command(visible_alias = "si")]
+    /// Get the selector for a function
+    ///
+    /// Examples:
+    /// - cast sig "transfer(address,uint256)"
+    /// - cast sig "deposit(uint256)" 2 (optimize for 2 leading zero bytes)
+    #[command(verbatim_doc_comment, visible_alias = "si")]
     Sig {
         /// The function signature, e.g. transfer(address,uint256).
         sig: Option<String>,
@@ -1181,12 +1264,22 @@ pub enum CastSubcommand {
         shell: foundry_cli::clap::Shell,
     },
 
-    /// Runs a published transaction in a local environment and prints the trace.
-    #[command(visible_alias = "r")]
+    /// Runs a published transaction in a local environment and prints the trace
+    ///
+    /// Examples:
+    /// - cast run $TX_HASH
+    /// - cast run $TX_HASH --quick (only use the state from the previous block)
+    /// - cast run $TX_HASH --debug (open the transaction in the debugger)
+    #[command(verbatim_doc_comment, visible_alias = "r")]
     Run(RunArgs),
 
-    /// Perform a raw JSON-RPC request.
-    #[command(visible_alias = "rp")]
+    /// Perform a raw JSON-RPC request
+    ///
+    /// Examples:
+    /// - cast rpc eth_blockNumber
+    /// - cast rpc eth_getBlockByNumber 0x123 false
+    /// - cast rpc eth_getBlockByNumber '["0x123", false]' --raw
+    #[command(verbatim_doc_comment, visible_alias = "rp")]
     Rpc(RpcArgs),
 
     /// Formats a string into bytes32 encoding.

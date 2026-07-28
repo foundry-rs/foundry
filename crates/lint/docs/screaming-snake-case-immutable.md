@@ -8,7 +8,8 @@ Flags `immutable` state variables whose names do not follow `SCREAMING_SNAKE_CAS
 ## What it does
 
 Reports state variables declared `immutable` whose identifier deviates from
-`SCREAMING_SNAKE_CASE`.
+`SCREAMING_SNAKE_CASE`. Single-character names are not checked, and leading and trailing
+underscores are preserved.
 
 ## Why is this bad?
 

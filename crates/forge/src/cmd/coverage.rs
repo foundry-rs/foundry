@@ -40,6 +40,17 @@ foundry_config::impl_figment_convert!(CoverageArgs, test);
 /// option in `foundry.toml`. CLI flags take precedence over config; the helper
 /// `resolve_with` merges them after the config is loaded.
 #[derive(Parser)]
+#[command(after_long_help = r#"Source attribution:
+  Coverage follows compiler source maps. Inherited modifier code is reported under the
+  source where the modifier is declared. Dependency sources are excluded by default;
+  use `--include-libs` to include their coverage.
+
+Compatibility:
+  `forge coverage` supports test filters and `--watch`, but not test-only output or
+  execution modes such as `--json`, `--junit`, `--list`, `--debug`, flame profiles,
+  symbolic artifact replay, showmap replay, brutalization, or mutation testing. Use
+  `--report lcov` for interoperable coverage data or `--report attribution` for
+  Foundry's per-test JSON attribution report."#)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -85,7 +96,7 @@ pub struct CoverageArgs {
     )]
     report_file: Option<PathBuf>,
 
-    /// Whether to include libraries in the coverage report.
+    /// Include dependency sources in the coverage report.
     #[arg(long)]
     include_libs: bool,
 
@@ -121,7 +132,13 @@ impl CoverageArgs {
         usize::from(has_lcov) + usize::from(has_attribution)
     }
 
+    pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
+        self.test.ensure_coverage_mode_compatible()
+    }
+
     pub async fn run(mut self) -> Result<()> {
+        self.ensure_mode_compatible()?;
+
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
@@ -140,7 +157,6 @@ impl CoverageArgs {
         // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
         // flags take precedence; unset CLI flags fall back to the config.
         self.resolve_with(&config.coverage);
-        self.test.ensure_mutation_mode_compatible(true)?;
 
         let (paths, mut output) = {
             let (project, output) = self.build(&config)?;

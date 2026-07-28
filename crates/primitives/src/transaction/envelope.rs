@@ -1,7 +1,8 @@
 #[cfg(feature = "optimism")]
 use alloy_consensus::{Sealed, Transaction as _};
 use alloy_consensus::{
-    Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxType, Typed2718,
+    SignableTransaction, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
+    TxType, Typed2718,
     crypto::RecoveryError,
     transaction::{
         SignerRecoverable, TxEip7702, TxHashRef,
@@ -10,13 +11,12 @@ use alloy_consensus::{
 };
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, TxHash};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash};
 use alloy_rpc_types::ConversionError;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
 use revm::context::TxEnv;
-use serde::{Deserialize, Serialize};
-use tempo_primitives::{AASigned, TempoTransaction};
+use tempo_primitives::{AASigned, TempoSignature, TempoTransaction};
 use tempo_revm::TempoTxEnv;
 
 //
@@ -70,6 +70,50 @@ pub enum FoundryTxEnvelope {
 }
 
 impl FoundryTxEnvelope {
+    /// Returns `true` if this is a legacy transaction.
+    #[inline]
+    pub const fn is_legacy(&self) -> bool {
+        matches!(self, Self::Legacy(_))
+    }
+
+    /// Returns `true` if this is an EIP-2930 transaction.
+    #[inline]
+    pub const fn is_eip2930(&self) -> bool {
+        matches!(self, Self::Eip2930(_))
+    }
+
+    /// Returns `true` if this is an EIP-1559 transaction.
+    #[inline]
+    pub const fn is_eip1559(&self) -> bool {
+        matches!(self, Self::Eip1559(_))
+    }
+
+    /// Returns `true` if this is an EIP-4844 transaction.
+    #[inline]
+    pub const fn is_eip4844(&self) -> bool {
+        matches!(self, Self::Eip4844(_))
+    }
+
+    /// Returns `true` if this is an EIP-7702 transaction.
+    #[inline]
+    pub const fn is_eip7702(&self) -> bool {
+        matches!(self, Self::Eip7702(_))
+    }
+
+    /// Returns `true` if this is an OP stack deposit transaction.
+    #[cfg(feature = "optimism")]
+    #[inline]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns `true` if this is an OP stack post-execution synthetic transaction.
+    #[cfg(feature = "optimism")]
+    #[inline]
+    pub const fn is_post_exec(&self) -> bool {
+        matches!(self, Self::PostExec(_))
+    }
+
     /// Converts the transaction into an Ethereum [`TxEnvelope`].
     ///
     /// Returns an error if the transaction is not part of the standard Ethereum transaction types.
@@ -95,6 +139,14 @@ impl FoundryTxEnvelope {
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    /// Drops pooled sidecars so the transaction uses its canonical block-body representation.
+    pub fn into_canonical(self) -> Self {
+        match self {
+            Self::Eip4844(tx) => Self::Eip4844(tx.map(TxEip4844Variant::drop_sidecar)),
+            tx => tx,
         }
     }
 
@@ -144,82 +196,72 @@ impl FoundryTxEnvelope {
             Self::Tempo(tx) => tx.signature().recover_signer(&tx.signature_hash())?,
         })
     }
+}
 
-    /// Converts this envelope into Tempo's classifier envelope, when supported.
-    pub fn clone_into_tempo_envelope(&self) -> Option<tempo_primitives::TempoTxEnvelope> {
-        Some(match self {
-            Self::Legacy(tx) => tempo_primitives::TempoTxEnvelope::Legacy(tx.clone()),
-            Self::Eip2930(tx) => tempo_primitives::TempoTxEnvelope::Eip2930(tx.clone()),
-            Self::Eip1559(tx) => tempo_primitives::TempoTxEnvelope::Eip1559(tx.clone()),
-            Self::Eip7702(tx) => tempo_primitives::TempoTxEnvelope::Eip7702(tx.clone()),
-            Self::Tempo(tx) => tempo_primitives::TempoTxEnvelope::AA(tx.clone()),
-            Self::Eip4844(_) => return None,
-            #[cfg(feature = "optimism")]
-            Self::Deposit(_) | Self::PostExec(_) => return None,
-        })
+impl FoundryTxType {
+    /// Returns `true` if this is an OP stack deposit transaction type.
+    #[cfg(feature = "optimism")]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit)
     }
 
-    /// Classifies this transaction with Tempo's T5 payment-lane classifier.
-    pub fn classify_t5_payment_lane(&self) -> PaymentLaneClassification {
-        let Some(tx) = self.clone_into_tempo_envelope() else {
-            return PaymentLaneClassification::general(
-                PaymentLaneReason::UnsupportedTransactionType,
-            );
-        };
+    /// Returns `true` if this is an OP stack post-execution synthetic transaction type.
+    #[cfg(feature = "optimism")]
+    pub const fn is_post_exec(&self) -> bool {
+        matches!(self, Self::PostExec)
+    }
 
-        if tx.is_payment_v2() {
-            PaymentLaneClassification::payment()
-        } else {
-            PaymentLaneClassification::general(PaymentLaneReason::NotPaymentLane)
+    /// Returns `true` if this is a Tempo transaction type.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo)
+    }
+}
+
+impl FoundryTypedTx {
+    /// Builds an envelope with a dummy signature for an impersonated account.
+    ///
+    /// The signature uses `r = 1` and `s = 1` because clients reject zero scalar values.
+    pub fn into_impersonated(self) -> FoundryTxEnvelope {
+        let signature = Signature::from_scalars_and_parity(
+            B256::with_last_byte(1),
+            B256::with_last_byte(1),
+            false,
+        );
+        match self {
+            Self::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
+            Self::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
+            Self::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
+            Self::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
+            Self::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
+            #[cfg(feature = "optimism")]
+            Self::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+            #[cfg(feature = "optimism")]
+            Self::PostExec(_) => {
+                unreachable!("op post-exec txs should not be impersonated")
+            }
+            Self::Tempo(tx) => {
+                let tempo_sig: TempoSignature = signature.into();
+                FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))
+            }
         }
     }
-}
 
-/// Structured T5 payment-lane classification for Foundry-facing APIs.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaymentLaneClassification {
-    /// The classified lane.
-    pub lane: PaymentLane,
-    /// Convenience boolean for consumers that only need the lane predicate.
-    pub payment: bool,
-    /// Structured reason for general-lane classification, when known.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<PaymentLaneReason>,
-}
-
-impl PaymentLaneClassification {
-    /// Constructs a payment-lane classification.
-    pub const fn payment() -> Self {
-        Self { lane: PaymentLane::Payment, payment: true, reason: None }
+    /// Returns `true` if this is an OP stack deposit transaction.
+    #[cfg(feature = "optimism")]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
     }
 
-    /// Constructs a general-lane classification with a structured reason.
-    pub const fn general(reason: PaymentLaneReason) -> Self {
-        Self { lane: PaymentLane::General, payment: false, reason: Some(reason) }
+    /// Returns `true` if this is an OP stack post-execution synthetic transaction.
+    #[cfg(feature = "optimism")]
+    pub const fn is_post_exec(&self) -> bool {
+        matches!(self, Self::PostExec(_))
     }
-}
 
-/// Payment-lane classifier output lane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaymentLane {
-    Payment,
-    General,
-}
-
-/// Stable Foundry-facing reasons for general-lane classification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaymentLaneReason {
-    /// The active network is not Tempo.
-    NotTempo,
-    /// Tempo is active but the T5 classifier is not active.
-    T5NotActive,
-    /// The transaction type cannot be classified by Tempo's payment-lane classifier.
-    UnsupportedTransactionType,
-    /// Tempo's T5 classifier classified the transaction as general.
-    NotPaymentLane,
+    /// Returns `true` if this is a Tempo transaction.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo(_))
+    }
 }
 
 impl TxHashRef for FoundryTxEnvelope {
@@ -472,9 +514,79 @@ mod tests {
 
     use alloy_primitives::{TxKind, U256, b256, hex};
     use alloy_rlp::Decodable;
-    use alloy_signer::Signature;
 
     use super::*;
+
+    fn signed<T>(tx: T) -> Signed<T> {
+        Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO)
+    }
+
+    #[test]
+    fn tx_type_predicates() {
+        assert!(FoundryTxType::Legacy.is_legacy());
+        assert!(FoundryTxType::Eip2930.is_eip2930());
+        assert!(FoundryTxType::Eip1559.is_eip1559());
+        assert!(FoundryTxType::Eip4844.is_eip4844());
+        assert!(FoundryTxType::Eip7702.is_eip7702());
+        assert!(FoundryTxType::Tempo.is_tempo());
+        assert!(!FoundryTxType::Tempo.is_legacy());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(FoundryTxType::Deposit.is_deposit());
+            assert!(FoundryTxType::PostExec.is_post_exec());
+            assert!(!FoundryTxType::Deposit.is_post_exec());
+        }
+    }
+
+    #[test]
+    fn typed_tx_predicates() {
+        assert!(FoundryTypedTx::Legacy(TxLegacy::default()).is_legacy());
+        assert!(FoundryTypedTx::Eip2930(TxEip2930::default()).is_eip2930());
+        assert!(FoundryTypedTx::Eip1559(TxEip1559::default()).is_eip1559());
+        assert!(
+            FoundryTypedTx::Eip4844(TxEip4844Variant::TxEip4844(Default::default())).is_eip4844()
+        );
+        assert!(FoundryTypedTx::Eip7702(TxEip7702::default()).is_eip7702());
+        assert!(FoundryTypedTx::Tempo(TempoTransaction::default()).is_tempo());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(FoundryTypedTx::Deposit(TxDeposit::default()).is_deposit());
+            assert!(FoundryTypedTx::PostExec(TxPostExec::default()).is_post_exec());
+        }
+    }
+
+    #[test]
+    fn tx_envelope_predicates() {
+        assert!(FoundryTxEnvelope::Legacy(signed(TxLegacy::default())).is_legacy());
+        assert!(FoundryTxEnvelope::Eip2930(signed(TxEip2930::default())).is_eip2930());
+        assert!(FoundryTxEnvelope::Eip1559(signed(TxEip1559::default())).is_eip1559());
+        assert!(
+            FoundryTxEnvelope::Eip4844(signed(TxEip4844Variant::TxEip4844(Default::default())))
+                .is_eip4844()
+        );
+        assert!(FoundryTxEnvelope::Eip7702(signed(TxEip7702::default())).is_eip7702());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit::default())).is_deposit());
+            assert!(FoundryTxEnvelope::PostExec(Sealed::new(TxPostExec::default())).is_post_exec());
+        }
+    }
+
+    #[test]
+    fn impersonated_tx_uses_nonzero_dummy_signature() {
+        let FoundryTxEnvelope::Legacy(tx) =
+            FoundryTypedTx::Legacy(TxLegacy::default()).into_impersonated()
+        else {
+            panic!("expected legacy transaction");
+        };
+
+        assert_eq!(tx.signature().r(), U256::from(1));
+        assert_eq!(tx.signature().s(), U256::from(1));
+        assert!(!tx.signature().v());
+    }
 
     #[test]
     fn test_decode_call() {

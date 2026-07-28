@@ -17,6 +17,7 @@ use alloy_rpc_types::{
         parity::TraceType,
     },
 };
+use alloy_rpc_types_mev::EthCallBundle;
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
     deserialize_number, deserialize_number_opt, deserialize_number_seq, deserialize_u64_seq,
@@ -225,6 +226,9 @@ pub enum EthRequest {
         #[serde(default)] Option<StateContext>,
         #[serde(default)] Option<StateOverride>,
     ),
+
+    #[serde(rename = "eth_callBundle", with = "sequence")]
+    EthCallBundle(EthCallBundle),
 
     #[serde(rename = "eth_simulateV1")]
     EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
@@ -2014,6 +2018,12 @@ true}]}"#;
     #[test]
     fn test_eth_call_many() {
         let s = r#"{"method":"eth_callMany","params":[[{"transactions":[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","data":"0xcfae3217"}]}],{"blockNumber":"latest"},{"0x0000000000000000000000000000000000000001":{"balance":"0x1"}}]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+    }
+
+    #[test]
+    fn test_eth_call_bundle() {
+        let s = r#"{"method":"eth_callBundle","params":[{"txs":["0x1234"],"blockNumber":"0x1","stateBlockNumber":"latest"}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 

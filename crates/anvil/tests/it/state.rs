@@ -898,3 +898,42 @@ async fn blockhash_opcode_consistent_after_load_state() {
 
     assert_eq!(B256::from_slice(res.as_ref()), block1_hash);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn blockhash_opcode_consistent_after_loading_older_state() {
+    let (source_api, _source_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000_000_u64))).await;
+    source_api.mine_one().await;
+    source_api.mine_one().await;
+
+    let block1_hash = source_api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Number(1))
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .hash;
+    let state = source_api.serialized_state(false).await.unwrap();
+
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_mine(Some(U256::from(258)), None).await.unwrap();
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+
+    assert_eq!(api.block_number().unwrap(), U256::from(2));
+
+    // Runtime code returning BLOCKHASH(1):
+    // PUSH1 1, BLOCKHASH, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
+    let code = Bytes::from_str("0x60014060005260206000f3").unwrap();
+    let target = address!("00000000000000000000000000000000000b10c4");
+
+    let mut overrides = StateOverride::default();
+    overrides.insert(target, AccountOverride { code: Some(code), ..Default::default() });
+
+    let tx = TransactionRequest::default().with_to(target);
+    let res = api
+        .call(WithOtherFields::new(tx), None, EvmOverrides::new(Some(overrides), None))
+        .await
+        .unwrap();
+
+    assert_eq!(B256::from_slice(res.as_ref()), block1_hash);
+}

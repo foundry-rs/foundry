@@ -5,7 +5,7 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    Address, Bytes, I256, Log, Selector, U256,
+    Address, B256, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
@@ -22,7 +22,9 @@ use foundry_evm::{
     },
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats, SymbolicStopReason};
+use foundry_evm_symbolic::{
+    PortfolioDiagnostics, SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -612,12 +614,135 @@ mod tests {
         assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
         assert_eq!(value["kind"], "sequence");
         assert_eq!(value["replay_semantics"]["fail_on_revert"], false);
+        assert!(value.get("storage").is_none());
+        assert!(value.get("invariant_failure").is_none());
         assert_eq!(value["calls"].as_array().unwrap().len(), 2);
         assert_eq!(value["calls"][0]["calldata"], "0x12345678");
         assert_eq!(value["calls"][0]["warp"], "0xc");
         assert_eq!(value["calls"][0]["roll"], "0x3");
         assert_eq!(value["calls"][0]["value"], "0x9");
         assert_counterexample_artifact_shape(&value);
+
+        let decoded = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).unwrap();
+        assert!(decoded.storage.is_empty());
+        assert!(decoded.invariant_failure.is_none());
+    }
+
+    #[test]
+    fn symbolic_counterexample_artifact_serializes_invariant_replay_metadata() {
+        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
+        let call = SymbolicCounterexampleCall {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            target: Address::repeat_byte(0x22),
+            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            value: None,
+            contract_name: Some("Target".to_string()),
+            function_name: Some("step".to_string()),
+            signature: Some("step()".to_string()),
+            args: Some(String::new()),
+            raw_args: Some(String::new()),
+        };
+        let artifact = SymbolicCounterexampleArtifact::new(
+            SymbolicCounterexampleArtifactKind::Sequence,
+            SymbolicCounterexampleTestIdentity {
+                contract: "InvariantTest".to_string(),
+                test: "invariant_counter()".to_string(),
+            },
+            &symbolic,
+            SymbolicCounterexampleReplaySemantics { fail_on_revert: true },
+            vec![call],
+        )
+        .with_storage(vec![SymbolicStorageAssignment {
+            address: Address::repeat_byte(0x11),
+            slot: U256::from(7),
+            value: U256::from(42),
+        }])
+        .with_invariant_failure(SymbolicInvariantArtifactFailure::Handler {
+            name: Some("Target::step".to_string()),
+            reverter: Address::repeat_byte(0x22),
+            selector: Selector::from([0x12, 0x34, 0x56, 0x78]),
+            fingerprint: B256::repeat_byte(0x33),
+        });
+
+        let value = serde_json::to_value(artifact.clone()).unwrap();
+        assert_eq!(value["storage"][0]["address"], format!("{:?}", Address::repeat_byte(0x11)));
+        assert_eq!(value["storage"][0]["slot"], "0x7");
+        assert_eq!(value["storage"][0]["value"], "0x2a");
+        assert_eq!(value["invariant_failure"]["kind"], "handler");
+        assert_eq!(value["invariant_failure"]["name"], "Target::step");
+        assert_eq!(
+            value["invariant_failure"]["reverter"],
+            format!("{:?}", Address::repeat_byte(0x22))
+        );
+        assert_eq!(value["invariant_failure"]["selector"], "0x12345678");
+        assert_eq!(
+            value["invariant_failure"]["fingerprint"],
+            format!("{:?}", B256::repeat_byte(0x33))
+        );
+        assert_counterexample_artifact_shape(&value);
+
+        let decoded = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).unwrap();
+        assert_eq!(decoded.storage, artifact.storage);
+        assert_eq!(decoded.invariant_failure, artifact.invariant_failure);
+    }
+
+    #[test]
+    fn symbolic_counterexample_schema_includes_predicate_failure_sites() {
+        let schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON).unwrap();
+        let predicate = schema["$defs"]["invariant_failure"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variant| variant["properties"]["kind"]["const"] == "predicate")
+            .unwrap();
+        assert_eq!(predicate["properties"]["site"]["$ref"], "#/$defs/invariant_failure_site");
+
+        let site_schema = &schema["$defs"]["invariant_failure_site"];
+        let site_properties = site_schema["properties"].as_object().unwrap();
+        let required_site_properties = site_schema["required"].as_array().unwrap();
+        let site_kinds = site_properties["kind"]["enum"].as_array().unwrap();
+        for (site, expected_kind) in [
+            (
+                SymbolicInvariantFailureSite::SequenceCall {
+                    target: Address::ZERO,
+                    selector: Selector::ZERO,
+                    fingerprint: B256::ZERO,
+                },
+                "sequence_call",
+            ),
+            (
+                SymbolicInvariantFailureSite::Invariant {
+                    target: Address::ZERO,
+                    selector: Selector::ZERO,
+                    fingerprint: B256::ZERO,
+                },
+                "invariant",
+            ),
+            (
+                SymbolicInvariantFailureSite::AfterInvariant {
+                    target: Address::ZERO,
+                    selector: Selector::ZERO,
+                    fingerprint: B256::ZERO,
+                },
+                "after_invariant",
+            ),
+        ] {
+            let failure = SymbolicInvariantArtifactFailure::Predicate {
+                name: "invariant_counter".to_string(),
+                site: Some(site),
+            };
+            let value = serde_json::to_value(failure).unwrap();
+            assert_eq!(value["site"]["kind"], expected_kind);
+            assert!(site_kinds.contains(&value["site"]["kind"]));
+            let site = value["site"].as_object().unwrap();
+            assert!(site.keys().all(|key| site_properties.contains_key(key)));
+            assert!(
+                required_site_properties.iter().all(|key| site.contains_key(key.as_str().unwrap()))
+            );
+        }
     }
 
     #[test]
@@ -992,6 +1117,23 @@ impl SymbolicResult {
             SymbolicReplayMetadata::confirmed(),
             call_trace,
             Some(counterexample),
+        )
+    }
+
+    /// Creates a symbolic sequence counterexample result that concrete replay confirmed.
+    pub fn fail_counterexample_sequence(
+        config: &SymbolicConfig,
+        stats: SymbolicStats,
+        call_trace: SymbolicCallTrace,
+    ) -> Self {
+        Self::new(
+            SymbolicResultStatus::FailCounterexample,
+            config,
+            stats,
+            None,
+            SymbolicReplayMetadata::confirmed(),
+            call_trace,
+            None,
         )
     }
 
@@ -1500,6 +1642,12 @@ pub struct SymbolicCounterexampleArtifact {
     pub assumptions: Vec<SymbolicAssumption>,
     /// Where an agent can find the concrete replay trace, when one was produced.
     pub call_trace: SymbolicCallTrace,
+    /// Concrete setup-storage assignments required before replaying this artifact.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub storage: Vec<SymbolicStorageAssignment>,
+    /// Stateful invariant failure origin, when this sequence came from symbolic invariants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invariant_failure: Option<SymbolicInvariantArtifactFailure>,
     /// Concrete replay calls.
     pub calls: Vec<SymbolicCounterexampleCall>,
 }
@@ -1524,8 +1672,25 @@ impl SymbolicCounterexampleArtifact {
             solver: symbolic.solver.clone(),
             assumptions: symbolic.assumptions.clone(),
             call_trace: symbolic.call_trace.clone(),
+            storage: Vec::new(),
+            invariant_failure: None,
             calls,
         }
+    }
+
+    /// Attaches setup-storage assignments required for concrete replay.
+    pub fn with_storage(mut self, storage: Vec<SymbolicStorageAssignment>) -> Self {
+        self.storage = storage;
+        self
+    }
+
+    /// Attaches stateful invariant failure origin metadata.
+    pub fn with_invariant_failure(
+        mut self,
+        invariant_failure: SymbolicInvariantArtifactFailure,
+    ) -> Self {
+        self.invariant_failure = Some(invariant_failure);
+        self
     }
 }
 
@@ -1545,6 +1710,44 @@ pub enum SymbolicCounterexampleArtifactKind {
     SingleCall,
     /// A stateful sequence of calls.
     Sequence,
+}
+
+/// Stateful invariant failure origin for a persisted symbolic sequence artifact.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SymbolicInvariantArtifactFailure {
+    /// An invariant predicate failed.
+    Predicate {
+        /// Invariant function name.
+        name: String,
+        /// Exact concrete failure site confirmed during replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        site: Option<SymbolicInvariantFailureSite>,
+    },
+    /// A target/handler call asserted before an invariant predicate failed.
+    Handler {
+        /// Best-effort human-readable handler function name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Address of the handler whose call asserted.
+        reverter: Address,
+        /// 4-byte selector of the failing handler call.
+        selector: Selector,
+        /// Stable edge fingerprint for the failing handler site.
+        fingerprint: B256,
+    },
+}
+
+/// Concrete invariant failure site stored in symbolic replay artifacts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SymbolicInvariantFailureSite {
+    /// Target/handler call failed before the invariant predicate.
+    SequenceCall { target: Address, selector: Selector, fingerprint: B256 },
+    /// Invariant predicate failed.
+    Invariant { target: Address, selector: Selector, fingerprint: B256 },
+    /// `afterInvariant` hook failed.
+    AfterInvariant { target: Address, selector: Selector, fingerprint: B256 },
 }
 
 /// Test identity for a symbolic counterexample artifact.
@@ -2216,7 +2419,7 @@ impl TestResult {
     pub fn invariant_replay_fail(
         &mut self,
         replayed_entirely: bool,
-        invariant_name: &String,
+        invariant_name: &str,
         replay_reason: Option<String>,
         calls: usize,
         reverts: usize,
@@ -2392,6 +2595,12 @@ impl TestResult {
         self.status = status;
         self.reason = reason;
         self.counterexample = counterexample;
+        self.record_symbolic(symbolic);
+        self.duration = Duration::default();
+    }
+
+    /// Records symbolic execution metadata without changing the test status/kind.
+    pub(crate) fn record_symbolic(&mut self, symbolic: SymbolicResult) {
         if let Some(artifact) = symbolic.artifact.clone() {
             self.add_counterexample_artifact(artifact);
         }
@@ -2400,7 +2609,6 @@ impl TestResult {
             self.add_counterexample_artifact(minimization.minimized);
         }
         self.symbolic = Some(symbolic);
-        self.duration = Duration::default();
     }
 
     /// Records a successful showmap replay result.
@@ -2490,6 +2698,11 @@ impl TestResult {
     /// Merges the given raw call result into `self`.
     pub fn extend<FEN: FoundryEvmNetwork>(&mut self, call_result: RawCallResult<FEN>) {
         extend!(self, call_result, TraceKind::Execution);
+    }
+
+    /// Merges the given pre-test setup result into `self`.
+    pub(crate) fn extend_setup<FEN: FoundryEvmNetwork>(&mut self, call_result: RawCallResult<FEN>) {
+        extend!(self, call_result, TraceKind::Setup);
     }
 
     /// Merges the given coverage result into `self`.

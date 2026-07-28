@@ -3457,7 +3457,7 @@ impl SymbolicExecutor {
             SymbolicVmCheatcode::EnableSymbolicStorage => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                state.world.enable_arbitrary_storage(target);
+                state.world.enable_arbitrary_storage(target, false);
                 Ok(SymReturnData::empty(&mut self.cx))
             }
             SymbolicVmCheatcode::SnapshotStorage => {
