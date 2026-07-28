@@ -92,7 +92,7 @@ pub(crate) fn lazy_mpp_ws_connect(url: &Url) -> MppWsConnect<LazyAccountsProvide
 ///
 /// HTTP payment mechanics live in `alloy-transport-mpp`; this wrapper contains
 /// only Foundry CLI policy: account-store discovery, optional interactive login
-/// and funding, and the legacy WebSocket handshake lock.
+/// and funding, and session channel configuration.
 #[derive(Clone)]
 pub struct LazyAccountsProvider {
     inner: Arc<Mutex<HashMap<Option<u64>, TempoAccountsProvider>>>,

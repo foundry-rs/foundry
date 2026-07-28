@@ -485,7 +485,7 @@ fn split_for_command(command: &str) -> Result<Vec<String>> {
     Ok(args)
 }
 
-/// Creates a signed session entry and stores it in the local registry.
+/// Creates a signed temporary access key in the Tempo Accounts store.
 async fn run_create(
     root_account: Address,
     chain_id: u64,
