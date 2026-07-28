@@ -86,13 +86,16 @@ impl Service<RequestPacket> for LazyMppHttpTransport {
                         .map_err(TransportErrorKind::custom)?
                     {
                         match transport.call(retry).await {
-                            Err(error)
-                                if insufficient_balance_details(&error).is_some_and(
-                                    |problem| {
+                            Err(error) => {
+                                let Some(problem) =
+                                    insufficient_balance_details(&error).filter(|problem| {
                                         problem.problem_type.ends_with("/insufficient-balance")
-                                    },
-                                ) =>
-                            {
+                                    })
+                                else {
+                                    return Err(error);
+                                };
+                                let context =
+                                    provider.take_funding_context(problem.challenge_id.as_deref());
                                 Err(with_transport_funding_help(error, &context))
                             }
                             result => result,
