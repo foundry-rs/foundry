@@ -2618,7 +2618,12 @@ impl<N: Network> Backend<N> {
                     "Forking not enabled and RPC URL not provided to start forking",
                 )
             })?;
-        if let Some(fork) = &current_fork {
+        let rpc_url_changed = current_fork
+            .as_ref()
+            .is_some_and(|fork| fork.database_rpc_url() != Some(target_rpc_url.as_str()));
+        if let Some(fork) = &current_fork
+            && !rpc_url_changed
+        {
             fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
         }
 

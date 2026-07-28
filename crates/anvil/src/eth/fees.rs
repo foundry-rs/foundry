@@ -297,8 +297,8 @@ pub struct FeeHistoryService<N: Network>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    /// blob parameters for the current spec
-    blob_params: BlobParams,
+    /// Active fee state shared with the backend.
+    fees: FeeManager,
     /// incoming notifications about new blocks
     new_blocks: ChainNotifications,
     /// contains all fee history related entries
@@ -314,13 +314,13 @@ where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     pub const fn new(
-        blob_params: BlobParams,
+        fees: FeeManager,
         new_blocks: ChainNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo<N>,
     ) -> Self {
         Self {
-            blob_params,
+            fees,
             new_blocks,
             cache,
             fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
@@ -362,7 +362,8 @@ where
         let base_fee = header.base_fee_per_gas().unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
+        let blob_params = self.fees.blob_params();
+        let base_fee_per_blob_gas = header.blob_fee(blob_params);
 
         let mut item = FeeHistoryCacheItem {
             base_fee: base_fee as u128,
@@ -385,7 +386,7 @@ where
             item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
             item.blob_gas_used_ratio = blob_gas_used
                 .map(|g| {
-                    let max = self.blob_params.max_blob_gas_per_block() as f64;
+                    let max = blob_params.max_blob_gas_per_block() as f64;
                     if max == 0.0 { 0.0 } else { g / max }
                 })
                 .unwrap_or(0.0);

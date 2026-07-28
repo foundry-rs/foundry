@@ -59,6 +59,8 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     pub config: Arc<RwLock<ClientForkConfig<N>>>,
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
+    /// The RPC URL associated with the state in the underlying database.
+    database_rpc_url: Option<String>,
     /// Resolved runtime values that are not configuration overrides.
     runtime: Arc<RwLock<ForkRuntimeInfo>>,
 }
@@ -72,10 +74,12 @@ struct ForkRuntimeInfo {
 impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
+        let database_rpc_url = config.eth_rpc_url().map(ToOwned::to_owned);
         Self {
             storage: Default::default(),
             config: Arc::new(RwLock::new(config)),
             database,
+            database_rpc_url,
             runtime: Default::default(),
         }
     }
@@ -135,6 +139,10 @@ impl<N: Network> ClientFork<N> {
 
     pub fn eth_rpc_url(&self) -> Option<String> {
         self.config.read().eth_rpc_url().map(|s| s.to_string())
+    }
+
+    pub(crate) fn database_rpc_url(&self) -> Option<&str> {
+        self.database_rpc_url.as_deref()
     }
 
     pub fn chain_id(&self) -> u64 {
