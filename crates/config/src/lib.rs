@@ -5931,6 +5931,7 @@ mod tests {
                 compact_labels = true
                 trace_depth = 3
                 decode_internal = true
+                external_identification_timeout = 9
 
                 [tracing.labels]
                 0x0000000000000000000000000000000000000002 = "Bob"
@@ -5944,6 +5945,7 @@ mod tests {
             assert_eq!(config.tracing.trace_depth, Some(3));
             assert!(config.tracing.decode_internal);
             assert!(config.tracing.compact_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 9);
             let labels = AddressHashMap::from_iter(vec![(
                 address!("0x0000000000000000000000000000000000000002"),
                 "Bob".to_string(),
@@ -5967,6 +5969,18 @@ mod tests {
     }
 
     #[test]
+    fn test_external_identification_timeout_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT", "0");
+
+            let config = Config::load().unwrap();
+
+            assert_eq!(config.tracing.external_identification_timeout, 0);
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_global_and_tracing_verbosity_are_independent() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -5984,6 +5998,7 @@ mod tests {
             assert_eq!(config.verbosity, 4);
             assert_eq!(config.tracing.verbosity, 0);
             assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 5);
 
             Ok(())
         });
