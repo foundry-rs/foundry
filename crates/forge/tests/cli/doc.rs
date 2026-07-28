@@ -266,7 +266,7 @@ description: "import somesecret from the outside"
 
 **Inherits:** [IEsm](/src/interface.IEsm)
 
-&#105;mport somesecret from the outside
+&#105;&#109;port somesecret from the outside
 
 ## Functions
 
