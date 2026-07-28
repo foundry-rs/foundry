@@ -11997,7 +11997,6 @@ dependencies = [
  "tempo-chainspec",
  "tempo-contracts",
  "tempo-primitives",
- "tempo-revm",
  "thiserror 2.0.19",
  "tower",
  "tracing",
