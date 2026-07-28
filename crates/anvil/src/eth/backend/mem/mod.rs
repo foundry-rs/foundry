@@ -28,7 +28,6 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
         preserve_simulation_request_fields,
-        sign::build_impersonated,
     },
     mem::{
         inspector::{AnvilInspector, InspectorTxConfig},
@@ -5882,7 +5881,7 @@ impl Backend<FoundryNetwork> {
                             BlockchainError::InvalidTransactionRequest(e.to_string())
                         })?;
                         MaybeImpersonatedTransaction::impersonated(
-                            build_impersonated(typed_tx),
+                            typed_tx.into_impersonated(),
                             from,
                         )
                     };

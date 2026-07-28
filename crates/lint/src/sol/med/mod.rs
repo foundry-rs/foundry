@@ -1,4 +1,4 @@
-use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
+use crate::sol::SolLint;
 
 mod assert_state_change;
 use assert_state_change::ASSERT_STATE_CHANGE;

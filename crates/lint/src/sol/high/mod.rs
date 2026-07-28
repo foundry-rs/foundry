@@ -1,4 +1,4 @@
-use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
+use crate::sol::SolLint;
 
 mod arbitrary_send_erc20;
 mod arbitrary_send_eth;
