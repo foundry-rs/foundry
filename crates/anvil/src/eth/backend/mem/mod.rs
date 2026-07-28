@@ -37,14 +37,17 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
+    TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, TxType, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
 use alloy_eips::{
-    BlockNumHash, Encodable2718, eip2935, eip4844::kzg_to_versioned_hash,
-    eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams, eip7910::SystemContract,
+    BlockNumHash, Encodable2718, eip2935,
+    eip4844::{DATA_GAS_PER_BLOB, kzg_to_versioned_hash},
+    eip7685::EMPTY_REQUESTS_HASH,
+    eip7840::BlobParams,
+    eip7910::SystemContract,
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
@@ -112,7 +115,7 @@ use foundry_evm::{
         precompiles::EC_RECOVER,
     },
     decode::RevertDecoder,
-    hardfork::FoundryHardfork,
+    hardfork::{EthereumHardfork, FoundryHardfork},
     inspectors::AccessListInspector,
     traces::{
         CallTraceDecoder, FourByteInspector, GethTraceBuilder, TracingInspector,
@@ -843,6 +846,52 @@ impl<N: Network> Backend<N> {
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
         get_blob_params_by_spec_id(self.spec_id())
+    }
+
+    fn simulation_blob_params_at_timestamp(&self, timestamp: u64) -> BlobParams {
+        let spec_id = self.spec_id();
+        let configured_hardfork = self.hardfork();
+        if let FoundryHardfork::Ethereum(
+            configured
+            @ (EthereumHardfork::Osaka | EthereumHardfork::Bpo1 | EthereumHardfork::Bpo2),
+        ) = configured_hardfork
+            && let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
+                self.evm_env.read().cfg_env.chain_id,
+                timestamp,
+            )
+            && let FoundryHardfork::Ethereum(
+                scheduled @ (EthereumHardfork::Osaka
+                | EthereumHardfork::Bpo1
+                | EthereumHardfork::Bpo2),
+            ) = hardfork
+        {
+            let hardfork = match (configured, scheduled) {
+                (EthereumHardfork::Bpo2, _) | (_, EthereumHardfork::Bpo2) => EthereumHardfork::Bpo2,
+                (EthereumHardfork::Bpo1, _) | (_, EthereumHardfork::Bpo1) => EthereumHardfork::Bpo1,
+                _ => EthereumHardfork::Osaka,
+            };
+            return Self::simulation_blob_params_for_hardfork(hardfork.into(), spec_id);
+        }
+        Self::simulation_blob_params_for_hardfork(configured_hardfork, spec_id)
+    }
+
+    fn simulation_blob_params_for_hardfork(
+        hardfork: FoundryHardfork,
+        spec_id: SpecId,
+    ) -> BlobParams {
+        match hardfork {
+            FoundryHardfork::Ethereum(EthereumHardfork::Prague) => BlobParams::prague(),
+            FoundryHardfork::Ethereum(EthereumHardfork::Osaka) => BlobParams::osaka(),
+            FoundryHardfork::Ethereum(EthereumHardfork::Bpo1) => BlobParams::bpo1(),
+            FoundryHardfork::Ethereum(EthereumHardfork::Bpo2) => BlobParams::bpo2(),
+            FoundryHardfork::Ethereum(
+                EthereumHardfork::Bpo3
+                | EthereumHardfork::Bpo4
+                | EthereumHardfork::Bpo5
+                | EthereumHardfork::Amsterdam,
+            ) => BlobParams::bpo2(),
+            _ => get_blob_params_by_spec_id(spec_id),
+        }
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -5630,7 +5679,10 @@ impl Backend<FoundryNetwork> {
                            base_number,
                            base_timestamp,
                            base_hash,
-                           base_fee| {
+                           base_fee,
+                           base_base_fee_per_gas,
+                           base_excess_blob_gas,
+                           base_blob_gas_used| {
             let SimulatePayload {
                 block_state_calls,
                 trace_transfers,
@@ -5649,16 +5701,41 @@ impl Backend<FoundryNetwork> {
             let mut parent_hash = base_hash;
             let mut next_base_fee = base_fee;
             let mut inherited_block_env = base_block_env;
-            let (is_amsterdam, tx_gas_limit_cap) = {
+            let (is_cancun, is_amsterdam, tx_gas_limit_cap) = {
                 let cfg_env = &self.evm_env.read().cfg_env;
-                (cfg_env.spec >= SpecId::AMSTERDAM, cfg_env.tx_gas_limit_cap())
+                (
+                    cfg_env.spec >= SpecId::CANCUN,
+                    cfg_env.spec >= SpecId::AMSTERDAM,
+                    cfg_env.tx_gas_limit_cap(),
+                )
             };
+            let mut parent_base_fee_per_gas = base_base_fee_per_gas;
+            let mut parent_excess_blob_gas = base_excess_blob_gas;
+            let mut parent_blob_gas_used = base_blob_gas_used;
             let mut rpc_gas_budget = SIMULATE_GAS_CAP;
 
             // execute the blocks
             for block in block_state_calls {
                 let SimBlock { block_overrides, state_overrides, calls } = block;
                 let mut block_env = inherited_block_env.clone();
+                let block_timestamp = block_overrides
+                    .as_ref()
+                    .and_then(|overrides| overrides.time)
+                    .unwrap_or_else(|| block_env.timestamp.saturating_to());
+                let blob_params = self.simulation_blob_params_at_timestamp(block_timestamp);
+                if is_cancun {
+                    let excess_blob_gas = blob_params.next_block_excess_blob_gas_osaka(
+                        parent_excess_blob_gas,
+                        parent_blob_gas_used,
+                        parent_base_fee_per_gas,
+                    );
+                    block_env.set_blob_excess_gas_and_price(
+                        excess_blob_gas,
+                        blob_params.update_fraction as u64,
+                    );
+                } else {
+                    block_env.blob_excess_gas_and_price = None;
+                }
                 block_env.basefee = if validation { next_base_fee } else { 0 };
                 block_env.prevrandao = Some(B256::ZERO);
                 let mut call_res = Vec::with_capacity(calls.len());
@@ -5666,6 +5743,7 @@ impl Backend<FoundryNetwork> {
                 let mut cumulative_gas_used = 0;
                 let mut block_regular_gas_used = 0;
                 let mut block_state_gas_used = 0;
+                let mut block_blob_gas_used = 0u64;
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut transaction_envelopes = Vec::with_capacity(calls.len());
                 let mut receipts = Vec::with_capacity(calls.len());
@@ -5701,6 +5779,36 @@ impl Backend<FoundryNetwork> {
 
                 // execute all calls in that block
                 for (req_idx, mut request) in calls.into_iter().enumerate() {
+                    let classified_request = self.parse_transaction_request(request.clone())?;
+                    let is_ethereum_request = classified_request.is_ethereum();
+                    let mut parsed_request = self.is_tempo().then_some(classified_request);
+                    if is_ethereum_request {
+                        request.populate_blob_hashes();
+                        let preferred_type = request.preferred_type();
+                        request.transaction_type = Some(preferred_type as u8);
+                        request.trim_conflicting_keys();
+                        request.populate_blob_hashes();
+                        if preferred_type == TxType::Eip4844
+                            && request.max_fee_per_blob_gas.is_none()
+                        {
+                            request.max_fee_per_blob_gas = block_env.blob_gasprice();
+                        }
+                    }
+                    let request_blob_gas_used = if is_ethereum_request {
+                        u64::try_from(request.blob_versioned_hashes.as_ref().map_or(0, Vec::len))
+                            .unwrap_or(u64::MAX)
+                            .saturating_mul(DATA_GAS_PER_BLOB)
+                    } else {
+                        0
+                    };
+                    let max_blob_gas = blob_params.max_blob_gas_per_block();
+                    if block_blob_gas_used.saturating_add(request_blob_gas_used) > max_blob_gas {
+                        return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                            "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
+                        ))));
+                    }
+                    block_blob_gas_used = block_blob_gas_used.saturating_add(request_blob_gas_used);
+
                     let inner = request.as_ref();
                     let remaining_regular_gas =
                         block_env.gas_limit.saturating_sub(block_regular_gas_used);
@@ -5730,10 +5838,6 @@ impl Backend<FoundryNetwork> {
                         }));
                     }
                     let execution_gas_limit = requested_gas.min(rpc_gas_budget);
-                    let mut parsed_request = self
-                        .is_tempo()
-                        .then(|| self.parse_transaction_request(request.clone()))
-                        .transpose()?;
                     let preserve_signed_gas = matches!(
                         &parsed_request,
                         Some(FoundryTransactionRequest::Tempo(request))
@@ -5760,6 +5864,16 @@ impl Backend<FoundryNetwork> {
                         request.nonce = Some(nonce);
                         if let Some(parsed_request) = &mut parsed_request {
                             parsed_request.as_mut().nonce = Some(nonce);
+                        }
+                    }
+
+                    if is_ethereum_request {
+                        let mut canonical_request =
+                            FoundryTransactionRequest::Ethereum(request.inner.clone());
+                        canonical_request.prep_for_submission();
+                        request.inner = canonical_request.as_ref().clone();
+                        if let Some(parsed_request) = &mut parsed_request {
+                            *parsed_request = canonical_request;
                         }
                     }
 
@@ -5869,6 +5983,7 @@ impl Backend<FoundryNetwork> {
 
                     // create the transaction from a request
                     let from = caller;
+                    request.sidecar = None;
                     let tx = if let Some(envelope) = simulated_envelope {
                         MaybeImpersonatedTransaction::impersonated(envelope, from)
                     } else {
@@ -6001,8 +6116,8 @@ impl Backend<FoundryNetwork> {
                     nonce: Default::default(),
                     base_fee_per_gas: Some(block_env.basefee),
                     withdrawals_root: None,
-                    blob_gas_used: None,
-                    excess_blob_gas: None,
+                    blob_gas_used: is_cancun.then_some(block_blob_gas_used),
+                    excess_blob_gas: if is_cancun { block_env.blob_excess_gas() } else { None },
                     parent_beacon_block_root: None,
                     requests_hash: None,
                     ..Default::default()
@@ -6047,6 +6162,9 @@ impl Backend<FoundryNetwork> {
                     header.gas_limit(),
                     header.base_fee_per_gas().unwrap_or_default(),
                 );
+                parent_base_fee_per_gas = header.base_fee_per_gas().unwrap_or_default();
+                parent_excess_blob_gas = header.excess_blob_gas().unwrap_or_default();
+                parent_blob_gas_used = header.blob_gas_used().unwrap_or_default();
 
                 block_res.push(simulated_block);
             }
@@ -6070,6 +6188,9 @@ impl Backend<FoundryNetwork> {
                         header.timestamp(),
                         header.hash_slow(),
                         base_fee,
+                        header.base_fee_per_gas().unwrap_or_default(),
+                        header.excess_blob_gas().unwrap_or_default(),
+                        header.blob_gas_used().unwrap_or_default(),
                     )
                 })
                 .await
@@ -6092,9 +6213,18 @@ impl Backend<FoundryNetwork> {
                     base_block.header.gas_limit(),
                     base_block.header.base_fee_per_gas().unwrap_or_default(),
                 );
-
                 self.with_database_at(block_request, |state, block_env| {
-                    simulate_at(state, block_env, base_number, base_timestamp, base_hash, base_fee)
+                    simulate_at(
+                        state,
+                        block_env,
+                        base_number,
+                        base_timestamp,
+                        base_hash,
+                        base_fee,
+                        base_block.header.base_fee_per_gas().unwrap_or_default(),
+                        base_block.header.excess_blob_gas().unwrap_or_default(),
+                        base_block.header.blob_gas_used().unwrap_or_default(),
+                    )
                 })
                 .await?
             }
