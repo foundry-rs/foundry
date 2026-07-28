@@ -5487,7 +5487,6 @@ dependencies = [
  "ciborium",
  "clap",
  "comfy-table",
- "dirs",
  "dunce",
  "eyre",
  "flate2",
