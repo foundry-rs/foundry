@@ -38,11 +38,7 @@ use foundry_evm::core::tempo::{
     active_tempo_precompile_addresses,
 };
 use futures::StreamExt;
-use tempo_alloy::{
-    TempoNetwork,
-    primitives::TempoTxEnvelope,
-    rpc::{TempoHeaderResponse, TempoTransactionRequest},
-};
+use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
@@ -3847,7 +3843,7 @@ async fn test_tempo_browser_webauthn_gas_estimation() {
     let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
         .connect_http(handle.http_endpoint().parse().unwrap());
     let accounts: Vec<Address> = handle.dev_accounts().collect();
-    let request = TempoTransactionRequest {
+    let request = tempo_alloy::rpc::TempoTransactionRequest {
         inner: TransactionRequest::default().from(accounts[0]),
         fee_token: Some(PATH_USD),
         nonce_key: Some(U256::ZERO),
