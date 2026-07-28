@@ -16,6 +16,11 @@
 
 set -euo pipefail
 
+if [ -n "${MPP_API_KEY:-}" ]; then
+  echo "ERROR: MPP_API_KEY bypasses payment challenges and must be unset for the paid MPP e2e" >&2
+  exit 1
+fi
+
 BIN_DIR="${1:-}"
 if [ -n "$BIN_DIR" ]; then
   BIN_DIR="$(cd "$BIN_DIR" && pwd)"
