@@ -1,4 +1,5 @@
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -193,6 +194,16 @@ class WorkspaceTests(unittest.TestCase):
             return_value=subprocess.CompletedProcess([], returncode=0),
         ), self.assertRaisesRegex(prepare_stable_release.ReleaseError, "did not change"):
             prepare_stable_release.require_changes(Path("."))
+
+    def test_no_fragments_outputs_cleanup_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".changelog").mkdir()
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion = "1.7.2"\n')
+            output = root / "output"
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
+                prepare_stable_release.prepare(root, root / "changelogs")
+            self.assertEqual(output.read_text(), "base_branch=master\nchanged=false\n")
 
 
 if __name__ == "__main__":

@@ -220,6 +220,7 @@ def prepare(root: Path, changelogs: Path) -> None:
     candidate = workspace_version(manifest)
     candidate_version = parse_version(candidate)
     fragments = pending_fragments(root)
+    set_output("base_branch", "master")
     if not fragments:
         set_output("changed", "false")
         print("No pending changelog fragments.")
@@ -294,7 +295,6 @@ def prepare(root: Path, changelogs: Path) -> None:
 
     expected_tag = f"v{candidate}"
     set_output("changed", "true")
-    set_output("base_branch", "master")
     set_output("expected_version", candidate)
     set_output("expected_tag", expected_tag)
     set_output("package_count", str(package_count))

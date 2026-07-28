@@ -6,7 +6,13 @@ permissions: {}
 'on':
   push:
     branches: [master]
-    paths: ['.changelog/*.md']
+    paths:
+      - '.changelog/*.md'
+      - '.changelog/config.toml'
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'CHANGELOG.md'
   workflow_dispatch:
 
 concurrency:
@@ -30,7 +36,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Detect pending changelog fragments
+        id: fragments
+        run: |
+          if [[ -n "$(find .changelog -maxdepth 1 -type f -name '*.md' ! -name README.md -print -quit)" ]]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install pinned changelogs CLI
+        if: steps.fragments.outputs.found == 'true'
         run: |
           cargo install \
             --git https://github.com/tempoxyz/changelogs \
@@ -53,7 +69,7 @@ jobs:
 
       - name: Create repository-scoped App token
         id: app-token
-        if: steps.prepare.outputs.changed == 'true' && env.STABLE_VERSION_PRS_ENABLED == 'true'
+        if: env.STABLE_VERSION_PRS_ENABLED == 'true'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ vars.FOUNDRY_RELEASE_APP_ID }}
@@ -63,8 +79,19 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Create or update stable version PR
-        if: steps.prepare.outputs.changed == 'true' && env.STABLE_VERSION_PRS_ENABLED == 'true'
+      - name: Verify checked-out master is current
+        if: env.STABLE_VERSION_PRS_ENABLED == 'true'
+        run: |
+          git fetch --no-tags origin +master:refs/remotes/origin/master
+          checked_out=$(git rev-parse HEAD)
+          current=$(git rev-parse refs/remotes/origin/master)
+          if [[ "$checked_out" != "$current" ]]; then
+            echo "master advanced from $checked_out to $current; refusing to write stale output" >&2
+            exit 1
+          fi
+
+      - name: Reconcile stable version PR
+        if: env.STABLE_VERSION_PRS_ENABLED == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
