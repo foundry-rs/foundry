@@ -27,7 +27,7 @@ use revm::{
     },
     context_interface::{Cfg, ContextSetters, transaction::AuthorizationTr},
     handler::{EthFrame, EvmTr, FrameResult, Handler},
-    inspector::{InspectSystemCallEvm, InspectorHandler},
+    inspector::{InspectSystemCallEvm, Inspector, InspectorHandler},
     interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
     primitives::{Address, HashSet},
 };
@@ -83,6 +83,35 @@ pub fn monad_context_from_participants(
         },
         ..Default::default()
     }
+}
+
+fn transact_monad_replay<DB, I>(
+    evm: &mut MonadEvm<DB, I>,
+    tx: TxEnv,
+) -> eyre::Result<ResultAndState>
+where
+    DB: alloy_evm::Database,
+    I: Inspector<MonadContext<DB>>,
+{
+    let factory = MonadEvmFactory::default();
+    let Some(system_call) = factory.protocol_system_call(&tx)? else {
+        return evm.transact(tx).map_err(Into::into);
+    };
+
+    system_call.validate_chain_id(evm.chain_id())?;
+    let context_state = evm.ctx().context_state();
+    let result = (|| {
+        let (db, journal) = evm.ctx_mut().db_journal_inner_mut();
+        system_call.apply_prestate(db, journal)?;
+        let result = evm
+            .transact_system_call(system_call.caller, system_call.contract, system_call.data)
+            .wrap_err("failed to execute protocol system transaction")?;
+        finish_protocol_system_call(result)
+    })();
+    if result.is_err() {
+        evm.ctx_mut().set_context_state(context_state);
+    }
+    result
 }
 
 impl FoundryEvmFactory for MonadEvmFactory {
@@ -239,9 +268,9 @@ impl FoundryEvmFactory for MonadEvmFactory {
                 (syscall_on_epoch_change_calldata(call.epoch), None)
             }
             _ => {
-                eyre::bail!(
+                return Err(eyre::eyre!(
                     "invalid Monad protocol system transaction: unknown staking syscall selector"
-                )
+                ));
             }
         };
 
@@ -253,6 +282,26 @@ impl FoundryEvmFactory for MonadEvmFactory {
             chain_id: tx.chain_id(),
             balance_increment,
         }))
+    }
+
+    fn transact_replay<DB, I>(
+        &self,
+        evm: &mut Self::Evm<DB, I>,
+        tx: Self::Tx,
+    ) -> eyre::Result<ResultAndState<Self::HaltReason>>
+    where
+        DB: alloy_evm::Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        transact_monad_replay(evm, tx)
+    }
+
+    fn transact_foundry_replay<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+        &self,
+        evm: &mut Self::FoundryEvm<'db, I>,
+        tx: Self::Tx,
+    ) -> eyre::Result<ResultAndState<Self::HaltReason>> {
+        transact_monad_replay(evm, tx)
     }
 
     fn create_foundry_nested_evm<'db>(
@@ -340,15 +389,23 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         };
 
         system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
-        let prestate = system_call.apply_prestate(self.0.ctx.db_mut())?;
-        let result = self
-            .inspect_system_call_with_caller(
-                system_call.caller,
-                system_call.contract,
-                system_call.data,
-            )
-            .wrap_err("failed to execute protocol system transaction")?;
-        finish_protocol_system_call(result, prestate)
+        let context_state = self.context_state();
+        let result = (|| {
+            let (db, journal) = self.0.ctx.db_journal_inner_mut();
+            system_call.apply_prestate(db, journal)?;
+            let result = self
+                .inspect_system_call_with_caller(
+                    system_call.caller,
+                    system_call.contract,
+                    system_call.data,
+                )
+                .wrap_err("failed to execute protocol system transaction")?;
+            finish_protocol_system_call(result)
+        })();
+        if result.is_err() {
+            self.set_context_state(context_state);
+        }
+        result
     }
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {

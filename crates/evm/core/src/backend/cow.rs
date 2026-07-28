@@ -9,7 +9,7 @@ use crate::{
     },
     evm::{
         ContextAuxFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        HaltReasonFor, SpecFor, TxEnvFor, execute_replay_transaction,
+        HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId},
 };
@@ -141,7 +141,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
             context_aux,
             inspector,
         );
-        let result = execute_replay_transaction(&factory, &mut evm, tx_env.clone())?;
+        let result = factory.transact_foundry_replay(&mut evm, tx_env.clone())?;
 
         if !is_protocol_system {
             *tx_env = evm.tx().clone();

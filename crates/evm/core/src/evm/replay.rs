@@ -1,16 +1,12 @@
-use alloy_evm::Evm;
-use alloy_primitives::{
-    Address, Bytes, U256,
-    map::{AddressMap, Entry},
-};
-use eyre::{Result, WrapErr};
+use alloy_primitives::{Address, Bytes, U256};
+use eyre::Result;
 use revm::{
-    Database, DatabaseCommit,
-    context_interface::result::ResultAndState,
-    state::{Account, EvmState},
+    context::journaled_state::account::JournaledAccountTr,
+    context_interface::result::ResultAndState, inspector::Inspector,
 };
 
 use super::FoundryEvmFactory;
+use crate::backend::JournaledState;
 
 /// A protocol system transaction that must bypass ordinary transaction validation.
 #[derive(Clone, Debug)]
@@ -42,99 +38,80 @@ impl ProtocolSystemCall {
         Ok(())
     }
 
-    pub(crate) fn apply_prestate<DB: alloy_evm::Database + DatabaseCommit>(
+    pub(crate) fn apply_prestate<DB: alloy_evm::Database>(
         &self,
         db: &mut DB,
-    ) -> Result<AddressMap<Account>> {
-        let mut changes = AddressMap::default();
-        let caller = load_account(db, &mut changes, self.caller)?;
-        if caller.info.nonce != self.nonce {
-            eyre::bail!(
-                "protocol system transaction nonce mismatch: envelope {}, state {}",
-                self.nonce,
-                caller.info.nonce
-            );
-        }
-        caller.info.nonce = self
+        journal: &mut JournaledState,
+    ) -> Result<()> {
+        let next_nonce = self
             .nonce
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("protocol system transaction nonce overflow"))?;
-        caller.mark_touch();
+        let caller_nonce = journal.load_account(db, self.caller)?.data.info.nonce;
+        if caller_nonce != self.nonce {
+            eyre::bail!(
+                "protocol system transaction nonce mismatch: envelope {}, state {}",
+                self.nonce,
+                caller_nonce
+            );
+        }
 
-        if let Some((address, amount)) = self.balance_increment {
-            let account = load_account(db, &mut changes, address)?;
-            account.info.balance = account
+        let balance = if let Some((address, amount)) = self.balance_increment {
+            let balance = journal
+                .load_account(db, address)?
+                .data
                 .info
                 .balance
                 .checked_add(amount)
                 .ok_or_else(|| eyre::eyre!("protocol system transaction balance overflow"))?;
-            account.mark_touch();
+            Some((address, balance))
+        } else {
+            None
+        };
+
+        journal.load_account_mut(db, self.caller)?.data.set_nonce(next_nonce);
+        if let Some((address, balance)) = balance {
+            journal.load_account_mut(db, address)?.data.set_balance(balance);
         }
 
-        db.commit(changes.clone());
-        Ok(changes)
-    }
-}
-
-fn load_account<'a, DB: alloy_evm::Database>(
-    db: &mut DB,
-    changes: &'a mut AddressMap<Account>,
-    address: Address,
-) -> Result<&'a mut Account> {
-    match changes.entry(address) {
-        Entry::Occupied(entry) => Ok(entry.into_mut()),
-        Entry::Vacant(entry) => {
-            let info = Database::basic(db, address)?.unwrap_or_default();
-            Ok(entry.insert(Account::from(info)))
-        }
+        Ok(())
     }
 }
 
 /// Executes one canonical replay transaction, including family-specific protocol system calls.
-pub fn execute_replay_transaction<F, E>(
+pub fn execute_replay_transaction<F, DB, I>(
     factory: &F,
-    evm: &mut E,
+    evm: &mut F::Evm<DB, I>,
     tx: F::Tx,
 ) -> Result<ResultAndState<F::HaltReason>>
 where
     F: FoundryEvmFactory,
-    E: Evm<Tx = F::Tx, HaltReason = F::HaltReason>,
-    E::DB: DatabaseCommit,
+    DB: alloy_evm::Database,
+    I: Inspector<F::Context<DB>>,
 {
-    let Some(system_call) = factory.protocol_system_call(&tx)? else {
-        return evm.transact(tx).wrap_err("failed to replay transaction");
-    };
-
-    system_call.validate_chain_id(evm.chain_id())?;
-    let prestate = system_call.apply_prestate(evm.db_mut())?;
-    let result = evm
-        .transact_system_call(system_call.caller, system_call.contract, system_call.data)
-        .wrap_err("failed to execute protocol system transaction")?;
-    finish_protocol_system_call(result, prestate)
+    factory.transact_replay(evm, tx)
 }
 
 pub(crate) fn finish_protocol_system_call<H>(
     mut result: ResultAndState<H>,
-    prestate: AddressMap<Account>,
 ) -> Result<ResultAndState<H>> {
     if !result.result.is_success() {
         eyre::bail!("protocol system transaction reverted or halted");
     }
 
-    merge_prestate(&mut result.state, prestate);
-    Ok(result)
-}
-
-fn merge_prestate(state: &mut EvmState, prestate: AddressMap<Account>) {
-    for (address, account) in prestate {
-        state.entry(address).or_insert(account);
+    if let revm::context_interface::result::ExecutionResult::Success { gas, .. } =
+        &mut result.result
+    {
+        *gas = Default::default();
     }
+
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use revm::{database::InMemoryDB, primitives::address, state::AccountInfo};
+    use revm::{Database, database::InMemoryDB, primitives::address, state::AccountInfo};
 
     #[test]
     fn protocol_prestate_updates_nonce_and_balance() {
@@ -154,13 +131,14 @@ mod tests {
             chain_id: None,
             balance_increment: Some((recipient, U256::from(25))),
         };
+        let mut journal = JournaledState::default();
 
-        let changes = call.apply_prestate(&mut db).unwrap();
+        call.apply_prestate(&mut db, &mut journal).unwrap();
 
-        assert_eq!(changes[&caller].info.nonce, 8);
-        assert_eq!(changes[&recipient].info.balance, U256::from(35));
-        assert_eq!(db.basic(caller).unwrap().unwrap().nonce, 8);
-        assert_eq!(db.basic(recipient).unwrap().unwrap().balance, U256::from(35));
+        assert_eq!(journal.state[&caller].info.nonce, 8);
+        assert_eq!(journal.state[&recipient].info.balance, U256::from(35));
+        assert_eq!(db.basic(caller).unwrap().unwrap().nonce, 7);
+        assert_eq!(db.basic(recipient).unwrap().unwrap().balance, U256::from(10));
     }
 
     #[test]
@@ -176,8 +154,9 @@ mod tests {
             chain_id: None,
             balance_increment: None,
         };
+        let mut journal = JournaledState::default();
 
-        let err = call.apply_prestate(&mut db).unwrap_err();
+        let err = call.apply_prestate(&mut db, &mut journal).unwrap_err();
 
         assert!(err.to_string().contains("nonce mismatch"));
         assert_eq!(db.basic(caller).unwrap().unwrap().nonce, 3);
@@ -196,8 +175,9 @@ mod tests {
             chain_id: None,
             balance_increment: None,
         };
+        let mut journal = JournaledState::default();
 
-        let err = call.apply_prestate(&mut db).unwrap_err();
+        let err = call.apply_prestate(&mut db, &mut journal).unwrap_err();
 
         assert!(err.to_string().contains("nonce overflow"));
         assert_eq!(db.basic(caller).unwrap().unwrap().nonce, u64::MAX);
@@ -207,11 +187,12 @@ mod tests {
 #[cfg(all(test, feature = "monad"))]
 mod monad_tests {
     use super::*;
-    use alloy_evm::{EvmEnv, EvmFactory};
+    use crate::FoundryContextExt;
+    use alloy_evm::{Evm, EvmEnv, EvmFactory};
     use alloy_monad_evm::MonadEvmFactory;
     use alloy_sol_types::{SolCall, SolEvent};
     use monad_revm::{
-        MonadHardfork,
+        MonadContext, MonadHardfork,
         staking::{
             STAKING_ADDRESS,
             constants::{MON, SYSTEM_ADDRESS},
@@ -222,12 +203,36 @@ mod monad_tests {
         },
     };
     use revm::{
+        Database, DatabaseCommit,
         context::{BlockEnv, CfgEnv, TxEnv},
         database::InMemoryDB,
-        inspector::CountInspector,
+        interpreter::{CallInputs, CallOutcome},
         primitives::{TxKind, address},
         state::AccountInfo,
     };
+
+    #[derive(Default)]
+    struct ProtocolPrestateInspector {
+        call_count: usize,
+        staking_balance: Option<U256>,
+    }
+
+    impl Inspector<MonadContext<InMemoryDB>> for ProtocolPrestateInspector {
+        fn call(
+            &mut self,
+            context: &mut MonadContext<InMemoryDB>,
+            _inputs: &mut CallInputs,
+        ) -> Option<CallOutcome> {
+            self.call_count += 1;
+            self.staking_balance = context
+                .journaled_state
+                .inner
+                .state
+                .get(&STAKING_ADDRESS)
+                .map(|account| account.info.balance);
+            None
+        }
+    }
 
     fn left_aligned_u64(value: u64) -> U256 {
         let mut bytes = [0; 32];
@@ -289,12 +294,15 @@ mod monad_tests {
         let factory = MonadEvmFactory::default();
         let evm_env =
             EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
-        let mut evm = factory.create_evm_with_inspector(db, evm_env, CountInspector::default());
+        let mut evm =
+            factory.create_evm_with_inspector(db, evm_env, ProtocolPrestateInspector::default());
 
         let result = execute_replay_transaction(&factory, &mut evm, tx).unwrap();
 
         assert!(result.result.is_success());
-        assert!(evm.inspector().call_count() > 0);
+        assert_eq!(result.result.tx_gas_used(), 0);
+        assert!(evm.inspector().call_count > 0);
+        assert_eq!(evm.inspector().staking_balance, Some(initial_staking_balance + reward));
         assert_eq!(result.result.logs().len(), 1);
         assert_eq!(result.result.logs()[0].address, STAKING_ADDRESS);
         assert_eq!(result.result.logs()[0].topics()[0], ValidatorRewarded::SIGNATURE_HASH);
@@ -316,6 +324,53 @@ mod monad_tests {
             )
             .unwrap(),
             reward
+        );
+    }
+
+    #[test]
+    fn failed_reward_envelope_does_not_commit_prestate() {
+        let unknown_author = address!("1111111111111111111111111111111111111111");
+        let reward = U256::from(25) * MON;
+        let initial_staking_balance = U256::from(3) * MON;
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(SYSTEM_ADDRESS, AccountInfo { nonce: 11, ..Default::default() });
+        db.insert_account_info(
+            STAKING_ADDRESS,
+            AccountInfo { balance: initial_staking_balance, ..Default::default() },
+        );
+        let tx = TxEnv {
+            tx_type: 0,
+            caller: SYSTEM_ADDRESS,
+            gas_limit: 0,
+            kind: TxKind::Call(STAKING_ADDRESS),
+            value: reward,
+            data: syscallRewardCall { blockAuthor: unknown_author }.abi_encode().into(),
+            nonce: 11,
+            ..Default::default()
+        };
+        let factory = MonadEvmFactory::default();
+        let evm_env =
+            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
+        let mut evm =
+            factory.create_evm_with_inspector(db, evm_env, ProtocolPrestateInspector::default());
+        let context_before = evm.context_state();
+
+        let error = execute_replay_transaction(&factory, &mut evm, tx).unwrap_err();
+
+        assert!(error.to_string().contains("reverted or halted"));
+        assert!(evm.inspector().call_count > 0);
+        assert_eq!(evm.inspector().staking_balance, Some(initial_staking_balance + reward));
+        let context_after = evm.context_state();
+        assert_eq!(context_after.journaled_state.state, context_before.journaled_state.state);
+        assert_eq!(context_after.auxiliary, context_before.auxiliary);
+        assert_eq!(evm.db_mut().basic(SYSTEM_ADDRESS).unwrap().unwrap().nonce, 11);
+        assert_eq!(
+            evm.db_mut().basic(STAKING_ADDRESS).unwrap().unwrap().balance,
+            initial_staking_balance
+        );
+        assert_eq!(
+            evm.db_mut().storage(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).unwrap(),
+            U256::ZERO
         );
     }
 }

@@ -28,7 +28,7 @@ use revm::{
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::FrameResult,
-    inspector::NoOpInspector,
+    inspector::{Inspector, NoOpInspector},
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
@@ -223,6 +223,37 @@ pub trait FoundryEvmFactory:
     /// not satisfy that network's canonical envelope rules.
     fn protocol_system_call(&self, _tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
         Ok(None)
+    }
+
+    /// Executes a canonical replay transaction on a regular EVM created by this factory.
+    ///
+    /// Factories with protocol system envelopes override this hook to apply their protocol
+    /// prestate through the concrete EVM context before entering the dedicated system-call path.
+    fn transact_replay<DB, I>(
+        &self,
+        evm: &mut Self::Evm<DB, I>,
+        tx: Self::Tx,
+    ) -> eyre::Result<ResultAndState<Self::HaltReason>>
+    where
+        DB: alloy_evm::Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        if self.protocol_system_call(&tx)?.is_some() {
+            eyre::bail!("protocol system replay is not implemented for this EVM factory");
+        }
+        evm.transact(tx).map_err(Into::into)
+    }
+
+    /// Executes a canonical replay transaction on a Foundry EVM with an inspector.
+    fn transact_foundry_replay<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+        &self,
+        evm: &mut Self::FoundryEvm<'db, I>,
+        tx: Self::Tx,
+    ) -> eyre::Result<ResultAndState<Self::HaltReason>> {
+        if self.protocol_system_call(&tx)?.is_some() {
+            eyre::bail!("protocol system replay is not implemented for this EVM factory");
+        }
+        evm.transact(tx).map_err(Into::into)
     }
 
     /// Creates an uninspected EVM with explicit network-specific auxiliary state.

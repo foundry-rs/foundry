@@ -75,6 +75,13 @@ struct TransactionInputs<FEN: FoundryEvmNetwork> {
     context_aux: ContextAuxFor<FEN>,
 }
 
+/// Block data required to execute or position a fork at a transaction.
+struct TransactionForkTarget {
+    fork_block_number: u64,
+    transaction: AnyRpcTransaction,
+    block: AnyRpcBlock,
+}
+
 /// Canonical chain position used to reconstruct network-specific transaction context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ForkPosition {
@@ -982,7 +989,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, AnyRpcBlock)> {
+    ) -> eyre::Result<TransactionForkTarget> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.backend().get_transaction(transaction)?;
 
@@ -993,13 +1000,18 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, block))
+            Ok(TransactionForkTarget { fork_block_number: fork_block, transaction: tx, block })
         } else {
+            if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                eyre::bail!(
+                    "transaction {transaction} is pending and has no canonical block context"
+                );
+            }
             let block = fork.backend().get_full_block(BlockNumberOrTag::Latest)?;
 
             let number = block.header().number();
 
-            Ok((number, block))
+            Ok(TransactionForkTarget { fork_block_number: number, transaction: tx, block })
         }
     }
 
@@ -1051,7 +1063,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(BlockContext::new(grandparent, parent, current))
     }
 
-    /// Returns the block cursor matching the active fork's exact database position.
+    /// Returns the block cursor matching the active fork's database position.
     pub fn block_context_for_synthetic_transaction(
         &self,
     ) -> eyre::Result<Option<BlockContext<FEN>>> {
@@ -1088,17 +1100,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &mut self,
         id: LocalForkId,
         evm_env: EvmEnvFor<FEN>,
+        full_block: &AnyRpcBlock,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
-        let full_block = self
-            .inner
-            .get_fork_by_id(id)?
-            .backend()
-            .get_full_block(evm_env.block_env.number().saturating_to::<u64>())?;
         let BlockTransactions::Full(transactions) = full_block.transactions() else {
             eyre::bail!(
                 "block {} does not contain full transactions",
@@ -1108,6 +1116,16 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let Some(target_index) = transactions.iter().position(|tx| tx.tx_hash() == tx_hash) else {
             return Ok(None);
         };
+        if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+            let fork = self.inner.get_fork_by_id(id)?;
+            eyre::ensure!(
+                fork.position
+                    .after_transaction(full_block.header().number(), 0, transactions.len(),)
+                    .is_some(),
+                "block {} does not immediately follow the active fork position",
+                full_block.header().number()
+            );
+        }
         let target_tx = transactions[target_index].clone();
         let factory = FEN::EvmFactory::default();
         let mut txs_to_replay = Vec::with_capacity(target_index);
@@ -1123,7 +1141,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
 
         let context_inputs = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT && !txs_to_replay.is_empty() {
-            Some(self.block_context_inputs(id, &full_block)?)
+            Some(self.block_context_inputs(id, full_block)?)
         } else {
             None
         };
@@ -1538,7 +1556,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         trace!(?id, ?transaction, "roll fork to transaction");
         let id = self.ensure_fork(id)?;
 
-        let (fork_block, block) =
+        let TransactionForkTarget { fork_block_number, block, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         let transaction_index = match block.transactions() {
             BlockTransactions::Full(transactions) => {
@@ -1546,11 +1564,17 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             }
             _ => None,
         };
+        if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT && transaction_index.is_none() {
+            eyre::bail!(
+                "transaction {transaction:?} is missing from block {}",
+                block.header().number()
+            );
+        }
 
         // roll the fork to the transaction's parent block or latest if it's pending, because we
         // need to fork off the parent block's state for tx level forking and then replay the txs
         // before the tx in that block to get the state at the tx
-        self.roll_fork(Some(id), fork_block, evm_env, journaled_state)?;
+        self.roll_fork(Some(id), fork_block_number, evm_env, journaled_state)?;
 
         // we need to update the env to the block
         update_env_block(evm_env, block.header());
@@ -1562,7 +1586,8 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             .update_block_env(self.inner.ensure_fork_id(id).cloned()?, evm_env.block_env.clone());
 
         // replay all transactions that came before
-        let target = self.replay_until(id, evm_env.clone(), transaction, journaled_state)?;
+        let target =
+            self.replay_until(id, evm_env.clone(), &block, transaction, journaled_state)?;
         if target.is_some()
             && let Some(transaction_index) = transaction_index
         {
@@ -1590,20 +1615,15 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let id = self.ensure_fork(maybe_id)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
 
-        let tx = {
-            let fork = self.inner.get_fork_by_id_mut(id)?;
-            fork.backend().get_transaction(transaction)?
-        };
-        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
-
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
         // the current context, but we're assuming the user wants to transact the transaction as it
         // was mined. Usually this is used in a combination of a fork at the transaction's parent
         // transaction in the block and then the transaction is transacted:
         // <https://github.com/foundry-rs/foundry/issues/6538>
         // So we modify the env to match the transaction's block.
-        let (_fork_block, block) =
+        let TransactionForkTarget { transaction: tx, block, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
+        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
         update_env_block(&mut evm_env, block.header());
 
         let factory = FEN::EvmFactory::default();
@@ -1630,6 +1650,21 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         };
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
+        let next_position = if let Some((current_tx_index, transaction_count)) = current_tx_position
+        {
+            Some(
+                fork.position
+                    .after_transaction(block.header().number(), current_tx_index, transaction_count)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "transaction {transaction} does not immediately follow the active \
+                             fork position"
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
         commit_transaction::<FEN>(
             TransactionInputs { evm_env, tx_env, context_aux },
             journaled_state,
@@ -1638,13 +1673,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             &persistent_accounts,
             inspector,
         )?;
-        if let Some((current_tx_index, transaction_count)) = current_tx_position
-            && let Some(position) = fork.position.after_transaction(
-                block.header().number(),
-                current_tx_index,
-                transaction_count,
-            )
-        {
+        if let Some(position) = next_position {
             fork.position = position;
         }
         Ok(())
@@ -2589,7 +2618,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn temporary_backend_preserves_exact_fork_position() {
+    async fn temporary_backend_preserves_fork_position() {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let provider = handle.http_provider();
         let block_number = provider.get_block_number().await.unwrap();

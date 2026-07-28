@@ -37,6 +37,14 @@ async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
 }
 
 #[cfg(feature = "monad")]
+fn monad_staking_reward_input(block_author: Address) -> Vec<u8> {
+    let mut input = keccak256("syscallReward(address)")[..4].to_vec();
+    input.extend_from_slice(&[0u8; 12]);
+    input.extend_from_slice(block_author.as_slice());
+    input
+}
+
+#[cfg(feature = "monad")]
 fn monad_staking_validator_id_key(address: Address) -> U256 {
     let mut key = [0u8; 32];
     key[0] = 0x06;
@@ -801,6 +809,44 @@ contract TransactionForkMonadContextTest {
         require(abi.decode(result, (bool)), "last replayed sender was treated as fresh");
         require(FUTURE_SENDER.balance == 9 ether, "unexpected last sender balance");
     }
+
+    function test_non_immediate_transact_rejects_without_mutation() public {
+        uint256 forkId = vm.createSelectFork("<rpc>");
+        vm.rollFork(forkId, PARENT_BLOCK);
+        uint64 targetNonce = vm.getNonce(TARGET_SENDER);
+        uint64 futureNonce = vm.getNonce(FUTURE_SENDER);
+        uint256 targetRecipientBalance = TARGET_RECIPIENT.balance;
+        uint256 futureRecipientBalance = FUTURE_RECIPIENT.balance;
+
+        bool reverted;
+        try vm.transact(forkId, FUTURE_HASH) {
+            reverted = false;
+        } catch {
+            reverted = true;
+        }
+
+        require(reverted, "non-immediate transaction was replayed");
+        require(vm.getNonce(TARGET_SENDER) == targetNonce, "target nonce changed");
+        require(vm.getNonce(FUTURE_SENDER) == futureNonce, "future nonce changed");
+        require(TARGET_RECIPIENT.balance == targetRecipientBalance, "target balance changed");
+        require(FUTURE_RECIPIENT.balance == futureRecipientBalance, "future balance changed");
+
+        vm.transact(forkId, TARGET_HASH);
+        require(vm.getNonce(TARGET_SENDER) == targetNonce + 1, "cursor changed on rejection");
+        require(TARGET_RECIPIENT.balance == targetRecipientBalance + 1, "target was not committed");
+        require(vm.getNonce(FUTURE_SENDER) == futureNonce, "future nonce changed after target");
+        require(
+            FUTURE_RECIPIENT.balance == futureRecipientBalance,
+            "future balance changed after target"
+        );
+
+        vm.transact(forkId, FUTURE_HASH);
+        require(vm.getNonce(FUTURE_SENDER) == futureNonce + 1, "future nonce was not advanced");
+        require(
+            FUTURE_RECIPIENT.balance == futureRecipientBalance + 1,
+            "future was not committed"
+        );
+    }
 }
 "#
     .replace("<target_sender>", &target_sender.to_string())
@@ -830,6 +876,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
     const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
     const VALIDATOR_AUTH: Address = address!("0x2222222222222222222222222222222222222222");
+    const UNKNOWN_BLOCK_AUTHOR: Address = address!("0x3333333333333333333333333333333333333333");
     const VALIDATOR_ID: u64 = 7;
 
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -838,7 +885,6 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     let reward = U256::from(25) * mon;
     let initial_system_balance = U256::from(100) * mon;
     let initial_staking_balance = U256::from(3) * mon;
-
     api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
     api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
     api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
@@ -875,15 +921,11 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     api.mine_one().await;
     let parent_block = provider.get_block_number().await.unwrap();
 
-    let mut reward_input = keccak256("syscallReward(address)")[..4].to_vec();
-    reward_input.extend_from_slice(&[0u8; 12]);
-    reward_input.extend_from_slice(BLOCK_AUTHOR.as_slice());
-
     let request = <Ethereum as Network>::TransactionRequest::default()
         .with_from(SYSTEM_ADDRESS)
         .with_to(STAKING_ADDRESS)
         .with_value(reward)
-        .with_input(reward_input)
+        .with_input(monad_staking_reward_input(BLOCK_AUTHOR))
         .with_gas_limit(1_000_000)
         .with_gas_price(2_000_000_000);
     let receipt =
@@ -923,6 +965,34 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     assert_eq!(target_block["result"]["transactions"][0]["s"], transaction["result"]["s"]);
     assert_eq!(target_block["result"]["transactions"][0]["v"], transaction["result"]["v"]);
 
+    let (failed_api, failed_handle) = spawn(NodeConfig::test()).await;
+    let failed_provider = failed_handle.http_provider();
+    failed_api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
+    failed_api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
+    failed_api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
+    failed_api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
+    failed_api.mine_one().await;
+    let failed_parent_block = failed_provider.get_block_number().await.unwrap();
+    let failed_request = <Ethereum as Network>::TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(STAKING_ADDRESS)
+        .with_value(reward)
+        .with_input(monad_staking_reward_input(UNKNOWN_BLOCK_AUTHOR))
+        .with_gas_limit(1_000_000)
+        .with_gas_price(2_000_000_000);
+    let failed_receipt = failed_provider
+        .send_transaction(failed_request.into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(failed_receipt.status());
+    assert_eq!(failed_receipt.block_number(), Some(failed_parent_block + 1));
+    let failed_target_hash = failed_receipt.transaction_hash;
+    let failed_endpoint =
+        spawn_canonical_monad_system_rpc(failed_handle.http_endpoint(), failed_target_hash).await;
+
     let source = r#"
 interface Vm {
     struct Log {
@@ -949,7 +1019,9 @@ contract MonadProtocolSystemTargetTest {
     address constant SYSTEM = 0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e;
     IMonadStaking constant STAKING = IMonadStaking(address(0x1000));
     bytes32 constant TARGET_HASH = <tx_hash>;
+    bytes32 constant FAILED_TARGET_HASH = <failed_tx_hash>;
     uint256 constant PARENT_BLOCK = <parent_block>;
+    uint256 constant FAILED_PARENT_BLOCK = <failed_parent_block>;
     uint64 constant VALIDATOR_ID = 7;
     uint256 constant REWARD = 25 ether;
 
@@ -980,6 +1052,34 @@ contract MonadProtocolSystemTargetTest {
         require(SYSTEM.balance == systemBalanceBefore, "protocol caller balance changed");
         require(address(STAKING).balance == stakingBalanceBefore, "staking balance changed");
         require(vm.getNonce(SYSTEM) == nonceBefore, "protocol caller nonce changed");
+    }
+
+    function test_failed_reward_target_from_transaction_hash_fork_rolls_back() public {
+        vm.createSelectFork("<failed_rpc>", FAILED_TARGET_HASH);
+        _assertFailedRewardRollback();
+    }
+
+    function test_failed_reward_target_from_parent_block_fork_rolls_back() public {
+        vm.createSelectFork("<failed_rpc>", FAILED_PARENT_BLOCK);
+        _assertFailedRewardRollback();
+    }
+
+    function _assertFailedRewardRollback() internal {
+        uint256 systemBalanceBefore = SYSTEM.balance;
+        uint256 stakingBalanceBefore = address(STAKING).balance;
+        uint64 nonceBefore = vm.getNonce(SYSTEM);
+
+        bool reverted;
+        try vm.transact(FAILED_TARGET_HASH) {
+            reverted = false;
+        } catch {
+            reverted = true;
+        }
+
+        require(reverted, "invalid reward target was replayed");
+        require(SYSTEM.balance == systemBalanceBefore, "protocol caller balance changed");
+        require(address(STAKING).balance == stakingBalanceBefore, "reward mint was committed");
+        require(vm.getNonce(SYSTEM) == nonceBefore, "protocol caller nonce was committed");
     }
 
     function _assertRewardReplay() internal {
@@ -1035,9 +1135,12 @@ contract MonadProtocolSystemTargetTest {
 }
 "#
     .replace("<rpc>", &endpoint)
+    .replace("<failed_rpc>", &failed_endpoint)
     .replace("<origin_rpc>", &handle.http_endpoint())
     .replace("<tx_hash>", &target_hash.to_string())
-    .replace("<parent_block>", &parent_block.to_string());
+    .replace("<failed_tx_hash>", &failed_target_hash.to_string())
+    .replace("<parent_block>", &parent_block.to_string())
+    .replace("<failed_parent_block>", &failed_parent_block.to_string());
     prj.add_test("MonadProtocolSystemTarget.t.sol", &source);
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
