@@ -23,8 +23,8 @@ use foundry_evm_core::{
     decode::RevertDecoder,
     precompiles::{
         BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
-        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
-        MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
+        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
+        EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
 #[cfg(feature = "monad")]
@@ -32,6 +32,7 @@ use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::TempoHardfork;
 #[cfg(feature = "monad")]
 use foundry_evm_networks::is_monad_precompile_active_at;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
 use itertools::Itertools;
 #[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
@@ -145,22 +146,23 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the execution network used for network-specific precompile detection.
+    #[inline]
+    pub fn with_execution_network(self, network: NetworkVariant) -> Self {
+        self.with_networks(network.into())
+    }
+
+    /// Sets the complete execution profile used for network-specific precompile detection.
+    #[inline]
+    pub const fn with_networks(mut self, networks: NetworkConfigs) -> Self {
+        self.decoder.networks = Some(networks);
+        self
+    }
+
     /// Sets the Tempo hardfork for hardfork-specific precompile detection.
     #[inline]
-    pub fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
+    pub const fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
         self.decoder.tempo_hardfork = hardfork;
-        if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
-            self.decoder
-                .labels
-                .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
-                .or_insert_with(|| "TIP20ChannelReserve".to_string());
-        }
-        if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
-            self.decoder
-                .labels
-                .entry(RECEIVE_POLICY_GUARD_ADDRESS)
-                .or_insert_with(|| "ReceivePolicyGuard".to_string());
-        }
         self
     }
 
@@ -190,6 +192,8 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn build(mut self) -> CallTraceDecoder {
         self.decoder.base_labels = self.decoder.labels.clone();
+        self.decoder.register_celo_metadata();
+        self.decoder.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.decoder.register_monad_metadata();
         self.decoder
@@ -253,6 +257,9 @@ pub struct CallTraceDecoder {
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
 
+    /// Execution profile, kept separate from the source chain used for external identification.
+    networks: Option<NetworkConfigs>,
+
     /// Detailed opcodes for analysis.
     pub opcodes: Vec<OpCode>,
 
@@ -267,6 +274,34 @@ pub struct CallTraceDecoder {
 }
 
 impl CallTraceDecoder {
+    fn register_celo_metadata(&mut self) {
+        if precompiles::is_known_precompile(
+            CELO_TRANSFER,
+            self.networks,
+            self.chain_id,
+            self.tempo_hardfork,
+            self.monad_hardfork,
+        ) {
+            self.labels.entry(CELO_TRANSFER).or_insert_with(|| CELO_TRANSFER_LABEL.to_string());
+        }
+    }
+
+    fn register_tempo_metadata(&mut self) {
+        if self.networks.is_some_and(|networks| !networks.is_tempo()) {
+            return;
+        }
+        if self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
+            self.labels
+                .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
+                .or_insert_with(|| "TIP20ChannelReserve".to_string());
+        }
+        if self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
+            self.labels
+                .entry(RECEIVE_POLICY_GUARD_ADDRESS)
+                .or_insert_with(|| "ReceivePolicyGuard".to_string());
+        }
+    }
+
     /// Creates a new call trace decoder.
     ///
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
@@ -282,6 +317,20 @@ impl CallTraceDecoder {
     #[cfg(feature = "monad")]
     pub const fn monad_hardfork(&self) -> Option<MonadHardfork> {
         self.monad_hardfork
+    }
+
+    /// Returns the Tempo hardfork used for address-scoped metadata.
+    pub const fn tempo_hardfork(&self) -> Option<TempoHardfork> {
+        self.tempo_hardfork
+    }
+
+    /// Rebuilds address-scoped metadata for a new Tempo hardfork.
+    pub fn set_tempo_hardfork(&mut self, hardfork: Option<TempoHardfork>) {
+        if self.tempo_hardfork == hardfork {
+            return;
+        }
+        self.tempo_hardfork = hardfork;
+        self.clear_addresses();
     }
 
     /// Rebuilds address-scoped metadata for a new Monad hardfork.
@@ -424,6 +473,7 @@ impl CallTraceDecoder {
             disable_labels: false,
 
             chain_id: None,
+            networks: None,
 
             opcodes: Vec::new(),
 
@@ -452,6 +502,8 @@ impl CallTraceDecoder {
         self.constructors_by_address.clear();
         self.constructor_args_offsets.clear();
 
+        self.register_celo_metadata();
+        self.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.register_monad_metadata();
     }
@@ -463,6 +515,7 @@ impl CallTraceDecoder {
             .filter(|(address, _)| {
                 precompiles::is_known_precompile(
                     **address,
+                    self.networks,
                     self.chain_id,
                     self.tempo_hardfork,
                     self.monad_hardfork,
@@ -492,6 +545,7 @@ impl CallTraceDecoder {
             if node.is_precompile()
                 || precompiles::is_known_precompile(
                     node.trace.address,
+                    self.networks,
                     self.chain_id,
                     self.tempo_hardfork,
                     self.monad_hardfork,
@@ -581,6 +635,9 @@ impl CallTraceDecoder {
 
     #[cfg(feature = "monad")]
     fn register_monad_metadata(&mut self) {
+        if self.networks.is_some_and(|networks| !networks.is_monad()) {
+            return;
+        }
         let Some(hardfork) = self.monad_hardfork else { return };
 
         self.labels.entry(MONAD_CHEATCODE_ADDRESS).or_insert_with(|| "MonadVM".to_string());
@@ -611,6 +668,7 @@ impl CallTraceDecoder {
             && self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t8())
             && precompiles::is_known_precompile(
                 address,
+                self.networks,
                 self.chain_id,
                 self.tempo_hardfork,
                 self.monad_hardfork,
@@ -804,9 +862,13 @@ impl CallTraceDecoder {
             };
         }
 
-        if let Some(trace) =
-            precompiles::decode(trace, self.chain_id, self.tempo_hardfork, self.monad_hardfork)
-        {
+        if let Some(trace) = precompiles::decode(
+            trace,
+            self.networks,
+            self.chain_id,
+            self.tempo_hardfork,
+            self.monad_hardfork,
+        ) {
             return trace;
         }
 
@@ -1308,6 +1370,7 @@ impl CallTraceDecoder {
                     || n.is_precompile()
                     || precompiles::is_known_precompile(
                         n.trace.address,
+                        self.networks,
                         self.chain_id,
                         self.tempo_hardfork,
                         self.monad_hardfork,
@@ -1483,6 +1546,8 @@ mod tests {
     use alloy_sol_types::TopicList;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     #[cfg(feature = "monad")]
+    use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+    #[cfg(feature = "monad")]
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
         staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
@@ -1523,6 +1588,7 @@ mod tests {
     #[cfg(feature = "monad")]
     fn monad_decoder(hardfork: MonadHardfork) -> CallTraceDecoder {
         CallTraceDecoderBuilder::new()
+            .with_execution_network(NetworkVariant::Monad)
             .with_chain_id(Some(143))
             .with_monad_hardfork(Some(hardfork))
             .build()
@@ -2804,6 +2870,45 @@ mod tests {
             Some(&"ReceivePolicyGuard".to_string())
         );
         assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+
+        let ethereum_labels = CallTraceDecoderBuilder::new()
+            .with_execution_network(NetworkVariant::Ethereum)
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T7))
+            .build()
+            .precompile_labels();
+        assert!(!ethereum_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(!ethereum_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!ethereum_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+    }
+
+    #[test]
+    fn celo_profile_is_authoritative_for_custom_precompile_labels() {
+        let mut custom_celo = CallTraceDecoderBuilder::new()
+            .with_networks(NetworkConfigs::with_celo())
+            .with_chain_id(Some(98_765_432))
+            .build();
+        assert_eq!(
+            custom_celo.precompile_labels().get(&CELO_TRANSFER),
+            Some(&CELO_TRANSFER_LABEL.to_string())
+        );
+        custom_celo.clear_addresses();
+        assert_eq!(
+            custom_celo.precompile_labels().get(&CELO_TRANSFER),
+            Some(&CELO_TRANSFER_LABEL.to_string())
+        );
+
+        let explicit_ethereum = CallTraceDecoderBuilder::new()
+            .with_networks(NetworkConfigs::default())
+            .with_chain_id(Some(42_220))
+            .build();
+        assert!(!explicit_ethereum.precompile_labels().contains_key(&CELO_TRANSFER));
+
+        let inferred_celo = CallTraceDecoderBuilder::new().with_chain_id(Some(42_220)).build();
+        assert_eq!(
+            inferred_celo.precompile_labels().get(&CELO_TRANSFER),
+            Some(&CELO_TRANSFER_LABEL.to_string())
+        );
     }
 
     #[tokio::test]
@@ -2892,8 +2997,6 @@ mod tests {
 
     #[test]
     fn test_tempo_hardfork_labels_do_not_clobber_user_labels() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-
         let reserve_label = "UserReserve".to_string();
         let guard_label = "UserGuard".to_string();
         let decoder = CallTraceDecoderBuilder::new()
@@ -2906,6 +3009,39 @@ mod tests {
 
         assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
         assert_eq!(decoder.labels.get(&RECEIVE_POLICY_GUARD_ADDRESS), Some(&guard_label));
+    }
+
+    #[test]
+    fn test_tempo_hardfork_transitions_rebuild_address_metadata() {
+        let user_address = address!("0000000000000000000000000000000000001234");
+        let user_label = "UserLabel".to_string();
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_execution_network(NetworkVariant::Tempo)
+            .with_labels([(user_address, user_label.clone())])
+            .with_tempo_hardfork(Some(TempoHardfork::T4))
+            .build();
+
+        let labels = decoder.precompile_labels();
+        assert!(labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(!labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+
+        decoder.set_tempo_hardfork(Some(TempoHardfork::T6));
+        let labels = decoder.precompile_labels();
+        assert!(labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
+
+        decoder.set_tempo_hardfork(Some(TempoHardfork::T4));
+        let labels = decoder.precompile_labels();
+        assert!(labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(!labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
+
+        decoder.set_tempo_hardfork(None);
+        assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
     }
 
     #[test]
@@ -3325,5 +3461,17 @@ mod tests {
             identifier.queried,
             vec![regular_addr, STAKING_ADDRESS, RESERVE_BALANCE_ADDRESS]
         );
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn execution_network_overrides_nested_source_monad_precompile_detection() {
+        assert!(!precompiles::is_known_precompile(
+            RESERVE_BALANCE_ADDRESS,
+            Some(NetworkVariant::Ethereum.into()),
+            Some(143),
+            None,
+            Some(MonadHardfork::MonadNine),
+        ));
     }
 }
