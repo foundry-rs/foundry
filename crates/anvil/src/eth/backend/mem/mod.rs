@@ -15,7 +15,7 @@ use crate::{
             fork::ClientFork,
             genesis::GenesisConfig,
             mem::{
-                state::{storage_root, trie_accounts},
+                state::{state_root, storage_root, trie_accounts},
                 storage::MinedTransactionReceipt,
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
@@ -5541,13 +5541,17 @@ impl Backend<FoundryNetwork> {
 
                 let transactions_envelopes: Vec<AnyTxEnvelope> =
                     transactions.iter().map(|tx| AnyTxEnvelope::from(tx.clone())).collect();
+                let state_root = cache_db
+                    .maybe_full_db()
+                    .map(|accounts| state_root(&accounts))
+                    .unwrap_or_default();
                 let header = Header {
                     logs_bloom: logs_bloom(logs.iter()),
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
                     receipts_root: calculate_receipt_root(&transactions_envelopes),
                     parent_hash,
                     beneficiary: block_env.beneficiary,
-                    state_root: Default::default(),
+                    state_root,
                     difficulty: Default::default(),
                     number: block_env.number.saturating_to(),
                     gas_limit: block_env.gas_limit,

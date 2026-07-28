@@ -9,6 +9,7 @@ use alloy_rpc_types::{
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverridesBuilder},
 };
+use alloy_serde::WithOtherFields;
 use anvil::{EthereumHardfork, NodeConfig, PrecompileFactory, spawn};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
@@ -835,6 +836,80 @@ async fn test_simulate_derives_from_historical_base_rpc() {
     assert_eq!(
         quantity(&response["result"][0]["timestamp"]),
         quantity(&genesis["result"]["timestamp"]) + 12
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_returns_unchanged_state_root_rpc() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let state_root = api.state_root().await.unwrap();
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}])).await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_ne!(
+        response["result"][0]["stateRoot"],
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+    );
+    assert_eq!(response["result"][0]["stateRoot"], serde_json::to_value(state_root).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::London.into()))
+        .with_base_fee(Some(0));
+    let (api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let contract = address!("0xc000000000000000000000000000000000000000");
+    let beneficiary = address!("0xc100000000000000000000000000000000000000");
+    let mut code = vec![0x73];
+    code.extend_from_slice(beneficiary.as_slice());
+    code.push(0xff);
+
+    api.anvil_set_code(contract, code.into()).await.unwrap();
+    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
+    api.mine_one().await;
+
+    let call = json!({
+        "from": sender,
+        "to": contract,
+        "gas": "0x186a0",
+        "gasPrice": "0x0"
+    });
+    let simulated = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{"calls": [call.clone()]}], "validation": true}]),
+    )
+    .await;
+    assert!(simulated.get("error").is_none(), "{simulated}");
+    assert_eq!(simulated["result"][0]["calls"][0]["status"], "0x1");
+
+    handle
+        .http_provider()
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Call(contract)),
+            gas: Some(100_000),
+            gas_price: Some(0),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let mined = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
+    let code = rpc_request(&endpoint, "eth_getCode", json!([contract, "latest"])).await;
+
+    assert_eq!(code["result"], "0x");
+    assert_eq!(simulated["result"][0]["stateRoot"], mined["result"]["stateRoot"]);
+    assert_eq!(
+        mined["result"]["stateRoot"],
+        serde_json::to_value(api.state_root().await.unwrap()).unwrap()
     );
 }
 
