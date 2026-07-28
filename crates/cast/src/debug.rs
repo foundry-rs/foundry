@@ -168,7 +168,7 @@ mod tests {
         after.instance_id = Some(B256::with_last_byte(2));
         assert!(ensure_remote_trace_context_unchanged(&before, &after).is_err());
 
-        let mut before_unknown = before.clone();
+        let mut before_unknown = before;
         before_unknown.instance_id = None;
         before_unknown.reported_hardfork = Some("FutureA".to_string());
         let mut after_unknown = before_unknown.clone();

@@ -1546,8 +1546,6 @@ mod tests {
     use alloy_sol_types::TopicList;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     #[cfg(feature = "monad")]
-    use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-    #[cfg(feature = "monad")]
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
         staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
