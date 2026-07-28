@@ -15,6 +15,38 @@ SPEC.loader.exec_module(prepare_stable_release)
 
 
 class VersionTests(unittest.TestCase):
+    def test_restores_lockfile_after_command(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lockfile = root / "Cargo.lock"
+            lockfile.write_bytes(b"reviewed lockfile\n")
+
+            def mutate_lockfile(*args, **kwargs):
+                lockfile.write_bytes(b"re-resolved lockfile\n")
+                return subprocess.CompletedProcess([], returncode=0)
+
+            with patch.object(prepare_stable_release, "run", side_effect=mutate_lockfile):
+                prepare_stable_release.run_preserving_lockfile([], root, lockfile)
+
+            self.assertEqual(lockfile.read_bytes(), b"reviewed lockfile\n")
+
+    def test_restores_lockfile_after_failed_command(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lockfile = root / "Cargo.lock"
+            lockfile.write_bytes(b"reviewed lockfile\n")
+
+            def mutate_lockfile(*args, **kwargs):
+                lockfile.write_bytes(b"re-resolved lockfile\n")
+                raise subprocess.CalledProcessError(1, ["changelogs", "version"])
+
+            with patch.object(
+                prepare_stable_release, "run", side_effect=mutate_lockfile
+            ), self.assertRaises(subprocess.CalledProcessError):
+                prepare_stable_release.run_preserving_lockfile([], root, lockfile)
+
+            self.assertEqual(lockfile.read_bytes(), b"reviewed lockfile\n")
+
     def test_accepts_stable_version(self) -> None:
         self.assertEqual(prepare_stable_release.parse_version("1.7.2"), (1, 7, 2))
 
@@ -176,7 +208,9 @@ class WorkspaceTests(unittest.TestCase):
             prepare_stable_release,
             "changed_paths",
             return_value={"Cargo.lock", "crates/forge/Cargo.toml"},
-        ), self.assertRaisesRegex(prepare_stable_release.ReleaseError, "crates/forge/Cargo.toml"):
+        ), self.assertRaisesRegex(
+            prepare_stable_release.ReleaseError, "Cargo.lock, crates/forge/Cargo.toml"
+        ):
             prepare_stable_release.verify_changed_paths(Path("."), [])
 
     def test_requires_a_tracked_change(self) -> None:

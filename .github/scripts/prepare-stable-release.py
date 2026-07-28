@@ -38,6 +38,16 @@ def run(
     )
 
 
+def run_preserving_lockfile(
+    command: list[str], root: Path, lockfile: Path, *, capture_output: bool = False
+) -> subprocess.CompletedProcess:
+    original = lockfile.read_bytes()
+    try:
+        return run(command, root, capture_output=capture_output)
+    finally:
+        lockfile.write_bytes(original)
+
+
 def parse_version(value: str) -> tuple[int, int, int]:
     if not VERSION.fullmatch(value):
         raise ReleaseError(f"expected a stable X.Y.Z version, got {value!r}")
@@ -206,7 +216,7 @@ def changed_paths(root: Path) -> set[str]:
 
 
 def verify_changed_paths(root: Path, fragments: list[Path]) -> None:
-    allowed = {"Cargo.toml", "Cargo.lock", "CHANGELOG.md"}
+    allowed = {"Cargo.toml", "CHANGELOG.md"}
     allowed.update(str(path.relative_to(root)) for path in fragments)
     unexpected = sorted(changed_paths(root) - allowed)
     if unexpected:
@@ -215,6 +225,7 @@ def verify_changed_paths(root: Path, fragments: list[Path]) -> None:
 
 def prepare(root: Path, changelogs: Path) -> None:
     manifest = root / "Cargo.toml"
+    lockfile = root / "Cargo.lock"
     changelog = root / "CHANGELOG.md"
     original_manifest = manifest.read_text()
     candidate = workspace_version(manifest)
@@ -249,8 +260,11 @@ def prepare(root: Path, changelogs: Path) -> None:
     # version as its baseline, then require its release plan to land exactly on that candidate.
     set_workspace_version(manifest, stable)
     try:
-        dry_run = run(
-            [str(changelogs), "version", "--dry-run"], root, capture_output=True
+        dry_run = run_preserving_lockfile(
+            [str(changelogs), "version", "--dry-run"],
+            root,
+            lockfile,
+            capture_output=True,
         ).stdout
     finally:
         set_workspace_version(manifest, candidate)
@@ -260,7 +274,7 @@ def prepare(root: Path, changelogs: Path) -> None:
 
     set_workspace_version(manifest, stable)
     try:
-        run([str(changelogs), "version"], root)
+        run_preserving_lockfile([str(changelogs), "version"], root, lockfile)
         cli_version = workspace_version(manifest)
     finally:
         try:
@@ -280,7 +294,6 @@ def prepare(root: Path, changelogs: Path) -> None:
 
     verify_release_heading_count(changelog, candidate, 1)
 
-    run(["cargo", "generate-lockfile"], root)
     metadata = json.loads(
         run(
             ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"],
