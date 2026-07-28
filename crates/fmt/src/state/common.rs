@@ -1,5 +1,5 @@
 use super::{CommentConfig, Separator, State};
-use crate::pp::{BreakToken, Printer, SIZE_INFINITY};
+use crate::pp::{BreakToken, GroupId, Printer, SIZE_INFINITY};
 use foundry_common::iter::IterDelimited;
 use foundry_config::fmt as config;
 use itertools::{Either, Itertools};
@@ -408,19 +408,25 @@ impl<'ast> State<'_, 'ast> {
 
         let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
         let skip_first_break = if format.with_delimiters || format.is_inline() {
-            self.s.cbox(if format.no_ind { 0 } else { self.ind });
+            self.open_commasep_box(format);
             if is_single_without_cmnts {
                 true
             } else {
                 self.commasep_opening_logic(values, &mut get_span, format, manual_opening)
             }
         } else {
+            if manual_offset {
+                self.open_manual_commasep_box(format);
+            }
             let res = self.commasep_opening_logic(values, &mut get_span, format, manual_opening);
             if !manual_offset {
-                self.s.cbox(if format.no_ind { 0 } else { self.ind });
+                self.open_commasep_box(format);
             }
             res
         };
+        if let Some(group) = format.break_if {
+            self.s.if_break(group, |p| p.break_parent(), |_| {});
+        }
 
         if let Some(sym) = format.prev_symbol() {
             self.word_space(sym);
@@ -538,14 +544,25 @@ impl<'ast> State<'_, 'ast> {
             self.word(sym);
         }
 
-        if !manual_offset {
-            self.end();
-        }
+        self.end();
         self.cursor.advance_to(pos_hi, true);
 
         if last_delimiter_break {
             format.print_break(true, values.len(), &mut self.s);
         }
+    }
+
+    fn open_commasep_box(&mut self, format: ListFormat) {
+        let indent = if format.no_ind { 0 } else { self.ind };
+        if format.isolated {
+            self.s.isolated_cbox(indent);
+        } else {
+            self.s.cbox(indent);
+        }
+    }
+
+    fn open_manual_commasep_box(&mut self, _format: ListFormat) {
+        self.s.transparent_group(0);
     }
 
     pub(super) fn print_path(&mut self, path: &'ast ast::PathSlice, consistent_break: bool) {
@@ -585,9 +602,6 @@ impl<'ast> State<'_, 'ast> {
             self.print_empty_block(block_format, pos_hi);
             return;
         }
-
-        // update block depth
-        self.block_depth += 1;
 
         // Print multiline block comments.
         let block_lo = get_block_span(&block[0]).lo();
@@ -704,9 +718,6 @@ impl<'ast> State<'_, 'ast> {
         if block_format.with_braces() {
             self.print_word("}");
         }
-
-        // restore block depth
-        self.block_depth -= 1;
     }
 
     fn print_single_line_block<T: Debug>(
@@ -792,6 +803,10 @@ pub(crate) struct ListFormat {
     with_space: bool,
     /// If `true`, the list is enclosed in delimiters.
     with_delimiters: bool,
+    /// Breaks the list when the referenced group breaks.
+    break_if: Option<GroupId>,
+    /// Calculates this list's fit independently of enclosing groups.
+    isolated: bool,
 }
 
 /// The kind of formatting style for a list.
@@ -818,6 +833,8 @@ impl Default for ListFormat {
             breaks_cmnts: false,
             with_space: false,
             with_delimiters: true,
+            break_if: None,
+            isolated: false,
         }
     }
 }
@@ -898,6 +915,16 @@ impl ListFormat {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.breaks_cmnts = true;
         }
+        self
+    }
+
+    pub(crate) const fn break_if(mut self, group: GroupId) -> Self {
+        self.break_if = Some(group);
+        self
+    }
+
+    pub(crate) const fn isolated(mut self) -> Self {
+        self.isolated = true;
         self
     }
 
