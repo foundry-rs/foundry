@@ -61,6 +61,10 @@ jobs:
           fi
           python3 "$validator" "${args[@]}"
 
+      - name: Test GitHub scripts
+        working-directory: pull-request
+        run: python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
+
   guidance:
     name: Changelog guidance
     if: github.event_name == 'pull_request_target'
