@@ -5,7 +5,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
-use alloy_primitives::{Address, B256, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_wallets::TempoAccountsWallet;
@@ -14,7 +14,7 @@ use op_alloy_network::Optimism;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionRequest;
 use tempo_alloy::TempoNetwork;
-use tempo_primitives::{TempoTxType, transaction::Call};
+use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 /// Composite transaction builder trait for Foundry transactions.
 ///
@@ -182,6 +182,14 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     fn with_nonce_key(mut self, nonce_key: U256) -> Self {
         self.set_nonce_key(nonce_key);
         self
+    }
+
+    /// Clone this request and prepare it for browser-wallet gas estimation.
+    fn browser_wallet_gas_estimation_request(&self) -> Self
+    where
+        Self: Clone,
+    {
+        self.clone()
     }
 
     /// Get the access key ID for a Tempo transaction.
@@ -385,6 +393,12 @@ impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
     }
 }
 
+/// Viem's Tempo formatter uses a 1,400-byte WebAuthn placeholder when the signature is not yet
+/// available. Tempo RPC encodes that size as a two-byte big-endian `keyData` value (`0x0578`).
+///
+/// See <https://github.com/wevm/viem/blob/61a40ec943652a09ee6622e2349c5fedca97ed5e/src/tempo/Formatters.ts#L148-L159>.
+const TEMPO_BROWSER_WEBAUTHN_DATA_SIZE: u16 = 1_400;
+
 impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::TransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
@@ -430,6 +444,19 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn set_nonce_key(&mut self, nonce_key: U256) {
         self.nonce_key = Some(nonce_key);
+    }
+
+    fn browser_wallet_gas_estimation_request(&self) -> Self {
+        let mut request = self.clone();
+        if request.key_type.is_none() {
+            request.key_type = Some(SignatureType::WebAuthn);
+        }
+        if matches!(request.key_type, Some(SignatureType::WebAuthn)) && request.key_data.is_none() {
+            request.key_data =
+                Some(Bytes::copy_from_slice(&TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes()));
+        }
+        request.convert_create_to_call();
+        request
     }
 
     fn key_id(&self) -> Option<Address> {

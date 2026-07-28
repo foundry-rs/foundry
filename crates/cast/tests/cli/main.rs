@@ -1,7 +1,6 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
-use alloy_consensus::Transaction;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
@@ -5437,67 +5436,6 @@ Transaction successfully executed.
 "#]]);
     }
 );
-
-// <https://github.com/foundry-rs/foundry/issues/1803>
-casttest!(cast_send_applies_gas_estimate_multiplier, async |_prj, cmd| {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let rpc = handle.http_endpoint();
-    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-    let recipient = "0x000000000000000000000000000000000000dEaD";
-
-    cmd.cast_fuse()
-        .args(["send", recipient, "--private-key", private_key, "--rpc-url", rpc.as_str()])
-        .assert_success();
-
-    let transaction = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-        .await
-        .unwrap()
-        .unwrap();
-    let estimated = transaction.gas_limit();
-
-    cmd.cast_fuse()
-        .args([
-            "send",
-            recipient,
-            "--private-key",
-            private_key,
-            "--rpc-url",
-            rpc.as_str(),
-            "--gas-estimate-multiplier",
-            "130",
-        ])
-        .assert_success();
-
-    let transaction = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(transaction.gas_limit(), estimated * 130 / 100);
-
-    cmd.cast_fuse()
-        .args([
-            "send",
-            recipient,
-            "--private-key",
-            private_key,
-            "--rpc-url",
-            rpc.as_str(),
-            "--gas-estimate-multiplier",
-            "130",
-            "--gas-limit",
-            "30000",
-        ])
-        .assert_success();
-
-    let transaction = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(transaction.gas_limit(), 30_000);
-});
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>

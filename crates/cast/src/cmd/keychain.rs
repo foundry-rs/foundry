@@ -24,8 +24,8 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token,
-        read_tempo_accounts_store, resolve_and_set_fee_token, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
+        resolve_and_set_fee_token, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3621,11 +3621,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         KeychainRootSigner::Browser(browser) => {
             let chain = builder.chain();
             let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
-            if chain.is_tempo()
-                && let Some(gas) = tx.gas_limit()
-            {
-                tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
-            }
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor
                     .resolve_and_set_fee_token(

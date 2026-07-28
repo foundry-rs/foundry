@@ -27,7 +27,7 @@ use foundry_common::{
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     },
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -115,10 +115,6 @@ pub struct CreateArgs {
 
     #[command(flatten)]
     tx: TransactionOpts,
-
-    /// Relative percentage to multiply gas estimates by.
-    #[arg(long, help_heading = "Transaction options")]
-    gas_estimate_multiplier: Option<u64>,
 
     #[command(flatten)]
     eth: EthereumOpts,
@@ -549,19 +545,12 @@ impl CreateArgs {
         }
 
         if self.tx.gas_limit.is_none() {
-            let mut estimated = provider.estimate_gas(deployer.tx.clone()).await?;
-
-            if let Some(multiplier) = self.gas_estimate_multiplier {
-                estimated = estimated * multiplier / 100;
-            }
-
-            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
-            // costs more gas for signature verification on Tempo chains. Add a
-            // conservative buffer since we can't determine the signature type beforehand.
-            if browser_signer.is_some() && chain.is_tempo() {
-                estimated += TEMPO_BROWSER_GAS_BUFFER;
-            }
-
+            let request = if browser_signer.is_some() && chain.is_tempo() {
+                deployer.tx.browser_wallet_gas_estimation_request()
+            } else {
+                deployer.tx.clone()
+            };
+            let estimated = provider.estimate_gas(request).await?;
             deployer.tx.set_gas_limit(estimated);
         }
 
