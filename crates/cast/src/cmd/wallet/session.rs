@@ -969,14 +969,12 @@ mod tests {
                 let session_id = entry.session_id;
                 let expiry = entry.expiry;
                 upsert_session_entry(entry).unwrap();
-                let record = foundry_common::tempo::read_session_record().unwrap();
-                assert_eq!(record.sessions.len(), 1);
-                assert_eq!(record.sessions[0].session_id, session_id);
-                assert!(record.sessions[0].has_live_key_at(expiry - 1));
+                let stored = read_session_entry(session_id).unwrap().unwrap();
+                assert_eq!(stored.session_id, session_id);
+                assert!(stored.has_live_key_at(expiry - 1));
 
                 assert!(retire_session_entry(session_id).unwrap());
-                let record = foundry_common::tempo::read_session_record().unwrap();
-                let session = record.get(session_id).unwrap();
+                let session = read_session_entry(session_id).unwrap().unwrap();
                 assert_eq!(session.status, SessionStatus::Revoked);
                 assert!(session.key.is_none());
             });

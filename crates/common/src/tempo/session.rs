@@ -98,26 +98,6 @@ impl SessionEntry {
     }
 }
 
-/// A derived view of Foundry-managed access keys in the Accounts store.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct SessionRecord {
-    pub sessions: Vec<SessionEntry>,
-}
-
-impl SessionRecord {
-    pub const fn is_empty(&self) -> bool {
-        self.sessions.is_empty()
-    }
-
-    pub fn get(&self, session_id: B256) -> Option<&SessionEntry> {
-        self.sessions.iter().find(|session| session.session_id == session_id)
-    }
-
-    pub fn live_key(&self, session_id: B256, now: u64) -> Option<&SessionEntry> {
-        self.get(session_id).filter(|session| session.has_live_key_at(now))
-    }
-}
-
 /// A live managed key pinned into an Accounts wallet.
 #[derive(Debug)]
 pub struct ResolvedSessionSigner {
@@ -125,25 +105,9 @@ pub struct ResolvedSessionSigner {
     pub access_key: TempoAccountsWallet,
 }
 
-/// Read all access keys carrying a Foundry session witness from `store.json`.
-pub fn read_session_record() -> Option<SessionRecord> {
-    match read_session_record_strict(now_unix()) {
-        Ok(record) => record,
-        Err(err) => {
-            tracing::warn!(%err, "failed to load Tempo managed access keys");
-            None
-        }
-    }
-}
-
-pub fn read_live_session_key(session_id: B256, now: u64) -> Option<SessionEntry> {
-    read_session_record_strict(now).ok().flatten()?.live_key(session_id, now).cloned()
-}
-
 pub fn read_session_entry(session_id: B256) -> eyre::Result<Option<SessionEntry>> {
-    Ok(read_session_record_strict(now_unix())?.and_then(|record| {
-        record.sessions.into_iter().find(|entry| entry.session_id == session_id)
-    }))
+    Ok(read_session_entries(now_unix())?
+        .and_then(|entries| entries.into_iter().find(|entry| entry.session_id == session_id)))
 }
 
 /// Resolve a live managed key from the Accounts store and pin it for signing.
@@ -152,9 +116,9 @@ pub fn resolve_live_session_signer(
     now: u64,
 ) -> eyre::Result<Option<ResolvedSessionSigner>> {
     mark_expired_session_entries(now)?;
-    let Some(session) = read_session_record_strict(now)?.and_then(|record| {
-        record.sessions.into_iter().find(|entry| entry.session_id == session_id)
-    }) else {
+    let Some(session) = read_session_entries(now)?
+        .and_then(|entries| entries.into_iter().find(|entry| entry.session_id == session_id))
+    else {
         return Ok(None);
     };
     if !session.has_live_key_at(now) {
@@ -389,12 +353,12 @@ pub fn retire_session_entry(session_id: B256) -> eyre::Result<bool> {
 
 /// Retire expired managed access keys and return the number changed.
 pub fn mark_expired_session_entries(now: u64) -> eyre::Result<usize> {
-    let Some(record) = read_session_record_strict(now)? else {
+    let Some(entries) = read_session_entries(now)? else {
         return Ok(0);
     };
     let store = TempoAccountsStore::open_default()?;
     let mut retired = 0;
-    for entry in record.sessions {
+    for entry in entries {
         if entry.status == SessionStatus::Expired
             && store.retire_access_key(entry.root_account, entry.chain_id, entry.key_address)?
         {
@@ -404,7 +368,7 @@ pub fn mark_expired_session_entries(now: u64) -> eyre::Result<usize> {
     Ok(retired)
 }
 
-fn read_session_record_strict(now: u64) -> eyre::Result<Option<SessionRecord>> {
+fn read_session_entries(now: u64) -> eyre::Result<Option<Vec<SessionEntry>>> {
     let Some(store) = TempoAccountsStore::try_open_default()? else {
         return Ok(None);
     };
@@ -458,7 +422,7 @@ fn read_session_record_strict(now: u64) -> eyre::Result<Option<SessionRecord>> {
             })
         })
         .collect();
-    Ok(Some(SessionRecord { sessions }))
+    Ok(Some(sessions))
 }
 
 fn now_unix() -> u64 {
