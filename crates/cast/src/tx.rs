@@ -35,7 +35,8 @@ pub struct SendTxOpts {
     pub cast_async: bool,
 
     /// Wait for transaction receipt synchronously instead of polling.
-    /// Note: uses `eth_sendTransactionSync` which may not be supported by all clients.
+    /// Note: uses `eth_sendTransactionSync` or `eth_sendRawTransactionSync`, which may not be
+    /// supported by all clients.
     #[arg(long, conflicts_with = "async")]
     pub sync: bool,
 
@@ -291,6 +292,19 @@ where
     pub async fn send_raw(&self, raw_tx: &[u8]) -> Result<PendingTransactionBuilder<N>> {
         let res = self.provider.send_raw_transaction(raw_tx).await?;
         Ok(res)
+    }
+
+    /// Sends a raw RLP-encoded transaction and waits for its receipt synchronously.
+    pub async fn send_raw_sync(&self, raw_tx: &[u8]) -> Result<(B256, String)> {
+        let mut receipt = TransactionReceiptWithRevertReason::<N> {
+            receipt: self.provider.send_raw_transaction_sync(raw_tx).await?,
+            revert_reason: None,
+        };
+        let tx_hash = receipt.receipt.transaction_hash();
+        // Allow this to fail silently.
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, None).map(|formatted| (tx_hash, formatted))
     }
 
     /// Prints the transaction hash (if async) or waits for the receipt and prints it.

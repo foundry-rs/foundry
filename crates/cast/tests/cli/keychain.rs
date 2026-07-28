@@ -738,7 +738,7 @@ casttest!(send_uses_access_key_from_accounts_store, async |_prj, cmd| {
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 });
 
-casttest!(send_with_accounts_store_and_remote_sponsor_succeeds, async |_prj, cmd| {
+casttest!(send_with_accounts_store_and_remote_sponsor_sync_succeeds, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -774,6 +774,7 @@ casttest!(send_with_accounts_store_and_remote_sponsor_succeeds, async |_prj, cmd
             &rpc,
             "--sponsor-url",
             &sponsor_url,
+            "--sync",
             "--json",
         ])
         .assert_success()
@@ -1717,7 +1718,7 @@ casttest!(batch_mktx_raw_unsigned_resolves_tempo_access_key_metadata, async |_pr
     );
 });
 
-casttest!(vaddr_create_uses_tempo_session_id_env, async |_prj, cmd| {
+casttest!(vaddr_create_sync_json_uses_tempo_session_id_env, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1738,7 +1739,7 @@ casttest!(vaddr_create_uses_tempo_session_id_env, async |_prj, cmd| {
             PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--rpc-url",
             &rpc,
-            "--async",
+            "--sync",
         ])
         .assert_success()
         .get_output()
