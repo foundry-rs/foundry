@@ -1,6 +1,6 @@
 use super::{
     install,
-    test::{ProjectPathsAwareFilter, TestArgs, TestExecutionOptions, sources_for_test_filter},
+    test::{ProjectPathsAwareFilter, TestArgs, TestExecutionOptions},
     watch::WatchArgs,
 };
 use crate::coverage::{
@@ -13,8 +13,8 @@ use crate::coverage::{
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
+use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
+use foundry_common::{TestFilter, compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
@@ -29,6 +29,7 @@ use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
 use semver::Version;
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -264,10 +265,16 @@ impl CoverageArgs {
 
         let mut compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
         if filter.args().path_pattern.is_some() || filter.args().path_pattern_inverse.is_some() {
-            let mut sources = sources_for_test_filter(config, filter);
-            // Coverage reports include scripts even though they are not test targets.
-            sources
-                .extend(source_files_iter(&config.script, MultiCompilerLanguage::FILE_EXTENSIONS));
+            let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(
+                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                        // Preserve path-filter behavior for conventional test files while still
+                        // scanning non-test fixtures under the test root.
+                        .filter(|path| !path.is_sol_test() || filter.matches_path(path)),
+                )
+                // Coverage reports include scripts even though they are not test targets.
+                .chain(source_files_iter(&config.script, MultiCompilerLanguage::FILE_EXTENSIONS))
+                .collect::<BTreeSet<_>>();
             compiler = compiler.files(sources);
         }
         let output = compiler.compile(&project)?.with_stripped_file_prefixes(project.root());
