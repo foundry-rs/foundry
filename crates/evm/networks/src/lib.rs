@@ -198,6 +198,91 @@ impl std::str::FromStr for NetworkVariant {
 }
 
 impl NetworkVariant {
+    /// Returns the network family identified by a known chain ID.
+    ///
+    /// Unknown chain IDs return `None` so callers can consult endpoint metadata instead of
+    /// assuming Ethereum. If a known chain belongs to a feature-gated family that is not enabled,
+    /// this returns an error rather than silently selecting a different EVM.
+    pub fn from_known_chain_id(chain_id: ChainId) -> Result<Option<Self>, String> {
+        let chain = Chain::from_id(chain_id);
+        if chain.is_tempo() {
+            return Ok(Some(Self::Tempo));
+        }
+        if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
+            return Ok(Some(Self::Ethereum));
+        }
+        if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
+            #[cfg(feature = "monad")]
+            return Ok(Some(Self::Monad));
+            #[cfg(not(feature = "monad"))]
+            return Err("network family `monad` is not enabled in this build".to_string());
+        }
+        if chain.is_optimism() {
+            #[cfg(feature = "optimism")]
+            return Ok(Some(Self::Optimism));
+            #[cfg(not(feature = "optimism"))]
+            return Err("network family `optimism` is not enabled in this build".to_string());
+        }
+        Ok(chain.named().map(|_| Self::Ethereum))
+    }
+
+    /// Parses an explicit network family reported by `anvil_nodeInfo`.
+    pub fn from_node_info_name(network: &str) -> Result<Self, String> {
+        match network {
+            "ethereum" => Ok(Self::Ethereum),
+            #[cfg(feature = "optimism")]
+            "optimism" => Ok(Self::Optimism),
+            #[cfg(not(feature = "optimism"))]
+            "optimism" => Err("network family `optimism` is not enabled in this build".to_string()),
+            "tempo" => Ok(Self::Tempo),
+            #[cfg(feature = "monad")]
+            "monad" => Ok(Self::Monad),
+            #[cfg(not(feature = "monad"))]
+            "monad" => Err("network family `monad` is not enabled in this build".to_string()),
+            network => {
+                Err(format!("unsupported network family `{network}` reported by fork endpoint"))
+            }
+        }
+    }
+
+    /// Resolves an RPC endpoint's network family.
+    ///
+    /// The outer `node_info_network` option distinguishes an unavailable `anvil_nodeInfo` method
+    /// from a successful legacy response that omitted the network. An explicit name is
+    /// authoritative even when the endpoint exposes a well-known execution chain ID. A legacy
+    /// omission falls back to the known chain ID, or Ethereum for a custom chain.
+    pub fn from_rpc_identity(
+        chain_id: ChainId,
+        node_info_network: Option<Option<&str>>,
+    ) -> Result<Option<Self>, String> {
+        Self::from_rpc_identity_with_fallback(chain_id, node_info_network, None)
+    }
+
+    /// Resolves an RPC endpoint's network family with a caller-selected unknown-chain fallback.
+    ///
+    /// Explicit endpoint metadata is authoritative. Legacy `anvil_nodeInfo` responses that omit
+    /// the family first use a known chain ID, then the supplied fallback, and finally Ethereum to
+    /// preserve historical behavior. Endpoints without `anvil_nodeInfo` use only a known chain ID
+    /// or the supplied fallback.
+    pub fn from_rpc_identity_with_fallback(
+        chain_id: ChainId,
+        node_info_network: Option<Option<&str>>,
+        unknown_fallback: Option<Self>,
+    ) -> Result<Option<Self>, String> {
+        match node_info_network {
+            Some(Some(network)) => Self::from_node_info_name(network).map(Some),
+            Some(None) => Ok(Self::from_known_chain_id(chain_id)?
+                .or(unknown_fallback)
+                .or(Some(Self::Ethereum))),
+            None => Ok(Self::from_known_chain_id(chain_id)?.or(unknown_fallback)),
+        }
+    }
+
+    /// Parses a hardfork name reported by an RPC endpoint in this network's namespace.
+    pub fn parse_hardfork(self, hardfork: &str) -> Result<FoundryHardfork, String> {
+        format!("{}:{hardfork}", self.name()).parse()
+    }
+
     /// Returns `true` if this is the Ethereum network variant.
     pub const fn is_ethereum(&self) -> bool {
         matches!(self, Self::Ethereum)
@@ -220,6 +305,12 @@ impl NetworkVariant {
         matches!(self, Self::Monad)
     }
 
+    /// Returns `false` when Monad support is not compiled in.
+    #[cfg(not(feature = "monad"))]
+    pub const fn is_monad(&self) -> bool {
+        false
+    }
+
     /// Returns the network variant name.
     pub const fn name(&self) -> &'static str {
         match self {
@@ -229,6 +320,18 @@ impl NetworkVariant {
             Self::Tempo => "tempo",
             #[cfg(feature = "monad")]
             Self::Monad => "monad",
+        }
+    }
+
+    /// Returns the hardfork namespace used by this network family.
+    pub const fn hardfork_namespace(&self) -> Option<&'static str> {
+        match self {
+            Self::Ethereum => None,
+            #[cfg(feature = "optimism")]
+            Self::Optimism => Some("optimism"),
+            Self::Tempo => Some("tempo"),
+            #[cfg(feature = "monad")]
+            Self::Monad => Some("monad"),
         }
     }
 }
@@ -244,6 +347,9 @@ impl From<ChainId> for NetworkVariant {
         let chain = Chain::from_id(chain_id);
         if chain.is_tempo() {
             return Self::Tempo;
+        }
+        if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
+            return Self::Ethereum;
         }
         #[cfg(feature = "monad")]
         if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
@@ -316,6 +422,47 @@ impl Serialize for NetworkConfigs {
 }
 
 impl NetworkConfigs {
+    /// Validates that all configured network selectors resolve to the same execution profile.
+    ///
+    /// Canonical and legacy selectors for the same family remain compatible. Selectors for
+    /// different families are rejected instead of being silently resolved by field priority.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut selectors = Vec::new();
+        if let Some(network) = self.network {
+            selectors.push((network.name(), format!("network = \"{}\"", network.name())));
+        }
+        if self.celo {
+            selectors.push(("celo", "celo = true".to_string()));
+        }
+        #[cfg(feature = "optimism")]
+        if self.optimism {
+            selectors.push(("optimism", "optimism = true".to_string()));
+        }
+        if self.tempo {
+            selectors.push(("tempo", "tempo = true".to_string()));
+        }
+        #[cfg(feature = "monad")]
+        if self.monad {
+            selectors.push(("monad", "monad = true".to_string()));
+        }
+
+        if let Some((family, selector)) = selectors.first()
+            && let Some((_, conflicting)) =
+                selectors.iter().find(|(candidate, _)| candidate != family)
+        {
+            return Err(format!(
+                "network selectors `{selector}` and `{conflicting}` conflict; select only one \
+                 network"
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub fn with_ethereum() -> Self {
+        Self { network: Some(NetworkVariant::Ethereum), ..Default::default() }
+    }
+
     pub fn with_celo() -> Self {
         Self { celo: true, ..Default::default() }
     }
@@ -366,12 +513,40 @@ impl NetworkConfigs {
         None
     }
 
+    /// Returns whether a network family was selected in this configuration.
+    pub const fn has_network_selection(&self) -> bool {
+        self.celo || self.resolved_network().is_some()
+    }
+
+    /// Returns the execution family represented by this configuration.
+    pub const fn execution_family_name(&self) -> &'static str {
+        self.execution_network().name()
+    }
+
+    /// Returns a label for the complete execution configuration.
+    pub const fn execution_profile_name(&self) -> &'static str {
+        if self.celo { "celo" } else { self.execution_family_name() }
+    }
+
+    /// Returns the concrete execution network, treating an unresolved configuration as Ethereum.
+    pub const fn execution_network(&self) -> NetworkVariant {
+        if let Some(network) = self.resolved_network() { network } else { NetworkVariant::Ethereum }
+    }
+
+    /// Returns whether both configurations can use the same instantiated EVM backend.
+    pub fn has_same_execution_profile(&self, other: &Self) -> bool {
+        self.celo == other.celo
+            && match (self.resolved_network(), other.resolved_network()) {
+                (Some(left), Some(right)) => left == right,
+                (Some(left), None) => left.is_ethereum(),
+                (None, Some(right)) => right.is_ethereum(),
+                (None, None) => true,
+            }
+    }
+
     /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
     pub fn active_network_name(&self) -> Option<&'static str> {
-        self.resolved_network().and_then(|n| match n {
-            NetworkVariant::Ethereum => None,
-            _ => Some(n.name()),
-        })
+        self.resolved_network().and_then(|network| network.hardfork_namespace())
     }
 
     /// Returns the base fee parameters for the configured network.
@@ -420,14 +595,11 @@ impl NetworkConfigs {
 
     pub fn with_chain_id(self, chain_id: u64) -> Self {
         let chain = Chain::from_id(chain_id);
-        if self.resolved_network().is_some() {
-            return if !self.celo
-                && matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia))
-            {
-                Self::with_celo()
-            } else {
-                self
-            };
+        if self.resolved_network().is_some() || self.celo {
+            return self;
+        }
+        if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
+            return Self { celo: true, ..self };
         }
         if chain.is_tempo() {
             return Self::with_tempo();
@@ -443,18 +615,100 @@ impl NetworkConfigs {
         self
     }
 
+    /// Applies an RPC endpoint's resolved EVM family to this configuration.
+    ///
+    /// Successful endpoint metadata is authoritative, including when a local Anvil uses a
+    /// well-known chain ID as an execution override. Orthogonal settings are preserved.
+    pub fn with_rpc_network(self, network: NetworkVariant) -> Self {
+        let mut resolved = if network.is_ethereum() { Self::default() } else { network.into() };
+        resolved.bypass_prevrandao = self.bypass_prevrandao;
+        resolved
+    }
+
+    /// Applies an RPC endpoint's execution family and chain-specific Ethereum configuration.
+    ///
+    /// The reported family is authoritative. A known Celo chain ID additionally enables Celo's
+    /// precompiles because Celo shares the Ethereum EVM factory rather than having its own
+    /// [`NetworkVariant`].
+    pub fn with_rpc_identity(self, network: NetworkVariant, chain_id: ChainId) -> Self {
+        let mut resolved = self.with_rpc_network(network);
+        if network.is_ethereum()
+            && matches!(
+                Chain::from_id(chain_id).named(),
+                Some(NamedChain::Celo | NamedChain::CeloSepolia)
+            )
+        {
+            resolved.celo = true;
+        }
+        resolved
+    }
+
+    /// Returns the canonical endpoint-visible execution profile.
+    pub fn canonical_execution_profile(self) -> Self {
+        if self.is_celo() {
+            Self::with_celo()
+        } else if let Some(network) = self.resolved_network()
+            && !network.is_ethereum()
+        {
+            network.into()
+        } else {
+            Self::default()
+        }
+    }
+
+    /// Applies an endpoint-reported execution profile while preserving orthogonal settings.
+    pub fn with_rpc_profile(self, profile: Self) -> Self {
+        let mut resolved = profile.canonical_execution_profile();
+        resolved.bypass_prevrandao = self.bypass_prevrandao;
+        resolved
+    }
+
+    /// Parses the execution profile reported by `anvil_nodeInfo`.
+    pub fn from_node_info_profile(profile: &str) -> Result<Self, String> {
+        if profile == "celo" {
+            return Ok(Self::with_celo());
+        }
+        let network = NetworkVariant::from_node_info_name(profile)?;
+        Ok(if network.is_ethereum() { Self::default() } else { network.into() })
+    }
+
+    /// Resolves an RPC endpoint's complete execution profile.
+    ///
+    /// Explicit metadata is authoritative. Legacy Anvil responses and ordinary RPC endpoints
+    /// recover Celo only from a canonical Celo chain ID; a caller-supplied fallback handles custom
+    /// chain IDs when the profile was selected explicitly.
+    pub fn from_rpc_identity_profile_with_fallback(
+        chain_id: ChainId,
+        node_info_profile: Option<Option<&str>>,
+        unknown_fallback: Option<Self>,
+    ) -> Result<Option<Self>, String> {
+        let known_profile = || {
+            NetworkVariant::from_known_chain_id(chain_id).map(|network| {
+                network.map(|network| Self::default().with_rpc_identity(network, chain_id))
+            })
+        };
+        let fallback = unknown_fallback.map(Self::canonical_execution_profile);
+        match node_info_profile {
+            Some(Some(profile)) => Self::from_node_info_profile(profile).map(Some),
+            Some(None) => Ok(known_profile()?.or(fallback).or(Some(Self::default()))),
+            None => Ok(known_profile()?.or(fallback)),
+        }
+    }
+
     /// Validates `hardfork` against the current `NetworkConfigs` and, if consistent, returns an
     /// updated instance with the network implied by the enabled hardfork.
     ///
     /// Returns `Err` when the hardfork's network family conflicts with the configured one.
     pub fn normalize_for_hardfork(self, hardfork: FoundryHardfork) -> Result<Self, String> {
-        if let Some(configured) =
-            self.active_network_name().filter(|&n| Some(n) != hardfork.namespace())
-        {
-            return Err(format!(
-                "hardfork `{}` conflicts with network config `{configured}`",
-                String::from(hardfork),
-            ));
+        if self.has_network_selection() {
+            let configured = self.execution_network();
+            if configured.hardfork_namespace() != hardfork.namespace() {
+                return Err(format!(
+                    "hardfork `{}` conflicts with network config `{}`",
+                    String::from(hardfork),
+                    self.execution_profile_name(),
+                ));
+            }
         }
 
         let network = match hardfork {
@@ -471,7 +725,7 @@ impl NetworkConfigs {
 
     /// Inject precompiles for configured networks.
     pub fn inject_precompiles(self, precompiles: &mut PrecompilesMap) {
-        if self.celo {
+        if self.is_celo() {
             precompiles.apply_precompile(&CELO_TRANSFER_ADDRESS, move |_| {
                 Some(celo::transfer::precompile())
             });
@@ -504,7 +758,7 @@ impl NetworkConfigs {
         #[cfg(not(feature = "monad"))]
         let _ = monad_hardfork;
         let mut labels = AddressHashMap::default();
-        if self.celo {
+        if self.is_celo() {
             labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
         }
         if self.is_tempo() {
@@ -546,7 +800,7 @@ impl NetworkConfigs {
         #[cfg(not(feature = "monad"))]
         let _ = monad_hardfork;
         let mut precompiles = BTreeMap::new();
-        if self.celo {
+        if self.is_celo() {
             precompiles
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
         }
@@ -584,7 +838,7 @@ impl NetworkConfigs {
 impl From<NetworkVariant> for NetworkConfigs {
     fn from(network: NetworkVariant) -> Self {
         match network {
-            NetworkVariant::Ethereum => Self::default(),
+            NetworkVariant::Ethereum => Self::with_ethereum(),
             NetworkVariant::Tempo => {
                 Self { network: Some(network), tempo: true, ..Default::default() }
             }
@@ -638,6 +892,241 @@ mod tests {
 
         #[cfg(all(feature = "optimism", feature = "monad"))]
         assert!(!NetworkVariant::Monad.is_optimism());
+    }
+
+    #[test]
+    fn known_chain_identity_does_not_guess_unknown_networks() {
+        assert_eq!(NetworkVariant::from_known_chain_id(98_765_432).unwrap(), None);
+        assert_eq!(
+            NetworkVariant::from_known_chain_id(NamedChain::Mainnet as u64).unwrap(),
+            Some(NetworkVariant::Ethereum)
+        );
+    }
+
+    #[test]
+    fn rpc_identity_preserves_orthogonal_configuration() {
+        let base = NetworkConfigs { bypass_prevrandao: true, ..NetworkConfigs::default() };
+        let ethereum = base.with_rpc_network(NetworkVariant::Ethereum);
+        assert!(ethereum.bypass_prevrandao(NamedChain::Mainnet as u64));
+
+        let ethereum = NetworkConfigs::default().with_rpc_network(NetworkVariant::Ethereum);
+        assert_eq!(ethereum, NetworkConfigs::default());
+
+        assert!(
+            NetworkConfigs::default()
+                .with_rpc_identity(NetworkVariant::Ethereum, NamedChain::Celo as u64)
+                .is_celo()
+        );
+        assert!(
+            !NetworkConfigs::default()
+                .with_rpc_identity(NetworkVariant::Ethereum, NamedChain::Monad as u64)
+                .is_monad()
+        );
+    }
+
+    #[test]
+    fn rpc_metadata_overrides_known_execution_chain_identity() {
+        assert_eq!(
+            NetworkVariant::from_rpc_identity(NamedChain::Mainnet as u64, Some(Some("tempo")))
+                .unwrap(),
+            Some(NetworkVariant::Tempo)
+        );
+        assert_eq!(
+            NetworkVariant::from_rpc_identity(NamedChain::Tempo as u64, Some(None)).unwrap(),
+            Some(NetworkVariant::Tempo)
+        );
+        assert_eq!(NetworkVariant::from_rpc_identity(98_765_432, None).unwrap(), None);
+        assert_eq!(
+            NetworkVariant::from_rpc_identity(98_765_432, Some(None)).unwrap(),
+            Some(NetworkVariant::Ethereum)
+        );
+        #[cfg(feature = "optimism")]
+        assert_eq!(
+            NetworkVariant::from_rpc_identity(NamedChain::Optimism as u64, Some(None)).unwrap(),
+            Some(NetworkVariant::Optimism)
+        );
+        assert_eq!(
+            NetworkVariant::from_rpc_identity(NamedChain::Celo as u64, Some(None)).unwrap(),
+            Some(NetworkVariant::Ethereum)
+        );
+    }
+
+    #[test]
+    fn rpc_profile_distinguishes_celo_from_ethereum_factory() {
+        let custom_chain_id = 98_765_432;
+        assert!(
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                custom_chain_id,
+                Some(Some("celo")),
+                None,
+            )
+            .unwrap()
+            .unwrap()
+            .is_celo()
+        );
+        assert!(
+            !NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                NamedChain::Celo as u64,
+                Some(Some("ethereum")),
+                None,
+            )
+            .unwrap()
+            .unwrap()
+            .is_celo()
+        );
+        assert!(
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                NamedChain::Celo as u64,
+                Some(None),
+                None,
+            )
+            .unwrap()
+            .unwrap()
+            .is_celo()
+        );
+        assert!(
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                custom_chain_id,
+                None,
+                Some(NetworkConfigs::with_celo()),
+            )
+            .unwrap()
+            .unwrap()
+            .is_celo()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn rpc_identity_fallback_preserves_explicit_custom_networks() {
+        let custom_chain_id = 98_765_432;
+        for node_info in [None, Some(None)] {
+            assert_eq!(
+                NetworkVariant::from_rpc_identity_with_fallback(
+                    custom_chain_id,
+                    node_info,
+                    Some(NetworkVariant::Monad),
+                )
+                .unwrap(),
+                Some(NetworkVariant::Monad)
+            );
+        }
+
+        assert_eq!(
+            NetworkVariant::from_rpc_identity_with_fallback(
+                NamedChain::Mainnet as u64,
+                Some(None),
+                Some(NetworkVariant::Monad),
+            )
+            .unwrap(),
+            Some(NetworkVariant::Ethereum)
+        );
+        assert_eq!(
+            NetworkVariant::from_rpc_identity_with_fallback(
+                custom_chain_id,
+                Some(Some("tempo")),
+                Some(NetworkVariant::Monad),
+            )
+            .unwrap(),
+            Some(NetworkVariant::Tempo)
+        );
+    }
+
+    #[test]
+    fn network_selection_distinguishes_default_and_explicit_ethereum() {
+        assert!(!NetworkConfigs::default().has_network_selection());
+        assert!(NetworkConfigs::with_ethereum().has_network_selection());
+        assert!(NetworkConfigs::with_celo().has_network_selection());
+    }
+
+    #[test]
+    fn celo_uses_ethereum_factory_with_distinct_precompiles() {
+        assert!(
+            !NetworkConfigs::with_celo().has_same_execution_profile(&NetworkConfigs::default())
+        );
+        assert!(
+            NetworkConfigs::with_ethereum().has_same_execution_profile(&NetworkConfigs::default())
+        );
+        assert_eq!(NetworkConfigs::with_celo().execution_family_name(), "ethereum");
+        assert_eq!(NetworkConfigs::with_celo().execution_profile_name(), "celo");
+    }
+
+    #[test]
+    fn chain_id_inference_preserves_explicit_networks() {
+        assert!(NetworkConfigs::default().with_chain_id(NamedChain::Celo as u64).is_celo());
+        let celo = NetworkConfigs { bypass_prevrandao: true, ..Default::default() }
+            .with_chain_id(NamedChain::Celo as u64);
+        assert!(celo.is_celo());
+        assert!(celo.bypass_prevrandao(NamedChain::Mainnet as u64));
+
+        let explicit = [
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_tempo(),
+            NetworkConfigs::with_celo(),
+        ];
+        for networks in explicit {
+            assert_eq!(networks.with_chain_id(NamedChain::Celo as u64), networks);
+        }
+
+        #[cfg(feature = "monad")]
+        {
+            let monad = NetworkConfigs::with_monad();
+            assert_eq!(monad.with_chain_id(NamedChain::Celo as u64), monad);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn rpc_metadata_identifies_custom_monad_networks() {
+        assert_eq!(NetworkVariant::from_node_info_name("monad").unwrap(), NetworkVariant::Monad);
+        assert!(NetworkConfigs::default().with_rpc_network(NetworkVariant::Monad).is_monad());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn parses_endpoint_hardfork_in_network_namespace() {
+        assert_eq!(
+            NetworkVariant::Monad.parse_hardfork("MonadEight").unwrap(),
+            FoundryHardfork::Monad(MonadHardfork::MonadEight)
+        );
+    }
+
+    #[test]
+    fn rpc_metadata_rejects_unknown_network_family() {
+        assert_eq!(
+            NetworkVariant::from_node_info_name("unknown").unwrap_err(),
+            "unsupported network family `unknown` reported by fork endpoint"
+        );
+    }
+
+    #[test]
+    fn explicit_ethereum_families_reject_namespaced_hardforks() {
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut incompatible = vec![FoundryHardfork::Tempo(TempoHardfork::T0)];
+        #[cfg(feature = "monad")]
+        incompatible.push(FoundryHardfork::Monad(MonadHardfork::MonadEight));
+
+        for networks in [NetworkConfigs::with_ethereum(), NetworkConfigs::with_celo()] {
+            for hardfork in &incompatible {
+                assert_eq!(
+                    networks.normalize_for_hardfork(*hardfork).unwrap_err(),
+                    format!(
+                        "hardfork `{}` conflicts with network config `{}`",
+                        String::from(*hardfork),
+                        networks.execution_profile_name()
+                    )
+                );
+            }
+        }
+
+        let celo = NetworkConfigs::with_celo();
+        assert_eq!(
+            celo.normalize_for_hardfork(FoundryHardfork::Ethereum(
+                foundry_evm_hardforks::EthereumHardfork::Prague
+            ))
+            .unwrap(),
+            celo
+        );
     }
 
     #[test]
@@ -882,6 +1371,87 @@ mod tests {
     }
 
     #[test]
+    fn validates_flattened_network_selectors() {
+        let valid = [
+            NetworkConfigs::default(),
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_celo(),
+            NetworkConfigs::with_tempo(),
+            NetworkConfigs {
+                network: Some(NetworkVariant::Tempo),
+                tempo: true,
+                ..Default::default()
+            },
+        ];
+        for networks in valid {
+            networks.validate().unwrap();
+        }
+
+        let conflicts = [
+            (
+                NetworkConfigs {
+                    network: Some(NetworkVariant::Tempo),
+                    celo: true,
+                    ..Default::default()
+                },
+                "network selectors `network = \"tempo\"` and `celo = true` conflict",
+            ),
+            (
+                NetworkConfigs { celo: true, tempo: true, ..Default::default() },
+                "network selectors `celo = true` and `tempo = true` conflict",
+            ),
+        ];
+        for (networks, expected) in conflicts {
+            assert!(networks.validate().unwrap_err().contains(expected));
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn validates_flattened_monad_network_selectors() {
+        for networks in [
+            NetworkConfigs::with_monad(),
+            NetworkConfigs {
+                network: Some(NetworkVariant::Monad),
+                monad: true,
+                ..Default::default()
+            },
+        ] {
+            networks.validate().unwrap();
+        }
+
+        let conflicts = [
+            (
+                NetworkConfigs {
+                    network: Some(NetworkVariant::Monad),
+                    celo: true,
+                    ..Default::default()
+                },
+                "network selectors `network = \"monad\"` and `celo = true` conflict",
+            ),
+            (
+                NetworkConfigs {
+                    network: Some(NetworkVariant::Monad),
+                    tempo: true,
+                    ..Default::default()
+                },
+                "network selectors `network = \"monad\"` and `tempo = true` conflict",
+            ),
+            (
+                NetworkConfigs { celo: true, monad: true, ..Default::default() },
+                "network selectors `celo = true` and `monad = true` conflict",
+            ),
+            (
+                NetworkConfigs { tempo: true, monad: true, ..Default::default() },
+                "network selectors `tempo = true` and `monad = true` conflict",
+            ),
+        ];
+        for (networks, expected) in conflicts {
+            assert!(networks.validate().unwrap_err().contains(expected));
+        }
+    }
+
+    #[test]
     #[cfg(feature = "monad")]
     fn chain_id_detects_monad_network() {
         assert_eq!(NetworkVariant::from(143), NetworkVariant::Monad);
@@ -905,21 +1475,28 @@ mod tests {
         }
 
         #[test]
+        fn matching_optimism_selectors_are_valid() {
+            NetworkConfigs::with_optimism().validate().unwrap();
+        }
+
+        #[test]
         fn active_network_name_optimism() {
             let cfg = NetworkConfigs::with_optimism();
             assert_eq!(cfg.active_network_name(), Some("optimism"));
         }
 
         #[test]
-        fn new_flag_wins_over_legacy_when_both_set() {
-            // --network optimism --tempo: network field wins
+        fn conflicting_optimism_and_tempo_selectors_are_rejected() {
             let cfg = NetworkConfigs {
                 network: Some(NetworkVariant::Optimism),
                 tempo: true,
                 ..Default::default()
             };
-            assert!(cfg.is_optimism());
-            assert!(!cfg.is_tempo());
+            assert_eq!(
+                cfg.validate().unwrap_err(),
+                "network selectors `network = \"optimism\"` and `tempo = true` conflict; select \
+                 only one network"
+            );
         }
 
         #[test]
