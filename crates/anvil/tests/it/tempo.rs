@@ -273,6 +273,23 @@ async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_reset_to_memory_restores_genesis_beneficiary() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await;
+    let fork_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(fork_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(genesis.header.beneficiary, Address::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_reset_to_fork_preserves_explicit_coinbase() {
     let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
     let custom_coinbase = address!("0x1111111111111111111111111111111111111111");

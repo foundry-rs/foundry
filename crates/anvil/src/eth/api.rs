@@ -155,6 +155,10 @@ pub struct EthApi<N: Network> {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
+    /// Serializes endpoint identity reads with reset transitions.
+    lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
+    /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
+    reset_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -172,6 +176,8 @@ impl<N: Network> Clone for EthApi<N> {
             transaction_order: self.transaction_order.clone(),
             net_listening: self.net_listening,
             instance_id: self.instance_id.clone(),
+            lifecycle_lock: self.lifecycle_lock.clone(),
+            reset_lock: self.reset_lock.clone(),
         }
     }
 }
@@ -205,6 +211,8 @@ impl<N: Network> EthApi<N> {
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
+            lifecycle_lock: Arc::new(tokio::sync::RwLock::new(())),
+            reset_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -428,6 +436,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_nodeInfo`
     pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
         node_info!("anvil_nodeInfo");
+        let _lifecycle = self.lifecycle_lock.read().await;
 
         let evm_env = self.backend.evm_env().read();
         let fork_config = self.backend.get_fork();
@@ -460,13 +469,9 @@ impl<N: Network> EthApi<N> {
                     }
                 })
                 .unwrap_or_default(),
-            network: if self.backend.is_tempo() {
-                Some("tempo".to_string())
-            } else if self.backend.is_monad() {
-                Some("monad".to_string())
-            } else {
-                None
-            },
+            // Always emit the execution profile. Older Anvil versions omitted plain Ethereum, so
+            // consumers must still treat `None` as legacy unspecified metadata.
+            network: Some(self.backend.execution_profile_name().to_string()),
         })
     }
 
@@ -475,6 +480,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_metadata`
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
+        let _lifecycle = self.lifecycle_lock.read().await;
         let fork_config = self.backend.get_fork();
 
         Ok(Metadata {
@@ -505,6 +511,8 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
+        let _lifecycle = self.lifecycle_lock.read().await;
+        let _mining = self.backend.lock_mining().await;
         Ok(self.backend.create_state_snapshot().await)
     }
 
@@ -714,17 +722,26 @@ impl<N: Network> EthApi<N> {
     ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
-        self.reset_instance_id();
         node_info!("anvil_reset");
+        let _reset = self.reset_lock.lock().await;
         if let Some(forking) = forking {
-            // if we're resetting the fork we need to reset the instance id
-            self.backend.reset_fork(forking).await?;
+            let staged = self.backend.prepare_fork_reset(forking, self.instance_id()).await?;
+            let _lifecycle = self.lifecycle_lock.write().await;
+            // Stop an old-context block before publishing the replacement DB and environment.
+            let _mining = self.backend.lock_mining().await;
+            self.backend.commit_fork_reset(staged).await?;
+            self.reset_instance_id();
+            self.pool.clear();
+            self.fee_history_cache.lock().clear();
         } else {
-            // Reset to a fresh in-memory state
-            self.backend.reset_to_in_mem().await?;
+            let staged = self.backend.prepare_memory_reset().await?;
+            let _lifecycle = self.lifecycle_lock.write().await;
+            let _mining = self.backend.lock_mining().await;
+            self.backend.commit_memory_reset(staged).await?;
+            self.reset_instance_id();
+            self.pool.clear();
+            self.fee_history_cache.lock().clear();
         }
-        // Clear pending transactions since they reference the old chain state.
-        self.pool.clear();
         Ok(())
     }
 
@@ -734,6 +751,8 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         node_info!("evm_revert");
+        let _lifecycle = self.lifecycle_lock.read().await;
+        let _mining = self.backend.lock_mining().await;
         self.backend.revert_state_snapshot(id).await
     }
 
@@ -1708,6 +1727,21 @@ impl EthApi<FoundryNetwork> {
     #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
+        // Reset takes the write lock internally after its fallible staging work. Identity and
+        // snapshot methods also lock internally to keep direct API callers safe without
+        // recursively acquiring this fair RwLock.
+        let _lifecycle = if matches!(
+            &request,
+            EthRequest::Reset(_)
+                | EthRequest::NodeInfo(_)
+                | EthRequest::AnvilMetadata(_)
+                | EthRequest::EvmSnapshot(_)
+                | EthRequest::EvmRevert(_)
+        ) {
+            None
+        } else {
+            Some(self.lifecycle_lock.read().await)
+        };
         let response = match request.clone() {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),

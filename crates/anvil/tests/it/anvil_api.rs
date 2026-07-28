@@ -5,8 +5,9 @@ use crate::{
     fork::fork_config,
     utils::http_provider_with_signer,
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
-use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
@@ -16,7 +17,11 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::api::CLIENT_VERSION, spawn};
+use anvil::{
+    NodeConfig,
+    eth::{api::CLIENT_VERSION, fees::INITIAL_BASE_FEE},
+    spawn,
+};
 use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
@@ -25,12 +30,109 @@ use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
 #[cfg(feature = "monad")]
 use foundry_evm::hardfork::MonadHardfork;
+use foundry_evm_networks::NetworkConfigs;
 use tempo_hardfork::TempoHardfork;
 
 use std::{
     str::FromStr,
     time::{Duration, SystemTime},
 };
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_resets_reject_celo_precompile_transitions() {
+    let (_ethereum_api, ethereum_origin) = spawn(NodeConfig::test()).await;
+    let (_celo_api, celo_origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Celo as u64))
+            .with_networks(NetworkConfigs::with_celo()),
+    )
+    .await;
+
+    let (ethereum_fork, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(ethereum_origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let error = ethereum_fork
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(celo_origin.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("cannot reset Anvil across network families (ethereum -> celo)"),
+        "unexpected error: {error}"
+    );
+
+    let (celo_fork, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(celo_origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let error = celo_fork
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(ethereum_origin.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("cannot reset Anvil across network families (celo -> ethereum)"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nested_custom_chain_celo_fork_preserves_execution_profile() {
+    let custom_chain_id = 98_765_432u64;
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(custom_chain_id))
+            .with_networks(NetworkConfigs::with_celo()),
+    )
+    .await;
+    assert_eq!(origin_api.anvil_node_info().await.unwrap().network.as_deref(), Some("celo"));
+
+    let (nested_api, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    assert_eq!(nested_api.anvil_node_info().await.unwrap().network.as_deref(), Some("celo"));
+    assert_eq!(
+        nested_api.config().unwrap().current.precompiles.get("celo transfer"),
+        Some(&address!("00000000000000000000000000000000000000fd"))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_fee_rules_follow_exact_endpoint_hardfork() {
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    let info = fork_api.anvil_node_info().await.unwrap();
+    assert_eq!(info.hard_fork, "Berlin");
+    assert_eq!(info.environment.base_fee, 0);
+    assert_eq!(fork_api.base_fee().unwrap(), None);
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
@@ -462,7 +564,7 @@ async fn can_get_node_info() {
             fork_block_number: None,
             fork_retry_backoff: None,
         },
-        network: None,
+        network: Some("ethereum".to_string()),
     };
 
     assert_eq!(node_info, expected_node_info);
@@ -584,6 +686,18 @@ async fn test_set_chain_id() {
 
     let chain_id = provider.get_chain_id().await.unwrap();
     assert_eq!(chain_id, 1234);
+
+    let from = handle.dev_accounts().next().unwrap();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6096>
@@ -1421,6 +1535,14 @@ async fn can_get_node_info_monad() {
     };
 
     assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "optimism")]
+async fn can_get_node_info_optimism() {
+    let (api, _) = spawn(NodeConfig::test().with_optimism()).await;
+
+    assert_eq!(api.anvil_node_info().await.unwrap().network.as_deref(), Some("optimism"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
