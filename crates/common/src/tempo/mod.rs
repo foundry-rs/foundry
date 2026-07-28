@@ -20,7 +20,6 @@ use tempo_primitives::TempoAddressExt;
 
 mod keystore;
 mod lane;
-mod registry;
 mod session;
 mod session_policy;
 #[cfg(test)]
@@ -42,7 +41,7 @@ pub use tip20::{
 };
 
 #[cfg(test)]
-pub(crate) use test_utils::{test_env_mutex, with_tempo_home};
+pub(crate) use test_utils::test_env_mutex;
 
 #[cfg(test)]
 mod tests;
