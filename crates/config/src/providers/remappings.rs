@@ -12,6 +12,8 @@ use std::{
     path::{MAIN_SEPARATOR, Path, PathBuf},
 };
 
+const GENERATED_REMAPPINGS_KEY: &str = "__generated_remappings";
+
 /// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
 #[derive(Clone, Debug, Default)]
 pub struct Remappings {
@@ -65,10 +67,10 @@ impl Remappings {
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
-    fn push(&mut self, remapping: Remapping) {
+    fn push(&mut self, remapping: Remapping) -> bool {
         // Special handling for .sol file remappings, only allow one remapping per source file.
         if remapping.name.ends_with(".sol") && !remapping.path.ends_with(".sol") {
-            return;
+            return false;
         }
 
         if self.remappings.iter().any(|existing| {
@@ -94,7 +96,7 @@ impl Remappings {
             let is_conflicting = remapping.name.starts_with(&existing_name_path);
             is_conflicting && existing.context == remapping.context
         }) {
-            return;
+            return false;
         };
 
         // Ignore remappings of root project src, test or script dir.
@@ -104,10 +106,11 @@ impl Remappings {
             .iter()
             .any(|project_path| remapping.name.eq_ignore_ascii_case(&project_path.name))
         {
-            return;
+            return false;
         };
 
         self.remappings.push(remapping);
+        true
     }
 
     /// Extend the remappings vector, leaving out the remappings that are already present.
@@ -117,25 +120,23 @@ impl Remappings {
         }
     }
 
+    /// Extract generated contextual refinements from a Figment.
+    pub fn generated_from_figment(figment: &Figment) -> Vec<Remapping> {
+        figment.extract_inner(GENERATED_REMAPPINGS_KEY).unwrap_or_default()
+    }
+
     /// Extend with lower-precedence remappings, omitting generated contextual refinements
     /// overridden by an existing global alias.
-    pub fn extend_with_lower_precedence(&mut self, remappings: Vec<Remapping>) {
-        let is_generated_refinement = |remapping: &Remapping| {
-            let Some(context) = remapping.context.as_deref() else { return false };
-            remappings.iter().any(|global| {
-                global.context.is_none()
-                    && global.name == remapping.name
-                    && Path::new(&global.path).starts_with(context)
-                    && Path::new(&remapping.path)
-                        .strip_prefix(&global.path)
-                        .is_ok_and(|remainder| remainder.components().next().is_some())
-            })
-        };
+    pub fn extend_with_lower_precedence(
+        &mut self,
+        remappings: Vec<Remapping>,
+        generated: &[Remapping],
+    ) {
         let suppressed = remappings
             .iter()
             .enumerate()
             .filter(|(_, remapping)| {
-                is_generated_refinement(remapping)
+                generated.contains(remapping)
                     && self.remappings.iter().any(|existing| {
                         existing.context.is_none()
                             && remapping_names_overlap(&existing.name, &remapping.name)
@@ -182,7 +183,10 @@ impl RemappingsProvider<'_> {
     /// - `remappings.txt`
     /// - Environment variables
     /// - CLI parameters
-    fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+    fn get_remappings(
+        &self,
+        remappings: Vec<Remapping>,
+    ) -> Result<(Vec<Remapping>, Vec<Remapping>), Error> {
         trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
@@ -231,8 +235,11 @@ impl RemappingsProvider<'_> {
         }
 
         user_remappings.extend(remappings);
-        let user_remapping_names =
-            user_remappings.iter().map(|r| r.name.clone()).collect::<Vec<_>>();
+        let global_user_remapping_names = user_remappings
+            .iter()
+            .filter(|r| r.context.is_none())
+            .map(|r| r.name.clone())
+            .collect::<Vec<_>>();
         // Let's now use the wrapper to conditionally extend the remappings with the autodetected
         // ones. We want to avoid duplicates, and the wrapper will handle this for us.
         let mut all_remappings = Remappings::new_with_remappings(user_remappings);
@@ -254,7 +261,7 @@ impl RemappingsProvider<'_> {
                 // source directory. Scope that refinement to the dependency so root imports keep
                 // the broader package mapping.
                 if r.context.is_none()
-                    && !user_remapping_names
+                    && !global_user_remapping_names
                         .iter()
                         .any(|root| remapping_names_overlap(root, &r.name))
                     && auto_detected_remappings.iter().any(|auto| {
@@ -279,7 +286,21 @@ impl RemappingsProvider<'_> {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
-            all_remappings.extend(contextual_remappings);
+            let explicit_remappings = all_remappings
+                .remappings
+                .iter()
+                .map(|r| relative_remapping_preserving_context_boundary(r.clone(), self.root))
+                .collect::<Vec<_>>();
+            let mut generated_remappings = Vec::new();
+            for contextual in contextual_remappings {
+                let relative =
+                    relative_remapping_preserving_context_boundary(contextual.clone(), self.root);
+                if !explicit_remappings.contains(&relative)
+                    && all_remappings.push(contextual.clone())
+                {
+                    generated_remappings.push(contextual);
+                }
+            }
             all_remappings.extend(
                 lib_remappings
                     .into_iter()
@@ -292,23 +313,30 @@ impl RemappingsProvider<'_> {
                     })
                     .collect(),
             );
+
+            return Ok((all_remappings.into_inner(), generated_remappings));
         }
 
-        Ok(all_remappings.into_inner())
+        Ok((all_remappings.into_inner(), Vec::new()))
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = (PathBuf, Remapping)> + '_ {
-        self.lib_paths
+        let mut groups = self
+            .lib_paths
             .par_iter()
             .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
             .flat_map(foundry_toml_dirs)
-            .flat_map_iter(|lib| {
+            .map(|lib| {
                 trace!(?lib, "find all remappings of nested foundry.toml");
-                self.nested_foundry_remappings(&lib).into_iter().map(move |r| (lib.clone(), r))
+                let remappings = self.nested_foundry_remappings(&lib);
+                (lib, remappings)
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        groups.sort_by(|(a, _), (b, _)| a.cmp(b));
+        groups
             .into_iter()
+            .flat_map(|(lib, remappings)| remappings.into_iter().map(move |r| (lib.clone(), r)))
     }
 
     fn nested_foundry_remappings(&self, lib: &Path) -> Vec<Remapping> {
@@ -394,7 +422,7 @@ impl Provider for RemappingsProvider<'_> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let remappings = match &self.remappings {
+        let (remappings, generated_remappings) = match &self.remappings {
             Ok(remappings) => self.get_remappings(remappings.clone()),
             Err(err) => {
                 if let figment::error::Kind::MissingField(_) = err.kind {
@@ -410,10 +438,20 @@ impl Provider for RemappingsProvider<'_> {
             .into_iter()
             .map(|r| relative_remapping_preserving_context_boundary(r, self.root).to_string())
             .collect::<Vec<_>>();
+        let generated_remappings = generated_remappings
+            .into_iter()
+            .map(|r| relative_remapping_preserving_context_boundary(r, self.root).to_string())
+            .collect::<Vec<_>>();
 
         Ok(Map::from([(
             Config::selected_profile(),
-            Dict::from([("remappings".to_string(), figment::value::Value::from(remappings))]),
+            Dict::from([
+                ("remappings".to_string(), figment::value::Value::from(remappings)),
+                (
+                    GENERATED_REMAPPINGS_KEY.to_string(),
+                    figment::value::Value::from(generated_remappings),
+                ),
+            ]),
         )]))
     }
 
@@ -451,7 +489,7 @@ mod tests {
             path: "lib/dep/vendor/pkg/".to_string(),
         };
         let mut explicit = Remappings::new_with_remappings(vec![cli.clone()]);
-        explicit.extend_with_lower_precedence(vec![contextual.clone()]);
+        explicit.extend_with_lower_precedence(vec![contextual.clone()], &[]);
         assert_eq!(explicit.into_inner(), vec![cli.clone(), contextual]);
 
         let global = Remapping {
@@ -465,8 +503,33 @@ mod tests {
             path: "lib/dep/lib/pkg/contracts/".to_string(),
         };
         let mut generated = Remappings::new_with_remappings(vec![cli.clone()]);
-        generated.extend_with_lower_precedence(vec![refinement, global.clone()]);
+        generated
+            .extend_with_lower_precedence(vec![refinement.clone(), global.clone()], &[refinement]);
         assert_eq!(generated.into_inner(), vec![cli, global]);
+    }
+
+    #[test]
+    fn nested_remapping_groups_are_sorted() {
+        let root = tempfile::tempdir().unwrap();
+        for dependency in ["zeta", "alpha"] {
+            let dependency = root.path().join("lib").join(dependency);
+            fs::create_dir_all(&dependency).unwrap();
+            fs::write(dependency.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(dependency.join("remappings.txt"), "pkg/=src/\n").unwrap();
+        }
+        let libs = vec![PathBuf::from("lib")];
+        let provider = RemappingsProvider {
+            auto_detect_remappings: true,
+            lib_paths: Cow::Borrowed(&libs),
+            root: root.path(),
+            remappings: Ok(Vec::new()),
+        };
+
+        let dependencies = provider
+            .find_nested_foundry_remappings()
+            .map(|(dependency, _)| dependency.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(dependencies, ["alpha", "alpha", "zeta", "zeta"]);
     }
 
     #[test]

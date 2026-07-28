@@ -1153,6 +1153,10 @@ forgetest!(nested_config_remapping_refines_auto_detected_package_root, |prj, cmd
     let outer = prj.paths().libraries[0].join("outer");
     let outer_other = prj.paths().libraries[0].join("outer-other");
     let inner = outer.join("lib/inner");
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("test/:inner/=src/unrelated/").unwrap().into()];
+    });
     pretty_err(&outer, fs::create_dir_all(outer.join("src")));
     pretty_err(&outer_other, fs::create_dir_all(outer_other.join("src")));
     pretty_err(&inner, fs::create_dir_all(inner.join("contracts")));
@@ -1180,6 +1184,7 @@ forgetest!(nested_config_remapping_refines_auto_detected_package_root, |prj, cmd
     );
 
     cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+test/:inner/=src/unrelated/
 lib/outer/:inner/=lib/outer/lib/inner/contracts/
 inner/=lib/outer/lib/inner/
 outer-other/=lib/outer-other/src/
@@ -1188,6 +1193,45 @@ outer/=lib/outer/src/
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
+    let dependency = prj.paths().libraries[0].join("dep");
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("src")));
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("pkg/contracts")));
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings =
+            ["dep/=lib/dep/src/", "lib/dep/:pkg/=lib/dep/pkg/contracts/", "pkg/=lib/dep/pkg/"]
+                .map(|remapping| Remapping::from_str(remapping).unwrap().into())
+                .into();
+    });
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/Dep.sol"),
+            "import {Other} from \"pkg/Other.sol\"; contract Dep is Other {}\n",
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(dependency.join("pkg/contracts/Other.sol"), "contract Other {}\n"),
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        "import {Dep} from \"dep/Dep.sol\"; contract UsesDep is Dep {}\n",
+    );
+
+    cmd.args(["build", "--remappings", "pkg/sub/=src/local/"]).assert_success();
+
+    // A generated candidate that normalizes to the explicit contextual mapping must not cause the
+    // explicit mapping to be tagged as generated and removed by the CLI merge.
+    pretty_err(&dependency, fs::write(dependency.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&dependency, fs::write(dependency.join("remappings.txt"), "pkg/=pkg/contracts/\n"));
+    prj.update_config(|config| config.auto_detect_remappings = true);
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "pkg/sub/=src/local/"])
+        .assert_success();
 });
 
 forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
