@@ -29,9 +29,12 @@ executes normally. Reusing a donor does not bypass the existing sequence-level
 corpus admission rules: only sequence-level inputs that improve coverage or the
 optimization objective are persisted.
 
-Nested calls are not collected: their calldata alone does not reproduce the
-caller, value, preceding state, or reentrancy context that made the original
-execution interesting.
+Nested calls are not collected. Even if a recorder retains their caller and
+value, replaying a nested frame as a top-level transaction cannot reproduce the
+surrounding call frame, reentrancy context, or preceding sequence state. The
+whole-call dictionary intentionally preserves ABI-argument correlation rather
+than full call reproducibility; sender, value, warp, and roll are generated
+normally.
 
 Whole-call donors are in-memory generation inputs, not additional corpus
 entries. Corpus replay at startup reconstructs the donor dictionary from
@@ -46,8 +49,9 @@ ABI arguments matter, including handlers that share a canonical signature. It
 does not derive unknown cryptographic preimages or generally solve nonlinear
 constraints, and does not claim a general hard-branch improvement. There is no
 separate `forge fuzz seed` subcommand: `forge fuzz run` learns and reuses these
-donors automatically, while the explicit CLI entry point for solver-assisted
-pre-seeding is `forge test --symbolic-seed-corpus`.
+donors automatically. Solver-assisted pre-seeding remains explicit through
+`forge test --symbolic-seed-corpus` or the two-step
+`--fuzz-frontier-dir`/`--symbolic-use-fuzz-frontiers` workflow.
 
 ## Campaign and inspection workflow
 
@@ -87,7 +91,7 @@ every selected fuzz/invariant test:
 
 1. Resolves the per-test corpus dir (or `--showmap-corpus-dir <PATH>` override).
 2. Walks every `worker*/corpus/*.json[.gz]` and deduplicates synchronized
-   copies by corpus identity (UUID and timestamp).
+   copies by corpus UUID.
 3. Replays each entry through a fresh executor.
 4. Aggregates per-call EVM instruction/PC hit maps and/or sancov edge bitmaps
    with saturating add.
