@@ -244,7 +244,7 @@ fn create_session_with_scope(
     (session_id, key_address)
 }
 
-fn assert_session_file_status_without_key(tempo_home: &Path, status: &str) {
+fn assert_accounts_store_key_retired(tempo_home: &Path, context: &str) {
     let store_file = tempo_home.join("wallet/store.json");
     let contents = fs::read_to_string(&store_file).expect("store.json exists");
     let store: serde_json::Value = serde_json::from_str(&contents).expect("valid store.json");
@@ -252,12 +252,12 @@ fn assert_session_file_status_without_key(tempo_home: &Path, status: &str) {
         store["tempo-cli.store"]["state"]["accessKeys"].as_array().expect("accessKeys array");
     assert!(
         keys.iter().all(|key| key.get("privateKey").is_none()),
-        "{status} managed key must not retain private key material:\n{contents}"
+        "{context} managed key must not retain private key material:\n{contents}"
     );
     assert!(!tempo_home.join("wallet/sessions.toml").exists());
 }
 
-fn assert_session_file_status_with_key(tempo_home: &Path, status: &str) {
+fn assert_accounts_store_key_signable(tempo_home: &Path, context: &str) {
     let store_file = tempo_home.join("wallet/store.json");
     let contents = fs::read_to_string(&store_file).expect("store.json exists");
     let store: serde_json::Value = serde_json::from_str(&contents).expect("valid store.json");
@@ -265,7 +265,7 @@ fn assert_session_file_status_with_key(tempo_home: &Path, status: &str) {
         store["tempo-cli.store"]["state"]["accessKeys"].as_array().expect("accessKeys array");
     assert!(
         keys.iter().any(|key| key.get("privateKey").is_some()),
-        "{status} managed key should retain private key material:\n{contents}"
+        "{context} managed key should retain private key material:\n{contents}"
     );
     assert!(!tempo_home.join("wallet/sessions.toml").exists());
 }
@@ -1227,7 +1227,7 @@ casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, c
     assert_eq!(checked["provisioned"], false);
     assert_eq!(checked["is_revoked"], true);
 
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_revoke_sponsor_hash_does_not_mark_revoked, async |_prj, cmd| {
@@ -1282,7 +1282,7 @@ casttest!(wallet_session_revoke_sponsor_hash_does_not_mark_revoked, async |_prj,
     assert_eq!(checked["provisioned"], true);
     assert_eq!(checked["is_revoked"], false);
 
-    assert_session_file_status_with_key(tempo_home.path(), "active");
+    assert_accounts_store_key_signable(tempo_home.path(), "active");
 });
 
 casttest!(wallet_session_revoke_marks_unprovisioned_key_revoked_locally, async |_prj, cmd| {
@@ -1325,7 +1325,7 @@ casttest!(wallet_session_revoke_marks_unprovisioned_key_revoked_locally, async |
     assert_eq!(checked["provisioned"], false);
     assert_eq!(checked["is_revoked"], false);
 
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_revoke_local_cleans_key_without_rpc, async |_prj, cmd| {
@@ -1344,7 +1344,7 @@ casttest!(wallet_session_revoke_local_cleans_key_without_rpc, async |_prj, cmd| 
     assert_eq!(revoked["status"], "revoked");
     assert_eq!(revoked["reason"], "local");
 
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_store_preserves_existing_access_keys, async |prj, cmd| {
@@ -1406,7 +1406,7 @@ casttest!(wallet_session_revoke_wrong_chain_preserves_local_key, async |_prj, cm
     ])
     .assert_failure();
 
-    assert_session_file_status_with_key(tempo_home.path(), "active");
+    assert_accounts_store_key_signable(tempo_home.path(), "active");
 });
 
 casttest!(
@@ -1470,7 +1470,7 @@ printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
             child_session_id.trim().starts_with("0x"),
             "unexpected child session id: {child_session_id}"
         );
-        assert_session_file_status_without_key(tempo_home.path(), "revoking");
+        assert_accounts_store_key_retired(tempo_home.path(), "revoking");
     }
 );
 
@@ -1512,7 +1512,7 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj,
     let stdout = assertion.get_output().stdout_lossy();
 
     assert_contains_tx_hash(&stdout, "child cast send");
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj, cmd| {
@@ -1566,7 +1566,7 @@ printf '%s\n' "$tx_hash"
     let stdout = assertion.get_output().stdout_lossy();
 
     assert_contains_tx_hash(&stdout, "child cast batch-send");
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked");
 });
 
 casttest!(wallet_session_run_for_forge_script_submits_with_session_key, async |prj, cmd| {
@@ -1665,7 +1665,7 @@ contract SessionForgeScript is Script {{
         tx["hash"].as_str().is_some_and(|hash| hash.starts_with("0x")),
         "forge broadcast tx should have a submitted hash: {tx}"
     );
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked");
 });
 
 casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
@@ -2390,7 +2390,7 @@ sh "$1"
     let stdout = assertion.get_output().stdout_lossy();
 
     assert_contains_tx_hash(&stdout, "grandchild cast send");
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked");
 });
 
 casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
@@ -2550,7 +2550,7 @@ exit 7
         .get_output()
         .stderr_lossy();
     assert!(stderr.contains("exited with code 7"), "unexpected stderr:\n{stderr}");
-    assert_session_file_status_without_key(tempo_home.path(), "failed");
+    assert_accounts_store_key_retired(tempo_home.path(), "failed");
 });
 
 casttest!(
@@ -2599,6 +2599,6 @@ test -n "${TEMPO_SESSION_ID:-}"
             .stderr_lossy();
 
         assert!(stderr.contains("created for chain 31338"), "unexpected stderr:\n{stderr}");
-        assert_session_file_status_without_key(tempo_home.path(), "revoking");
+        assert_accounts_store_key_retired(tempo_home.path(), "revoking");
     }
 );

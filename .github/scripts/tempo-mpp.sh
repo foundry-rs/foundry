@@ -8,11 +8,11 @@
 #   - Foundry binaries built: `cargo build --bin cast --bin forge --bin anvil --bin chisel`
 #
 # Usage:
-#   ./scripts/mpp-test.sh [binary-dir]
+#   ./.github/scripts/tempo-mpp.sh [binary-dir]
 #
 # Examples:
-#   ./scripts/mpp-test.sh                         # uses cast/forge from PATH
-#   ./scripts/mpp-test.sh ./target/debug          # use debug builds
+#   ./.github/scripts/tempo-mpp.sh                # uses Foundry tools from PATH
+#   ./.github/scripts/tempo-mpp.sh ./target/debug # use debug builds
 
 set -euo pipefail
 
@@ -114,11 +114,20 @@ if [ "$TEMPO_ROTATE_WALLET" = "1" ]; then
     --access-key "$ACCESS_PRIVATE_KEY" \
     --authorization "$AUTHORIZATION"
 else
+  if [ ! -f "$STORE_PATH" ]; then
+    echo "ERROR: Tempo Accounts store not found at $STORE_PATH"
+    exit 1
+  fi
   STORE_SUMMARY=$("$CAST" --json keychain list)
-  WALLET=$(printf '%s' "$STORE_SUMMARY" | jq -r --argjson chain_id "$CHAIN_ID" \
-    '[.data[] | select(.chain_id == $chain_id and .has_key == true)][0].wallet_address // empty')
-  if [ -z "$WALLET" ]; then
-    echo "ERROR: no locally signable chain $CHAIN_ID key found in ${TEMPO_HOME:-$HOME/.tempo}/wallet/store.json"
+  ACTIVE_ACCOUNT=$(jq -er '."tempo-cli.store".state.activeAccount' "$STORE_PATH")
+  WALLET=$(jq -er --argjson active "$ACTIVE_ACCOUNT" \
+    '."tempo-cli.store".state.accounts[$active].address' "$STORE_PATH")
+  ACTIVE_KEY_AVAILABLE=$(printf '%s' "$STORE_SUMMARY" | jq -r \
+    --argjson chain_id "$CHAIN_ID" \
+    --arg wallet "$(printf '%s' "$WALLET" | tr '[:upper:]' '[:lower:]')" \
+    'any(.data[]; .chain_id == $chain_id and .has_key == true and (.wallet_address | ascii_downcase) == $wallet)')
+  if [ "$ACTIVE_KEY_AVAILABLE" != "true" ]; then
+    echo "ERROR: active account $WALLET has no locally signable chain $CHAIN_ID key in $STORE_PATH"
     exit 1
   fi
 fi
