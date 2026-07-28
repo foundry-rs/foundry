@@ -3,6 +3,16 @@ pragma solidity ^0.8.18;
 
 import "utils/Test.sol";
 
+contract ConstructorDeploymentChild {}
+
+contract ConstructorDeploymentParent {
+    ConstructorDeploymentChild public child;
+
+    constructor() {
+        child = new ConstructorDeploymentChild();
+    }
+}
+
 contract SimpleContract {
     constructor() {
         assembly {
@@ -117,6 +127,40 @@ contract DumpStateTest is Test {
         assertEq(0, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x400)), ".balance")));
         assertEq(hex"af", vm.parseJsonBytes(json, string.concat(".", vm.toString(address(0x400)), ".code")));
         assertEq(0, vm.parseJsonKeys(json, string.concat(".", vm.toString(address(0x400)), ".storage")).length);
+
+        vm.removeFile(path);
+    }
+
+    function testDumpStateOrderingContract() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_ordering_contract.json");
+
+        vm.setNonce(address(0x300), 1);
+        ConstructorDeploymentParent parent = new ConstructorDeploymentParent();
+        vm.setNonce(address(0x100), 1);
+        SimpleContract later = new SimpleContract();
+        vm.setNonce(address(0x200), 1);
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 parentIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(parent))), '"'));
+        uint256 childIndex =
+            vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(parent.child()))), '"'));
+        uint256 laterIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(later))), '"'));
+        uint256 lowIndex = vm.indexOf(json, '"0x0000000000000000000000000000000000000100"');
+        uint256 middleIndex = vm.indexOf(json, '"0x0000000000000000000000000000000000000200"');
+        uint256 highIndex = vm.indexOf(json, '"0x0000000000000000000000000000000000000300"');
+
+        assertTrue(parentIndex != type(uint256).max);
+        assertTrue(childIndex != type(uint256).max);
+        assertTrue(laterIndex != type(uint256).max);
+        assertTrue(lowIndex != type(uint256).max);
+        assertTrue(middleIndex != type(uint256).max);
+        assertTrue(highIndex != type(uint256).max);
+        assertLt(parentIndex, childIndex);
+        assertLt(childIndex, laterIndex);
+        assertLt(laterIndex, lowIndex);
+        assertLt(lowIndex, middleIndex);
+        assertLt(middleIndex, highIndex);
 
         vm.removeFile(path);
     }
