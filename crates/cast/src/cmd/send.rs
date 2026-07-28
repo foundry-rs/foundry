@@ -71,6 +71,10 @@ pub struct SendTxArgs {
     #[command(flatten)]
     tx: TransactionOpts,
 
+    /// Relative percentage to multiply gas estimates by.
+    #[arg(long, help_heading = "Transaction options")]
+    gas_estimate_multiplier: Option<u64>,
+
     /// The path of blob data to be sent.
     #[arg(
         long,
@@ -127,8 +131,19 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
-            self;
+        let Self {
+            to,
+            mut sig,
+            mut args,
+            data,
+            send_tx,
+            mut tx,
+            gas_estimate_multiplier,
+            command,
+            unlocked,
+            force,
+            path,
+        } = self;
 
         let has_session = tx.tempo.session_id()?.is_some();
         if has_session && unlocked {
@@ -231,6 +246,7 @@ impl SendTxArgs {
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
+            .with_gas_estimate_multiplier(gas_estimate_multiplier)
             .with_to(to)
             .await?
             .with_code_sig_and_args(code, sig, args)

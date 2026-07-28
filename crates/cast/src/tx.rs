@@ -413,6 +413,8 @@ pub struct CastTxBuilder<N: Network, P, S> {
     /// Whether to fill gas, fees and nonce. Set to `false` for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
     fill: bool,
+    /// Relative percentage to multiply gas estimates by.
+    gas_estimate_multiplier: Option<u64>,
     /// Whether the filled transaction will be submitted through a browser wallet.
     browser: bool,
     /// The preset used when estimating EIP-1559 fees.
@@ -434,6 +436,15 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
     /// Marks this transaction as destined for browser wallet submission.
     pub const fn with_browser_wallet(mut self) -> Self {
         self.browser = true;
+        self
+    }
+
+    /// Sets the relative percentage to multiply gas estimates by.
+    pub(crate) const fn with_gas_estimate_multiplier(
+        mut self,
+        gas_estimate_multiplier: Option<u64>,
+    ) -> Self {
+        self.gas_estimate_multiplier = gas_estimate_multiplier;
         self
     }
 }
@@ -464,6 +475,7 @@ where
             blob: tx_opts.blob,
             eip4844: tx_opts.eip4844,
             fill: true,
+            gas_estimate_multiplier: None,
             browser: false,
             eip1559_fee_estimate: config.eip1559_fee_estimate,
             chain,
@@ -485,6 +497,7 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            gas_estimate_multiplier: self.gas_estimate_multiplier,
             browser: self.browser,
             eip1559_fee_estimate: self.eip1559_fee_estimate,
             chain: self.chain,
@@ -550,6 +563,7 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            gas_estimate_multiplier: self.gas_estimate_multiplier,
             browser: self.browser,
             eip1559_fee_estimate: self.eip1559_fee_estimate,
             chain: self.chain,
@@ -778,6 +792,9 @@ where
     async fn estimate_gas(&mut self) -> Result<()> {
         match self.provider.estimate_gas(self.tx.clone()).await {
             Ok(estimated) => {
+                let estimated = self
+                    .gas_estimate_multiplier
+                    .map_or(estimated, |multiplier| estimated * multiplier / 100);
                 self.tx.set_gas_limit(estimated);
                 Ok(())
             }

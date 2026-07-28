@@ -116,6 +116,10 @@ pub struct CreateArgs {
     #[command(flatten)]
     tx: TransactionOpts,
 
+    /// Relative percentage to multiply gas estimates by.
+    #[arg(long, help_heading = "Transaction options")]
+    gas_estimate_multiplier: Option<u64>,
+
     #[command(flatten)]
     eth: EthereumOpts,
 
@@ -546,6 +550,10 @@ impl CreateArgs {
 
         if self.tx.gas_limit.is_none() {
             let mut estimated = provider.estimate_gas(deployer.tx.clone()).await?;
+
+            if let Some(multiplier) = self.gas_estimate_multiplier {
+                estimated = estimated * multiplier / 100;
+            }
 
             // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
             // costs more gas for signature verification on Tempo chains. Add a

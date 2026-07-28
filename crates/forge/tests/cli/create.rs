@@ -4,7 +4,8 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
-use alloy_primitives::{Address, hex};
+use alloy_consensus::Transaction;
+use alloy_primitives::{Address, B256, hex};
 use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
 use foundry_test_utils::{
@@ -290,6 +291,87 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/1803>
+forgetest_async!(create_applies_gas_estimate_multiplier, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let private_key = hex::encode(wallet.credential().to_bytes());
+    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            contract.as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            private_key.as_str(),
+            "--broadcast",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let output = serde_json::from_str::<serde_json::Value>(&output).unwrap();
+    let tx_hash = output["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+    let transaction = api.transaction_by_hash(tx_hash).await.unwrap().unwrap();
+    let estimated = transaction.gas_limit();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            contract.as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            private_key.as_str(),
+            "--broadcast",
+            "--gas-estimate-multiplier",
+            "130",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let output = serde_json::from_str::<serde_json::Value>(&output).unwrap();
+    let tx_hash = output["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+    let transaction = api.transaction_by_hash(tx_hash).await.unwrap().unwrap();
+    assert_eq!(transaction.gas_limit(), estimated * 130 / 100);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            contract.as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            private_key.as_str(),
+            "--broadcast",
+            "--gas-estimate-multiplier",
+            "130",
+            "--gas-limit",
+            "400000",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let output = serde_json::from_str::<serde_json::Value>(&output).unwrap();
+    let tx_hash = output["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+    let transaction = api.transaction_by_hash(tx_hash).await.unwrap().unwrap();
+    assert_eq!(transaction.gas_limit(), 400_000);
 });
 
 forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, cmd| {
