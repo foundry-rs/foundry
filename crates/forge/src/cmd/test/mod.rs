@@ -378,6 +378,20 @@ struct CompiledTestProject {
     selected_sources: BTreeSet<PathBuf>,
 }
 
+pub(super) fn sources_for_test_filter(
+    config: &Config,
+    test_filter: &ProjectPathsAwareFilter,
+) -> BTreeSet<PathBuf> {
+    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+        .chain(
+            source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                // Preserve path-filter behavior for conventional test files while still
+                // scanning non-test fixtures under the test root.
+                .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+        )
+        .collect()
+}
+
 fn sources_to_compile_from_artifacts(
     config: &Config,
     test_filter: &ProjectPathsAwareFilter,
@@ -1553,14 +1567,7 @@ impl TestArgs {
         }
 
         let mut project = config.create_project(true, true)?;
-        let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-            .chain(
-                source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    // Preserve path-filter behavior for conventional test files while still
-                    // scanning non-test fixtures under the test root.
-                    .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
-            )
-            .collect::<BTreeSet<_>>();
+        let sources = sources_for_test_filter(config, test_filter);
         let output = compile_abi_project(
             &mut project,
             ProjectCompiler::new()
