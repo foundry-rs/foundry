@@ -245,29 +245,29 @@ fn create_session_with_scope(
 }
 
 fn assert_session_file_status_without_key(tempo_home: &Path, status: &str) {
-    let session_file = tempo_home.join("wallet/sessions.toml");
-    let contents = fs::read_to_string(&session_file).expect("sessions.toml exists");
+    let store_file = tempo_home.join("wallet/store.json");
+    let contents = fs::read_to_string(&store_file).expect("store.json exists");
+    let store: serde_json::Value = serde_json::from_str(&contents).expect("valid store.json");
+    let keys =
+        store["tempo-cli.store"]["state"]["accessKeys"].as_array().expect("accessKeys array");
     assert!(
-        contents.contains(&format!("status = \"{status}\"")),
-        "unexpected sessions.toml:\n{contents}"
+        keys.iter().all(|key| key.get("privateKey").is_none()),
+        "{status} managed key must not retain private key material:\n{contents}"
     );
-    assert!(
-        !contents.contains("key = \"0x"),
-        "{status} session must not retain private key material:\n{contents}"
-    );
+    assert!(!tempo_home.join("wallet/sessions.toml").exists());
 }
 
 fn assert_session_file_status_with_key(tempo_home: &Path, status: &str) {
-    let session_file = tempo_home.join("wallet/sessions.toml");
-    let contents = fs::read_to_string(&session_file).expect("sessions.toml exists");
+    let store_file = tempo_home.join("wallet/store.json");
+    let contents = fs::read_to_string(&store_file).expect("store.json exists");
+    let store: serde_json::Value = serde_json::from_str(&contents).expect("valid store.json");
+    let keys =
+        store["tempo-cli.store"]["state"]["accessKeys"].as_array().expect("accessKeys array");
     assert!(
-        contents.contains(&format!("status = \"{status}\"")),
-        "unexpected sessions.toml:\n{contents}"
+        keys.iter().any(|key| key.get("privateKey").is_some()),
+        "{status} managed key should retain private key material:\n{contents}"
     );
-    assert!(
-        contents.contains("key = \"0x"),
-        "{status} session should retain private key material:\n{contents}"
-    );
+    assert!(!tempo_home.join("wallet/sessions.toml").exists());
 }
 
 fn assert_async_tx_hash(stdout: &str, command: &str) {
@@ -1347,6 +1347,45 @@ casttest!(wallet_session_revoke_local_cleans_key_without_rpc, async |_prj, cmd| 
     assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
+casttest!(wallet_session_store_preserves_existing_access_keys, async |prj, cmd| {
+    let tempo_home = prj.root().join("tempo-home");
+    write_accounts_store(&tempo_home, 31337);
+    let before = fs::read_to_string(tempo_home.join("wallet/store.json")).unwrap();
+    let before: serde_json::Value = serde_json::from_str(&before).unwrap();
+    let existing = before["tempo-cli.store"]["state"]["accessKeys"][0].clone();
+
+    let (session_id, key_address) = create_session(&mut cmd, &tempo_home, "31337");
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", &tempo_home);
+    cmd.args(["--json", "wallet", "session", "revoke", &session_id, "--local"]).assert_success();
+
+    let after = fs::read_to_string(tempo_home.join("wallet/store.json")).unwrap();
+    let after: serde_json::Value = serde_json::from_str(&after).unwrap();
+    let keys = after["tempo-cli.store"]["state"]["accessKeys"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(
+        keys.iter()
+            .find(|key| {
+                key["address"]
+                    .as_str()
+                    .is_some_and(|address| address.eq_ignore_ascii_case(accounts::ADDR2))
+            })
+            .unwrap(),
+        &existing
+    );
+    let retired = keys
+        .iter()
+        .find(|key| {
+            key["address"]
+                .as_str()
+                .is_some_and(|address| address.eq_ignore_ascii_case(&key_address))
+        })
+        .unwrap();
+    assert!(retired.get("privateKey").is_none());
+    assert!(retired.get("keyAuthorization").is_some());
+    assert!(!tempo_home.join("wallet/sessions.toml").exists());
+});
+
 casttest!(wallet_session_revoke_wrong_chain_preserves_local_key, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
@@ -1385,10 +1424,10 @@ casttest!(
             r#"#!/bin/sh
 set -eu
 test -n "${TEMPO_SESSION_ID:-}"
-session_file="${TEMPO_HOME}/wallet/sessions.toml"
-grep -q 'status = "active"' "${session_file}"
-grep -q 'key = "0x' "${session_file}"
-grep -q 'key_authorization = "0x' "${session_file}"
+store_file="${TEMPO_HOME}/wallet/store.json"
+test ! -e "${TEMPO_HOME}/wallet/sessions.toml"
+grep -q '"privateKey":' "${store_file}"
+grep -q '"keyAuthorization":' "${store_file}"
 printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
 "#,
         )
@@ -2478,9 +2517,9 @@ casttest!(wallet_session_run_for_cleans_key_material_when_child_fails, async |_p
         r#"#!/bin/sh
 set -eu
 test -n "${TEMPO_SESSION_ID:-}"
-session_file="${TEMPO_HOME}/wallet/sessions.toml"
-grep -q 'status = "active"' "${session_file}"
-grep -q 'key = "0x' "${session_file}"
+store_file="${TEMPO_HOME}/wallet/store.json"
+test ! -e "${TEMPO_HOME}/wallet/sessions.toml"
+grep -q '"privateKey":' "${store_file}"
 exit 7
 "#,
     )

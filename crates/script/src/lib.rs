@@ -1000,25 +1000,28 @@ mod tests {
     use alloy_primitives::{B256, address};
     use alloy_provider::Provider as _;
     use alloy_rpc_types::TransactionRequest;
+    use alloy_signer::SignerSync as _;
     use anvil::{NodeConfig, spawn};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
     use foundry_common::tempo::{
-        KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
+        GeneratedSessionKey, SessionAuthorizationRequest, SessionEntry, TEMPO_HOME_ENV,
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
     use foundry_evm::traces::{
         CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
     };
-    use std::{fs, sync::LazyLock};
+    use std::{fs, num::NonZeroU64, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
 
     const SESSION_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+    const SESSION_ROOT_PRIVATE_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const SESSION_ID_HEX: &str =
         "0x1111111111111111111111111111111111111111111111111111111111111111";
-    const SESSION_ROOT_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
+    const SESSION_ROOT_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
@@ -1138,22 +1141,33 @@ mod tests {
         root_account: Address,
         chain_id: u64,
     ) -> SessionEntry {
-        let key = foundry_wallets::utils::create_private_key_signer(SESSION_PRIVATE_KEY).unwrap();
-        SessionEntry {
+        let foundry_wallets::WalletSigner::Local(root) =
+            foundry_wallets::utils::create_private_key_signer(SESSION_ROOT_PRIVATE_KEY).unwrap()
+        else {
+            unreachable!("a raw private key always creates a local signer")
+        };
+        assert_eq!(root.address(), root_account);
+        let key = GeneratedSessionKey::from_private_key(SESSION_PRIVATE_KEY).unwrap();
+        let prepared = SessionAuthorizationRequest {
             session_id,
             root_account,
             chain_id,
             key_address: key.address(),
-            expiry: u64::MAX,
-            scope: None,
-            limits: None,
-            status: SessionStatus::Active,
-            key: Some(SessionKeyMaterial {
-                key_type: KeyType::Secp256k1,
-                key: SESSION_PRIVATE_KEY.to_string(),
-                key_authorization: None,
-            }),
+            expiry: NonZeroU64::new(u64::MAX).unwrap(),
+            scope: vec![tempo_primitives::transaction::CallScope {
+                target: Address::repeat_byte(0xaa),
+                selector_rules: vec![],
+            }],
+            spend_limits: vec![],
         }
+        .prepare(0)
+        .unwrap();
+        let signature = root.sign_hash_sync(&prepared.authorization.signature_hash()).unwrap();
+        let authorization = prepared
+            .authorization
+            .clone()
+            .into_signed(tempo_primitives::transaction::PrimitiveSignature::Secp256k1(signature));
+        prepared.into_active_entry(key, &authorization).unwrap()
     }
 
     struct TempoHomeGuard {
