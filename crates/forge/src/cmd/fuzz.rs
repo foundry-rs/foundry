@@ -48,7 +48,7 @@ impl FuzzArgs {
         match self.command {
             FuzzSubcommands::Run(args) => {
                 let mut test = TestArgs::from_fuzz_run(args);
-                test.enable_fuzz_only_with_auto_fuzz_corpus();
+                test.enable_fuzz_only_with_auto_corpora();
                 Box::pin(test.run())
             }
             FuzzSubcommands::Replay(args) => Box::pin(args.run()),
@@ -79,7 +79,7 @@ impl FuzzArgs {
 #[derive(Clone, Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum FuzzSubcommands {
-    /// Run only fuzz and invariant tests.
+    /// Run fuzz and invariant tests with cache-backed corpus reuse.
     Run(FuzzRunArgs),
     /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
     Replay(FuzzReplayArgs),
@@ -91,7 +91,7 @@ pub enum FuzzSubcommands {
     Tmin(FuzzTminArgs),
 }
 
-/// Run only fuzz and invariant tests.
+/// Run only fuzz and invariant tests with cache-backed corpus reuse.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzRunArgs {
     #[command(flatten)]

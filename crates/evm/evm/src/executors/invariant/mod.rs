@@ -2,8 +2,9 @@ use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
         corpus::{
-            CorpusInsertionMode, DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
-            finalize_corpus_after_campaign, prepare_corpus_for_campaign,
+            DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
+            finalize_corpus_after_campaign, is_whole_call_coverage_winner,
+            prepare_corpus_for_campaign,
         },
     },
     inspectors::Fuzzer,
@@ -30,7 +31,7 @@ use foundry_evm_core::{
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
-    BasicTxDetails, FuzzCase, FuzzFixtures, ObservedCall,
+    BasicTxDetails, FuzzCase, FuzzFixtures,
     invariant::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
@@ -376,6 +377,7 @@ fn focused_targeted_contracts(
     let (address, function) = candidates[candidate_index].clone();
     let mut contract = targeted_contracts.get(&address)?.clone();
     contract.targeted_functions = vec![function];
+    contract.rebuild_function_lookups();
 
     let mut focused = TargetedContracts::new();
     focused.insert(address, contract);
@@ -1164,12 +1166,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let failures_revision = failures_checkpoint.revision();
             let mut stop_after_run = false;
             let mut run_cancelled = false;
-            let mut observed_call_entries = Vec::<(Vec<ObservedCall>, BasicTxDetails)>::new();
 
             let initial_seq = corpus_manager.new_inputs(
                 &mut invariant_test.test_data.branch_runner,
                 &invariant_test.fuzz_state,
                 &invariant_test.targeted_contracts,
+                config.dictionary.dictionary_weight,
             )?;
 
             let run_depth =
@@ -1265,13 +1267,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 if new_call_coverage {
                     current_run.new_coverage = true;
                 }
-                let observed_calls = std::mem::take(&mut call_result.observed_calls);
-                if new_call_coverage && !observed_calls.is_empty() {
-                    observed_call_entries.push((
-                        observed_calls,
-                        current_run.inputs.last().expect("checked above").clone(),
-                    ));
-                }
+                let current_input = current_run.inputs.last().expect("checked above");
+                let coverage_winning = is_whole_call_coverage_winner(new_call_coverage, discarded);
+                corpus_manager.record_whole_call_result(coverage_winning);
+                corpus_manager.admit_whole_call(
+                    current_input,
+                    coverage_winning,
+                    &invariant_test.targeted_contracts,
+                );
 
                 if discarded {
                     current_run.inputs.pop();
@@ -1464,6 +1467,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                 current_run.inputs.push(corpus_manager.generate_next_input(
                     &mut invariant_test.test_data.branch_runner,
+                    &invariant_test.fuzz_state,
+                    &invariant_test.targeted_contracts,
+                    config.dictionary.dictionary_weight,
                     &initial_seq,
                     discarded,
                     current_run.depth as usize,
@@ -1525,22 +1531,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 > failures_checkpoint.handler_count()
             {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
-            }
-
-            let insertion_mode = if corpus_persistence.is_deferred() {
-                CorpusInsertionMode::Deferred
-            } else {
-                CorpusInsertionMode::Live
-            };
-            for (observed_calls, parent_tx) in observed_call_entries {
-                if let Some(entry) = corpus_manager.hoist_observed_calls(
-                    &observed_calls,
-                    &parent_tx,
-                    &invariant_test.targeted_contracts,
-                    insertion_mode,
-                ) {
-                    corpus_entries.push(entry);
-                }
             }
 
             // Extend corpus only after the run and its optional hook have completed.
@@ -1826,10 +1816,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
-        executor.inspector_mut().set_fuzzer(
-            Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
-                .with_call_recording(config.corpus.is_coverage_guided()),
-        );
+        executor
+            .inspector_mut()
+            .set_fuzzer(Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots));
 
         // Let's make sure the invariant is sound before actually starting the run:
         // We'll assert the invariant in its initial state, and if it fails, we'll
@@ -1850,24 +1839,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
             fuzz_state.collect_fuzzer_values(fuzzer);
-            let _ = fuzzer.take_observed_calls();
         }
-        let mut worker = WorkerCorpus::from_seed(
+        let worker = WorkerCorpus::from_seed(
             plan.worker_id as usize,
             config.corpus.clone(),
             strategy.boxed(),
             corpus_seed,
         )?;
 
-        if let Err(err) =
-            worker.seed_from_test_traces(invariant_contract, &targeted_contracts, executor)
-        {
-            debug!(target: "corpus", %err, "failed to seed corpus from test traces");
-        }
-
-        // NOW enable call_override after the initial invariant check and corpus trace seeding have
-        // passed. This allows `override_call_strat` to inject calls during actual fuzz runs for
-        // reentrancy vulnerability detection.
+        // NOW enable call_override after the initial invariant check has passed. This allows
+        // `override_call_strat` to inject calls during actual fuzz runs for reentrancy
+        // vulnerability detection.
         if config.call_override {
             let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
 
@@ -2947,6 +2929,7 @@ mod tests {
         let target = Address::from([0x11; 20]);
         let first = function("first(uint256)");
         let second = function("second(uint256)");
+        let first_selector = first.selector();
         let second_selector = second.selector();
         let mut contract = targeted_contract("Target", vec![first.clone(), second.clone()]);
         contract.targeted_functions = vec![first, second];
@@ -2960,6 +2943,8 @@ mod tests {
         assert_eq!(focused.len(), 1);
         assert_eq!(focused_functions.len(), 1);
         assert_eq!(focused_functions[0].selector(), second_selector);
+        assert!(focused[&target].fuzzed_function_by_selector(first_selector).is_none());
+        assert!(focused[&target].fuzzed_function_by_selector(second_selector).is_some());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{U256, hex};
-use foundry_config::fs_permissions::PathPermission;
+use foundry_config::{FuzzCorpusMutationWeights, fs_permissions::PathPermission};
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
@@ -3197,8 +3197,196 @@ contract ForgeFuzzAutoCorpusSeedTest is Test {
         .join("ForgeFuzzAutoCorpusSeedTest")
         .join("worker0")
         .join("corpus");
-    assert!(!has_regular_file(&corpus_root));
+    assert!(has_regular_file(&corpus_root), "forge fuzz run did not populate its invariant corpus");
     assert!(!marker.exists());
+});
+
+forgetest_init!(forge_fuzz_run_reuses_whole_calls_for_new_coverage, |prj, cmd| {
+    let discovered_marker = prj.root().join("whole-call-discovered.txt");
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.check_interval = 0;
+        config.invariant.dictionary.dictionary_weight = 100;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            // Replace the single persisted call with a newly generated call.
+            mutation_weight_prefix: 1_000_000,
+            mutation_weight_suffix: 0,
+            // Enables automatic whole-call donor collection and reuse.
+            mutation_weight_abi: 1,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
+        };
+        config.fs_permissions.add(PathPermission::read_write(prj.root()));
+    });
+    prj.add_test(
+        "ForgeFuzzWholeCallReuse.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+contract ForgeFuzzWholeCallTarget {
+    Vm private constant vm =
+        Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    bytes32[4] private hashes;
+    bool private immutable replay;
+    bool public discovered;
+
+    constructor(bool replay_, bytes32[4] memory hashes_) {
+        replay = replay_;
+        hashes = hashes_;
+    }
+
+    function target(uint256 a, uint256 b, uint256 c, uint256 d) external {
+        if (!replay) {
+            string memory objectKey = "whole-call-hashes";
+            string memory json =
+                vm.serializeBytes32(objectKey, "a", keccak256(abi.encode(a)));
+            vm.serializeBytes32(objectKey, "b", keccak256(abi.encode(b)));
+            vm.serializeBytes32(objectKey, "c", keccak256(abi.encode(c)));
+            json = vm.serializeBytes32(objectKey, "d", keccak256(abi.encode(d)));
+            vm.writeJson(
+                json,
+                string.concat(vm.projectRoot(), "/whole-call-hashes.json")
+            );
+            return;
+        }
+
+        uint256 count;
+        if (keccak256(abi.encode(a)) == hashes[0]) count++;
+        if (keccak256(abi.encode(b)) == hashes[1]) count++;
+        if (keccak256(abi.encode(c)) == hashes[2]) count++;
+        if (keccak256(abi.encode(d)) == hashes[3]) count++;
+        if (count == 3) {
+            discovered = true;
+        }
+    }
+}
+
+contract ForgeFuzzWholeCallReuseTest is Test {
+    ForgeFuzzWholeCallTarget private target;
+
+    function setUp() public {
+        bool replay = vm.envOr("FOUNDRY_TEST_WHOLE_CALL_REPLAY", false);
+        bytes32[4] memory hashes;
+        if (replay) {
+            string memory json = vm.readFile(
+                string.concat(vm.projectRoot(), "/whole-call-hashes.json")
+            );
+            hashes[0] = vm.parseJsonBytes32(json, ".a");
+            hashes[1] = vm.parseJsonBytes32(json, ".b");
+            hashes[2] = vm.parseJsonBytes32(json, ".c");
+            hashes[3] = vm.parseJsonBytes32(json, ".d");
+        }
+        target = new ForgeFuzzWholeCallTarget(replay, hashes);
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public {
+        if (target.discovered()) {
+            vm.writeFile(
+                string.concat(vm.projectRoot(), "/whole-call-discovered.txt"),
+                "discovered"
+            );
+        }
+    }
+}
+   "#,
+    );
+
+    cmd.args([
+        "fuzz",
+        "run",
+        "--mc",
+        "ForgeFuzzWholeCallReuseTest",
+        "--mt",
+        "invariant_ok",
+        "--threads",
+        "1",
+        "--workers",
+        "1",
+        "--depth",
+        "1",
+        "--runs",
+        "1",
+        // The first process only creates the restart corpus and hashed oracle.
+        "--dictionary-weight",
+        "0",
+        "--seed",
+        "0x1234",
+        "-q",
+    ])
+    .assert_success();
+
+    let corpus_root = prj
+        .root()
+        .join("invariant_corpus")
+        .join("ForgeFuzzWholeCallReuseTest")
+        .join("worker0")
+        .join("corpus");
+    assert!(has_regular_file(&corpus_root), "first run did not persist a donor corpus");
+    assert!(
+        prj.root().join("whole-call-hashes.json").is_file(),
+        "first run did not persist the hashed replay oracle"
+    );
+    assert!(
+        !discovered_marker.exists(),
+        "the recording campaign unexpectedly reached the replay branch"
+    );
+
+    cmd.forge_fuse().env("FOUNDRY_TEST_WHOLE_CALL_REPLAY", "true");
+    let resumed = cmd
+        .args([
+            "fuzz",
+            "run",
+            "--mc",
+            "ForgeFuzzWholeCallReuseTest",
+            "--mt",
+            "invariant_ok",
+            "--threads",
+            "1",
+            "--workers",
+            "1",
+            "--depth",
+            "1",
+            "--runs",
+            "100000000",
+            "--timeout",
+            "10",
+            "--seed",
+            "0x1234",
+            "-vv",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(resumed.get_output().stdout.clone()).unwrap();
+    let pulse_metrics = stdout.lines().filter_map(|line| {
+        let payload: Value = serde_json::from_str(line).ok()?;
+        (payload["event"] == "pulse").then(|| payload["metrics"].clone())
+    });
+    let useful_pulse = pulse_metrics.into_iter().find(|metrics| {
+        metrics["whole_call_dictionary_entries"].as_u64().is_some_and(|value| value > 0)
+            && metrics["whole_call_mutations"].as_u64().is_some_and(|value| value > 0)
+            && metrics["whole_call_coverage_wins"].as_u64().is_some_and(|value| value > 0)
+    });
+    assert!(
+        useful_pulse.is_some(),
+        "expected a reloaded whole-call donor to win concrete coverage:\n{stdout}"
+    );
+    assert!(
+        discovered_marker.exists(),
+        "whole-call reuse did not reach the destination's three-matching-arguments branch"
+    );
 });
 
 forgetest_init!(fuzz_branch_frontiers_capture_comparison_for_symbolic_followup, |prj, cmd| {

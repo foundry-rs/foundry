@@ -41,16 +41,14 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, I256, U256};
+use alloy_primitives::{Address, B256, Bytes, I256};
 use eyre::{Result, eyre};
-use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
+use foundry_common::{ContractsByAddress, ContractsByArtifact, sh_warn};
 use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
-use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
+use foundry_evm_core::{constants::MAGIC_ASSUME, evm::FoundryEvmNetwork, utils::StateChangeset};
 use foundry_evm_fuzz::{
-    BasicTxDetails, CallDetails, ObservedCall,
-    invariant::{
-        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, TargetedContracts,
-    },
+    BasicTxDetails,
+    invariant::{ArtifactFilters, FuzzRunIdentifiedContracts, TargetedContracts},
     strategies::{
         EvmFuzzState, FuzzStateReader, InvariantFuzzState, generate_msg_value, mutate_param_value,
     },
@@ -84,9 +82,136 @@ const CACHED_DISK_CORPUS_MAX_LEN: usize = 128;
 // Prefer decoded donors while periodically refreshing the bounded cache from disk.
 const DISK_CORPUS_REFRESH_DENOMINATOR: u32 = 16;
 
+/// Keep whole-call donors worker-local and small enough to scan during deduplication.
+const WHOLE_CALL_DICTIONARY_MAX_LEN: usize = 1024;
+/// Bound retained calldata independently from the number of whole-call donors.
+const WHOLE_CALL_DICTIONARY_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct WholeCallSignature(B256);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WholeCall {
+    /// The unique target that produced this call, or `None` if multiple targets produced it.
+    source_target: Option<Address>,
+    calldata: Bytes,
+}
+
+/// Worker-local ABI donors learned from argument-bearing top-level calls whose complete concrete
+/// execution wins an edge or hit-count coverage feature.
+///
+/// Donors are mutation inputs, not corpus entries. Reusing one never bypasses normal concrete
+/// execution or the existing sequence-level corpus admission rules.
+#[derive(Clone, Default)]
+struct WholeCallDictionary {
+    by_signature: HashMap<WholeCallSignature, VecDeque<WholeCall>>,
+    insertion_order: VecDeque<(WholeCallSignature, Bytes)>,
+    len: usize,
+    calldata_bytes: usize,
+}
+
+impl WholeCallDictionary {
+    fn insert(
+        &mut self,
+        signature: WholeCallSignature,
+        source_target: Address,
+        calldata: Bytes,
+    ) -> bool {
+        let calldata_len = calldata.len();
+        if calldata_len > WHOLE_CALL_DICTIONARY_MAX_BYTES {
+            return false;
+        }
+        if let Some(existing) = self
+            .by_signature
+            .get_mut(&signature)
+            .and_then(|calls| calls.iter_mut().find(|call| call.calldata == calldata))
+        {
+            if existing.source_target != Some(source_target) {
+                existing.source_target = None;
+            }
+            return false;
+        }
+
+        while self.len >= WHOLE_CALL_DICTIONARY_MAX_LEN
+            || self.calldata_bytes + calldata_len > WHOLE_CALL_DICTIONARY_MAX_BYTES
+        {
+            self.evict_oldest();
+        }
+
+        self.by_signature.entry(signature).or_default().push_back(WholeCall {
+            source_target: Some(source_target),
+            calldata: calldata.clone(),
+        });
+        self.insertion_order.push_back((signature, calldata));
+        self.len += 1;
+        self.calldata_bytes += calldata_len;
+        true
+    }
+
+    fn evict_oldest(&mut self) {
+        let Some((signature, calldata)) = self.insertion_order.pop_front() else {
+            return;
+        };
+        let remove_bucket = if let Some(calls) = self.by_signature.get_mut(&signature) {
+            if let Some(index) = calls.iter().position(|call| call.calldata == calldata) {
+                let call = calls.remove(index).expect("whole-call donor index exists");
+                self.len -= 1;
+                self.calldata_bytes = self.calldata_bytes.saturating_sub(call.calldata.len());
+            }
+            calls.is_empty()
+        } else {
+            false
+        };
+        if remove_bucket {
+            self.by_signature.remove(&signature);
+        }
+    }
+
+    fn sample(&self, signature: WholeCallSignature, rng: &mut impl Rng) -> Option<WholeCall> {
+        let calls = self.by_signature.get(&signature)?;
+        calls.get(rng.random_range(0..calls.len())).cloned()
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn insert_tx(&mut self, tx: &BasicTxDetails, targets: &TargetedContracts) -> bool {
+        let Some((function, signature)) = fuzzed_function_for_tx(tx, targets) else {
+            return false;
+        };
+        if function.inputs.is_empty()
+            || function.abi_decode_input(&tx.call_details.calldata[4..]).is_err()
+        {
+            return false;
+        }
+        self.insert(signature, tx.call_details.target, tx.call_details.calldata.clone())
+    }
+}
+
+fn fuzzed_function_for_tx<'a>(
+    tx: &BasicTxDetails,
+    targets: &'a TargetedContracts,
+) -> Option<(&'a Function, WholeCallSignature)> {
+    let selector = tx
+        .call_details
+        .calldata
+        .get(..4)
+        .and_then(|selector| <[u8; 4]>::try_from(selector).ok())?;
+    let selector = selector.into();
+    let contract = targets.get(&tx.call_details.target)?;
+    Some((
+        contract.fuzzed_function_by_selector(selector)?,
+        WholeCallSignature(contract.fuzzed_signature_by_selector(selector)?),
+    ))
+}
+
+pub(crate) const fn is_whole_call_coverage_winner(new_coverage: bool, discarded: bool) -> bool {
+    new_coverage && !discarded
+}
 
 fn weighted_arg_mutation(
     rng: &mut impl Rng,
@@ -503,7 +628,6 @@ fn rewrite_campaign_corpus(config: &FuzzCorpusConfig, gzip: bool) -> Result<()> 
 pub(crate) enum CorpusInsertionMode {
     Live,
     Deferred,
-    MemoryOnly,
     WorkerSync,
 }
 
@@ -546,6 +670,7 @@ struct ReplayCoverage<'a> {
     edge_indices: &'a mut EdgeIndexMap,
     sancov_history_map: &'a mut Vec<u8>,
     metrics: Option<&'a mut CorpusMetrics>,
+    whole_calls: Option<&'a mut WholeCallDictionary>,
 }
 
 /// Campaign-level corpus state produced by replaying persisted corpus entries once.
@@ -562,6 +687,7 @@ pub(crate) struct WorkerCorpusSeed {
     sancov_history_map: Vec<u8>,
     top_rated: HashMap<usize, (Uuid, usize)>,
     metrics: CorpusMetrics,
+    whole_calls: WholeCallDictionary,
     failed_replays: usize,
     optimization_best_value: Option<I256>,
     optimization_best_sequence: Vec<BasicTxDetails>,
@@ -640,6 +766,7 @@ impl WorkerCorpusSeed {
             sancov_history_map: self.sancov_history_map.clone(),
             top_rated: HashMap::new(),
             metrics,
+            whole_calls: self.whole_calls.clone(),
             failed_replays: self.failed_replays,
             optimization_best_value: self.optimization_best_value,
             optimization_best_sequence: self.optimization_best_sequence.clone(),
@@ -693,6 +820,7 @@ impl WorkerCorpusSeed {
         let Some(executor) = executor else {
             return Ok(seed);
         };
+        let collect_whole_calls = config.mutation_weights.effective().mutation_weight_abi > 0;
         let mut seen_entries =
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
         for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
@@ -716,6 +844,7 @@ impl WorkerCorpusSeed {
                 edge_indices: &mut seed.edge_indices,
                 sancov_history_map: &mut seed.sancov_history_map,
                 metrics: Some(&mut seed.metrics),
+                whole_calls: collect_whole_calls.then_some(&mut seed.whole_calls),
             };
             let ReplayOutcome {
                 keep_entry, new_edge, edges_covered, cmp_seq, failed_replays, ..
@@ -777,6 +906,7 @@ impl WorkerCorpusSeed {
                     edge_indices: &mut edge_indices,
                     sancov_history_map: &mut sancov_history_map,
                     metrics: None,
+                    whole_calls: None,
                 };
                 let ReplayOutcome { keep_entry, new_coverage, .. } =
                     replay_corpus_sequence(&entry.tx_seq, executor, target, coverage)?;
@@ -822,8 +952,13 @@ impl GlobalCorpusMetrics {
             cumulative_features_seen: self.cumulative_features_seen.load(Ordering::Relaxed),
             corpus_count: self.corpus_count.load(Ordering::Relaxed),
             favored_items: self.favored_items.load(Ordering::Relaxed),
+            ..Default::default()
         }
     }
+}
+
+const fn usize_is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Serialize, Default, Clone)]
@@ -836,6 +971,21 @@ pub(crate) struct CorpusMetrics {
     corpus_count: usize,
     // Number of corpus entries that are favored.
     favored_items: usize,
+    // Worker-local number of compatible whole-call donors selected during fresh generation.
+    #[serde(skip_serializing_if = "usize_is_zero")]
+    whole_call_attempts: usize,
+    // Worker-local number of selected donors that produced changed calldata.
+    #[serde(skip_serializing_if = "usize_is_zero")]
+    whole_call_mutations: usize,
+    // Worker-local subset of mutations whose donor came from a different target.
+    #[serde(skip_serializing_if = "usize_is_zero")]
+    whole_call_cross_target_mutations: usize,
+    // Worker-local number of emitted donor mutations that themselves won coverage.
+    #[serde(skip_serializing_if = "usize_is_zero")]
+    whole_call_coverage_wins: usize,
+    // Current number of retained worker-local donors.
+    #[serde(skip_serializing_if = "usize_is_zero")]
+    whole_call_dictionary_entries: usize,
 }
 
 impl fmt::Display for CorpusMetrics {
@@ -846,6 +996,28 @@ impl fmt::Display for CorpusMetrics {
         writeln!(f, "        - cumulative features seen: {}", self.cumulative_features_seen)?;
         writeln!(f, "        - corpus count: {}", self.corpus_count)?;
         write!(f, "        - favored items: {}", self.favored_items)?;
+        if self.whole_call_attempts == 0
+            && self.whole_call_mutations == 0
+            && self.whole_call_cross_target_mutations == 0
+            && self.whole_call_coverage_wins == 0
+            && self.whole_call_dictionary_entries == 0
+        {
+            return Ok(());
+        }
+        writeln!(f)?;
+        writeln!(f, "        - whole-call donor attempts: {}", self.whole_call_attempts)?;
+        writeln!(f, "        - whole-call donor mutations: {}", self.whole_call_mutations)?;
+        writeln!(
+            f,
+            "        - cross-target whole-call mutations: {}",
+            self.whole_call_cross_target_mutations
+        )?;
+        writeln!(f, "        - whole-call coverage wins: {}", self.whole_call_coverage_wins)?;
+        write!(
+            f,
+            "        - whole-call dictionary entries: {}",
+            self.whole_call_dictionary_entries
+        )?;
         Ok(())
     }
 }
@@ -884,6 +1056,12 @@ pub struct WorkerCorpus {
     pub(crate) metrics: CorpusMetrics,
     /// Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
+    /// Coverage-winning top-level calls, kept separate from the replay corpus.
+    whole_calls: WholeCallDictionary,
+    /// Whole-call provenance parallel to the current run's initial sequence.
+    whole_call_plan: Vec<bool>,
+    /// Whether the next transaction to execute came from a whole-call donor.
+    next_whole_call_is_donor: bool,
     /// Call sequence mutation weights used by stateful fuzzing.
     mutation_weights: FuzzCorpusMutationWeights,
     /// Weighted stateful sequence mutation distribution.
@@ -1013,6 +1191,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
         if WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
             let mut call_result = execute_tx(executor, tx)?;
             cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
+            let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
             let (new_coverage, is_edge) = call_result.merge_all_coverage_with_edges_into(
                 coverage.history_map,
                 coverage.edge_indices,
@@ -1026,6 +1205,30 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
                 if let Some(metrics) = coverage.metrics.as_deref_mut() {
                     metrics.update_seen(is_edge);
                 }
+                if is_whole_call_coverage_winner(new_coverage, discarded)
+                    && let (Some(whole_calls), Some(fuzzed_contracts)) =
+                        (coverage.whole_calls.as_deref_mut(), target.fuzzed_contracts)
+                    && whole_calls.insert_tx(tx, &fuzzed_contracts.targets())
+                    && let Some(metrics) = coverage.metrics.as_deref_mut()
+                {
+                    metrics.whole_call_dictionary_entries = whole_calls.len;
+                }
+            }
+
+            // Live invariant execution merges coverage before discarding an assumed call, but it
+            // neither commits state nor learns a whole-call donor. Preserve that ordering while
+            // rebuilding coverage from disk and worker sync.
+            if discarded {
+                failed_replays += 1;
+                if trace_sync {
+                    trace!(
+                        target: "corpus",
+                        %new_coverage,
+                        ?tx,
+                        "discarded MAGIC_ASSUME corpus replay",
+                    );
+                }
+                continue;
             }
 
             register_replay_created(
@@ -1143,6 +1346,14 @@ impl WorkerCorpus {
             worker_dir
         });
 
+        let whole_calls = if mutation_weights.mutation_weight_abi > 0 {
+            seed.whole_calls
+        } else {
+            WholeCallDictionary::default()
+        };
+        let mut metrics = seed.metrics;
+        metrics.whole_call_dictionary_entries = whole_calls.len;
+
         let mut corpus = Self {
             id,
             in_memory_corpus: seed.in_memory_corpus,
@@ -1152,8 +1363,11 @@ impl WorkerCorpus {
             sancov_history_map: seed.sancov_history_map,
             top_rated: seed.top_rated,
             failed_replays: seed.failed_replays,
-            metrics: seed.metrics,
+            metrics,
             tx_generator,
+            whole_calls,
+            whole_call_plan: Default::default(),
+            next_whole_call_is_donor: false,
             mutation_weights,
             mutation_distribution,
             arg_mutation_distribution,
@@ -1495,6 +1709,130 @@ impl WorkerCorpus {
         self.last_new_edge_at.map(|at| at.elapsed())
     }
 
+    /// Learns an argument-bearing top-level call only when its complete concrete execution wins an
+    /// edge or hit-count coverage feature.
+    ///
+    /// The call remains a mutation donor, not a corpus entry. A later generated call still
+    /// executes normally, and only sequence-level inputs are eligible for corpus admission.
+    pub(crate) fn admit_whole_call(
+        &mut self,
+        tx: &BasicTxDetails,
+        new_coverage: bool,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+    ) -> bool {
+        if self.mutation_weights.mutation_weight_abi == 0
+            || !new_coverage
+            || !self.config.is_coverage_guided()
+        {
+            return false;
+        }
+
+        let inserted = self.whole_calls.insert_tx(tx, &targeted_contracts.targets());
+        if inserted {
+            self.metrics.whole_call_dictionary_entries = self.whole_calls.len;
+        }
+        inserted
+    }
+
+    /// Attributes an emitted whole-call mutation to its concrete execution.
+    pub(crate) fn record_whole_call_result(&mut self, new_coverage: bool) {
+        if std::mem::take(&mut self.next_whole_call_is_donor) && new_coverage {
+            self.metrics.whole_call_coverage_wins += 1;
+        }
+    }
+
+    /// Generates a destination normally, then optionally supplies arguments from a
+    /// feature-winning call with the same canonical ABI signature hash.
+    fn new_invariant_tx(
+        &mut self,
+        test_runner: &mut TestRunner,
+        fuzz_state: &InvariantFuzzState,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        dictionary_weight: u32,
+    ) -> Result<(BasicTxDetails, bool)> {
+        let mut tx = self.new_tx(test_runner)?;
+        let dictionary_weight = dictionary_weight.min(100);
+        if self.whole_calls.is_empty()
+            || self.mutation_weights.mutation_weight_abi == 0
+            || dictionary_weight == 0
+            || !test_runner.rng().random_ratio(dictionary_weight, 100)
+        {
+            return Ok((tx, false));
+        }
+
+        let targets = targeted_contracts.targets();
+        let Some((function, signature)) = fuzzed_function_for_tx(&tx, &targets) else {
+            return Ok((tx, false));
+        };
+        if function.inputs.is_empty() {
+            return Ok((tx, false));
+        }
+        let Some(donor) = self.whole_calls.sample(signature, test_runner.rng()) else {
+            return Ok((tx, false));
+        };
+        self.metrics.whole_call_attempts += 1;
+
+        let original_calldata = std::mem::replace(&mut tx.call_details.calldata, donor.calldata);
+        let Ok(mutated) = Self::mutate_one_call_argument(
+            function,
+            signature,
+            &tx.call_details.calldata,
+            test_runner,
+            fuzz_state,
+        ) else {
+            tx.call_details.calldata = original_calldata;
+            return Ok((tx, false));
+        };
+        tx.call_details.calldata = mutated;
+        self.metrics.whole_call_mutations += 1;
+        if donor.source_target.is_some_and(|source_target| source_target != tx.call_details.target)
+        {
+            self.metrics.whole_call_cross_target_mutations += 1;
+        }
+
+        Ok((tx, true))
+    }
+
+    /// Mutates exactly one ABI argument while preserving the donor's selector.
+    fn mutate_one_call_argument(
+        function: &Function,
+        signature: WholeCallSignature,
+        calldata: &Bytes,
+        test_runner: &mut TestRunner,
+        fuzz_state: &InvariantFuzzState,
+    ) -> Result<Bytes> {
+        let Some(selector) = calldata.get(..4) else {
+            return Err(eyre!("whole-call donor is shorter than a function selector"));
+        };
+        if selector != &signature.0[..4] {
+            return Err(eyre!("whole-call donor selector does not match generated function"));
+        }
+        if function.inputs.is_empty() {
+            return Err(eyre!("generated function has no arguments to mutate"));
+        }
+
+        let mut values = function
+            .abi_decode_input(&calldata[4..])
+            .map_err(|err| eyre!("failed to decode whole-call donor: {err}"))?;
+        let index = test_runner.rng().random_range(0..values.len());
+        let input_type = function.inputs[index].selector_type().parse()?;
+        values[index] =
+            mutate_param_value(&input_type, values[index].clone(), test_runner, fuzz_state);
+
+        let mutated = function
+            .abi_encode_input(&values)
+            .map_err(|err| eyre!("failed to encode whole-call mutation: {err}"))?;
+        if mutated.as_slice() == calldata.as_ref() {
+            return Err(eyre!("whole-call mutation did not change calldata"));
+        }
+        Ok(mutated.into())
+    }
+
+    fn remember_whole_call_plan(&mut self, plan: Vec<bool>) {
+        self.next_whole_call_is_donor = plan.first().copied().unwrap_or(false);
+        self.whole_call_plan = plan;
+    }
+
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
     /// configured max mutations value. Used by invariant test campaigns.
     #[instrument(skip_all)]
@@ -1503,13 +1841,18 @@ impl WorkerCorpus {
         test_runner: &mut TestRunner,
         fuzz_state: &InvariantFuzzState,
         targeted_contracts: &FuzzRunIdentifiedContracts,
+        dictionary_weight: u32,
     ) -> Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
+        let mut whole_call_positions = Vec::new();
+        self.whole_call_plan.clear();
+        self.next_whole_call_is_donor = false;
 
         // Early return with first_input only if corpus dir / coverage guided fuzzing not
         // configured.
         if !self.config.is_coverage_guided() {
             new_seq.push(self.new_tx(test_runner)?);
+            self.remember_whole_call_plan(vec![false]);
             return Ok(new_seq);
         };
 
@@ -1518,10 +1861,24 @@ impl WorkerCorpus {
                 weighted_mutation_type(test_runner.rng(), &self.mutation_distribution);
 
             let Some(primary) = self.random_mutation_corpus(test_runner.rng())? else {
-                return Ok(vec![self.new_tx(test_runner)?]);
+                let (tx, used_whole_call) = self.new_invariant_tx(
+                    test_runner,
+                    fuzz_state,
+                    targeted_contracts,
+                    dictionary_weight,
+                )?;
+                self.remember_whole_call_plan(vec![used_whole_call]);
+                return Ok(vec![tx]);
             };
             let Some(secondary) = self.random_mutation_corpus(test_runner.rng())? else {
-                return Ok(vec![self.new_tx(test_runner)?]);
+                let (tx, used_whole_call) = self.new_invariant_tx(
+                    test_runner,
+                    fuzz_state,
+                    targeted_contracts,
+                    dictionary_weight,
+                )?;
+                self.remember_whole_call_plan(vec![used_whole_call]);
+                return Ok(vec![tx]);
             };
             let primary = primary.get(&self.in_memory_corpus);
             let secondary = secondary.get(&self.in_memory_corpus);
@@ -1577,11 +1934,22 @@ impl WorkerCorpus {
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
 
                     let prefix_len = test_runner.rng().random_range(0..=corpus.tx_seq.len());
-                    new_seq.reserve(corpus.tx_seq.len());
+                    let corpus_len = corpus.tx_seq.len();
+                    let retained = corpus.tx_seq[prefix_len..].to_vec();
+                    new_seq.reserve(corpus_len);
                     for _ in 0..prefix_len {
-                        new_seq.push(self.new_tx(test_runner)?);
+                        let (tx, used_whole_call) = self.new_invariant_tx(
+                            test_runner,
+                            fuzz_state,
+                            targeted_contracts,
+                            dictionary_weight,
+                        )?;
+                        if used_whole_call {
+                            whole_call_positions.push(new_seq.len());
+                        }
+                        new_seq.push(tx);
                     }
-                    new_seq.extend_from_slice(&corpus.tx_seq[prefix_len..]);
+                    new_seq.extend(retained);
                 }
                 MutationType::Suffix => {
                     let corpus =
@@ -1590,10 +1958,20 @@ impl WorkerCorpus {
 
                     let suffix_len = test_runner.rng().random_range(0..corpus.tx_seq.len());
                     let retained_len = corpus.tx_seq.len() - suffix_len;
-                    new_seq.reserve(corpus.tx_seq.len());
-                    new_seq.extend_from_slice(&corpus.tx_seq[..retained_len]);
-                    for _ in retained_len..corpus.tx_seq.len() {
-                        new_seq.push(self.new_tx(test_runner)?);
+                    let corpus_len = corpus.tx_seq.len();
+                    new_seq = corpus.tx_seq[..retained_len].to_vec();
+                    new_seq.reserve(suffix_len);
+                    for _ in retained_len..corpus_len {
+                        let (tx, used_whole_call) = self.new_invariant_tx(
+                            test_runner,
+                            fuzz_state,
+                            targeted_contracts,
+                            dictionary_weight,
+                        )?;
+                        if used_whole_call {
+                            whole_call_positions.push(new_seq.len());
+                        }
+                        new_seq.push(tx);
                     }
                 }
                 MutationType::Abi => {
@@ -1689,7 +2067,16 @@ impl WorkerCorpus {
 
                     new_seq = corpus.tx_seq.clone();
                     let idx = test_runner.rng().random_range(0..=new_seq.len());
-                    new_seq.insert(idx, self.new_tx(test_runner)?);
+                    let (tx, used_whole_call) = self.new_invariant_tx(
+                        test_runner,
+                        fuzz_state,
+                        targeted_contracts,
+                        dictionary_weight,
+                    )?;
+                    new_seq.insert(idx, tx);
+                    if used_whole_call {
+                        whole_call_positions.push(idx);
+                    }
                 }
                 MutationType::Delete => {
                     let corpus =
@@ -1722,8 +2109,22 @@ impl WorkerCorpus {
 
         // Make sure the new sequence contains at least one tx to start fuzzing from.
         if new_seq.is_empty() {
-            new_seq.push(self.new_tx(test_runner)?);
+            let (tx, used_whole_call) = self.new_invariant_tx(
+                test_runner,
+                fuzz_state,
+                targeted_contracts,
+                dictionary_weight,
+            )?;
+            if used_whole_call {
+                whole_call_positions.push(0);
+            }
+            new_seq.push(tx);
         }
+        let mut whole_call_plan = vec![false; new_seq.len()];
+        for position in whole_call_positions {
+            whole_call_plan[position] = true;
+        }
+        self.remember_whole_call_plan(whole_call_plan);
         trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
 
         Ok(new_seq)
@@ -1826,127 +2227,19 @@ impl WorkerCorpus {
         tx_seq.into_iter().nth(tx_idx)
     }
 
-    /// Converts replayable observed sub-calls into one normal multi-transaction corpus entry.
-    ///
-    /// This captures calls shaped by a handler or another target call and lets the existing corpus
-    /// machinery mutate, evict, sync, and persist them like any other interesting sequence.
-    pub fn hoist_observed_calls(
-        &mut self,
-        observed: &[ObservedCall],
-        parent_tx: &BasicTxDetails,
-        targeted_contracts: &FuzzRunIdentifiedContracts,
-        insertion_mode: CorpusInsertionMode,
-    ) -> Option<CampaignCorpusEntry> {
-        if !self.config.is_coverage_guided() || observed.is_empty() {
-            return None;
-        }
-
-        let tx_seq = {
-            let targets = targeted_contracts.targets();
-            sequence_from_observed(
-                observed,
-                &targets,
-                ObservedCallDepth::All,
-                Some((parent_tx.warp, parent_tx.roll)),
-            )
-        };
-
-        self.push_observed_sequence(tx_seq, insertion_mode)
-    }
-
-    /// Seeds the corpus from sibling zero-input unit tests by replaying them on a clone of the
-    /// post-setUp executor and keeping the direct replayable calls made by each test.
-    ///
-    /// Returns the number of test-derived corpus entries added.
-    pub fn seed_from_test_traces<FEN: FoundryEvmNetwork>(
-        &mut self,
-        invariant_contract: &InvariantContract<'_>,
-        targeted_contracts: &FuzzRunIdentifiedContracts,
-        executor: &Executor<FEN>,
-    ) -> Result<usize> {
-        if !self.config.is_coverage_guided() {
-            return Ok(0);
-        }
-
-        let mut added = 0;
-
-        for func in invariant_contract.abi.functions() {
-            if !func.is_unit_test() {
-                continue;
-            }
-            if invariant_contract
-                .invariant_fns
-                .iter()
-                .any(|(invariant_fn, _)| func.selector() == invariant_fn.selector())
-            {
-                continue;
-            }
-
-            let calldata = match func.abi_encode_input(&[]) {
-                Ok(calldata) => Bytes::from(calldata),
-                Err(_) => continue,
-            };
-
-            let exec = executor.clone();
-
-            let raw = match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO)
-            {
-                Ok(raw) => raw,
-                Err(_) => continue,
-            };
-            if raw.reverted {
-                continue;
-            }
-
-            let observed = raw.observed_calls;
-            if observed.is_empty() {
-                continue;
-            }
-
-            let seq = {
-                let targets = targeted_contracts.targets();
-                sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
-            };
-
-            let insertion_mode = if self.id == 0 {
-                CorpusInsertionMode::Live
-            } else {
-                CorpusInsertionMode::MemoryOnly
-            };
-            let len_before = self.in_memory_corpus.len();
-            let _ = self.push_observed_sequence(seq, insertion_mode);
-            if self.in_memory_corpus.len() > len_before {
-                debug!(target: "corpus", test = %func.name, "seeded corpus sequence from test trace");
-                added += 1;
-            }
-        }
-
-        Ok(added)
-    }
-
-    fn push_observed_sequence(
-        &mut self,
-        tx_seq: Vec<BasicTxDetails>,
-        insertion_mode: CorpusInsertionMode,
-    ) -> Option<CampaignCorpusEntry> {
-        if !self.config.is_coverage_guided() || tx_seq.is_empty() {
-            return None;
-        }
-
-        let corpus = CorpusEntry::new(tx_seq);
-
-        self.insert_corpus_entry(corpus, insertion_mode, false)
-    }
-
     /// Returns the next call to be used in call sequence.
     /// If coverage guided fuzzing is not configured or if previous input was discarded then this is
     /// a new tx from strategy.
     /// If running with coverage guided fuzzing it returns a new call only when sequence
     /// does not have enough entries, or randomly. Otherwise, returns the next call from initial
     /// sequence.
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_next_input(
         &mut self,
         test_runner: &mut TestRunner,
+        fuzz_state: &InvariantFuzzState,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        dictionary_weight: u32,
         sequence: &[BasicTxDetails],
         discarded: bool,
         depth: usize,
@@ -1954,7 +2247,14 @@ impl WorkerCorpus {
         // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
         // call was discarded.
         if self.config.corpus_dir.is_none() || discarded {
-            return self.new_tx(test_runner);
+            let (tx, used_whole_call) = self.new_invariant_tx(
+                test_runner,
+                fuzz_state,
+                targeted_contracts,
+                dictionary_weight,
+            )?;
+            self.next_whole_call_is_donor = used_whole_call;
+            return Ok(tx);
         }
 
         // When running with coverage guided fuzzing enabled then generate new sequence if initial
@@ -1962,10 +2262,18 @@ impl WorkerCorpus {
         let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
         let generate_fresh = fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100);
         if depth >= sequence.len() || generate_fresh {
-            return self.new_tx(test_runner);
+            let (tx, used_whole_call) = self.new_invariant_tx(
+                test_runner,
+                fuzz_state,
+                targeted_contracts,
+                dictionary_weight,
+            )?;
+            self.next_whole_call_is_donor = used_whole_call;
+            return Ok(tx);
         }
 
         // Continue with the next call initial sequence.
+        self.next_whole_call_is_donor = self.whole_call_plan.get(depth).copied().unwrap_or(false);
         Ok(sequence[depth].clone())
     }
 
@@ -2230,6 +2538,8 @@ impl WorkerCorpus {
                 edge_indices: &mut self.edge_indices,
                 sancov_history_map: &mut self.sancov_history_map,
                 metrics: Some(&mut self.metrics),
+                // Invariant donors are worker-local; this synchronization path is stateless.
+                whole_calls: None,
             };
             let ReplayOutcome {
                 keep_entry, new_coverage, new_edge, edges_covered, cmp_seq, ..
@@ -2494,43 +2804,6 @@ impl WorkerCorpus {
     }
 }
 
-#[derive(Clone, Copy)]
-enum ObservedCallDepth {
-    DirectOnly,
-    All,
-}
-
-fn sequence_from_observed(
-    observed: &[ObservedCall],
-    targets: &TargetedContracts,
-    depth: ObservedCallDepth,
-    first_delay: Option<(Option<U256>, Option<U256>)>,
-) -> Vec<BasicTxDetails> {
-    let mut first_delay = first_delay;
-    observed
-        .iter()
-        .filter(|call| matches!(depth, ObservedCallDepth::All) || call.depth == 1)
-        .filter_map(|call| {
-            let mut tx = BasicTxDetails {
-                warp: None,
-                roll: None,
-                sender: call.caller,
-                call_details: CallDetails {
-                    target: call.target,
-                    calldata: call.calldata.clone(),
-                    value: call.value,
-                },
-            };
-            targets.can_replay(&tx).then(|| {
-                let (warp, roll) = first_delay.take().unwrap_or((None, None));
-                tx.warp = warp;
-                tx.roll = roll;
-                tx
-            })
-        })
-        .collect()
-}
-
 fn prepare_campaign_output_dir(config: &FuzzCorpusConfig) {
     let Some(root) = &config.corpus_dir else {
         return;
@@ -2599,13 +2872,27 @@ fn unique_corpus_entries<'a>(
     replay_dirs: &'a [PathBuf],
     seen_entries: &'a mut HashSet<Uuid>,
 ) -> impl Iterator<Item = CorpusDirEntry> + 'a {
-    replay_dirs.iter().flat_map(|replay_dir| read_corpus_dir(replay_dir)).filter(|entry| {
-        let is_new = seen_entries.insert(entry.uuid);
-        if !is_new {
-            trace!(target: "corpus", "skipping duplicate corpus entry {}", entry.uuid);
-        }
-        is_new
-    })
+    replay_dirs
+        .iter()
+        .flat_map(|replay_dir| {
+            let mut entries = read_corpus_dir(replay_dir).collect::<Vec<_>>();
+            // Filesystem iteration order is unspecified. Stable startup replay keeps coverage
+            // attribution, corpus sharding, and whole-call donor insertion reproducible.
+            entries.sort_unstable_by(|left, right| {
+                left.timestamp
+                    .cmp(&right.timestamp)
+                    .then_with(|| left.uuid.cmp(&right.uuid))
+                    .then_with(|| left.path.cmp(&right.path))
+            });
+            entries
+        })
+        .filter(|entry| {
+            let is_new = seen_entries.insert(entry.uuid);
+            if !is_new {
+                trace!(target: "corpus", "skipping duplicate corpus entry {}", entry.uuid);
+            }
+            is_new
+        })
 }
 
 #[cfg(test)]
@@ -2613,6 +2900,7 @@ mod tests {
     use super::*;
     use crate::inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey};
     use alloy_dyn_abi::DynSolValue;
+    use alloy_primitives::{U256, keccak256};
     use foundry_config::FuzzDictionaryConfig;
     use proptest::prelude::Just;
     use revm::database::{CacheDB, EmptyDB};
@@ -2805,8 +3093,12 @@ mod tests {
         let mut manager =
             worker_corpus_with_config(0, config, generated.clone(), WorkerCorpusSeed::default());
         let mut runner = TestRunner::default();
+        let fuzz_state = empty_fuzz_state().into_invariant();
+        let targeted_contracts = empty_targeted_contracts();
 
-        let input = manager.generate_next_input(&mut runner, &[], false, 0).unwrap();
+        let input = manager
+            .generate_next_input(&mut runner, &fuzz_state, &targeted_contracts, 0, &[], false, 0)
+            .unwrap();
 
         assert_eq!(input.call_details.calldata, generated.call_details.calldata);
     }
@@ -2874,7 +3166,8 @@ mod tests {
             [function.selector()],
         );
 
-        let sequence = manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts).unwrap();
+        let sequence =
+            manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts, 0).unwrap();
 
         assert_eq!(sequence.len(), 1);
         assert_eq!(sequence[0].call_details.calldata, original.call_details.calldata);
@@ -2898,6 +3191,24 @@ mod tests {
 
         let mut targets = TargetedContracts::new();
         targets.inner.insert(target, contract);
+        FuzzRunIdentifiedContracts::new(targets, false)
+    }
+
+    fn targeted_contracts_with_same_functions(
+        addresses: &[Address],
+        functions: &[Function],
+    ) -> FuzzRunIdentifiedContracts {
+        use alloy_json_abi::JsonAbi;
+        use foundry_evm_fuzz::invariant::TargetedContract;
+
+        let mut targets = TargetedContracts::new();
+        for &address in addresses {
+            let mut abi = JsonAbi::new();
+            for function in functions {
+                abi.functions.entry(function.name.clone()).or_default().push(function.clone());
+            }
+            targets.inner.insert(address, TargetedContract::new("Target".to_string(), abi));
+        }
         FuzzRunIdentifiedContracts::new(targets, false)
     }
 
@@ -2972,6 +3283,7 @@ mod tests {
                 &mut runner,
                 &empty_fuzz_state().into_invariant(),
                 &empty_targeted_contracts(),
+                0,
             )
             .unwrap();
 
@@ -3014,6 +3326,7 @@ mod tests {
                 &mut runner,
                 &empty_fuzz_state().into_invariant(),
                 &empty_targeted_contracts(),
+                0,
             )
             .unwrap();
 
@@ -3053,6 +3366,7 @@ mod tests {
                 &mut runner,
                 &empty_fuzz_state().into_invariant(),
                 &empty_targeted_contracts(),
+                0,
             )
             .unwrap();
 
@@ -3095,6 +3409,7 @@ mod tests {
                 &mut runner,
                 &empty_fuzz_state().into_invariant(),
                 &empty_targeted_contracts(),
+                0,
             )
             .unwrap();
 
@@ -3137,6 +3452,7 @@ mod tests {
                 &mut runner,
                 &empty_fuzz_state().into_invariant(),
                 &empty_targeted_contracts(),
+                0,
             )
             .unwrap();
 
@@ -3284,6 +3600,35 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].uuid, corpus.uuid);
+        assert!(entries[0].path.starts_with(worker0_corpus));
+    }
+
+    #[test]
+    fn persisted_corpus_replay_order_is_deterministic() {
+        let corpus_dir = temp_corpus_dir();
+        let mut later = CorpusEntry::new(vec![basic_tx()]);
+        later.uuid = Uuid::from_u128(1);
+        later.timestamp = 20;
+        let mut early_high_uuid = CorpusEntry::new(vec![basic_tx()]);
+        early_high_uuid.uuid = Uuid::from_u128(3);
+        early_high_uuid.timestamp = 10;
+        let mut early_low_uuid = CorpusEntry::new(vec![basic_tx()]);
+        early_low_uuid.uuid = Uuid::from_u128(2);
+        early_low_uuid.timestamp = 10;
+
+        later.write_to_disk_in(&corpus_dir, false).unwrap();
+        early_high_uuid.write_to_disk_in(&corpus_dir, false).unwrap();
+        early_low_uuid.write_to_disk_in(&corpus_dir, false).unwrap();
+
+        let mut seen = HashSet::new();
+        let replay_order = unique_corpus_entries(std::slice::from_ref(&corpus_dir), &mut seen)
+            .map(|entry| (entry.timestamp, entry.uuid))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            replay_order,
+            vec![(10, early_low_uuid.uuid), (10, early_high_uuid.uuid), (20, later.uuid),]
+        );
     }
 
     #[test]
@@ -3408,11 +3753,13 @@ mod tests {
                 cumulative_features_seen: 11,
                 corpus_count: 1,
                 favored_items: 0,
+                ..Default::default()
             },
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: tx_seq,
             last_new_edge_at: None,
+            ..Default::default()
         };
 
         let manager =
@@ -3446,6 +3793,14 @@ mod tests {
         let entry_ids = entries.iter().map(|entry| entry.uuid).collect::<Vec<_>>();
         let top_rated =
             HashMap::from([(0, (entry_ids[0], 1)), (1, (entry_ids[1], 1)), (2, (entry_ids[2], 1))]);
+        let whole_call_signature = WholeCallSignature(B256::ZERO);
+        let whole_call_calldata = Bytes::from(vec![1, 2, 3, 4]);
+        let mut whole_calls = WholeCallDictionary::default();
+        assert!(whole_calls.insert(
+            whole_call_signature,
+            Address::from([0x42; 20]),
+            whole_call_calldata.clone(),
+        ));
         let seed = WorkerCorpusSeed {
             in_memory_corpus: entries,
             disk_corpus: CachedDiskCorpus::default(),
@@ -3458,7 +3813,9 @@ mod tests {
                 cumulative_features_seen: 11,
                 corpus_count: 10,
                 favored_items: 3,
+                ..Default::default()
             },
+            whole_calls,
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: vec![basic_tx()],
@@ -3509,6 +3866,11 @@ mod tests {
         assert!(shards.iter().all(|shard| shard.sancov_history_map == seed.sancov_history_map));
         assert!(shards.iter().all(|shard| shard.metrics.cumulative_edges_seen == 7));
         assert!(shards.iter().all(|shard| shard.metrics.cumulative_features_seen == 11));
+        assert!(shards.iter().all(|shard| {
+            shard.whole_calls.by_signature.get(&whole_call_signature).is_some_and(|calls| {
+                calls.len() == 1 && calls[0].calldata.as_ref() == whole_call_calldata.as_ref()
+            })
+        }));
     }
 
     #[test]
@@ -3608,262 +3970,314 @@ mod tests {
     }
 
     #[test]
-    fn hoist_observed_calls_bundles_replayable_subcalls_into_one_corpus_entry() {
+    fn whole_call_admission_requires_coverage_and_stays_out_of_corpus() {
         let target = Address::from([0x42; 20]);
-        let other = Address::from([0x43; 20]);
-        let sender = Address::from([0xaa; 20]);
-        let observed_caller = Address::from([0xbb; 20]);
         let foo = Function::parse("foo(uint256)").unwrap();
-        let bar = Function::parse("bar()").unwrap();
-        let foo_selector = foo.selector();
-        let bar_selector = bar.selector();
-        let targeted_contracts = targeted_contracts_with_selective_functions(
-            target,
-            vec![foo, bar],
-            [foo_selector, bar_selector],
-        );
-
-        let mut foo_calldata = vec![0u8; 36];
-        foo_calldata[..4].copy_from_slice(&foo_selector[..]);
-        let bar_calldata = bar_selector.to_vec();
-        let mut unknown_selector = vec![0u8; 36];
-        unknown_selector[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-        let value = U256::from(1);
-
-        let observed = vec![
-            ObservedCall {
-                depth: 1,
-                caller: observed_caller,
-                target: other,
-                calldata: Bytes::from(foo_calldata.clone()),
-                value: Some(value),
-            },
-            ObservedCall {
-                depth: 1,
-                caller: observed_caller,
-                target,
-                calldata: Bytes::from(foo_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 2,
-                caller: observed_caller,
-                target,
-                calldata: Bytes::from(bar_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: observed_caller,
-                target,
-                calldata: Bytes::from(unknown_selector),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: observed_caller,
-                target,
-                calldata: Bytes::from(vec![0u8; 3]),
-                value: None,
-            },
-        ];
-        let parent_tx = BasicTxDetails {
-            warp: Some(U256::from(123)),
-            roll: Some(U256::from(456)),
-            sender,
-            call_details: CallDetails {
-                target: Address::from([0x99; 20]),
-                calldata: Bytes::new(),
-                value: None,
-            },
-        };
-        let mut manager = empty_worker_corpus(0, temp_corpus_dir());
-
-        let campaign_entry = manager.hoist_observed_calls(
-            &observed,
-            &parent_tx,
-            &targeted_contracts,
-            CorpusInsertionMode::Live,
-        );
-
-        assert!(campaign_entry.is_none());
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(manager.metrics.corpus_count, 1);
-
-        let entry = manager.in_memory_corpus.last().unwrap();
-        assert_eq!(entry.tx_seq.len(), 2);
-        let tx = &entry.tx_seq[0];
-        assert_eq!(tx.warp, parent_tx.warp);
-        assert_eq!(tx.roll, parent_tx.roll);
-        assert_eq!(tx.sender, observed_caller);
-        assert_eq!(tx.call_details.target, target);
-        assert_eq!(&tx.call_details.calldata[..4], &foo_selector[..]);
-        assert_eq!(tx.call_details.value, None);
-
-        let tx = &entry.tx_seq[1];
-        assert_eq!(tx.warp, None);
-        assert_eq!(tx.roll, None);
-        assert_eq!(tx.sender, observed_caller);
-        assert_eq!(tx.call_details.target, target);
-        assert_eq!(&tx.call_details.calldata[..4], &bar_selector[..]);
-        assert_eq!(tx.call_details.value, None);
-    }
-
-    #[test]
-    fn hoist_observed_calls_persists_campaign_entry_immediately() {
-        let target = Address::from([0x42; 20]);
-        let foo = Function::parse("foo()").unwrap();
-        let selector = foo.selector();
-        let targeted_contracts = targeted_contracts_with_selective_functions(target, vec![foo], []);
-        let observed = vec![ObservedCall {
-            depth: 1,
-            caller: Address::from([0xaa; 20]),
-            target,
-            calldata: Bytes::from(selector.to_vec()),
-            value: None,
-        }];
+        let zero_arg = Function::parse("zeroArg()").unwrap();
+        let other = Function::parse("other(uint256)").unwrap();
+        let tx = tx_for_function(target, &foo, &[DynSolValue::Uint(U256::from(7), 256)]);
+        let mut malformed = tx.clone();
+        malformed.call_details.calldata = foo.selector().to_vec().into();
+        let mut off_target = tx.clone();
+        off_target.call_details.target = Address::from([0x43; 20]);
+        let zero_arg_tx = tx_for_function(target, &zero_arg, &[]);
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo.clone(), zero_arg], []);
+        let other_selector = other.selector();
+        let filtered_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo, other], [other_selector]);
         let corpus_root = temp_corpus_dir();
         let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        let campaign_entry = manager.hoist_observed_calls(
-            &observed,
-            &basic_tx(),
-            &targeted_contracts,
-            CorpusInsertionMode::Deferred,
-        );
-
-        assert!(campaign_entry.is_none());
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 1);
-    }
-
-    #[test]
-    fn hoist_observed_calls_skips_empty_or_non_coverage_guided_inputs() {
-        let target = Address::from([0x42; 20]);
-        let foo = Function::parse("foo()").unwrap();
-        let selector = foo.selector();
-        let targeted_contracts = targeted_contracts_with_selective_functions(target, vec![foo], []);
-        let observed = vec![ObservedCall {
-            depth: 1,
-            caller: Address::from([0xaa; 20]),
-            target,
-            calldata: Bytes::from(selector.to_vec()),
-            value: None,
-        }];
-
         let mut no_corpus_config = corpus_config(temp_corpus_dir());
         no_corpus_config.corpus_dir = None;
-        let mut manager = WorkerCorpus::from_seed(
-            0,
-            no_corpus_config,
-            Just(basic_tx()).boxed(),
-            WorkerCorpusSeed::default(),
-        )
-        .unwrap();
-        assert!(
-            manager
-                .hoist_observed_calls(
-                    &observed,
-                    &basic_tx(),
-                    &targeted_contracts,
-                    CorpusInsertionMode::Live
-                )
-                .is_none()
-        );
-        assert!(manager.in_memory_corpus.is_empty());
+        let mut no_corpus =
+            worker_corpus_with_config(0, no_corpus_config, tx.clone(), WorkerCorpusSeed::default());
 
-        let mut manager = empty_worker_corpus(0, temp_corpus_dir());
-        assert!(
-            manager
-                .hoist_observed_calls(
-                    &[],
-                    &basic_tx(),
-                    &targeted_contracts,
-                    CorpusInsertionMode::Live
-                )
-                .is_none()
+        assert!(!no_corpus.admit_whole_call(&tx, true, &targeted_contracts));
+        assert!(!manager.admit_whole_call(&tx, false, &targeted_contracts));
+        assert!(!manager.admit_whole_call(&tx, true, &filtered_contracts));
+        assert!(!manager.admit_whole_call(&malformed, true, &targeted_contracts));
+        assert!(!manager.admit_whole_call(&off_target, true, &targeted_contracts));
+        assert!(!manager.admit_whole_call(&zero_arg_tx, true, &targeted_contracts));
+        assert_eq!(manager.whole_calls.len, 0);
+        assert!(manager.admit_whole_call(&tx, true, &targeted_contracts));
+        assert!(!manager.admit_whole_call(&tx, true, &targeted_contracts));
+        assert_eq!(manager.whole_calls.len, 1);
+        assert_eq!(manager.metrics.whole_call_dictionary_entries, 1);
+        assert!(manager.in_memory_corpus.is_empty());
+        assert_eq!(manager.metrics.corpus_count, 0);
+        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 0);
+    }
+
+    #[test]
+    fn discarded_magic_assume_coverage_is_not_a_whole_call_winner() {
+        assert!(is_whole_call_coverage_winner(true, false));
+        assert!(!is_whole_call_coverage_winner(true, true));
+        assert!(!is_whole_call_coverage_winner(false, false));
+    }
+
+    #[test]
+    fn whole_call_dictionary_is_bounded_by_entries_and_bytes() {
+        let mut dictionary = WholeCallDictionary::default();
+        let first_signature = WholeCallSignature(B256::ZERO);
+
+        for index in 0..=WHOLE_CALL_DICTIONARY_MAX_LEN {
+            let signature = WholeCallSignature(U256::from(index).into());
+            assert!(dictionary.insert(
+                signature,
+                Address::from([index as u8; 20]),
+                Bytes::from(index.to_be_bytes().to_vec()),
+            ));
+        }
+        assert_eq!(dictionary.len, WHOLE_CALL_DICTIONARY_MAX_LEN);
+        assert_eq!(
+            dictionary.calldata_bytes,
+            dictionary.insertion_order.iter().map(|(_, calldata)| calldata.len()).sum::<usize>()
         );
+        assert!(!dictionary.by_signature.contains_key(&first_signature));
+
+        let oversized = Bytes::from(vec![0; WHOLE_CALL_DICTIONARY_MAX_BYTES + 1]);
+        assert!(!dictionary.insert(WholeCallSignature(B256::ZERO), Address::ZERO, oversized));
+
+        let mut dictionary = WholeCallDictionary::default();
+        let chunk_len = WHOLE_CALL_DICTIONARY_MAX_BYTES / 2 + 1;
+        let second_signature = WholeCallSignature(U256::from(1).into());
+        assert!(
+            dictionary.insert(first_signature, Address::ZERO, Bytes::from(vec![1; chunk_len]),)
+        );
+        assert!(dictionary.insert(
+            second_signature,
+            Address::ZERO,
+            Bytes::from(vec![2; chunk_len]),
+        ));
+        assert_eq!(dictionary.len, 1);
+        assert_eq!(dictionary.calldata_bytes, chunk_len);
+        assert!(!dictionary.by_signature.contains_key(&first_signature));
+        assert!(dictionary.by_signature.contains_key(&second_signature));
+    }
+
+    #[test]
+    fn whole_call_dictionary_separates_selector_collisions() {
+        let mut dictionary = WholeCallDictionary::default();
+        let first_function = Function::parse("burn(uint256)").unwrap();
+        let second_function = Function::parse("collate_propagate_storage(bytes16)").unwrap();
+        assert_eq!(first_function.selector(), second_function.selector());
+        let first = WholeCallSignature(keccak256(first_function.signature()));
+        let second = WholeCallSignature(keccak256(second_function.signature()));
+        assert_ne!(first, second);
+        assert!(dictionary.insert(first, Address::ZERO, Bytes::from(vec![1])));
+        assert!(dictionary.insert(second, Address::ZERO, Bytes::from(vec![2])));
+        let mut runner = TestRunner::default();
+
+        assert_eq!(dictionary.sample(first, runner.rng()).unwrap().calldata, Bytes::from(vec![1]));
+        assert_eq!(dictionary.sample(second, runner.rng()).unwrap().calldata, Bytes::from(vec![2]));
+    }
+
+    #[test]
+    fn cached_whole_call_signatures_separate_cross_target_selector_collisions() {
+        use alloy_json_abi::JsonAbi;
+        use foundry_evm_fuzz::invariant::TargetedContract;
+
+        let first_target = Address::from([0x41; 20]);
+        let second_target = Address::from([0x42; 20]);
+        let first_function = Function::parse("burn(uint256)").unwrap();
+        let second_function = Function::parse("collate_propagate_storage(bytes16)").unwrap();
+        assert_eq!(first_function.selector(), second_function.selector());
+
+        let mut targets = TargetedContracts::new();
+        for (target, function) in
+            [(first_target, first_function.clone()), (second_target, second_function.clone())]
+        {
+            let mut abi = JsonAbi::new();
+            abi.functions.entry(function.name.clone()).or_default().push(function);
+            targets.insert(target, TargetedContract::new("Target".to_string(), abi));
+        }
+        let first_tx = tx_for_function(
+            first_target,
+            &first_function,
+            &[DynSolValue::Uint(U256::from(1), 256)],
+        );
+        let second_tx = tx_for_function(
+            second_target,
+            &second_function,
+            &[DynSolValue::FixedBytes(B256::ZERO, 16)],
+        );
+
+        let (_, first_signature) = fuzzed_function_for_tx(&first_tx, &targets).unwrap();
+        let (_, second_signature) = fuzzed_function_for_tx(&second_tx, &targets).unwrap();
+
+        assert_ne!(first_signature, second_signature);
+    }
+
+    #[test]
+    fn whole_call_dictionary_deduplicates_identical_calls_across_targets() {
+        let mut dictionary = WholeCallDictionary::default();
+        let signature = WholeCallSignature(B256::ZERO);
+        let calldata = Bytes::from(vec![1, 2, 3, 4]);
+        let first_target = Address::from([0x41; 20]);
+        let second_target = Address::from([0x42; 20]);
+
+        assert!(dictionary.insert(signature, first_target, calldata.clone()));
+        assert!(!dictionary.insert(signature, second_target, calldata.clone()));
+        assert_eq!(dictionary.len, 1);
+
+        let mut runner = TestRunner::default();
+        let retained = dictionary.sample(signature, runner.rng()).unwrap();
+        assert_eq!(retained.source_target, None);
+        assert_eq!(retained.calldata, calldata);
+    }
+
+    #[test]
+    fn fresh_generation_retargets_whole_call_and_attributes_coverage() {
+        let source_target = Address::from([0x41; 20]);
+        let destination_target = Address::from([0x42; 20]);
+        let function = Function::parse("target(bool,bool)").unwrap();
+        let source = tx_for_function(
+            source_target,
+            &function,
+            &[DynSolValue::Bool(true), DynSolValue::Bool(true)],
+        );
+        let mut destination = tx_for_function(
+            destination_target,
+            &function,
+            &[DynSolValue::Bool(false), DynSolValue::Bool(false)],
+        );
+        destination.warp = Some(U256::from(11));
+        destination.roll = Some(U256::from(12));
+        destination.sender = Address::from([0xaa; 20]);
+        destination.call_details.value = Some(U256::from(13));
+        let targeted_contracts = targeted_contracts_with_same_functions(
+            &[source_target, destination_target],
+            std::slice::from_ref(&function),
+        );
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_abi: 1,
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
+        };
+        let mut manager =
+            worker_corpus_with_config(0, config, destination, WorkerCorpusSeed::default());
+        assert!(manager.admit_whole_call(&source, true, &targeted_contracts));
+
+        let fuzz_state = empty_fuzz_state().into_invariant();
+        let mut runner = TestRunner::default();
+        let emitted = (0..64)
+            .find_map(|_| {
+                let sequence =
+                    manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts, 100).unwrap();
+                (manager.metrics.whole_call_mutations > 0)
+                    .then(|| sequence.into_iter().next().unwrap())
+            })
+            .expect("whole-call donor should be selected");
+        let decoded = function.abi_decode_input(&emitted.call_details.calldata[4..]).unwrap();
+
+        assert_eq!(decoded.iter().filter(|value| value.as_bool() == Some(true)).count(), 1);
+        assert_eq!(emitted.warp, Some(U256::from(11)));
+        assert_eq!(emitted.roll, Some(U256::from(12)));
+        assert_eq!(emitted.sender, Address::from([0xaa; 20]));
+        assert_eq!(emitted.call_details.target, destination_target);
+        assert_eq!(emitted.call_details.value, Some(U256::from(13)));
+        assert_eq!(manager.metrics.whole_call_attempts, 1);
+        assert_eq!(manager.metrics.whole_call_mutations, 1);
+        assert_eq!(manager.metrics.whole_call_cross_target_mutations, 1);
+        assert_eq!(manager.metrics.whole_call_coverage_wins, 0);
+
+        manager.record_whole_call_result(true);
+        assert_eq!(manager.metrics.whole_call_coverage_wins, 1);
+        assert!(manager.admit_whole_call(&emitted, true, &targeted_contracts));
+        assert_eq!(manager.whole_calls.len, 2);
         assert!(manager.in_memory_corpus.is_empty());
     }
 
     #[test]
-    fn sequence_from_observed_keeps_only_direct_replayable_calls() {
+    fn whole_call_generation_honors_dictionary_weight_and_tracks_sequence_position() {
         let target = Address::from([0x42; 20]);
-        let other = Address::from([0x43; 20]);
-        let sender = Address::from([0xaa; 20]);
-        let nested_caller = Address::from([0xbb; 20]);
-        let foo = Function::parse("foo(uint256)").unwrap();
-        let bar = Function::parse("bar()").unwrap();
-        let foo_selector = foo.selector();
-        let bar_selector = bar.selector();
-        let targeted_contracts =
-            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
-        let targets = targeted_contracts.targets();
+        let function = Function::parse("target(bool,bool)").unwrap();
+        let donor =
+            tx_for_function(target, &function, &[DynSolValue::Bool(true), DynSolValue::Bool(true)]);
+        let generated = tx_for_function(
+            target,
+            &function,
+            &[DynSolValue::Bool(false), DynSolValue::Bool(false)],
+        );
+        let targeted_contracts = targeted_contracts_with_same_functions(
+            std::slice::from_ref(&target),
+            std::slice::from_ref(&function),
+        );
+        let mut config = corpus_config(temp_corpus_dir());
+        config.corpus_random_sequence_weight = 0;
+        let mut manager =
+            worker_corpus_with_config(0, config, generated.clone(), WorkerCorpusSeed::default());
+        assert!(manager.admit_whole_call(&donor, true, &targeted_contracts));
 
-        let mut foo_calldata = vec![0u8; 36];
-        foo_calldata[..4].copy_from_slice(&foo_selector[..]);
-        let bar_calldata = bar_selector.to_vec();
-        let observed = vec![
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target,
-                calldata: Bytes::from(foo_calldata.clone()),
-                value: None,
-            },
-            ObservedCall {
-                depth: 2,
-                caller: nested_caller,
-                target,
-                calldata: Bytes::from(foo_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target,
-                calldata: Bytes::from(bar_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target: other,
-                calldata: Bytes::from(foo_selector.to_vec()),
-                value: None,
-            },
-        ];
+        let fuzz_state = empty_fuzz_state().into_invariant();
+        let mut runner = TestRunner::default();
+        for _ in 0..32 {
+            let _ = manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts, 0).unwrap();
+        }
+        assert_eq!(manager.metrics.whole_call_attempts, 0);
+        assert_eq!(manager.metrics.whole_call_mutations, 0);
 
-        let seq = sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None);
-
-        assert_eq!(seq.len(), 1);
-        assert_eq!(seq[0].sender, sender);
-        assert_eq!(seq[0].call_details.target, target);
-        assert_eq!(&seq[0].call_details.calldata[..4], &foo_selector[..]);
+        // Provenance is positional, so an identical ordinary call before a donor call cannot
+        // consume the donor's coverage attribution.
+        manager.remember_whole_call_plan(vec![false, true]);
+        manager.record_whole_call_result(true);
+        assert_eq!(manager.metrics.whole_call_coverage_wins, 0);
+        let sequence = vec![generated.clone(), generated];
+        let _ = manager
+            .generate_next_input(
+                &mut runner,
+                &fuzz_state,
+                &targeted_contracts,
+                100,
+                &sequence,
+                false,
+                1,
+            )
+            .unwrap();
+        manager.record_whole_call_result(true);
+        assert_eq!(manager.metrics.whole_call_coverage_wins, 1);
     }
 
     #[test]
-    fn push_observed_sequence_live_persists_and_memory_only_does_not() {
-        let corpus_root = temp_corpus_dir();
-        let worker0_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
-        let mut manager = empty_worker_corpus(0, corpus_root.clone());
+    fn whole_call_admission_is_disabled_without_abi_mutation() {
+        let target = Address::from([0x42; 20]);
+        let function = Function::parse("target(uint256)").unwrap();
+        let tx = tx_for_function(target, &function, &[DynSolValue::Uint(U256::from(42), 256)]);
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![function], []);
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_repeat: 1,
+            mutation_weight_splice: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
+        };
+        let mut manager =
+            worker_corpus_with_config(0, config, tx.clone(), WorkerCorpusSeed::default());
 
-        assert!(
-            manager.push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::Live).is_none()
-        );
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker0_corpus_dir).count(), 1);
-
-        let mut manager = empty_worker_corpus(1, corpus_root.clone());
-        let worker1_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
-        assert!(
-            manager
-                .push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::MemoryOnly)
-                .is_none()
-        );
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker1_corpus_dir).count(), 0);
+        assert!(!manager.admit_whole_call(&tx, true, &targeted_contracts));
+        assert!(manager.whole_calls.is_empty());
     }
 
     #[test]
@@ -3953,7 +4367,6 @@ mod tests {
     fn invariant_insertions_do_not_disable_culling() {
         let mut deferred = empty_worker_corpus(1, temp_corpus_dir());
         let mut live = empty_worker_corpus(0, temp_corpus_dir());
-        let mut memory_only = empty_worker_corpus(1, temp_corpus_dir());
 
         for idx in 0..32 {
             let tx = basic_tx_with_calldata(vec![idx]);
@@ -3965,10 +4378,9 @@ mod tests {
                 None,
             );
             live.process_inputs(std::slice::from_ref(&tx), &[], true, vec![1], None);
-            let _ = memory_only.push_observed_sequence(vec![tx], CorpusInsertionMode::MemoryOnly);
         }
 
-        for manager in [&deferred, &live, &memory_only] {
+        for manager in [&deferred, &live] {
             assert_eq!(manager.in_memory_corpus.len(), 1);
             assert_eq!(manager.metrics.corpus_count, manager.in_memory_corpus.len());
             assert!(manager.pending_sync_uuids.is_empty());

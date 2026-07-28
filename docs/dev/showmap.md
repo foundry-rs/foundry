@@ -5,26 +5,92 @@ emits AFL-`afl-showmap`-style coverage files. Output is consumable by tools like
 [`riesentoaster/differential-coverage`](https://github.com/riesentoaster/differential-coverage)
 for cross-fuzzer / cross-approach coverage comparisons.
 
-## Usage
+## Automatic corpus reuse
+
+An ordinary `forge fuzz run` automatically assigns separate fuzz and invariant
+corpus directories and uses coverage-guided corpus mutation. By default the
+roots are `cache/fuzz/corpus` and `cache/invariant/corpus`; a customized
+`failure_persist_dir` instead produces `<failure_persist_dir>/corpus`. Explicit
+`corpus_dir` configuration or `--corpus-dir` overrides that location.
+`forge test` only enables this behavior when a corpus directory is configured.
+
+In invariant campaigns, Foundry also retains a worker-local dictionary of
+argument-bearing top-level calls whose complete concrete execution won an edge
+or hit-count coverage feature. It is bounded to 1,024 entries and 4 MiB of
+calldata per worker. The retained startup replay seed has the same bound, so a
+conservative campaign-level calldata bound is `(workers + 1) × 4 MiB`.
+
+Each donor is keyed by the full hash of the canonical ABI function signature,
+rather than only the four-byte selector. For each freshly generated invariant
+call, Foundry first selects the destination and function normally. It may then
+reuse calldata from a compatible donor, retarget it to that already-selected
+destination, and mutate exactly one ABI argument. The generated call still
+executes normally. Reusing a donor does not bypass the existing sequence-level
+corpus admission rules: only sequence-level inputs that improve coverage or the
+optimization objective are persisted.
+
+Nested calls are not collected: their calldata alone does not reproduce the
+caller, value, preceding state, or reentrancy context that made the original
+execution interesting.
+
+Whole-call donors are in-memory generation inputs, not additional corpus
+entries. Corpus replay at startup reconstructs the donor dictionary from
+coverage-winning calls in persisted sequences, then each invariant worker
+learns locally. The existing
+`dictionary_weight` controls how often a compatible donor is selected; zero
+disables donor reuse. An effective `mutation_weight_abi = 0` disables both donor
+collection and reuse.
+
+This concrete mutation is most relevant to invariant campaigns where correlated
+ABI arguments matter, including handlers that share a canonical signature. It
+does not derive unknown cryptographic preimages or generally solve nonlinear
+constraints, and does not claim a general hard-branch improvement. There is no
+separate `forge fuzz seed` subcommand: `forge fuzz run` learns and reuses these
+donors automatically, while the explicit CLI entry point for solver-assisted
+pre-seeding is `forge test --symbolic-seed-corpus`.
+
+## Campaign and inspection workflow
 
 ```bash
-# 1. Run a normal campaign with `corpus_dir` configured to populate the corpus.
-forge test
+# 1. Populate or continue an explicitly located corpus with a normal campaign.
+# Omitting --corpus-dir uses forge fuzz run's cache-backed default.
+forge fuzz run --corpus-dir corpus --mc MyInvariantTest --mt invariant_
 
-# 2. Replay it.
-forge test \
+# 2. Decode and inspect the persisted sequences.
+forge fuzz show corpus
+
+# 3. Keep only entries that add coverage. The output path must not exist.
+forge fuzz cmin corpus --corpus-out corpus-min \
+  --mc MyInvariantTest --mt invariant_
+
+# 4. Confirm that the minimized entries still replay for the selected test.
+forge fuzz replay --corpus-dir corpus-min \
+  --mc MyInvariantTest --mt invariant_
+
+# 5. Export coverage for comparison.
+forge fuzz run \
   --showmap-out coverage_data \
+  --showmap-corpus-dir corpus-min \
   --showmap-approach foundry \
-  --showmap-domain evm
+  --showmap-domain evm \
+  --mc MyInvariantTest \
+  --mt invariant_
 ```
+
+Use the same test filters and replay-critical EVM/build options for the
+campaign, minimization, replay, and showmap steps. `corpus_dir` may instead be
+configured under the applicable `[profile.<name>.fuzz]` or
+`[profile.<name>.invariant]` section in `foundry.toml`.
 
 This skips the regular fuzz/invariant campaign and unit/table tests, then for
 every selected fuzz/invariant test:
 
 1. Resolves the per-test corpus dir (or `--showmap-corpus-dir <PATH>` override).
-2. Walks `worker0/corpus/*.json[.gz]`.
+2. Walks every `worker*/corpus/*.json[.gz]` and deduplicates synchronized
+   copies by corpus identity (UUID and timestamp).
 3. Replays each entry through a fresh executor.
-4. Aggregates per-call EVM (and/or sancov) edge bitmaps with saturating add.
+4. Aggregates per-call EVM instruction/PC hit maps and/or sancov edge bitmaps
+   with saturating add.
 5. Writes one or more files under `<showmap-out>/<approach>__<suite>__<test>/`.
 
 ## Flags

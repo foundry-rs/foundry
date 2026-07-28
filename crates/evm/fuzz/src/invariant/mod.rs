@@ -1,5 +1,5 @@
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{Address, B256, Selector, map::HashMap};
+use alloy_primitives::{Address, B256, Selector, keccak256, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,13 @@ type DynamicTargetArtifactMatchCache =
     Rc<RefCell<HashMap<DynamicTargetCacheKey, Option<CachedTargetContract>>>>;
 type FuzzedFunction = (Address, Function);
 type FunctionLookup = HashMap<Selector, Function>;
+type FuzzedFunctionLookup = HashMap<Selector, CachedFuzzedFunction>;
+
+#[derive(Clone, Debug)]
+struct CachedFuzzedFunction {
+    function: Function,
+    signature: B256,
+}
 
 /// Returns true if the function returns `int256`, indicating optimization mode.
 /// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
@@ -325,7 +332,7 @@ pub struct TargetedContract {
     /// Contract events indexed by topic0 and indexed-topic count for log dictionary decoding.
     pub event_lookup: Arc<TargetedContractEvents>,
     functions_by_selector: FunctionLookup,
-    fuzzed_functions_by_selector: FunctionLookup,
+    fuzzed_functions_by_selector: FuzzedFunctionLookup,
 }
 
 impl TargetedContract {
@@ -351,7 +358,7 @@ impl TargetedContract {
             storage_layout,
             event_lookup,
             functions_by_selector: FunctionLookup::default(),
-            fuzzed_functions_by_selector: FunctionLookup::default(),
+            fuzzed_functions_by_selector: FuzzedFunctionLookup::default(),
         };
         contract.rebuild_function_lookups();
         contract
@@ -397,9 +404,14 @@ impl TargetedContract {
                 functions
             });
         let fuzzed_functions_by_selector = self.abi_fuzzed_functions().fold(
-            FunctionLookup::default(),
+            FuzzedFunctionLookup::default(),
             |mut functions, function| {
-                functions.entry(function.selector()).or_insert_with(|| function.clone());
+                let signature = keccak256(function.signature());
+                let selector = Selector::from_slice(&signature[..4]);
+                functions.entry(selector).or_insert_with(|| CachedFuzzedFunction {
+                    function: function.clone(),
+                    signature,
+                });
                 functions
             },
         );
@@ -414,7 +426,12 @@ impl TargetedContract {
 
     /// Returns a fuzzable function for the given selector.
     pub fn fuzzed_function_by_selector(&self, selector: Selector) -> Option<&Function> {
-        self.fuzzed_functions_by_selector.get(&selector)
+        self.fuzzed_functions_by_selector.get(&selector).map(|cached| &cached.function)
+    }
+
+    /// Returns the cached canonical signature hash for a fuzzable function.
+    pub fn fuzzed_signature_by_selector(&self, selector: Selector) -> Option<B256> {
+        self.fuzzed_functions_by_selector.get(&selector).map(|cached| cached.signature)
     }
 
     /// Returns the function for the given selector.
@@ -761,6 +778,20 @@ mod tests {
     }
 
     #[test]
+    fn targeted_contract_caches_canonical_fuzzed_signature_hashes() {
+        let function = Function::parse("target(uint256,address)").unwrap();
+        let contract = TargetedContract::new(
+            "Target".to_string(),
+            abi_with_functions(&["target(uint256,address)"]),
+        );
+
+        assert_eq!(
+            contract.fuzzed_signature_by_selector(function.selector()),
+            Some(keccak256(function.signature()))
+        );
+    }
+
+    #[test]
     fn abi_fuzzed_functions_filters_excluded_targeted_functions() {
         let allowed = Function::parse("allowed()").unwrap();
         let excluded = Function::parse("excluded()").unwrap();
@@ -783,6 +814,14 @@ mod tests {
         excluded.inner.get_mut(&target).unwrap().add_selectors([foo.selector()], true).unwrap();
         assert!(!excluded.can_replay(&tx(target, foo.selector().to_vec())));
         assert!(excluded.can_replay(&tx(target, bar.selector().to_vec())));
+        assert!(
+            excluded
+                .inner
+                .get(&target)
+                .unwrap()
+                .fuzzed_signature_by_selector(foo.selector())
+                .is_none()
+        );
         assert_eq!(
             excluded.fuzzed_artifacts(&tx(target, foo.selector().to_vec())).1.unwrap().name,
             "foo"
@@ -792,6 +831,14 @@ mod tests {
         targeted.inner.get_mut(&target).unwrap().add_selectors([foo.selector()], false).unwrap();
         assert!(targeted.can_replay(&tx(target, foo.selector().to_vec())));
         assert!(!targeted.can_replay(&tx(target, bar.selector().to_vec())));
+        assert!(
+            targeted
+                .inner
+                .get(&target)
+                .unwrap()
+                .fuzzed_signature_by_selector(bar.selector())
+                .is_none()
+        );
         assert_eq!(
             targeted.fuzzed_metric_key_for_selector(target, bar.selector()).unwrap(),
             "Target.bar"

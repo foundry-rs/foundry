@@ -10,6 +10,22 @@ Most users should interact with this crate through Forge. The Rust crate is the
 engine that Forge calls after it has compiled contracts, run `setUp`, selected
 tests, and prepared the concrete executor backend.
 
+## Choosing a workflow
+
+- Use `forge fuzz run` for an automatic fuzz or invariant campaign. With
+  symbolic features disabled, it persists and reuses coverage-winning sequences
+  without starting a solver. The whole-call donor mechanism is concrete and
+  does not itself enable symbolic execution.
+- Use `forge test --symbolic` when you intentionally want bounded symbolic
+  exploration of `check*`, `prove*`, `invariant*`, or `statefulFuzz*`
+  properties.
+- Use `--symbolic-seed-corpus` or `--symbolic-use-fuzz-frontiers` only when you
+  intentionally want a solver prelude before an ordinary concrete fuzz
+  campaign in the same invocation. Use `--symbolic-use-fuzz-corpus` for
+  symbolic-only exploration prioritized by an existing concrete corpus. None of
+  these options is required before ordinary fuzz runs or enables an automatic
+  hybrid engine.
+
 ## Quick Start
 
 Symbolic tests are Solidity functions named `check*` or `prove*`.
@@ -100,8 +116,18 @@ non-failing fuzz-test inputs into the configured `fuzz.corpus_dir`:
 forge test --symbolic-seed-corpus --fuzz-corpus-dir fuzz_corpus
 ```
 
-Forge symbolically executes matching fuzz tests, reuses their normal corpus
-layout, and writes a successful concrete input as a seed for later fuzz runs.
+Forge first symbolically executes matching fuzz tests, reuses their normal
+corpus layout, and writes a successful concrete input. The same invocation then
+loads that seed and runs the ordinary concrete fuzz campaign. Continue the
+explicit corpus in a later campaign, then inspect it with:
+
+```sh
+forge fuzz run --corpus-dir fuzz_corpus --match-test test_hard_branch
+forge fuzz show fuzz_corpus
+```
+
+The [showmap corpus guide](../../../docs/dev/showmap.md) covers minimization,
+replay, and differential-coverage export.
 
 Symbolic execution can import the same Foundry fuzz corpus as path-priority
 hints for fuzz tests:

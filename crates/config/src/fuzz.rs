@@ -66,7 +66,11 @@ impl FuzzConfig {
 /// Contains for fuzz testing
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzDictionaryConfig {
-    /// The weight of the dictionary
+    /// Percentage of generated values to draw from the fuzz dictionary.
+    ///
+    /// For invariant campaigns with a corpus, this also controls how often compatible whole calls
+    /// whose concrete execution won an edge or hit-count coverage feature are used instead of
+    /// fully synthesized calldata.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
     pub dictionary_weight: u32,
     /// The flag indicating whether to include values from storage
@@ -116,8 +120,12 @@ impl Default for FuzzDictionaryConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzCorpusConfig {
-    // Path to corpus directory, enabled coverage guided fuzzing mode.
-    // If not set then sequences producing new coverage are not persisted and mutated.
+    /// Path used to persist coverage-winning fuzz and invariant sequences.
+    ///
+    /// When set, coverage-guided corpus mutation is enabled. In invariant campaigns,
+    /// argument-bearing top-level calls whose concrete execution wins an edge or hit-count
+    /// coverage feature also populate a bounded, worker-local ABI donor dictionary for later call
+    /// generation.
     pub corpus_dir: Option<PathBuf>,
     // Path to fuzz branch frontier artifacts for symbolic follow-up.
     pub frontier_dir: Option<PathBuf>,
@@ -263,6 +271,9 @@ pub struct FuzzCorpusMutationWeights {
     /// Weight for replacing a corpus sequence suffix with generated calls.
     pub mutation_weight_suffix: u32,
     /// Weight for ABI-aware argument mutation.
+    ///
+    /// An effective value of zero also disables collection and reuse of coverage-winning
+    /// whole-call donors.
     pub mutation_weight_abi: u32,
     /// Weight for comparison-operand guided argument mutation.
     pub mutation_weight_cmp: u32,

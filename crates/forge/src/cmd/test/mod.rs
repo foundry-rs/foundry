@@ -103,6 +103,7 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
+const AUTO_INVARIANT_FAILURE_DIR: &str = "invariant";
 const AUTO_CORPUS_DIR: &str = "corpus";
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -110,7 +111,7 @@ enum FuzzOnlyMode {
     #[default]
     Disabled,
     Enabled,
-    WithAutoFuzzCorpus,
+    WithAutoCorpora,
 }
 
 impl FuzzOnlyMode {
@@ -118,8 +119,8 @@ impl FuzzOnlyMode {
         !matches!(self, Self::Disabled)
     }
 
-    const fn uses_auto_fuzz_corpus(self) -> bool {
-        matches!(self, Self::WithAutoFuzzCorpus)
+    const fn uses_auto_corpora(self) -> bool {
+        matches!(self, Self::WithAutoCorpora)
     }
 }
 
@@ -458,7 +459,8 @@ pub struct CampaignArgs {
     #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub corpus_dir: Option<PathBuf>,
 
-    /// Percent of calldata generated from the dictionary.
+    /// Percent of calldata generated from dictionaries, including compatible invariant whole-call
+    /// donors.
     #[arg(long, value_name = "PERCENT")]
     pub dictionary_weight: Option<u32>,
 
@@ -904,7 +906,7 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_REGRESSION_OVERWRITE", requires = "emit_regression")]
     pub regression_overwrite: bool,
 
-    /// Run fuzz tests symbolically and persist non-failing concrete inputs to the fuzz corpus.
+    /// Pre-seed the fuzz corpus symbolically, then run the ordinary concrete fuzz campaign.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
     pub symbolic_seed_corpus: bool,
 
@@ -916,7 +918,7 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CORPUS_SEED_LIMIT", value_name = "COUNT")]
     pub symbolic_corpus_seed_limit: Option<usize>,
 
-    /// Run targeted symbolic solving from existing fuzz branch frontier artifacts.
+    /// Pre-seed the fuzz corpus from branch frontiers symbolically, then run concrete fuzzing.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_USE_FUZZ_FRONTIERS")]
     pub symbolic_use_fuzz_frontiers: bool,
 
@@ -1310,14 +1312,14 @@ impl TestArgs {
         self.fuzz_only = FuzzOnlyMode::Enabled;
     }
 
-    /// Restricts this test invocation to fuzz and invariant tests and enables a default fuzz corpus
-    /// dir after user config is loaded.
-    pub(crate) const fn enable_fuzz_only_with_auto_fuzz_corpus(&mut self) {
-        self.fuzz_only = FuzzOnlyMode::WithAutoFuzzCorpus;
+    /// Restricts this invocation to fuzz and invariant tests and enables default corpus
+    /// directories after user config is loaded.
+    pub(crate) const fn enable_fuzz_only_with_auto_corpora(&mut self) {
+        self.fuzz_only = FuzzOnlyMode::WithAutoCorpora;
     }
 
-    fn apply_auto_fuzz_corpus_dir(&self, config: &mut Config) {
-        if !self.fuzz_only.uses_auto_fuzz_corpus() {
+    fn apply_auto_corpus_dirs(&self, config: &mut Config) {
+        if !self.fuzz_only.uses_auto_corpora() {
             return;
         }
 
@@ -1326,6 +1328,15 @@ impl TestArgs {
                 Some(root) => root.join(AUTO_CORPUS_DIR),
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
+        }
+        if config.invariant.corpus.corpus_dir.is_none() {
+            config.invariant.corpus.corpus_dir =
+                Some(match &config.invariant.failure_persist_dir {
+                    Some(root) => root.join(AUTO_CORPUS_DIR),
+                    None => {
+                        config.cache_path.join(AUTO_INVARIANT_FAILURE_DIR).join(AUTO_CORPUS_DIR)
+                    }
+                });
         }
     }
 
@@ -1689,7 +1700,7 @@ impl TestArgs {
         let test_failures_file = config.test_failures_file.clone();
         let mut config = workspace::rebase_config_paths(&config, temp_path).sanitized();
         config.test_failures_file = test_failures_file;
-        self.apply_auto_fuzz_corpus_dir(&mut config);
+        self.apply_auto_corpus_dirs(&mut config);
         let project = config.project()?;
         let project_root = project.paths.root.clone();
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1740,7 +1751,7 @@ impl TestArgs {
             apply_mutation_compiler_overrides(&mut config);
         }
 
-        self.apply_auto_fuzz_corpus_dir(&mut config);
+        self.apply_auto_corpus_dirs(&mut config);
 
         // Set up the project.
         let mut project = config.project()?;
@@ -4401,45 +4412,52 @@ mod tests {
     }
 
     #[test]
-    fn auto_fuzz_corpus_defaults_to_cache_failure_layout() {
+    fn auto_corpora_default_to_cache_failure_layouts() {
         let mut args = TestArgs::parse_from(["foundry-cli"]);
-        args.enable_fuzz_only_with_auto_fuzz_corpus();
+        args.enable_fuzz_only_with_auto_corpora();
         let mut config = Config::default();
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_auto_corpus_dirs(&mut config);
 
         assert_eq!(
             config.fuzz.corpus.corpus_dir,
             Some(config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR))
         );
-        assert_eq!(config.invariant.corpus.corpus_dir, None);
+        assert_eq!(
+            config.invariant.corpus.corpus_dir,
+            Some(config.cache_path.join(AUTO_INVARIANT_FAILURE_DIR).join(AUTO_CORPUS_DIR))
+        );
     }
 
     #[test]
-    fn auto_fuzz_corpus_uses_configured_failure_persist_dirs() {
+    fn auto_corpora_use_configured_failure_persist_dirs() {
         let mut args = TestArgs::parse_from(["foundry-cli"]);
-        args.enable_fuzz_only_with_auto_fuzz_corpus();
+        args.enable_fuzz_only_with_auto_corpora();
         let mut config = Config::default();
         config.fuzz.failure_persist_dir = Some(PathBuf::from("custom_fuzz_failures"));
+        config.invariant.failure_persist_dir = Some(PathBuf::from("custom_invariant_failures"));
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_auto_corpus_dirs(&mut config);
 
         assert_eq!(
             config.fuzz.corpus.corpus_dir,
             Some(PathBuf::from("custom_fuzz_failures").join(AUTO_CORPUS_DIR))
         );
-        assert_eq!(config.invariant.corpus.corpus_dir, None);
+        assert_eq!(
+            config.invariant.corpus.corpus_dir,
+            Some(PathBuf::from("custom_invariant_failures").join(AUTO_CORPUS_DIR))
+        );
     }
 
     #[test]
-    fn auto_fuzz_corpus_preserves_configured_corpus_dirs() {
+    fn auto_corpora_preserve_configured_corpus_dirs() {
         let mut args = TestArgs::parse_from(["foundry-cli"]);
-        args.enable_fuzz_only_with_auto_fuzz_corpus();
+        args.enable_fuzz_only_with_auto_corpora();
         let mut config = Config::default();
         config.fuzz.corpus.corpus_dir = Some(PathBuf::from("configured_fuzz_corpus"));
         config.invariant.corpus.corpus_dir = Some(PathBuf::from("configured_invariant_corpus"));
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_auto_corpus_dirs(&mut config);
 
         assert_eq!(config.fuzz.corpus.corpus_dir, Some(PathBuf::from("configured_fuzz_corpus")));
         assert_eq!(
@@ -4454,7 +4472,7 @@ mod tests {
         args.enable_fuzz_only();
         let mut config = Config::default();
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_auto_corpus_dirs(&mut config);
 
         assert_eq!(config.fuzz.corpus.corpus_dir, None);
         assert_eq!(config.invariant.corpus.corpus_dir, None);
