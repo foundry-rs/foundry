@@ -5,4 +5,15 @@ contract MethodChainCallOptions {
             .firstLongMethod()
             .secondLongMethod();
     }
+
+    function formatOverflowingCallOptions() external {
+        target{
+                value: v
+            }(
+                firstExtremelyLongArgument,
+                secondExtremelyLongArgument
+            )
+            .firstLongMethod()
+            .secondLongMethod();
+    }
 }
