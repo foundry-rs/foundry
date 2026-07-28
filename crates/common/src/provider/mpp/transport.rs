@@ -2,8 +2,8 @@
 
 use alloy_chains::Chain;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
-use alloy_transport::{TransportError, TransportErrorKind, TransportFut, TransportResult};
-use alloy_transport_mpp::MppHttpTransport;
+use alloy_transport::{TransportError, TransportFut};
+use alloy_transport_mpp::{MppHttpTransport, MppWsConnect};
 use mpp::{
     MppError,
     client::{
@@ -27,7 +27,6 @@ use std::{
     task,
 };
 use tempo_alloy::accounts::{TempoAccountsError, TempoAccountsStore};
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tower::Service;
 use url::Url;
 
@@ -74,6 +73,21 @@ impl Service<RequestPacket> for LazyMppHttpTransport {
     }
 }
 
+/// Build the canonical MPP WebSocket connector with Foundry's lazy Accounts
+/// provider.
+pub(crate) fn lazy_mpp_ws_connect(url: &Url) -> MppWsConnect<LazyAccountsProvider> {
+    let mut origin = url.clone();
+    let http_scheme = match origin.scheme() {
+        "ws" => Some("http"),
+        "wss" => Some("https"),
+        _ => None,
+    };
+    if let Some(http_scheme) = http_scheme {
+        let _ = origin.set_scheme(http_scheme);
+    }
+    MppWsConnect::new(url.to_string(), LazyAccountsProvider::new(origin.to_string()))
+}
+
 /// Lazily resolves a chain-bound MPP Charge provider from Tempo Accounts.
 ///
 /// HTTP payment mechanics live in `alloy-transport-mpp`; this wrapper contains
@@ -83,7 +97,6 @@ impl Service<RequestPacket> for LazyMppHttpTransport {
 pub struct LazyAccountsProvider {
     inner: Arc<Mutex<HashMap<Option<u64>, TempoAccountsProvider>>>,
     origin: String,
-    ws_payment_lock: Arc<AsyncMutex<()>>,
 }
 
 impl fmt::Debug for LazyAccountsProvider {
@@ -96,28 +109,7 @@ impl fmt::Debug for LazyAccountsProvider {
 
 impl LazyAccountsProvider {
     pub(super) fn new(origin: String) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-            origin,
-            ws_payment_lock: Arc::new(AsyncMutex::new(())),
-        }
-    }
-
-    /// Resolve a provider for the challenge chain.
-    pub(super) fn get_or_init(
-        &self,
-        chain_id: Option<u64>,
-    ) -> TransportResult<TempoAccountsProvider> {
-        self.resolve(chain_id).map_err(TransportErrorKind::custom)
-    }
-
-    /// Serialize the legacy Foundry WebSocket credential handshake.
-    ///
-    /// The canonical HTTP adapter deliberately has no such lock: independent
-    /// Charge payments use challenge-bound expiring nonces and may run in
-    /// parallel.
-    pub(super) async fn lock_ws_payment(&self) -> OwnedMutexGuard<()> {
-        self.ws_payment_lock.clone().lock_owned().await
+        Self { inner: Arc::new(Mutex::new(HashMap::new())), origin }
     }
 
     fn resolve(&self, chain_id: Option<u64>) -> Result<TempoAccountsProvider, MppError> {

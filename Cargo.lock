@@ -1045,7 +1045,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-mpp"
 version = "0.2.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=6a4a0d1c7e5e13d688d39be4833216cb050b8d9c#6a4a0d1c7e5e13d688d39be4833216cb050b8d9c"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=ad87fa9d7a422cb51ada2be40bc061eccdd03426#ad87fa9d7a422cb51ada2be40bc061eccdd03426"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -5497,7 +5497,6 @@ dependencies = [
  "foundry-config",
  "foundry-evm-hardforks",
  "foundry-wallets",
- "futures",
  "itertools 0.15.0",
  "jiff",
  "k256",
@@ -5509,7 +5508,6 @@ dependencies = [
  "regex",
  "reqwest 0.13.4",
  "revm",
- "rustls",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -5520,7 +5518,6 @@ dependencies = [
  "tempo-primitives",
  "thiserror 2.0.19",
  "tokio",
- "tokio-tungstenite 0.28.0",
  "tower",
  "tracing",
  "url",
@@ -7741,7 +7738,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.11.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=6a4a0d1c7e5e13d688d39be4833216cb050b8d9c#6a4a0d1c7e5e13d688d39be4833216cb050b8d9c"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=ad87fa9d7a422cb51ada2be40bc061eccdd03426#ad87fa9d7a422cb51ada2be40bc061eccdd03426"
 dependencies = [
  "alloy",
  "async-stream",
