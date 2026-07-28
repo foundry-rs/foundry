@@ -6,8 +6,17 @@ use alloy_transport::{TransportError, TransportErrorKind, TransportFut, Transpor
 use alloy_transport_mpp::MppHttpTransport;
 use mpp::{
     MppError,
-    client::{PaymentProvider, TempoAccountsProvider},
-    protocol::core::{PaymentChallenge, PaymentCredential},
+    client::{
+        PaymentContext, PaymentProvider, TempoAccountsProvider,
+        tempo::{
+            autoswap::{AutoswapConfig, DEFAULT_SLIPPAGE_BPS},
+            session::store::{SqliteChannelStore, SqliteChannelStoreOptions},
+        },
+    },
+    protocol::{
+        core::{PaymentChallenge, PaymentCredential},
+        intents::{ChargeRequest, SessionRequest},
+    },
 };
 use std::{
     collections::HashMap,
@@ -17,13 +26,19 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     task,
 };
-use tempo_alloy::accounts::TempoAccountsStore;
+use tempo_alloy::accounts::{TempoAccountsError, TempoAccountsStore};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tower::Service;
 use url::Url;
 
 /// Keep high-fanout fork database reads from overwhelming paid RPC endpoints.
 const MAX_CONCURRENT_MPP_HTTP_REQUESTS: usize = 4;
+
+/// Open a channel with 0.02 tokens when the server does not suggest a deposit.
+const DEFAULT_MPP_SESSION_DEPOSIT: u128 = 20_000;
+
+/// Never let a paid RPC reserve more than one six-decimal token automatically.
+const MAX_MPP_SESSION_DEPOSIT: u128 = 1_000_000;
 
 /// The MPP transport used by Foundry's runtime transport builder.
 #[derive(Clone, Debug)]
@@ -121,6 +136,25 @@ impl LazyAccountsProvider {
         if let Some(chain_id) = chain_id {
             provider = provider.with_expected_chain_id(chain_id);
         }
+        let request_url =
+            Url::parse(&self.origin).map_err(|error| MppError::InvalidConfig(error.to_string()))?;
+        let store = SqliteChannelStore::open(SqliteChannelStoreOptions {
+            namespace: request_url.origin().ascii_serialization(),
+            path: None,
+            request_url: Some(redacted_url(&self.origin)),
+        })
+        .map_err(|error| {
+            MppError::InvalidConfig(format!("failed to open Tempo channel store: {error}"))
+        })?;
+        provider = provider
+            .with_autoswap(AutoswapConfig::new(
+                crate::tempo::PATH_USD_ADDRESS,
+                DEFAULT_SLIPPAGE_BPS,
+            ))
+            .with_session_store(Arc::new(store))
+            .with_session_default_deposit(DEFAULT_MPP_SESSION_DEPOSIT)
+            .with_session_top_up_amount(DEFAULT_MPP_SESSION_DEPOSIT)
+            .with_session_max_deposit(MAX_MPP_SESSION_DEPOSIT);
         providers.insert(chain_id, provider.clone());
         Ok(provider)
     }
@@ -141,7 +175,7 @@ impl LazyAccountsProvider {
         if !interactive_login_allowed()
             || !Url::parse(&self.origin)
                 .is_ok_and(|origin| crate::tempo::is_known_tempo_endpoint(&origin))
-            || provider.has_access_key_for_challenge(challenge).await?
+            || has_access_key_for_challenge(&provider, challenge, chain_id).await?
         {
             return Ok(provider);
         }
@@ -172,7 +206,7 @@ impl LazyAccountsProvider {
 
 impl PaymentProvider for LazyAccountsProvider {
     fn supports(&self, method: &str, intent: &str) -> bool {
-        method == "tempo" && intent == "charge"
+        method == "tempo" && matches!(intent, "session" | "charge")
     }
 
     async fn pay(&self, challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
@@ -185,6 +219,26 @@ impl PaymentProvider for LazyAccountsProvider {
                     provider.pay(challenge).await
                 } else {
                     Err(with_funding_help(error, &context))
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn pay_with_context(
+        &self,
+        challenge: &PaymentChallenge,
+        context: PaymentContext,
+    ) -> Result<PaymentCredential, MppError> {
+        let provider = self.provider_for(challenge).await?;
+        match provider.pay_with_context(challenge, context.clone()).await {
+            Ok(credential) => Ok(credential),
+            Err(error @ MppError::InsufficientBalance(_)) => {
+                let funding = self.funding_context(challenge);
+                if run_interactive_tempo_fund(&funding).await? {
+                    provider.pay_with_context(challenge, context).await
+                } else {
+                    Err(with_funding_help(error, &funding))
                 }
             }
             Err(error) => Err(error),
@@ -207,6 +261,34 @@ impl PaymentProvider for LazyAccountsProvider {
     ) -> Result<(), MppError> {
         let (chain_id, _) = extract_challenge_chain_and_currency(challenge);
         self.resolve(chain_id)?.rollback_payment(challenge, credential).await
+    }
+
+    fn abandon_payment(&self, challenge: &PaymentChallenge, credential: &PaymentCredential) {
+        let (chain_id, _) = extract_challenge_chain_and_currency(challenge);
+        if let Ok(provider) = self.resolve(chain_id) {
+            provider.abandon_payment(challenge, credential);
+        }
+    }
+
+    fn accept_payment_header(&self) -> Option<String> {
+        Some("tempo/session, tempo/charge;q=0.5".to_owned())
+    }
+}
+
+async fn has_access_key_for_challenge(
+    provider: &TempoAccountsProvider,
+    challenge: &PaymentChallenge,
+    chain_id: u64,
+) -> Result<bool, MppError> {
+    if challenge.intent.as_str() == "charge" {
+        return provider.has_access_key_for_challenge(challenge).await;
+    }
+    match provider.wallet().clone().with_chain_id(chain_id).active_access_key() {
+        Ok(_) => Ok(true),
+        Err(TempoAccountsError::MissingAccessKey { .. }) => Ok(false),
+        Err(error) => Err(MppError::InvalidConfig(format!(
+            "failed to inspect Tempo Accounts access key: {error}"
+        ))),
     }
 }
 
@@ -295,19 +377,28 @@ async fn run_interactive_tempo_fund(context: &FundingContext) -> Result<bool, Mp
     }
 }
 
-/// Extract `(chainId, currency)` from a Tempo Charge challenge.
+/// Extract `(chainId, currency)` from a Tempo Charge or Session challenge.
 pub(super) fn extract_challenge_chain_and_currency(
     challenge: &PaymentChallenge,
 ) -> (Option<u64>, Option<String>) {
-    use mpp::protocol::methods::tempo::TempoChargeExt;
+    use mpp::protocol::methods::tempo::{TempoChargeExt, TempoSessionExt};
 
-    if challenge.method.as_str() != "tempo" || challenge.intent.as_str() != "charge" {
+    if challenge.method.as_str() != "tempo" {
         return (None, None);
     }
-    let Ok(request) = challenge.request.decode::<mpp::protocol::intents::ChargeRequest>() else {
-        return (None, None);
-    };
-    (request.chain_id(), Some(request.currency))
+    match challenge.intent.as_str() {
+        "charge" => challenge
+            .request
+            .decode::<ChargeRequest>()
+            .map(|request| (request.chain_id(), Some(request.currency)))
+            .unwrap_or_default(),
+        "session" => challenge
+            .request
+            .decode::<SessionRequest>()
+            .map(|request| (request.chain_id(), Some(request.currency)))
+            .unwrap_or_default(),
+        _ => (None, None),
+    }
 }
 
 fn lock_map<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -356,8 +447,21 @@ mod tests {
             (Some(42431), Some("0x20c0000000000000000000000000000000000000".to_owned()))
         );
         assert_eq!(
+            extract_challenge_chain_and_currency(&challenge("tempo", "session")),
+            (Some(42431), Some("0x20c0000000000000000000000000000000000000".to_owned()))
+        );
+        assert_eq!(
             extract_challenge_chain_and_currency(&challenge("stripe", "charge")),
             (None, None)
+        );
+    }
+
+    #[test]
+    fn advertises_sessions_before_charges() {
+        let provider = LazyAccountsProvider::new("https://rpc.example".to_owned());
+        assert_eq!(
+            provider.accept_payment_header().as_deref(),
+            Some("tempo/session, tempo/charge;q=0.5")
         );
     }
 

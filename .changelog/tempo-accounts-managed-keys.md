@@ -1,5 +1,6 @@
 ---
-title: Store Foundry-managed Tempo access keys in Accounts
+cast: patch
+forge: patch
 ---
 
 Removed the separate `sessions.toml` registry. Cast and Forge temporary access-key commands now
