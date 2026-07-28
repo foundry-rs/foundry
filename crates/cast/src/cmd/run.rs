@@ -1,5 +1,5 @@
 use crate::{
-    debug::handle_traces,
+    debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
     rpc_trace::{
         call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
     },
@@ -153,10 +153,11 @@ impl RunArgs {
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
 
         // Auto-detect network from fork chain ID when not explicitly configured.
-        evm_opts.infer_network_from_fork().await;
+        evm_opts.infer_network_from_fork().await?;
 
         if evm_opts.networks.is_tempo() {
             return self.run_with_evm::<TempoEvmNetwork>(evm_opts).await;
@@ -195,6 +196,11 @@ impl RunArgs {
             .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
+        let endpoint_identity = if self.debug_trace_transaction {
+            Some(evm_opts.discover_fork_endpoint().await?)
+        } else {
+            None
+        };
         let tx = provider
             .get_transaction_by_hash(tx_hash)
             .await
@@ -206,6 +212,9 @@ impl RunArgs {
         // pre-state and EVM rules, so this needs no block replay and no local executor; it also
         // handles system transactions, so this path comes before the system transaction guard.
         if self.debug_trace_transaction {
+            let endpoint_identity = endpoint_identity
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
             let tx_block_number = tx
                 .block_number()
                 .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
@@ -277,10 +286,17 @@ impl RunArgs {
                 Default::default()
             };
 
-            let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
-            // A configured hardfork is an explicit trace-decoding override. Otherwise decode
-            // against the transaction's exact historical block timestamp.
-            let resolved_hardfork = if let Some(hardfork) = config.hardfork {
+            // The remote node executed this trace, so its reported family is authoritative for
+            // decoding even when the caller selected a compatible local EVM implementation.
+            let execution_network = endpoint_identity.network;
+            let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
+            // A configured hardfork is an explicit trace-decoding override. Otherwise honor an
+            // Anvil endpoint's exact execution hardfork before consulting the source schedule.
+            let resolved_hardfork = if let Some(hardfork) = select_remote_trace_hardfork(
+                config.hardfork,
+                endpoint_identity.hardfork,
+                execution_network,
+            ) {
                 Some(hardfork)
             } else {
                 provider.get_block_by_number(tx_block_number.into()).await?.and_then(|block| {
@@ -290,6 +306,8 @@ impl RunArgs {
                     )
                 })
             };
+            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            ensure_remote_trace_context_unchanged(endpoint_identity, &final_endpoint_identity)?;
             handle_traces(
                 result,
                 &config,
@@ -299,6 +317,7 @@ impl RunArgs {
                 with_local_artifacts,
                 false,
                 resolved_hardfork,
+                endpoint_identity.network_profile,
             )
             .await?;
 
@@ -331,7 +350,7 @@ impl RunArgs {
 
         let create2_deployer = evm_opts.create2_deployer;
         let verbosity = tracing.verbosity;
-        let (block, (mut evm_env, tx_env, fork, chain, networks)) = tokio::try_join!(
+        let (block, (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork)) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
             TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts)
@@ -377,9 +396,11 @@ impl RunArgs {
             &config,
             networks,
             chain.id(),
+            endpoint_hardfork,
             &mut evm_env,
             evm_version,
         );
+        TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, resolved_hardfork);
 
         let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
             let block = block.as_ref().ok_or_else(|| {
@@ -611,6 +632,7 @@ impl RunArgs {
             with_local_artifacts,
             debug,
             resolved_hardfork,
+            networks,
         )
         .await?;
 

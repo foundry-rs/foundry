@@ -56,7 +56,8 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     if let Some(chain) = config.chain {
         evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
     }
-    evm_opts.infer_network_from_fork().await;
+    evm_opts.infer_network_from_fork().await?;
+    evm_opts.pin_fork_block().await?;
     config.networks = evm_opts.networks;
     let local_networks = evm_opts.networks;
     let local_chain_id = evm_opts.env.chain_id.or(config.chain.map(|chain| chain.id()));
@@ -113,6 +114,8 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
     local_networks: NetworkConfigs,
     local_chain_id: Option<u64>,
 ) -> Result<()> {
+    let fork_network_is_inferred = evm_opts.fork_network_is_inferred;
+    let fork_chain_id_is_inferred = evm_opts.fork_chain_id_is_inferred;
     // Create a new cli dispatcher
     let mut dispatcher = ChiselDispatcher::<FEN>::new(crate::source::SessionSourceConfig {
         // Enable traces if any level of verbosity was passed
@@ -122,7 +125,10 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         evm_opts,
         local_networks: Some(local_networks),
         local_chain_id,
+        fork_network_is_inferred,
+        fork_chain_id_is_inferred,
         resolved_hardfork: None,
+        source_chain_id: None,
         backend: None,
         calldata: None,
         ir_minimum: args.ir_minimum,

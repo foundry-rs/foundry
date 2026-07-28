@@ -5378,10 +5378,11 @@ casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     let config = NodeConfig::test_monad()
+        .with_hardfork(Some(MonadHardfork::MonadEight.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 1));
-    let (_api, handle) = anvil::spawn(config).await;
-    let endpoint = handle.http_endpoint();
+    let (_api, monad_eight_handle) = anvil::spawn(config).await;
+    let monad_eight_endpoint = monad_eight_handle.http_endpoint();
     let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
     let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
 
@@ -5392,7 +5393,7 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
             "--data",
             &input,
             "--rpc-url",
-            &endpoint,
+            &monad_eight_endpoint,
             "--trace",
         ])
         .assert_success()
@@ -5403,7 +5404,69 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     assert!(monad_eight.contains("[Stop]"), "{monad_eight}");
     assert!(!monad_eight.contains("[Return] false"), "{monad_eight}");
 
+    let monad_eight_rpc = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_eight_endpoint,
+            "--debug-trace-call",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(monad_eight_rpc.contains(&reserve_balance_address), "{monad_eight_rpc}");
+    assert!(!monad_eight_rpc.contains("ReserveBalance"), "{monad_eight_rpc}");
+
     let activation = MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP.to_string();
+    let monad_eight_with_later_timestamp = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_eight_endpoint,
+            "--trace",
+            "--block.time",
+            &activation,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        monad_eight_with_later_timestamp.contains(&reserve_balance_address),
+        "{monad_eight_with_later_timestamp}"
+    );
+    assert!(
+        !monad_eight_with_later_timestamp.contains("ReserveBalance"),
+        "{monad_eight_with_later_timestamp}"
+    );
+    assert!(
+        monad_eight_with_later_timestamp.contains("[Stop]"),
+        "{monad_eight_with_later_timestamp}"
+    );
+    assert!(
+        !monad_eight_with_later_timestamp.contains("[Return] false"),
+        "{monad_eight_with_later_timestamp}"
+    );
+
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP));
+    let (_origin_api, monad_nine_origin) = anvil::spawn(config).await;
+    let config = NodeConfig::test_monad()
+        .with_chain_id(Some(1u64))
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(monad_nine_origin.http_endpoint()))
+        .with_fork_block_number(Some(0u64));
+    let (_api, monad_nine_handle) = anvil::spawn(config).await;
+    let monad_nine_endpoint = monad_nine_handle.http_endpoint();
     let monad_nine = cmd
         .cast_fuse()
         .args([
@@ -5412,16 +5475,30 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
             "--data",
             &input,
             "--rpc-url",
-            &endpoint,
+            &monad_nine_endpoint,
             "--trace",
-            "--block.time",
-            &activation,
         ])
         .assert_success()
         .get_output()
         .stdout_lossy();
     assert!(monad_nine.contains("ReserveBalance::dippedIntoReserve()"), "{monad_nine}");
     assert!(monad_nine.contains("[Return] false"), "{monad_nine}");
+
+    let monad_nine_rpc = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_nine_endpoint,
+            "--debug-trace-call",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(monad_nine_rpc.contains("ReserveBalance::dippedIntoReserve()"), "{monad_nine_rpc}");
 
     cmd.cast_fuse().env("FOUNDRY_HARDFORK", "monad:MonadEight");
     let explicit_monad_eight = cmd
@@ -5431,10 +5508,8 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
             "--data",
             &input,
             "--rpc-url",
-            &endpoint,
+            &monad_nine_endpoint,
             "--trace",
-            "--block.time",
-            &activation,
         ])
         .assert_success()
         .get_output()
@@ -5527,17 +5602,23 @@ casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
 });
 
 #[cfg(feature = "monad")]
-casttest!(monad_run_decodes_historical_hardfork, async |_prj, cmd| {
-    let config = NodeConfig::test_monad()
+casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
+    let origin_config = NodeConfig::test_monad()
         .with_hardfork(Some(MonadHardfork::MonadNine.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 2));
+    let (_origin_api, origin_handle) = anvil::spawn(origin_config).await;
+    let config = NodeConfig::test_monad()
+        .with_chain_id(Some(1u64))
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+        .with_fork_block_number(Some(0u64));
     let (api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
 
     api.evm_set_next_block_timestamp(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 1).unwrap();
-    let monad_eight_receipt = provider
+    let pre_activation_receipt = provider
         .send_transaction(
             TransactionRequest::default()
                 .with_from(from)
@@ -5552,7 +5633,7 @@ casttest!(monad_run_decodes_historical_hardfork, async |_prj, cmd| {
         .unwrap();
 
     api.evm_set_next_block_timestamp(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP).unwrap();
-    let monad_nine_receipt = provider
+    let post_activation_receipt = provider
         .send_transaction(
             TransactionRequest::default()
                 .with_from(from)
@@ -5565,50 +5646,49 @@ casttest!(monad_run_decodes_historical_hardfork, async |_prj, cmd| {
         .get_receipt()
         .await
         .unwrap();
+    assert!(pre_activation_receipt.status());
+    assert!(post_activation_receipt.status());
 
     let endpoint = handle.http_endpoint();
-    let monad_eight_hash = monad_eight_receipt.transaction_hash.to_string();
-    let monad_eight = cmd
-        .args(["run", &monad_eight_hash, "--rpc-url", &endpoint, "--quick"])
+    let pre_activation_hash = pre_activation_receipt.transaction_hash.to_string();
+    let pre_activation = cmd
+        .args(["run", &pre_activation_hash, "--rpc-url", &endpoint, "--quick"])
         .assert_success()
         .get_output()
         .stdout_lossy();
-    assert!(monad_eight.contains(&MONAD_RESERVE_BALANCE_ADDRESS.to_string()), "{monad_eight}");
-    assert!(!monad_eight.contains("ReserveBalance"), "{monad_eight}");
-    assert!(monad_eight.contains("[Stop]"), "{monad_eight}");
-    assert!(!monad_eight.contains("[Return] false"), "{monad_eight}");
+    assert!(pre_activation.contains("ReserveBalance::dippedIntoReserve()"), "{pre_activation}");
+    assert!(pre_activation.contains("[Return] false"), "{pre_activation}");
 
-    let monad_nine_hash = monad_nine_receipt.transaction_hash.to_string();
-    let monad_nine = cmd
+    let post_activation_hash = post_activation_receipt.transaction_hash.to_string();
+    let post_activation = cmd
         .cast_fuse()
-        .args(["run", &monad_nine_hash, "--rpc-url", &endpoint, "--quick"])
+        .args(["run", &post_activation_hash, "--rpc-url", &endpoint, "--quick"])
         .assert_success()
         .get_output()
         .stdout_lossy();
-    assert!(monad_nine.contains("ReserveBalance::dippedIntoReserve()"), "{monad_nine}");
-    assert!(monad_nine.contains("[Return] false"), "{monad_nine}");
+    assert!(post_activation.contains("ReserveBalance::dippedIntoReserve()"), "{post_activation}");
+    assert!(post_activation.contains("[Return] false"), "{post_activation}");
 
-    let monad_eight_rpc_trace = cmd
+    let pre_activation_rpc_trace = cmd
         .cast_fuse()
-        .args(["run", &monad_eight_hash, "--rpc-url", &endpoint, "--debug-trace-transaction"])
+        .args(["run", &pre_activation_hash, "--rpc-url", &endpoint, "--debug-trace-transaction"])
         .assert_success()
         .get_output()
         .stdout_lossy();
     assert!(
-        monad_eight_rpc_trace.contains(&MONAD_RESERVE_BALANCE_ADDRESS.to_string()),
-        "{monad_eight_rpc_trace}"
+        pre_activation_rpc_trace.contains("ReserveBalance::dippedIntoReserve()"),
+        "{pre_activation_rpc_trace}"
     );
-    assert!(!monad_eight_rpc_trace.contains("ReserveBalance"), "{monad_eight_rpc_trace}");
 
-    let monad_nine_rpc_trace = cmd
+    let post_activation_rpc_trace = cmd
         .cast_fuse()
-        .args(["run", &monad_nine_hash, "--rpc-url", &endpoint, "--debug-trace-transaction"])
+        .args(["run", &post_activation_hash, "--rpc-url", &endpoint, "--debug-trace-transaction"])
         .assert_success()
         .get_output()
         .stdout_lossy();
     assert!(
-        monad_nine_rpc_trace.contains("ReserveBalance::dippedIntoReserve()"),
-        "{monad_nine_rpc_trace}"
+        post_activation_rpc_trace.contains("ReserveBalance::dippedIntoReserve()"),
+        "{post_activation_rpc_trace}"
     );
 });
 

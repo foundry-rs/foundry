@@ -34,7 +34,7 @@ use foundry_evm::{
         strategies::{EnumBounds, LiteralsDictionary},
     },
     inspectors::{CheatsConfig, EdgeIndexMap},
-    opts::{EvmOpts, resolve_execution_spec},
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
@@ -485,6 +485,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub hardfork: Option<FoundryHardfork>,
     /// Source chain ID used to resolve fork hardfork schedules.
     pub fork_chain_id: Option<ChainId>,
+    /// Exact hardfork reported by the fork endpoint.
+    pub fork_hardfork: Option<FoundryHardfork>,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
@@ -530,7 +532,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             &config,
             self.evm_opts.networks,
             &mut self.evm_env,
-            self.fork_chain_id,
+            ExecutionSpecContext::local_or_fork(self.fork_chain_id, self.fork_hardfork),
             None,
             None,
         );
@@ -632,6 +634,8 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<CreateFork>,
     /// Source chain ID used to resolve the fork's hardfork schedule.
     pub fork_chain_id: Option<ChainId>,
+    /// Exact hardfork reported by the fork endpoint.
+    pub fork_hardfork: Option<FoundryHardfork>,
     /// Project config.
     pub config: Arc<Config>,
     /// Parsed inline configuration.
@@ -681,6 +685,7 @@ impl MultiContractRunnerBuilder {
             initial_balance: Default::default(),
             fork: Default::default(),
             fork_chain_id: None,
+            fork_hardfork: None,
             line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
@@ -747,6 +752,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn with_fork_chain_id(mut self, chain_id: Option<ChainId>) -> Self {
         self.fork_chain_id = chain_id;
+        self
+    }
+
+    pub const fn with_fork_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+        self.fork_hardfork = hardfork;
         self
     }
 
@@ -941,7 +951,7 @@ impl MultiContractRunnerBuilder {
             &self.config,
             evm_opts.networks,
             &mut evm_env,
-            fork_chain_id,
+            ExecutionSpecContext::local_or_fork(fork_chain_id, self.fork_hardfork),
             None,
             None,
         );
@@ -967,6 +977,7 @@ impl MultiContractRunnerBuilder {
                 spec_id,
                 hardfork,
                 fork_chain_id,
+                fork_hardfork: self.fork_hardfork,
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,
@@ -1132,6 +1143,7 @@ mod tests {
             enable_caching: false,
             url: "http://localhost:8545".into(),
             evm_opts: evm_opts.clone(),
+            expected_context: None,
         });
         assert!(!builder.create2_deployer_available(&evm_opts));
         builder.fork = None;

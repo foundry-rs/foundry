@@ -717,8 +717,8 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
         let (evm_env, tx_env, fork_context) = evm_opts
             .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
             .await?;
-        let fork_block = fork_context.map(|context| context.block_number);
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
 
         // Build test runner mirroring the canonical `forge test` runner: same
         // isolation flag, same fail-fast semantics for mutation, and same
@@ -728,12 +728,11 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(
-                config,
-                fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
-                fork_block,
-            ))
+            .with_fork(
+                fork_context.and_then(|context| evm_opts.get_fork_with_context(config, context)),
+            )
             .with_fork_chain_id(fork_chain_id)
+            .with_fork_hardfork(fork_hardfork)
             .enable_isolation(isolate)
             .fail_fast(true)
             .with_create2_deployer_available(create2_deployer_available)

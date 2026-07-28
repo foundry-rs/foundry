@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     Cast,
-    debug::handle_traces,
+    debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
@@ -214,15 +214,17 @@ impl CallArgs {
         }
 
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         if self.tx.tempo.is_tempo() {
             evm_opts.networks = NetworkConfigs::with_tempo();
+            evm_opts.infer_network_from_fork().await?;
             return self.run_with_network_and_opts::<TempoEvmNetwork>(evm_opts).await;
         }
         if let Some(chain) = self.chain {
             evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
         }
-        evm_opts.infer_network_from_fork().await;
+        evm_opts.infer_network_from_fork().await?;
         if self.chain.is_none() {
             self.chain = evm_opts.env.chain_id.map(Chain::from_id);
         }
@@ -267,7 +269,16 @@ impl CallArgs {
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
+        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
+        evm_opts.infer_network_from_fork().await?;
+        let network = evm_opts.networks.execution_network();
+        if !FEN::supports_network(network) {
+            eyre::bail!(
+                "the selected EVM network cannot execute `{network}`; use the matching network \
+                 implementation"
+            );
+        }
         // Keep the public generic wrapper independent of the network-specific future layout.
         Box::pin(self.run_with_network_and_opts::<FEN>(evm_opts)).await
     }
@@ -294,6 +305,7 @@ impl CallArgs {
             command,
             block,
             trace,
+            debug_trace_call,
             evm_version,
             debug,
             data,
@@ -307,6 +319,8 @@ impl CallArgs {
         }
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
+        let endpoint_identity =
+            if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -337,8 +351,11 @@ impl CallArgs {
             .build(sender)
             .await?;
 
-        if self.debug_trace_call {
-            let requested_block = self.block.unwrap_or(BlockId::latest());
+        if debug_trace_call {
+            let endpoint_identity = endpoint_identity
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
+            let requested_block = block.unwrap_or(BlockId::latest());
             let fetched_block = provider.get_block(requested_block).await?;
             // Pin moving canonical tags to the block whose timestamp is used for decoding. This
             // prevents `latest`, `safe`, or `finalized` from crossing an activation boundary
@@ -436,16 +453,26 @@ impl CallArgs {
             } else {
                 Default::default()
             };
+            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            ensure_remote_trace_context_unchanged(endpoint_identity, &final_endpoint_identity)?;
 
-            let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            // The remote node executed this trace, so its reported family is authoritative for
+            // decoding even when the caller selected a compatible local EVM implementation.
+            let execution_network = endpoint_identity.network;
+            let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
             let block_timestamp = if let Some(timestamp) = block_time_override {
                 Some(timestamp)
             } else {
                 fetched_block.as_ref().map(|block| block.header().timestamp())
             };
-            // A configured hardfork is an explicit trace-decoding override. Otherwise decode
-            // against the exact effective timestamp used by the RPC call.
-            let resolved_hardfork = config.hardfork.or_else(|| {
+            // A configured hardfork is an explicit trace-decoding override. Otherwise honor an
+            // Anvil endpoint's exact execution hardfork before consulting the source schedule.
+            let resolved_hardfork = select_remote_trace_hardfork(
+                config.hardfork,
+                endpoint_identity.hardfork,
+                execution_network,
+            )
+            .or_else(|| {
                 block_timestamp.and_then(|timestamp| {
                     FoundryHardfork::from_chain_and_timestamp(chain.id(), timestamp)
                 })
@@ -459,6 +486,7 @@ impl CallArgs {
                 with_local_artifacts,
                 false,
                 resolved_hardfork,
+                endpoint_identity.network_profile,
             )
             .await?;
 
@@ -466,17 +494,16 @@ impl CallArgs {
         }
 
         if trace {
-            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
+            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = block {
                 // Override Config `fork_block_number` (if set) with CLI value.
                 config.fork_block_number = Some(block_number);
             }
 
             let create2_deployer = evm_opts.create2_deployer;
             let verbosity = tracing.verbosity;
-            let (mut evm_env, tx_env, fork, chain, networks) =
+            let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
             let context_block_number = evm_env.block_env.number().saturating_to();
-
             // modify settings that usually set in eth_call
             evm_env.cfg_env.disable_block_gas_limit = true;
             evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
@@ -495,8 +522,14 @@ impl CallArgs {
                 &config,
                 networks,
                 chain.id(),
+                endpoint_hardfork,
                 &mut evm_env,
                 evm_version,
+            );
+            TracingExecutor::<FEN>::extend_precompile_labels(
+                &mut config,
+                networks,
+                resolved_hardfork,
             );
 
             let trace_requirements = TraceRequirements::none()
@@ -597,6 +630,7 @@ impl CallArgs {
                 with_local_artifacts,
                 debug,
                 resolved_hardfork,
+                networks,
             )
             .await?;
 

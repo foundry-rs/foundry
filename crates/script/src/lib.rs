@@ -24,7 +24,7 @@ use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
-use eyre::{ContextCompat, Result};
+use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
@@ -61,7 +61,7 @@ use foundry_evm::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
-    opts::{EvmOpts, resolve_execution_spec},
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
@@ -280,15 +280,16 @@ impl ScriptArgs {
 
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
-        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if self.tempo.is_tempo() || self.has_tempo_session()? {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
-        } else {
-            // Auto-detect network from fork chain ID when not explicitly configured.
-            evm_opts.infer_network_from_fork().await;
         }
+        // Discover endpoint source identity and exact hardfork even when execution network is
+        // explicit. Without an explicit selection this also infers the execution network.
+        evm_opts.infer_network_from_fork().await?;
+        config.networks = evm_opts.networks;
 
         Ok((config, evm_opts))
     }
@@ -807,6 +808,8 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub evm_opts: EvmOpts,
     /// Exact network hardfork selected for script execution.
     pub hardfork: Option<FoundryHardfork>,
+    /// Source chain used for trace decoding and external identifiers.
+    pub source_chain_id: Option<u64>,
     pub sender_nonce: u64,
     sender_nonce_override: Option<u64>,
     /// Maps a rpc url to a backend
@@ -841,6 +844,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             config,
             evm_opts,
             hardfork: None,
+            source_chain_id: None,
             sender_nonce,
             sender_nonce_override,
             backends: HashMap::default(),
@@ -897,26 +901,25 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         trace!("preparing script runner");
         let (mut evm_env, mut tx_env, fork_context) =
             self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
-        let fork_block = fork_context.map(|context| context.block_number);
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        self.source_chain_id = fork_chain_id;
         self.hardfork = resolve_execution_spec(
             &self.config,
             self.evm_opts.networks,
             &mut evm_env,
-            fork_chain_id,
+            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
             None,
             None,
         );
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
+            let fork_context =
+                fork_context.ok_or_eyre("fork context is unavailable for configured fork URL")?;
             match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
-                    let fork = self.evm_opts.get_fork(
-                        &self.config,
-                        fork_chain_id.unwrap_or(evm_env.cfg_env.chain_id),
-                        fork_block,
-                    );
+                    let fork = self.evm_opts.get_fork_with_context(&self.config, fork_context);
                     let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
@@ -1003,6 +1006,8 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
+    #[cfg(feature = "monad")]
+    use foundry_evm::hardforks::MonadHardfork;
     use std::{fs, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
@@ -1138,6 +1143,43 @@ mod tests {
 
         config.update_sender(replacement_sender).await.unwrap();
         assert_eq!(config.sender_nonce, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
+    async fn script_runner_preserves_nested_fork_source_chain() {
+        let (_origin_api, origin_handle) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::MonadTestnet as u64))
+                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+        )
+        .await;
+        let (_fork_api, fork_handle) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Mainnet as u64))
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+        let mut evm_opts =
+            EvmOpts { fork_url: Some(fork_handle.http_endpoint()), ..Default::default() };
+        evm_opts.infer_network_from_fork().await.unwrap();
+        let config = Config { networks: evm_opts.networks, ..Default::default() };
+        let mut script = ScriptConfig::<MonadEvmNetwork>::new(
+            config,
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let _runner = script.get_runner().await.unwrap();
+
+        assert_eq!(script.source_chain_id, Some(NamedChain::MonadTestnet as u64));
+        assert_eq!(script.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
     }
 
     #[test]

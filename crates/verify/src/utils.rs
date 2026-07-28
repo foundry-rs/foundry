@@ -312,14 +312,21 @@ where
     fork_config.fork_block_number = Some(fork_blk_num);
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (mut evm_env, tx_env, fork, chain, networks) =
+    let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
         TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
 
     evm_env.block_env.set_number(U256::from(execution_blk_num));
     if let Some(block) = execution_block {
         configure_env_block::<FEN>(&mut evm_env, block, chain.id(), networks);
     }
-    resolve_runtime_spec::<FEN>(fork_config, networks, chain.id(), &mut evm_env);
+    let resolved_hardfork = resolve_runtime_spec::<FEN>(
+        fork_config,
+        networks,
+        chain.id(),
+        endpoint_hardfork,
+        &mut evm_env,
+    );
+    TracingExecutor::<FEN>::extend_precompile_labels(fork_config, networks, resolved_hardfork);
 
     let executor = TracingExecutor::<FEN>::new(
         (evm_env.clone(), tx_env.clone()),
@@ -338,12 +345,20 @@ fn resolve_runtime_spec<FEN>(
     config: &Config,
     networks: NetworkConfigs,
     source_chain_id: ChainId,
+    endpoint_hardfork: Option<FoundryHardfork>,
     evm_env: &mut EvmEnvFor<FEN>,
 ) -> Option<FoundryHardfork>
 where
     FEN: FoundryEvmNetwork,
 {
-    TracingExecutor::<FEN>::resolve_spec_for_chain(config, networks, source_chain_id, evm_env, None)
+    TracingExecutor::<FEN>::resolve_spec_for_chain(
+        config,
+        networks,
+        source_chain_id,
+        endpoint_hardfork,
+        evm_env,
+        None,
+    )
 }
 
 pub fn configure_env_block<FEN>(
@@ -623,6 +638,7 @@ contract Broken {
             &before_config,
             NetworkConfigs::with_monad(),
             NamedChain::Monad as u64,
+            None,
             &mut before_env,
         );
 
@@ -636,6 +652,7 @@ contract Broken {
             &after_config,
             NetworkConfigs::with_monad(),
             NamedChain::Monad as u64,
+            None,
             &mut after_env,
         );
 
@@ -645,20 +662,29 @@ contract Broken {
 
     #[test]
     #[cfg(feature = "monad")]
-    fn runtime_spec_prefers_explicit_monad_hardfork() {
-        let config =
+    fn runtime_spec_and_labels_prefer_explicit_monad_hardfork() {
+        let mut config =
             Config { hardfork: Some(MonadHardfork::MonadEight.into()), ..Default::default() };
         let mut env = monad_env(MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap());
+        let networks = NetworkConfigs::with_monad();
 
         let resolved = resolve_runtime_spec::<MonadEvmNetwork>(
             &config,
-            NetworkConfigs::with_monad(),
+            networks,
             NamedChain::Monad as u64,
+            Some(MonadHardfork::MonadNine.into()),
             &mut env,
+        );
+        TracingExecutor::<MonadEvmNetwork>::extend_precompile_labels(
+            &mut config,
+            networks,
+            resolved,
         );
 
         assert_eq!(resolved, Some(FoundryHardfork::Monad(MonadHardfork::MonadEight)));
         assert_eq!(env.cfg_env.spec, MonadHardfork::MonadEight);
+        assert!(config.labels.values().any(|label| label == "Staking"));
+        assert!(!config.labels.values().any(|label| label == "ReserveBalance"));
     }
 
     #[test]

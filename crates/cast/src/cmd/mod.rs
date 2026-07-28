@@ -5,6 +5,19 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
+use eyre::Result;
+use foundry_cli::utils::load_config_from_provider;
+use foundry_config::{Config, figment::Figment};
+use foundry_evm::opts::EvmOpts;
+
+/// Loads Cast's config and applies its normalized network to the EVM options.
+pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Config, EvmOpts)> {
+    let config = load_config_from_provider(figment.clone())?;
+    let mut evm_opts = figment.extract::<EvmOpts>()?;
+    evm_opts.networks = config.networks;
+    Ok((config, evm_opts))
+}
+
 pub mod access_list;
 pub mod artifact;
 pub mod b2e_payload;
@@ -40,3 +53,18 @@ pub mod trace;
 pub mod txpool;
 pub mod vaddr;
 pub mod wallet;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn normalized_hardfork_network_is_applied_to_evm_opts() {
+        let figment = Config::figment().merge(("hardfork", "monad:MonadNine"));
+        let (config, evm_opts) = load_cast_config_and_evm_opts(figment).unwrap();
+
+        assert!(config.networks.is_monad());
+        assert!(evm_opts.networks.is_monad());
+    }
+}

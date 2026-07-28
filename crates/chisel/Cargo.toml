@@ -56,6 +56,8 @@ tracing.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+anvil.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing-subscriber.workspace = true
 
 # REPL tests only work on Unix.

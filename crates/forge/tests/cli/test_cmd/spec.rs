@@ -420,6 +420,25 @@ contract MonadForkHardforkTest {
             "test_monad_nine",
         ])
         .assert_success();
+
+    let (_api, overridden) = spawn(
+        NodeConfig::test_monad()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(activation))
+            .with_hardfork(Some(MonadHardfork::MonadEight.into())),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--fork-url",
+            &overridden.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_eight",
+        ])
+        .assert_success();
 });
 
 #[cfg(feature = "monad")]

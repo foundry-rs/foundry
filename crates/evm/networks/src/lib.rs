@@ -997,6 +997,20 @@ mod tests {
     }
 
     #[test]
+    fn rpc_profile_keeps_moonbeam_on_default_ethereum() {
+        let profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
+            NamedChain::Moonbeam as u64,
+            None,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(profile, NetworkConfigs::default());
+        assert!(profile.bypass_prevrandao(NamedChain::Moonbeam as u64));
+    }
+
+    #[test]
     #[cfg(feature = "monad")]
     fn rpc_identity_fallback_preserves_explicit_custom_networks() {
         let custom_chain_id = 98_765_432;

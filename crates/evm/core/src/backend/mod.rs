@@ -598,13 +598,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork, _) = backend.forks.create_fork(fork)?;
-            let block_number = fork_block_number(&fork_id)
-                .ok_or_else(|| eyre::eyre!("fork {fork_id} is missing its pinned block number"))?;
+            let (fork_id, fork, _, context) = backend.forks.create_fork(fork)?;
             let fork_db = ForkDB::new(fork);
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
-                block_number,
+                context.block_number,
                 fork_db,
                 backend.inner.new_journaled_state(),
             );
@@ -1290,14 +1288,11 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork, _) = self.forks.create_fork(create_fork)?;
-        let block_number = fork_block_number(&fork_id)
-            .ok_or_else(|| eyre::eyre!("fork {fork_id} is missing its pinned block number"))?;
-
+        let (fork_id, fork, _, context) = self.forks.create_fork(create_fork)?;
         let fork_db = ForkDB::new(fork);
         let (id, _) = self.inner.insert_new_fork(
             fork_id,
-            block_number,
+            context.block_number,
             fork_db,
             self.fork_init_journaled_state.clone(),
         );
@@ -1476,10 +1471,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
-        let (fork_id, backend, fork_env) =
+        let (fork_id, backend, fork_env, context) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
         // this will update the local mapping
-        self.inner.roll_fork(id, fork_id, block_number, backend)?;
+        self.inner.roll_fork(id, fork_id, context.block_number, backend)?;
 
         if let Some((active_id, active_idx)) = self.active_fork_ids {
             // the currently active fork is the targeted fork of this call

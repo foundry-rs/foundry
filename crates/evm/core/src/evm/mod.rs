@@ -19,6 +19,7 @@ use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
+use foundry_evm_networks::NetworkVariant;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use revm::{
     Database,
@@ -81,6 +82,14 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     /// Maximum initcode size enforced when nested cheatcode execution simulates a raw deployment.
     const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 
+    /// Returns whether this concrete EVM network can execute `network`.
+    ///
+    /// Non-Monad implementations reject Monad execution because it requires a distinct EVM
+    /// factory. Other existing network compatibility behavior remains unchanged.
+    fn supports_network(network: NetworkVariant) -> bool {
+        !network.is_monad()
+    }
+
     fn is_extra_cheatcode_address(address: Address) -> bool {
         Self::EXTRA_CHEATCODE_ADDRESSES.contains(&address)
     }
@@ -115,6 +124,10 @@ impl FoundryEvmNetwork for MonadEvmNetwork {
 
     const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
     const CONTRACT_INITCODE_SIZE_LIMIT: usize = monad_revm::MONAD_MAX_INITCODE_SIZE;
+
+    fn supports_network(network: NetworkVariant) -> bool {
+        network.is_monad()
+    }
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
