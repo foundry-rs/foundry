@@ -2467,16 +2467,35 @@ impl Config {
         for block in chain_path.read_dir()?.flatten() {
             let file_type = block.file_type()?;
             let file_name = block.file_name();
-            let filepath = if file_type.is_dir() {
-                block.path().join("storage.json")
+            let size = if file_type.is_dir() {
+                let mut size = 0;
+                for cache_file in block.path().read_dir()?.flatten() {
+                    let cache_file_name = cache_file.file_name();
+                    let cache_file_name = cache_file_name.to_string_lossy();
+                    if cache_file.file_type()?.is_file()
+                        && (cache_file_name == "storage.json"
+                            || cache_file_name
+                                .strip_prefix("storage-")
+                                .and_then(|name| name.strip_suffix(".json"))
+                                .is_some_and(|hash| {
+                                    hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                                }))
+                    {
+                        size += cache_file.metadata()?.len();
+                    }
+                }
+                if size == 0 {
+                    continue;
+                }
+                size
             } else if file_type.is_file()
                 && file_name.to_string_lossy().chars().all(char::is_numeric)
             {
-                block.path()
+                block.metadata()?.len()
             } else {
                 continue;
             };
-            blocks.push((file_name.to_string_lossy().into_owned(), fs::metadata(filepath)?.len()));
+            blocks.push((file_name.to_string_lossy().into_owned(), size));
         }
         Ok(blocks)
     }
@@ -3033,11 +3052,11 @@ impl BasicConfig {
             let mut endpoints = toml::value::Table::new();
             endpoints.insert(
                 "tempo".to_string(),
-                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::TEMPO_RPC_URL.to_string()),
             );
             endpoints.insert(
                 "moderato".to_string(),
-                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::MODERATO_RPC_URL.to_string()),
             );
             document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
         }
@@ -5615,6 +5634,18 @@ mod tests {
             writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
         }
 
+        fn fake_endpoint_block_cache(
+            chain_path: &Path,
+            block_number: &str,
+            endpoint: &str,
+            size_bytes: usize,
+        ) {
+            let block_path = chain_path.join(block_number);
+            let file_path = block_path.join(format!("storage-{endpoint}.json"));
+            let mut file = File::create(file_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
+        }
+
         fn fake_block_cache_block_path_as_file(
             chain_path: &Path,
             block_number: &str,
@@ -5628,6 +5659,13 @@ mod tests {
         let chain_dir = tempdir()?;
 
         fake_block_cache(chain_dir.path(), "1", 100);
+        fake_endpoint_block_cache(
+            chain_dir.path(),
+            "1",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            50,
+        );
+        fake_endpoint_block_cache(chain_dir.path(), "1", "backup", 75);
         fake_block_cache(chain_dir.path(), "2", 500);
         fake_block_cache_block_path_as_file(chain_dir.path(), "3", 900);
         // Pollution file that should not show up in the cached block
@@ -5642,7 +5680,7 @@ mod tests {
         let block3 = &result.iter().find(|x| x.0 == "3").unwrap();
 
         assert_eq!(block1.0, "1");
-        assert_eq!(block1.1, 100);
+        assert_eq!(block1.1, 150);
         assert_eq!(block2.0, "2");
         assert_eq!(block2.1, 500);
         assert_eq!(block3.0, "3");
@@ -5931,6 +5969,7 @@ mod tests {
                 compact_labels = true
                 trace_depth = 3
                 decode_internal = true
+                external_identification_timeout = 9
 
                 [tracing.labels]
                 0x0000000000000000000000000000000000000002 = "Bob"
@@ -5944,6 +5983,7 @@ mod tests {
             assert_eq!(config.tracing.trace_depth, Some(3));
             assert!(config.tracing.decode_internal);
             assert!(config.tracing.compact_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 9);
             let labels = AddressHashMap::from_iter(vec![(
                 address!("0x0000000000000000000000000000000000000002"),
                 "Bob".to_string(),
@@ -5967,6 +6007,18 @@ mod tests {
     }
 
     #[test]
+    fn test_external_identification_timeout_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT", "0");
+
+            let config = Config::load().unwrap();
+
+            assert_eq!(config.tracing.external_identification_timeout, 0);
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_global_and_tracing_verbosity_are_independent() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -5984,6 +6036,7 @@ mod tests {
             assert_eq!(config.verbosity, 4);
             assert_eq!(config.tracing.verbosity, 0);
             assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 5);
 
             Ok(())
         });

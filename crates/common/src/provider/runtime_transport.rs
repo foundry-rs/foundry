@@ -4,7 +4,7 @@
 
 use crate::{
     DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
-    provider::mpp::{keys::discover_mpp_key, transport::LazyMppHttpTransport, ws::MppWsConnect},
+    provider::mpp::{transport::LazyMppHttpTransport, ws::MppWsConnect},
 };
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -26,7 +26,7 @@ use url::Url;
 ///
 /// Endpoints matching these patterns are always connected via [`MppWsConnect`],
 /// regardless of whether local MPP keys have been discovered.
-const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz"];
+const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz", ".mpp.moderato.tempo.xyz"];
 
 /// Returns `true` if `url` points to a known MPP-enabled RPC service.
 fn is_known_mpp_endpoint(url: &Url) -> bool {
@@ -266,13 +266,12 @@ impl RuntimeTransport {
     /// Connects to a WS transport.
     ///
     /// Uses [`MppWsConnect`] (which performs the MPP challenge/credential
-    /// handshake at connect time) when the endpoint is a known MPP service or
-    /// when MPP keys are discoverable. Otherwise falls back to alloy's plain
-    /// [`WsConnect`] with zero overhead.
+    /// handshake at connect time) when the endpoint is a known MPP service.
+    /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
 
-        let service = if is_known_mpp_endpoint(&self.url) && discover_mpp_key().is_some() {
+        let service = if is_known_mpp_endpoint(&self.url) {
             let mut ws = MppWsConnect::new(self.url.to_string());
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);

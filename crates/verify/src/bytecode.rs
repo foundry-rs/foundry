@@ -42,6 +42,7 @@ use foundry_evm::{
         evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::EvmError,
+    utils::apply_chain_specific_tx_replay_env_changes,
 };
 use foundry_evm_networks::NetworkVariant;
 use revm::{context::Block as _, state::AccountInfo};
@@ -660,6 +661,7 @@ impl VerifyBytecodeArgs {
             let prev_block_nonce =
                 provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
 
+            apply_chain_specific_tx_replay_env_changes(&mut evm_env);
             if let Some(ref block) = block {
                 configure_env_block::<FEN>(&mut evm_env, block, config.networks);
 

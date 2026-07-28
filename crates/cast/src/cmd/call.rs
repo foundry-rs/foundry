@@ -89,7 +89,7 @@ pub struct CallArgs {
     #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
-    /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
+    /// Raw hex-encoded data for the transaction. Used instead of `SIG` and `ARGS`.
     #[arg(
         long,
         conflicts_with_all = &["sig", "args"]
@@ -258,7 +258,8 @@ impl CallArgs {
         let mut config = load_config_from_provider(figment)?;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
-        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        let tracing = config.tracing.clone();
 
         let Self {
             to,

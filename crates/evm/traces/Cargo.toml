@@ -55,6 +55,7 @@ yansi.workspace = true
 [dev-dependencies]
 ron.workspace = true
 snapbox.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 default = ["optimism"]

@@ -33,35 +33,32 @@ macro_rules! declare_forge_lint {
 ///
 /// Each pass is declared with:
 /// - `$pass_id`: Identifier of the generated struct that will implement the pass trait(s).
-/// - `$pass_type`: Either `early`, `late`, or `both` to indicate which traits to implement.
+/// - `$pass_type`: `early`, `late`, `both`, or `project`.
 /// - `$lints`: A parenthesized, comma-separated list of `SolLint` constants.
+/// - an optional constructor that receives the lint-specific configuration.
 ///
 /// # Outputs
 ///
-/// - Structs for each linting pass
-/// - Helper methods to create early and late passes with required lifetimes
-/// - `const REGISTERED_LINTS` containing all registered lint objects
+/// - Marker structs for each linting pass.
+/// - `const REGISTERED_LINTS` containing all registered lint objects.
+/// - A function that adds fresh pass factories to Solar's lint registry.
 #[macro_export]
 macro_rules! register_lints {
     // 1. Internal rule for declaring structs and their associated lints.
-    ( @declare_structs $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?)) ),* $(,)? ) => {
+    ( @declare_structs $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?) $(, $constructor:expr)? ) ),* $(,)? ) => {
         $(
             #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
             pub struct $pass_id;
 
             impl $pass_id {
-                /// Static slice of lints associated with this pass.
-                const LINTS: &'static [SolLint] = &[$($lint),*];
-
-                register_lints!(@early_impl $pass_id, $pass_type);
-                register_lints!(@late_impl $pass_id, $pass_type);
-                register_lints!(@project_impl $pass_id, $pass_type);
+                /// Static slice of lint identifiers associated with this pass.
+                const LINT_IDS: &'static [&'static str] = &[$($lint.id),*];
             }
         )*
     };
 
     // 2. Internal rule for declaring the const array of ALL lints.
-    ( @declare_consts $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?)) ),* $(,)? ) => {
+    ( @declare_consts $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?) $(, $constructor:expr)? ) ),* $(,)? ) => {
         pub const REGISTERED_LINTS: &[SolLint] = &[
             $(
                 $($lint,)*
@@ -70,84 +67,59 @@ macro_rules! register_lints {
     };
 
     // 3. Internal rule for declaring the helper functions.
-    ( @declare_funcs $( ($pass_id:ident, $pass_type:ident, $lints:tt) ),* $(,)? ) => {
-        pub fn create_early_lint_passes<'ast>() -> Vec<(Box<dyn EarlyLintPass<'ast>>, &'static [SolLint])> {
-            [
-                $(
-                    register_lints!(@early_create $pass_id, $pass_type),
-                )*
-            ]
-            .into_iter()
-            .flatten()
-            .collect()
-        }
-
-        pub fn create_late_lint_passes<'hir>() -> Vec<(Box<dyn LateLintPass<'hir>>, &'static [SolLint])> {
-            [
-                $(
-                    register_lints!(@late_create $pass_id, $pass_type),
-                )*
-            ]
-            .into_iter()
-            .flatten()
-            .collect()
-        }
-
-        pub fn create_project_lint_passes<'ast>() -> Vec<(Box<dyn $crate::linter::ProjectLintPass<'ast>>, &'static [SolLint])> {
-            [
-                $(
-                    register_lints!(@project_create $pass_id, $pass_type),
-                )*
-            ]
-            .into_iter()
-            .flatten()
-            .collect()
+    ( @declare_funcs $( ($pass_id:ident, $pass_type:ident, $lints:tt $(, $constructor:expr)?) ),* $(,)? ) => {
+        pub fn register_lints(
+            registry: &mut solar_lint::LintRegistry,
+            config: &std::sync::Arc<foundry_config::lint::LintSpecificConfig>,
+        ) {
+            let _ = config;
+            $(
+                register_lints!(@register_early registry, config, $pass_id, $pass_type $(, $constructor)?);
+                register_lints!(@register_late registry, config, $pass_id, $pass_type $(, $constructor)?);
+                register_lints!(@register_project registry, config, $pass_id, $pass_type $(, $constructor)?);
+            )*
         }
     };
 
     // --- HELPERS ------------------------------------------------------------
-    (@early_impl $_pass_id:ident, late) => {};
-    (@early_impl $_pass_id:ident, project) => {};
-    (@early_impl $pass_id:ident, $other:ident) => {
-        pub fn as_early_lint_pass<'a>() -> Box<dyn EarlyLintPass<'a>> {
-            Box::new(Self::default())
-        }
+    (@register_early $registry:ident, $config:ident, $_pass_id:ident, late $(, $constructor:expr)?) => {};
+    (@register_early $registry:ident, $config:ident, $_pass_id:ident, project $(, $constructor:expr)?) => {};
+    (@register_early $registry:ident, $config:ident, $pass_id:ident, $_other:ident, $constructor:expr) => {{
+        let config = std::sync::Arc::clone($config);
+        $registry.register_early_pass(
+            $pass_id::LINT_IDS,
+            move || ($constructor)(std::sync::Arc::clone(&config)),
+        );
+    }};
+    (@register_early $registry:ident, $config:ident, $pass_id:ident, $_other:ident) => {
+        $registry.register_early_pass($pass_id::LINT_IDS, $pass_id::default);
     };
 
-    (@late_impl $_pass_id:ident, early) => {};
-    (@late_impl $_pass_id:ident, project) => {};
-    (@late_impl $pass_id:ident, $other:ident) => {
-        pub fn as_late_lint_pass<'hir>() -> Box<dyn LateLintPass<'hir>> {
-            Box::new(Self::default())
-        }
+    (@register_late $registry:ident, $config:ident, $_pass_id:ident, early $(, $constructor:expr)?) => {};
+    (@register_late $registry:ident, $config:ident, $_pass_id:ident, project $(, $constructor:expr)?) => {};
+    (@register_late $registry:ident, $config:ident, $pass_id:ident, $_other:ident, $constructor:expr) => {{
+        let config = std::sync::Arc::clone($config);
+        $registry.register_late_pass(
+            $pass_id::LINT_IDS,
+            move || ($constructor)(std::sync::Arc::clone(&config)),
+        );
+    }};
+    (@register_late $registry:ident, $config:ident, $pass_id:ident, $_other:ident) => {
+        $registry.register_late_pass($pass_id::LINT_IDS, $pass_id::default);
     };
 
-    (@project_impl $_pass_id:ident, early) => {};
-    (@project_impl $_pass_id:ident, late) => {};
-    (@project_impl $_pass_id:ident, both) => {};
-    (@project_impl $pass_id:ident, $other:ident) => {
-        pub fn as_project_lint_pass<'ast>() -> Box<dyn $crate::linter::ProjectLintPass<'ast>> {
-            Box::new(Self::default())
-        }
-    };
-
-    (@early_create $_pass_id:ident, late) => { None };
-    (@early_create $_pass_id:ident, project) => { None };
-    (@early_create $pass_id:ident, $_other:ident) => {
-        Some(($pass_id::as_early_lint_pass(), $pass_id::LINTS))
-    };
-
-    (@late_create $_pass_id:ident, early) => { None };
-    (@late_create $_pass_id:ident, project) => { None };
-    (@late_create $pass_id:ident, $_other:ident) => {
-        Some(($pass_id::as_late_lint_pass(), $pass_id::LINTS))
-    };
-
-    (@project_create $_pass_id:ident, early) => { None };
-    (@project_create $_pass_id:ident, late) => { None };
-    (@project_create $_pass_id:ident, both) => { None };
-    (@project_create $pass_id:ident, $_other:ident) => {
-        Some(($pass_id::as_project_lint_pass(), $pass_id::LINTS))
+    (@register_project $registry:ident, $config:ident, $_pass_id:ident, early $(, $constructor:expr)?) => {};
+    (@register_project $registry:ident, $config:ident, $_pass_id:ident, late $(, $constructor:expr)?) => {};
+    (@register_project $registry:ident, $config:ident, $_pass_id:ident, both $(, $constructor:expr)?) => {};
+    (@register_project $registry:ident, $config:ident, $pass_id:ident, $_other:ident, $constructor:expr) => {{
+        let config = std::sync::Arc::clone($config);
+        $registry.register_project_pass(
+            $pass_id::LINT_IDS,
+            move || ($constructor)(std::sync::Arc::clone(&config)),
+        );
+    }};
+    (@register_project $registry:ident, $config:ident, $pass_id:ident, $_other:ident) => {
+        $registry.register_project_pass($pass_id::LINT_IDS, $pass_id::default);
     };
 
     // --- ENTRY POINT ---------------------------------------------------------

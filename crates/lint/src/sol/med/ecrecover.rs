@@ -13,7 +13,7 @@ use solar::{
     sema::{
         Gcx,
         builtins::Builtin,
-        eval::{ConstValue, ConstantEvaluator},
+        eval::ConstValue,
         hir::{
             self, ExprKind, ItemId, LoopSource, Res, StateMutability, StmtKind, TypeKind, Visit,
         },
@@ -402,9 +402,7 @@ impl<'hir> Analyzer<'hir> {
                 _ => unreachable!(),
             };
         }
-        if let Some(value) =
-            ConstantEvaluator::new(self.gcx).try_eval(expr).ok().and_then(|value| value.as_u256())
-        {
+        if let Some(value) = self.gcx.try_eval_const(expr).ok().and_then(|value| value.as_u256()) {
             return Some(value);
         }
         None
@@ -1383,8 +1381,8 @@ fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &hir::Expr<'_
 }
 
 fn constant_bool(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<bool> {
-    match ConstantEvaluator::new(gcx).try_eval_value(expr).ok()? {
-        ConstValue::Bool(value) => Some(value),
+    match gcx.try_eval_const_value(expr).ok()? {
+        ConstValue::Bool(value) => Some(*value),
         _ => None,
     }
 }

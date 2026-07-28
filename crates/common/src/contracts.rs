@@ -3,7 +3,7 @@
 use crate::{compile::PathOrContractInfo, find_metadata_start, strip_bytecode_placeholders};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{Address, B256, Bytes, Selector, hex};
+use alloy_primitives::{Address, B256, Bytes, Selector, address, hex};
 use eyre::{OptionExt, Result};
 use foundry_compilers::{
     ArtifactId, Project, ProjectCompileOutput,
@@ -28,6 +28,26 @@ use std::{
 /// See: <https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries>
 const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
+
+/// Isolated account used to deploy libraries needed only while executing locally.
+///
+/// `address(uint160(uint256(keccak256("foundry library deployer"))))`
+pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+
+/// Returns whether `creation_code` is exactly this contract's linked creation bytecode followed by
+/// a complete, canonically encoded constructor argument tuple.
+pub fn matches_contract_creation(contract: &ContractData, creation_code: &[u8]) -> bool {
+    let Some(bytecode) = contract.bytecode() else { return false };
+    let Some(arguments) = creation_code.strip_prefix(bytecode.as_ref()) else { return false };
+    match contract.abi.constructor() {
+        Some(constructor) => constructor
+            .abi_decode_input(arguments)
+            .ok()
+            .and_then(|values| constructor.abi_encode_input(&values).ok())
+            .is_some_and(|encoded| encoded == arguments),
+        None => arguments.is_empty(),
+    }
+}
 
 /// Subset of [CompactBytecode] excluding sourcemaps.
 #[expect(missing_docs)]
@@ -645,6 +665,36 @@ pub fn find_matching_contract_artifact(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_dyn_abi::DynSolValue;
+    use alloy_primitives::U256;
+
+    #[test]
+    fn exact_creation_match_requires_canonical_constructor_suffix() {
+        let abi = JsonAbi::parse(["constructor(uint256 value)"]).unwrap();
+        let bytecode = Bytes::from_static(&[0x60, 0x00]);
+        let contract = ContractData {
+            name: "C".to_owned(),
+            abi,
+            bytecode: Some(BytecodeData {
+                object: Some(BytecodeObject::Bytecode(bytecode.clone())),
+                link_references: BTreeMap::new(),
+                immutable_references: BTreeMap::new(),
+            }),
+            deployed_bytecode: None,
+            storage_layout: None,
+        };
+        let arguments = contract
+            .abi
+            .constructor()
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .unwrap();
+        let creation = [bytecode.as_ref(), &arguments].concat();
+
+        assert!(matches_contract_creation(&contract, &creation));
+        assert!(!matches_contract_creation(&contract, &creation[..creation.len() - 1]));
+        assert!(!matches_contract_creation(&contract, &[creation, vec![0]].concat()));
+    }
 
     #[test]
     fn bytecode_diffing() {

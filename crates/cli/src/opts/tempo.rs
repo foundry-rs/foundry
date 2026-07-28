@@ -115,14 +115,17 @@ pub struct TempoOpts {
     )]
     pub sponsor_sig: Option<Signature>,
 
-    /// Remote sponsor (fee payer) service URL.
+    /// Remote sponsor (fee payer) service URL for Cast transaction commands.
     ///
     /// When set, the user-signed transaction is forwarded to this URL via
     /// `eth_signRawTransaction`. The service adds its fee payer signature and returns
     /// the fully-sponsored transaction, which is then submitted via the regular RPC.
     /// No local sponsor key is required.
     ///
-    /// Example: `cast send 0x... --sponsor-url https://sponsor.tempo.xyz/tp_abc123`
+    /// This option is supported by `cast send` and `cast erc20`. Forge commands currently support
+    /// local sponsorship through `--tempo.sponsor` and `--tempo.sponsor-signer` instead.
+    ///
+    /// Example: `cast send 0x... --sponsor-url https://sponsor.moderato.tempo.xyz`
     #[arg(
         long = "sponsor-url",
         alias = "tempo.sponsor-url",

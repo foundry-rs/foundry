@@ -48,6 +48,11 @@ pub struct TracingArgs {
     )]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+
+    /// Disable external trace identification using Sourcify, Etherscan, or OpenChain.
+    #[arg(long, help_heading = "Trace options")]
+    #[serde(skip)]
+    pub disable_external_identification: bool,
 }
 
 impl TracingArgs {
@@ -60,6 +65,9 @@ impl TracingArgs {
         tracing.compact_labels |= self.compact_labels;
         tracing.trace_depth = self.trace_depth.or(tracing.trace_depth);
         tracing.decode_internal |= self.decode_internal;
+        if self.disable_external_identification {
+            tracing.external_identification_timeout = 0;
+        }
         tracing
     }
 
@@ -97,6 +105,7 @@ mod tests {
             compact_labels: false,
             trace_depth: Some(1),
             decode_internal: false,
+            external_identification_timeout: 10,
         };
         let args = TracingArgs {
             decode_internal: true,
@@ -104,6 +113,7 @@ mod tests {
             disable_labels: true,
             compact_labels: true,
             labels: vec![format!("{address}:cli")],
+            disable_external_identification: true,
         };
 
         let tracing = args.resolve(&config, 3);
@@ -113,6 +123,16 @@ mod tests {
         assert!(tracing.compact_labels);
         assert_eq!(tracing.trace_depth, Some(2));
         assert!(tracing.decode_internal);
+        assert_eq!(tracing.external_identification_timeout, 0);
+    }
+
+    #[test]
+    fn resolve_preserves_external_identification_timeout() {
+        let config = TracingConfig { external_identification_timeout: 17, ..Default::default() };
+
+        let tracing = TracingArgs::default().resolve(&config, 0);
+
+        assert_eq!(tracing.external_identification_timeout, 17);
     }
 
     #[test]

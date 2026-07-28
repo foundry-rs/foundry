@@ -1,6 +1,8 @@
 use crate::{
     cmd::test::{CampaignArgs, FilterArgs, FuzzMinimizeReplaySession, ShowmapDomainArg, TestArgs},
-    multi_runner::{FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, ShowmapConfig},
+    multi_runner::{
+        FuzzMinimizeEdgeIndices, FuzzMinimizeMode, FuzzMinimizeObservation, ShowmapConfig,
+    },
     result::TestOutcome,
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -389,7 +391,12 @@ impl FuzzCminArgs {
                 empty += 1;
                 continue;
             }
-            let observations = replay_candidate(&session, evm_edge_indices.clone(), sequence)?;
+            let observations = replay_candidate(
+                &session,
+                evm_edge_indices.clone(),
+                sequence,
+                FuzzMinimizeMode::Cmin,
+            )?;
             let mut entry_improved = false;
             let mut entry_failed = false;
             let mut entry_failed_replays = 0usize;
@@ -397,7 +404,7 @@ impl FuzzCminArgs {
             let mut entry_unmatched_txs = 0usize;
             let mut entry_rejected_txs = 0usize;
             for FuzzMinimizeObservation { target, observation } in observations {
-                if observation.has_non_predicate_failure {
+                if observation.has_non_predicate_failure() {
                     entry_failed = true;
                     entry_failed_replays += observation.replayed;
                     continue;
@@ -659,12 +666,13 @@ fn replay_baseline(
     evm_edge_indices: FuzzMinimizeEdgeIndices,
     sequence: Vec<BasicTxDetails>,
 ) -> Result<ReplayBaseline> {
-    let observations = replay_candidate(session, evm_edge_indices, sequence)?;
+    let observations =
+        replay_candidate(session, evm_edge_indices, sequence, FuzzMinimizeMode::Tmin)?;
     let mut requirements = BTreeMap::new();
     let mut has_failure = false;
     let mut has_coverage = false;
     for FuzzMinimizeObservation { target, observation } in observations {
-        let observation_has_failure = observation.failure.is_some();
+        let observation_has_failure = !observation.failures.is_empty();
         let observation_has_coverage = has_edges(&observation);
         if observation.replayed == 0 && !observation_has_failure && !observation_has_coverage {
             continue;
@@ -707,8 +715,12 @@ impl<'a> MinimizeContext<'a> {
             return Ok(false);
         }
         self.attempts += 1;
-        let observations =
-            replay_candidate(self.session, self.evm_edge_indices.clone(), candidate.to_vec())?;
+        let observations = replay_candidate(
+            self.session,
+            self.evm_edge_indices.clone(),
+            candidate.to_vec(),
+            FuzzMinimizeMode::Tmin,
+        )?;
         let observations = observations
             .into_iter()
             .map(|obs| (obs.target, obs.observation))
@@ -722,11 +734,11 @@ impl<'a> MinimizeContext<'a> {
             let Some(candidate) = observations.get(target) else {
                 return Ok(false);
             };
-            if let Some(failure) = &baseline.failure {
-                if candidate.failure.as_ref() != Some(failure) {
+            if !baseline.failures.is_empty() {
+                if candidate.failures != baseline.failures {
                     return Ok(false);
                 }
-            } else if candidate.failure.is_some() || !same_edge_hit_sets(candidate, baseline) {
+            } else if !candidate.failures.is_empty() || !same_edge_hit_sets(candidate, baseline) {
                 return Ok(false);
             }
         }
@@ -741,7 +753,9 @@ fn has_new_active_targets(
 ) -> bool {
     observations.iter().any(|(target, observation)| {
         !baseline.contains_key(target)
-            && (observation.failure.is_some() || observation.replayed > 0 || has_edges(observation))
+            && (!observation.failures.is_empty()
+                || observation.replayed > 0
+                || has_edges(observation))
     })
 }
 
@@ -1322,9 +1336,10 @@ fn replay_candidate(
     session: &FuzzMinimizeReplaySession,
     evm_edge_indices: FuzzMinimizeEdgeIndices,
     sequence: Vec<BasicTxDetails>,
+    mode: FuzzMinimizeMode,
 ) -> Result<Vec<FuzzMinimizeObservation>> {
     let _quiet = QuietShellGuard::new();
-    session.replay(sequence, evm_edge_indices)
+    session.replay(sequence, evm_edge_indices, mode)
 }
 
 fn merge_new_edges(cumulative: &mut ReplayObservation, observation: &ReplayObservation) -> bool {
@@ -1436,7 +1451,7 @@ mod tests {
             (
                 "B".to_string(),
                 ReplayObservation {
-                    failure: Some(ReplayFailure::AfterInvariant),
+                    failures: std::collections::BTreeSet::from([ReplayFailure::AfterInvariant]),
                     ..Default::default()
                 },
             ),
