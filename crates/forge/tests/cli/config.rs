@@ -1246,6 +1246,7 @@ forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
     pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
     pretty_err(&outer, fs::write(outer.join("remappings.txt"), "inner/=lib/inner/contracts/\n"));
     pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "contract I {}\n"));
     pretty_err(
         prj.root(),
         fs::write(prj.root().join("src/local/Selected.sol"), "contract Selected {}\n"),
@@ -1258,7 +1259,7 @@ forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
         &outer,
         fs::write(
             outer.join("src/Outer.sol"),
-            "import {Selected} from \"inner/sub/Selected.sol\"; contract Outer is Selected {}\n",
+            "import {I} from \"inner/I.sol\"; import {Selected} from \"inner/sub/Selected.sol\"; contract Outer is I, Selected {}\n",
         ),
     );
     prj.add_source(

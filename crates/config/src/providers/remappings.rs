@@ -7,6 +7,7 @@ use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
+    cmp::Reverse,
     collections::{BTreeMap, HashSet, btree_map::Entry},
     fs,
     path::{MAIN_SEPARATOR, Path, PathBuf},
@@ -125,25 +126,33 @@ impl Remappings {
         figment.extract_inner(GENERATED_REMAPPINGS_KEY).unwrap_or_default()
     }
 
-    /// Extend with lower-precedence remappings, omitting generated contextual refinements
-    /// overridden by an existing global alias.
+    /// Extend with lower-precedence remappings, preserving global alias precedence over generated
+    /// contextual refinements without discarding their broader fallbacks.
     pub fn extend_with_lower_precedence(
         &mut self,
         remappings: Vec<Remapping>,
         generated: &[Remapping],
     ) {
-        let suppressed = remappings
+        let authoritative = self
+            .remappings
+            .iter()
+            .filter(|remapping| remapping.context.is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut suppressed = HashSet::new();
+        let mut overlays = Vec::new();
+        for (index, remapping) in remappings
             .iter()
             .enumerate()
-            .filter(|(_, remapping)| {
-                generated.contains(remapping)
-                    && self.remappings.iter().any(|existing| {
-                        existing.context.is_none()
-                            && remapping_names_overlap(&existing.name, &remapping.name)
-                    })
-            })
-            .map(|(index, _)| index)
-            .collect::<HashSet<_>>();
+            .filter(|(_, remapping)| remapping.context.is_some() && generated.contains(remapping))
+        {
+            if let Some(contextual) = contextual_overlays(&authoritative, remapping) {
+                overlays.extend(contextual);
+            } else {
+                suppressed.insert(index);
+            }
+        }
+        self.extend(overlays);
         for (index, remapping) in remappings.into_iter().enumerate() {
             if !suppressed.contains(&index) {
                 self.push(remapping);
@@ -235,11 +244,8 @@ impl RemappingsProvider<'_> {
         }
 
         user_remappings.extend(remappings);
-        let global_user_remapping_names = user_remappings
-            .iter()
-            .filter(|r| r.context.is_none())
-            .map(|r| r.name.clone())
-            .collect::<Vec<_>>();
+        let global_user_remappings =
+            user_remappings.iter().filter(|r| r.context.is_none()).cloned().collect::<Vec<_>>();
         // Let's now use the wrapper to conditionally extend the remappings with the autodetected
         // ones. We want to avoid duplicates, and the wrapper will handle this for us.
         let mut all_remappings = Remappings::new_with_remappings(user_remappings);
@@ -261,9 +267,6 @@ impl RemappingsProvider<'_> {
                 // source directory. Scope that refinement to the dependency so root imports keep
                 // the broader package mapping.
                 if r.context.is_none()
-                    && !global_user_remapping_names
-                        .iter()
-                        .any(|root| remapping_names_overlap(root, &r.name))
                     && auto_detected_remappings.iter().any(|auto| {
                         auto.context == r.context
                             && auto.name == r.name
@@ -273,7 +276,12 @@ impl RemappingsProvider<'_> {
                 {
                     let mut contextual = r.clone();
                     contextual.context = Some(format!("{}/", lib.display()));
-                    contextual_remappings.push(contextual);
+                    if let Some(overlays) =
+                        contextual_overlays(&global_user_remappings, &contextual)
+                    {
+                        contextual_remappings.extend(overlays);
+                        contextual_remappings.push(contextual);
+                    }
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
@@ -392,12 +400,30 @@ impl RemappingsProvider<'_> {
     }
 }
 
-fn remapping_names_overlap(a: &str, b: &str) -> bool {
-    let a = a.trim_end_matches('/');
-    let b = b.trim_end_matches('/');
-    a == b
-        || a.strip_prefix(b).is_some_and(|suffix| suffix.starts_with('/'))
-        || b.strip_prefix(a).is_some_and(|suffix| suffix.starts_with('/'))
+fn remapping_name_is_prefix(prefix: &str, name: &str) -> bool {
+    let prefix = prefix.trim_end_matches('/');
+    let name = name.trim_end_matches('/');
+    prefix == name || name.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn contextual_overlays(
+    authoritative: &[Remapping],
+    refinement: &Remapping,
+) -> Option<Vec<Remapping>> {
+    if authoritative.iter().any(|mapping| remapping_name_is_prefix(&mapping.name, &refinement.name))
+    {
+        return None;
+    }
+    let mut overlays = authoritative
+        .iter()
+        .filter(|mapping| remapping_name_is_prefix(&refinement.name, &mapping.name))
+        .cloned()
+        .collect::<Vec<_>>();
+    overlays.sort_by_key(|mapping| Reverse(mapping.name.len()));
+    for overlay in &mut overlays {
+        overlay.context.clone_from(&refinement.context);
+    }
+    Some(overlays)
 }
 
 pub fn relative_remapping_preserving_context_boundary(
@@ -490,7 +516,7 @@ mod tests {
         };
         let mut explicit = Remappings::new_with_remappings(vec![cli.clone()]);
         explicit.extend_with_lower_precedence(vec![contextual.clone()], &[]);
-        assert_eq!(explicit.into_inner(), vec![cli.clone(), contextual]);
+        assert_eq!(explicit.into_inner(), vec![cli.clone(), contextual.clone()]);
 
         let global = Remapping {
             context: None,
@@ -502,10 +528,33 @@ mod tests {
             name: "pkg/".to_string(),
             path: "lib/dep/lib/pkg/contracts/".to_string(),
         };
-        let mut generated = Remappings::new_with_remappings(vec![cli.clone()]);
-        generated
-            .extend_with_lower_precedence(vec![refinement.clone(), global.clone()], &[refinement]);
-        assert_eq!(generated.into_inner(), vec![cli, global]);
+        let cli_deep = Remapping {
+            context: None,
+            name: "pkg/sub/deep/".to_string(),
+            path: "src/deep/".to_string(),
+        };
+        let mut generated = Remappings::new_with_remappings(vec![cli.clone(), cli_deep.clone()]);
+        generated.extend_with_lower_precedence(
+            vec![refinement.clone(), global.clone()],
+            std::slice::from_ref(&refinement),
+        );
+        let mut overlay = cli.clone();
+        overlay.context.clone_from(&refinement.context);
+        let mut deep_overlay = cli_deep.clone();
+        deep_overlay.context.clone_from(&refinement.context);
+        assert_eq!(
+            generated.into_inner(),
+            vec![cli.clone(), cli_deep, deep_overlay, overlay, refinement, global.clone()]
+        );
+
+        let broad_cli =
+            Remapping { context: None, name: "pkg/".to_string(), path: "src/local/".to_string() };
+        let mut generated = Remappings::new_with_remappings(vec![broad_cli.clone(), cli.clone()]);
+        generated.extend_with_lower_precedence(
+            vec![contextual.clone(), global],
+            std::slice::from_ref(&contextual),
+        );
+        assert_eq!(generated.into_inner(), vec![broad_cli, cli]);
     }
 
     #[test]
