@@ -894,7 +894,7 @@ impl CallTraceDecoder {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
 
-                Some(decoded.iter().map(format_token).collect())
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
             }
             "signEd25519" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
@@ -1492,7 +1492,8 @@ mod tests {
 
     #[test]
     fn test_should_redact() {
-        let decoder = CallTraceDecoder::new();
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.labels.insert(Address::from([0x22; 20]), "signer".to_string());
 
         let expected_revert_bytes4 = vec![0xde, 0xad, 0xbe, 0xef];
         let expect_revert_bytes4_data = Function::parse("expectRevert(bytes4)")
@@ -1770,6 +1771,25 @@ mod tests {
                 Some(vec![
                     "\"<pk>\"".to_string(),
                     "0x1111111111111111111111111111111111111111".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // Labels are applied to address arguments while the key is redacted.
+                "signKeychain(uint256,address,bytes32)",
+                hex!(
+                    "
+                    5804c690
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000002222222222222222222222222222222222222222
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "signer: [0x2222222222222222222222222222222222222222]".to_string(),
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
                         .to_string(),
                 ]),
