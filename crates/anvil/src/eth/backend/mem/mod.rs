@@ -264,7 +264,7 @@ use revm::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
-    database::{CacheDB, DbAccount, WrapDatabaseRef},
+    database::{AccountState, CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
@@ -5858,8 +5858,28 @@ impl Backend<FoundryNetwork> {
                         inspector.into_print_traces(self.call_trace_decoder.clone());
                     }
 
+                    // REVM turns a previously deleted account into `Touched` when a later call
+                    // recreates it without storage. Preserve the cleared-storage provenance so
+                    // subsequent calls and the recursively merged state cannot reload old slots.
+                    let previously_deleted = state
+                        .keys()
+                        .filter(|address| {
+                            cache_db.cache.accounts.get(*address).is_some_and(|account| {
+                                account.account_state == AccountState::NotExisting
+                            })
+                        })
+                        .copied()
+                        .collect::<Vec<_>>();
+
                     // commit the transaction
                     cache_db.commit(state);
+                    for address in previously_deleted {
+                        if let Some(account) = cache_db.cache.accounts.get_mut(&address)
+                            && account.account_state != AccountState::NotExisting
+                        {
+                            account.account_state = AccountState::StorageCleared;
+                        }
+                    }
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used

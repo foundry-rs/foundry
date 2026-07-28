@@ -152,13 +152,7 @@ impl HistoricalStateCache {
         };
 
         for (address, dirty) in std::mem::take(&mut self.dirty) {
-            let Some(account) = db
-                .inner
-                .cache
-                .accounts
-                .get(&address)
-                .filter(|account| account.account_state != AccountState::NotExisting)
-            else {
+            let Some(account) = db.inner.cache.accounts.get(&address) else {
                 state.accounts.remove(&address);
                 continue;
             };
@@ -228,7 +222,6 @@ impl PersistentStateDb {
             .cache
             .accounts
             .iter()
-            .filter(|(_, account)| account.account_state != AccountState::NotExisting)
             .map(|(address, account)| {
                 (
                     *address,
@@ -924,22 +917,31 @@ mod tests {
 
     #[test]
     fn historical_missing_accounts_match_live_state() {
-        let address = Address::with_last_byte(1);
-        let db = StateRootDb::default();
+        let missing = Address::with_last_byte(1);
+        let deleted = Address::with_last_byte(2);
+        let mut db = StateRootDb::default();
         let historical = db.current_state();
 
-        let live_account = db.basic_ref(address).unwrap();
+        let live_account = db.basic_ref(missing).unwrap();
         assert_eq!(live_account, Some(AccountInfo::default()));
-        assert_eq!(historical.basic_ref(address).unwrap(), live_account);
+        assert_eq!(historical.basic_ref(missing).unwrap(), live_account);
 
-        let mut persistent = PersistentStateDb::default();
-        persistent.accounts.insert(
-            address,
-            PersistentAccount { account_state: AccountState::NotExisting, ..Default::default() },
-        );
-        assert_eq!(persistent.basic_ref(address).unwrap(), None);
-        assert!(!persistent.maybe_as_full_db().unwrap().contains_key(&address));
-        assert!(!persistent.read_as_state_snapshot().accounts.contains_key(&address));
+        db.insert_account(deleted, AccountInfo::from_balance(U256::from(1)));
+        db.inner.inner.cache.accounts.get_mut(&deleted).unwrap().account_state =
+            AccountState::NotExisting;
+        db.history.get_mut().record_account(deleted);
+        let historical = db.current_state();
+        assert_eq!(historical.basic_ref(deleted).unwrap(), None);
+        assert!(!historical.maybe_as_full_db().unwrap().contains_key(&deleted));
+        assert!(!historical.read_as_state_snapshot().accounts.contains_key(&deleted));
+
+        let mut fresh = StateRootDb::default();
+        fresh.insert_account(deleted, AccountInfo::from_balance(U256::from(1)));
+        fresh.inner.inner.cache.accounts.get_mut(&deleted).unwrap().account_state =
+            AccountState::NotExisting;
+        let historical = fresh.current_state();
+        assert_eq!(historical.basic_ref(deleted).unwrap(), None);
+        assert!(!historical.maybe_as_full_db().unwrap().contains_key(&deleted));
     }
 
     #[test]
