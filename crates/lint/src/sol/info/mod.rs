@@ -1,7 +1,9 @@
-use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
+use crate::sol::SolLint;
 
 mod mixed_case;
-use mixed_case::{MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE};
+use mixed_case::{
+    MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE, MixedCaseFunctionPass, MixedCaseVariablePass,
+};
 
 mod boolean_cst;
 use boolean_cst::BOOLEAN_CST;
@@ -25,7 +27,7 @@ mod unsafe_cheatcodes;
 use unsafe_cheatcodes::UNSAFE_CHEATCODE_USAGE;
 
 mod multi_contract_file;
-use multi_contract_file::MULTI_CONTRACT_FILE;
+use multi_contract_file::{MULTI_CONTRACT_FILE, MultiContractFilePass};
 
 mod interface_naming;
 use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
@@ -79,13 +81,13 @@ register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
-    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
-    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
+    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE), MixedCaseVariablePass::new),
+    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION), MixedCaseFunctionPass::new),
     (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
     (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT)),
     (NamedStructFields, late, (NAMED_STRUCT_FIELDS)),
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
-    (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
+    (MultiContractFile, early, (MULTI_CONTRACT_FILE), MultiContractFilePass::new),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
