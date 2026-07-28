@@ -326,6 +326,7 @@ pub(crate) async fn send_tip20_transaction(
                 &prepared,
                 sponsor_url,
                 send_tx.cast_async,
+                send_tx.sync,
                 send_tx.confirmations,
                 timeout,
             )
@@ -338,6 +339,7 @@ pub(crate) async fn send_tip20_transaction(
                 tempo_sponsor.is_none().then_some(chain),
                 None,
                 send_tx.cast_async,
+                send_tx.sync,
                 send_tx.confirmations,
                 timeout,
                 tempo_sponsor.is_none() && !config.eth_rpc_curl,

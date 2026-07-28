@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         erc20::build_provider_with_signer,
-        send::{cast_send, cast_send_with_tempo_wallet},
+        send::{cast_send, cast_send_raw, cast_send_with_tempo_wallet},
         tip20::mine,
     },
     tempo,
@@ -210,15 +210,17 @@ async fn register(
             .await?;
             maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx = tx.sign_with_tempo_wallet(&prepared).await?;
-            let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-            wait_for_receipt_if_needed(
-                &provider,
-                tx_hash,
-                send_tx.cast_async,
-                send_tx.confirmations,
-                timeout,
-            )
-            .await?;
+            let (tx_hash, _) = cast_send_raw(&provider, &raw_tx, send_tx.sync).await?;
+            if !send_tx.sync {
+                wait_for_receipt_if_needed(
+                    &provider,
+                    tx_hash,
+                    send_tx.cast_async,
+                    send_tx.confirmations,
+                    timeout,
+                )
+                .await?;
+            }
             Ok(tx_hash)
         } else {
             cast_send_with_tempo_wallet(
@@ -228,6 +230,7 @@ async fn register(
                 Some(chain),
                 None,
                 send_tx.cast_async,
+                send_tx.sync,
                 send_tx.confirmations,
                 timeout,
                 !config.eth_rpc_curl,

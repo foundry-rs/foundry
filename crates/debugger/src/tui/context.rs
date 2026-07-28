@@ -573,6 +573,18 @@ impl TUIContext<'_> {
     }
 
     fn goto_pc_from_input(&mut self, input: &str) {
+        self.move_to_pc_from_input(input, find_pc_target);
+    }
+
+    fn continue_to_pc_from_input(&mut self, input: &str) {
+        self.move_to_pc_from_input(input, find_next_pc_target);
+    }
+
+    fn move_to_pc_from_input(
+        &mut self,
+        input: &str,
+        find_target: impl Fn(&[DebugNode], usize, usize, usize) -> Option<StepTarget>,
+    ) {
         let candidates = match parse_pc_candidates(input) {
             Ok(candidates) => candidates,
             Err(err) => {
@@ -583,7 +595,7 @@ impl TUIContext<'_> {
 
         let mut found = Vec::new();
         for &candidate in &candidates {
-            if let Some(target) = find_pc_target(
+            if let Some(target) = find_target(
                 self.debug_arena(),
                 self.draw_memory.inner_call_index,
                 self.current_step,
@@ -688,14 +700,19 @@ impl TUIContext<'_> {
 
         let mut parts = input.split_whitespace();
         let command = parts.next().unwrap();
-        if CONTINUE_COMMANDS.contains(&command) || PC_COMMANDS.contains(&command) {
+        let is_continue_command = CONTINUE_COMMANDS.contains(&command);
+        if is_continue_command || PC_COMMANDS.contains(&command) {
             let Some(pc) = parts.next() else {
                 return self.set_error(command_usage(command, "<pc>"));
             };
             if parts.next().is_some() {
                 return self.set_error(command_usage(command, "<pc>"));
             }
-            self.goto_pc_from_input(pc);
+            if is_continue_command {
+                self.continue_to_pc_from_input(pc);
+            } else {
+                self.goto_pc_from_input(pc);
+            }
         } else if MEMORY_COMMANDS.contains(&command) {
             self.run_buffer_command(command, BufferKind::Memory, parts);
         } else if CALLDATA_COMMANDS.contains(&command) {
@@ -1485,6 +1502,26 @@ fn find_pc_target(
     pc: usize,
 ) -> Option<StepTarget> {
     find_step_target(arena, current_node_index, current_step, |_, step| step.pc == pc)
+}
+
+fn find_next_pc_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    pc: usize,
+) -> Option<StepTarget> {
+    let current_node = arena.get(current_node_index)?;
+    let (node_index, step_index) =
+        find_next_step_target(arena, current_node_index, current_step, |node, step| {
+            same_code_context(current_node, node) && step.pc == pc
+        })?;
+    let scope = if node_index == current_node_index {
+        StepTargetScope::CurrentNode
+    } else {
+        StepTargetScope::SameCodeContext
+    };
+
+    Some(StepTarget { node_index, step_index, scope })
 }
 
 fn find_next_step_target(
@@ -2518,6 +2555,21 @@ mod tests {
 
         assert_eq!(tui.current_step, 1);
         assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to PC 0x2a (42) in current trace");
+    }
+
+    #[test]
+    fn command_prompt_continues_to_next_pc_hit() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42, 2, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.current_step = 1;
+
+        tui.run_command_from_input("pc 2a");
+        assert_eq!(tui.current_step, 1);
+
+        tui.run_command_from_input("continue 2a");
+        assert_eq!(tui.current_step, 3);
     }
 
     #[test]
