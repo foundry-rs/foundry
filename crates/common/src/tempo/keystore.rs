@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, hex};
 use alloy_rlp::Decodable;
 use serde::{Deserialize, Serialize};
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
 use tempo_alloy::accounts::{TempoAccountsStore, default_accounts_store_path};
 use tempo_primitives::{
     SignatureType,
@@ -13,10 +13,7 @@ use tempo_primitives::{
 /// Environment variable to override the Tempo home directory.
 pub const TEMPO_HOME_ENV: &str = "TEMPO_HOME";
 
-/// Default Tempo home directory relative to the user's home.
-pub const DEFAULT_TEMPO_HOME: &str = ".tempo";
-
-/// Cryptographic key type shared by persistent wallet sessions.
+/// Cryptographic key type used by Tempo Accounts access keys.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyType {
@@ -124,14 +121,6 @@ pub struct AccountsStoreView {
     pub keys: Vec<KeyEntry>,
 }
 
-/// Resolve the Tempo home directory.
-pub fn tempo_home() -> Option<PathBuf> {
-    if let Some(home) = env::var_os(TEMPO_HOME_ENV).filter(|path| !path.is_empty()) {
-        return Some(PathBuf::from(home));
-    }
-    dirs::home_dir().map(|home| home.join(DEFAULT_TEMPO_HOME))
-}
-
 /// Return the canonical Tempo Accounts `store.json` path.
 pub fn tempo_accounts_store_path() -> Option<PathBuf> {
     default_accounts_store_path().ok()
@@ -171,7 +160,7 @@ pub fn read_tempo_accounts_store() -> Option<AccountsStoreView> {
     })
 }
 
-/// Decode a legacy RLP key authorization used by persistent session records.
+/// Decode an RLP key authorization stored by Tempo Accounts.
 pub fn decode_key_authorization<T: Decodable>(encoded: &str) -> eyre::Result<T> {
     let bytes = hex::decode(encoded)?;
     let mut bytes = bytes.as_slice();
