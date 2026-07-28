@@ -1055,12 +1055,12 @@ fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize
     regions.get(*cursor).is_some_and(|region| region.start <= position)
 }
 
-/// Neutralize any line MDX would parse as an ESM statement (`import`/`export` at the start of
-/// a line): the keyword's first letter becomes an HTML entity, so the line renders the same but
-/// no longer begins with an ESM token. NatSpec text can be inherited from a dependency via
-/// `@inheritdoc`, so this must run wherever displayed prose is assembled. A keyword that falls
-/// inside a Markdown code span or fenced code block is left untouched (see `code_regions`): the
-/// entity would render literally and corrupt the example, and MDX would not execute it there.
+/// Neutralize any line MDX would parse as an ESM statement (`import ` or `export ` at column one):
+/// the keyword's first letter becomes an HTML entity, so the line renders the same but no longer
+/// begins with an ESM token. NatSpec text can be inherited from a dependency via `@inheritdoc`, so
+/// this must run wherever displayed prose is assembled. A keyword that falls inside a Markdown
+/// code span or fenced code block is left untouched (see `code_regions`): the entity would render
+/// literally and corrupt the example, and MDX would not execute it there.
 fn neutralize_esm(text: &str) -> String {
     let regions = code_regions(text);
     let mut region_cursor = 0;
@@ -1068,24 +1068,20 @@ fn neutralize_esm(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
 
     for (line_start, line) in logical_lines(text) {
-        let trimmed = line.trim_start();
-        let mut entity = None;
-        for (keyword, replacement) in [("import", "&#105;"), ("export", "&#101;")] {
-            if let Some(rest) = trimmed.strip_prefix(keyword)
-                && !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-            {
-                entity = Some(replacement);
-                break;
-            }
-        }
+        let entity = if line.starts_with("import ") {
+            Some("&#105;")
+        } else if line.starts_with("export ") {
+            Some("&#101;")
+        } else {
+            None
+        };
         let Some(entity) = entity else { continue };
-        let keyword_pos = line_start + (line.len() - trimmed.len());
-        if region_contains(&regions, &mut region_cursor, keyword_pos) {
+        if region_contains(&regions, &mut region_cursor, line_start) {
             continue;
         }
-        out.push_str(&text[copied..keyword_pos]);
+        out.push_str(&text[copied..line_start]);
         out.push_str(entity);
-        copied = keyword_pos + 1;
+        copied = line_start + 1;
     }
 
     out.push_str(&text[copied..]);
@@ -1341,6 +1337,18 @@ fn dedent(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::neutralize_esm;
+    use markdown::{MdxSignal, ParseOptions, mdast::Node, to_mdast};
+
+    fn parse_mdx(text: &str) -> Node {
+        let mut options = ParseOptions::mdx();
+        options.mdx_esm_parse = Some(Box::new(|_| MdxSignal::Ok));
+        to_mdast(text, &options).unwrap()
+    }
+
+    fn contains_mdx_esm(node: &Node) -> bool {
+        matches!(node, Node::MdxjsEsm(_))
+            || node.children().is_some_and(|children| children.iter().any(contains_mdx_esm))
+    }
 
     #[test]
     fn preserves_line_endings_while_neutralizing_esm() {
@@ -1389,9 +1397,78 @@ mod tests {
     }
 
     #[test]
+    fn preserves_code_across_mdx_edge_cases() {
+        for (input, expected) in [
+            (
+                "```\nimport inside\n```\nexport outside",
+                "```\nimport inside\n```\n&#101;xport outside",
+            ),
+            (
+                "```\n~~~\nimport inside\n```\nexport outside",
+                "```\n~~~\nimport inside\n```\n&#101;xport outside",
+            ),
+            (
+                "````\n```\nimport inside\n```\n````\nexport outside",
+                "````\n```\nimport inside\n```\n````\n&#101;xport outside",
+            ),
+            (
+                "```\nimport inside\n```suffix\nexport inside\n```\nimport outside",
+                "```\nimport inside\n```suffix\nexport inside\n```\n&#105;mport outside",
+            ),
+            (
+                "`example:\nimport inside`\nexport outside",
+                "`example:\nimport inside`\n&#101;xport outside",
+            ),
+            (
+                "```\ninside\n    ```\n```\nimport inside second\n```\nexport outside",
+                "```\ninside\n    ```\n```\nimport inside second\n```\n&#101;xport outside",
+            ),
+            (
+                "- ```\n  import inside list\n  ```\n\nexport outside",
+                "- ```\n  import inside list\n  ```\n\n&#101;xport outside",
+            ),
+            (
+                "    ```\n    import inside indented\n    ```\nexport outside",
+                "    ```\n    import inside indented\n    ```\n&#101;xport outside",
+            ),
+            ("    ```\n    import inside unclosed", "    ```\n    import inside unclosed"),
+        ] {
+            assert_eq!(neutralize_esm(input), expected, "input:\n{input}");
+        }
+    }
+
+    #[test]
+    fn neutralized_output_contains_no_mdx_esm() {
+        let input = "import injected from \"x\"\n\n```js\nexport const example = 1\n```";
+        assert!(contains_mdx_esm(&parse_mdx(input)));
+
+        let output = neutralize_esm(input);
+        assert_eq!(
+            output,
+            "&#105;mport injected from \"x\"\n\n```js\nexport const example = 1\n```"
+        );
+
+        let tree = parse_mdx(&output);
+        assert!(!contains_mdx_esm(&tree), "{tree:#?}");
+        assert!(tree.children().is_some_and(|children| {
+            children.iter().any(
+                |node| matches!(node, Node::Code(code) if code.value == "export const example = 1"),
+            )
+        }));
+    }
+
+    #[test]
     fn leaves_non_esm_prefixes_unchanged() {
-        let input = "important\nexporter\nimport_\nexport$\nImport value\nExport value";
+        let input = "important\nexporter\nimport_\nexport$\nImport value\nExport value\n    import value\n\t export value\nimport(value)\nexport: value\nimport\tvalue";
         assert_eq!(neutralize_esm(input), input);
+    }
+
+    #[test]
+    fn neutralizes_only_exact_mdx_esm_prefixes() {
+        assert_eq!(
+            neutralize_esm("import value\nexport value\nimport  value\nexport  value"),
+            "&#105;mport value\n&#101;xport value\n&#105;mport  value\n&#101;xport  value"
+        );
     }
 
     #[test]

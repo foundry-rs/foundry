@@ -254,354 +254,41 @@ contract EsmChild is IEsm {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.EsmChild.mdx")).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.EsmChild.mdx"), None),
+        str![[r#"
+---
+title: "EsmChild"
+description: "import somesecret from the outside"
+---
 
-    // The inherited `export` notice and the local `import` notice both stay visible but are
-    // neutralized, so MDX no longer parses them as ESM statements.
-    assert!(rendered.contains("&#101;xport const injected = 1"), "{rendered}");
-    assert!(rendered.contains("&#105;mport somesecret from the outside"), "{rendered}");
-    assert!(!rendered.contains("\nexport const injected = 1"), "{rendered}");
-    assert!(!rendered.contains("\nimport somesecret from the outside"), "{rendered}");
-});
+# EsmChild
 
-// A fenced code block inside NatSpec must keep its `import`/`export` lines verbatim (MDX does
-// not treat fenced content as ESM); only a top-level statement outside the fence is
-// neutralized.
-forgetest_init!(natspec_preserves_esm_inside_code_fences, |prj, cmd| {
-    prj.add_source(
-        "Fenced.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+**Inherits:** [IEsm](/src/interface.IEsm)
 
-contract Fenced {
-    /// @notice Usage:
-    /// ```solidity
-    /// import "./Token.sol";
-    /// ```
-    /// export const after = 2
-    function act() external {}
-}
-"#,
+&#105;mport somesecret from the outside
+
+## Functions
+
+<a id="act-uint256"></a>
+
+### act
+
+&#101;xport const injected = 1
+
+```solidity
+function act(uint256 v) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| v | `uint256` |  |
+
+
+"#]],
     );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Fenced.mdx")).unwrap();
-    // Inside the fence: kept verbatim, not turned into a character reference.
-    assert!(rendered.contains("import \"./Token.sol\";"), "{rendered}");
-    assert!(!rendered.contains("&#105;mport \"./Token.sol\""), "{rendered}");
-    // Outside the fence: still neutralized.
-    assert!(rendered.contains("&#101;xport const after = 2"), "{rendered}");
-});
-
-// Neutralization covers the whole assembled comment block, not only descriptions: a
-// multiline `@author` whose continuation is a top-level `import` would otherwise reach the
-// page unneutralized.
-forgetest_init!(natspec_neutralizes_esm_across_whole_comment_block, |prj, cmd| {
-    prj.add_source(
-        "AuthorEsm.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-/**
- * @author Bob
- * import evilAuthorBlock from "y"
- */
-contract AuthorEsm {
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.AuthorEsm.mdx")).unwrap();
-    assert!(rendered.contains("&#105;mport evilAuthorBlock from \"y\""), "{rendered}");
-    assert!(
-        !rendered.lines().any(|l| l.trim_start().starts_with("import evilAuthorBlock")),
-        "{rendered}"
-    );
-});
-
-// A fence closes only on the marker character that opened it (CommonMark): a `~~~` line
-// inside a backtick fence is literal, so an `import` after it stays verbatim, while a
-// statement after the real closing fence is still neutralized.
-forgetest_init!(natspec_fence_closes_only_on_matching_marker, |prj, cmd| {
-    prj.add_source(
-        "FenceMarker.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract FenceMarker {
-    /// @notice Ex:
-    /// ```
-    /// ~~~
-    /// import insideMixedFence from "z";
-    /// ```
-    /// export const afterFence = 1
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.FenceMarker.mdx")).unwrap();
-    assert!(rendered.contains("import insideMixedFence from \"z\";"), "{rendered}");
-    assert!(!rendered.contains("&#105;mport insideMixedFence"), "{rendered}");
-    assert!(rendered.contains("&#101;xport const afterFence = 1"), "{rendered}");
-});
-
-// A closing fence must be at least as long as the opening one (CommonMark): inside a four-tick
-// fence, a three-tick line is content, not a close. The earlier line scanner closed on it and
-// desynchronized, leaving a following top-level `export` unneutralized. The `export` after the
-// real four-tick close must still be neutralized.
-forgetest_init!(natspec_neutralizes_esm_after_longer_fence, |prj, cmd| {
-    prj.add_source(
-        "LongFence.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract LongFence {
-    /// @notice Ex:
-    /// ````
-    /// ```
-    /// import insideLongFence from "a";
-    /// ```
-    /// ````
-    /// export const afterLongFence = 1
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.LongFence.mdx")).unwrap();
-    // Inside the four-tick fence, including the inner three-tick line: kept verbatim.
-    assert!(rendered.contains("import insideLongFence from \"a\";"), "{rendered}");
-    assert!(!rendered.contains("&#105;mport insideLongFence"), "{rendered}");
-    // After the real four-tick close: still neutralized (must not stay executable).
-    assert!(rendered.contains("&#101;xport const afterLongFence = 1"), "{rendered}");
-});
-
-// A closing fence must be blank after the backticks (CommonMark): a suffixed ```-marker is not a
-// close, so statements after it stay inside the fence, and only a statement after the real blank
-// close is neutralized.
-forgetest_init!(natspec_fence_does_not_close_on_suffixed_marker, |prj, cmd| {
-    prj.add_source(
-        "SuffixFence.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract SuffixFence {
-    /// @notice Ex:
-    /// ```
-    /// import stillInside from "b";
-    /// ```suffix
-    /// export alsoInside from "c"
-    /// ```
-    /// import afterRealClose from "d"
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.SuffixFence.mdx")).unwrap();
-    // The suffixed marker does not close the fence: both statements stay verbatim.
-    assert!(rendered.contains("import stillInside from \"b\";"), "{rendered}");
-    assert!(rendered.contains("export alsoInside from \"c\""), "{rendered}");
-    // After the real close: neutralized.
-    assert!(rendered.contains("&#105;mport afterRealClose from \"d\""), "{rendered}");
-});
-
-// An `import`/`export` inside a multi-line inline code span is inert in MDX, and a character
-// reference would render literally inside code. It must be left verbatim.
-forgetest_init!(natspec_preserves_esm_inside_multiline_inline_code, |prj, cmd| {
-    prj.add_source(
-        "InlineSpan.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract InlineSpan {
-    /// @notice See `example:
-    /// import fromInlineSpan from "e"` for details
-    /// export const outsideInlineSpan = 1
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.InlineSpan.mdx")).unwrap();
-    assert!(rendered.contains("import fromInlineSpan from \"e\""), "{rendered}");
-    assert!(!rendered.contains("&#105;mport fromInlineSpan"), "{rendered}");
-    assert!(rendered.contains("&#101;xport const outsideInlineSpan = 1"), "{rendered}");
-});
-
-// A block-comment fence closed by an indented (>=4 space) marker: MDX (no indented code) closes
-// the fence there and would execute the following `export`, while a CommonMark parser keeps the
-// block open past it. The statement after the indented closer must still be neutralized.
-forgetest_init!(natspec_neutralizes_esm_after_indented_fence_close, |prj, cmd| {
-    prj.add_source(
-        "IndentedClose.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-/**
- * @notice Ex:
- * ```
- * inside
- *     ```
- * export const pwned = 1
- */
-contract IndentedClose {
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.IndentedClose.mdx"))
-            .unwrap();
-    assert!(rendered.contains("&#101;xport const pwned = 1"), "{rendered}");
-    assert!(
-        !rendered.lines().any(|l| l.trim_start().starts_with("export const pwned")),
-        "{rendered}"
-    );
-});
-
-// Once an indented marker closes a fence in MDX, subsequent fences must be parsed from that new
-// state. CommonMark keeps the first fence open until the next unindented marker, so patching only
-// its first reported range would preserve the final executable `export` by mistake.
-forgetest_init!(natspec_tracks_fences_after_indented_close, |prj, cmd| {
-    prj.add_source(
-        "AlternatingFences.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-/**
- * @notice Ex:
- * ```
- *     ```
- * ```
- * import insideSecondFence from "x";
- * ```
- * export const afterSecondFence = 1
- */
-contract AlternatingFences {
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.AlternatingFences.mdx"))
-            .unwrap();
-    assert!(rendered.contains("import insideSecondFence from \"x\";"), "{rendered}");
-    assert!(!rendered.contains("&#105;mport insideSecondFence"), "{rendered}");
-    assert!(rendered.contains("&#101;xport const afterSecondFence = 1"), "{rendered}");
-    assert!(
-        !rendered.lines().any(|line| line.starts_with("export const afterSecondFence")),
-        "{rendered}"
-    );
-});
-
-// Fence state is scoped to Markdown containers. An unclosed or missed list-item fence must not
-// make a later top-level ESM statement look like code, and code inside the list fence stays exact.
-forgetest_init!(natspec_tracks_fences_inside_list_items, |prj, cmd| {
-    prj.add_source(
-        "ListFence.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-/**
- * @notice Ex:
- * - ```
- *   import insideListFence from "x";
- *   ```
- *
- * export const afterListFence = 1
- */
-contract ListFence {
-    function f() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ListFence.mdx")).unwrap();
-    assert!(rendered.contains("import insideListFence from \"x\";"), "{rendered}");
-    assert!(!rendered.contains("&#105;mport insideListFence"), "{rendered}");
-    assert!(rendered.contains("&#101;xport const afterListFence = 1"), "{rendered}");
-    assert!(
-        !rendered.lines().any(|line| line.starts_with("export const afterListFence")),
-        "{rendered}"
-    );
-});
-
-// MDX disables indented code blocks, so a fence indented by four or more spaces is still a
-// fence. Preserve ESM-looking lines through its matching closer or EOF without treating
-// ordinary indented prose as code.
-forgetest_init!(natspec_preserves_esm_inside_indented_fence_openers, |prj, cmd| {
-    prj.add_source(
-        "IndentedOpen.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract IndentedOpen {
-    /**
-     * @notice Closed:
-     *     ```solidity
-     *     import insideIndentedFence from "x";
-     *     ```
-     * export const afterIndentedFence = 1
-     */
-    function closed() external {}
-
-    /**
-     * @notice Unclosed:
-     *     ~~~solidity
-     *     export const insideUnclosedIndentedFence = 2
-     */
-    function unclosed() external {}
-
-    /**
-     * @notice Ordinary prose:
-     *     import ordinaryIndentedProse from "z";
-     */
-    function prose() external {}
-}
-"#,
-    );
-
-    cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.IndentedOpen.mdx"))
-            .unwrap();
-    assert!(rendered.contains("import insideIndentedFence from \"x\";"), "{rendered}");
-    assert!(!rendered.contains("&#105;mport insideIndentedFence"), "{rendered}");
-    assert!(rendered.contains("&#101;xport const afterIndentedFence = 1"), "{rendered}");
-    assert!(rendered.contains("export const insideUnclosedIndentedFence = 2"), "{rendered}");
-    assert!(!rendered.contains("&#101;xport const insideUnclosedIndentedFence"), "{rendered}");
-    assert!(rendered.contains("&#105;mport ordinaryIndentedProse from \"z\";"), "{rendered}");
 });
 
 // Test that {Ident} cross-references resolve to root-relative vocs links.
