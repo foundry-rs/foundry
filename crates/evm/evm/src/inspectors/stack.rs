@@ -815,10 +815,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .cheatcodes
             .as_deref()
             .is_some_and(|cheatcodes| cheatcodes.is_storage_hook_callback(ecx, inputs));
-        if !storage_hook_callback {
-            if let Some(fuzzer) = &mut self.fuzzer {
-                fuzzer.call_end(ecx, inputs, outcome);
-            }
+        if !storage_hook_callback && let Some(fuzzer) = &mut self.fuzzer {
+            fuzzer.call_end(ecx, inputs, outcome);
         }
 
         let result = outcome.result.result;
@@ -1173,15 +1171,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
 
-        if let Some(cheats) = self.cheatcodes.as_mut() {
-            if cheats.has_step_hooks() {
-                let opcode = interpreter.bytecode.opcode();
-                if !cheats.has_recording_accesses_only_step_hook()
-                    || matches!(opcode, op::SLOAD | op::SSTORE)
-                {
-                    crate::utils::cold_path();
-                    cheats.step(interpreter, ecx);
-                }
+        if let Some(cheats) = self.cheatcodes.as_mut()
+            && cheats.has_step_hooks()
+        {
+            let opcode = interpreter.bytecode.opcode();
+            if !cheats.has_recording_accesses_only_step_hook()
+                || matches!(opcode, op::SLOAD | op::SSTORE)
+            {
+                crate::utils::cold_path();
+                cheats.step(interpreter, ecx);
             }
         }
     }
