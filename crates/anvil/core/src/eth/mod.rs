@@ -231,7 +231,10 @@ pub enum EthRequest {
     EthCallBundle(EthCallBundle),
 
     #[serde(rename = "eth_simulateV1")]
-    EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
+    EthSimulateV1(
+        SimulatePayload<WithOtherFields<TransactionRequest>>,
+        #[serde(default)] Option<BlockId>,
+    ),
 
     #[serde(rename = "eth_createAccessList")]
     EthCreateAccessList(
@@ -1376,6 +1379,27 @@ mod tests {
 ["0xd84de507f3fada7df80908082d3239466db55a71", 1337]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_simulate_preserves_transaction_extension_fields() {
+        let value = serde_json::json!({
+            "method": "eth_simulateV1",
+            "params": [{
+                "blockStateCalls": [{
+                    "calls": [{
+                        "to": "0x0000000000000000000000000000000000000001",
+                        "tempoExtension": "preserved"
+                    }]
+                }]
+            }]
+        });
+
+        let request = serde_json::from_value::<EthRequest>(value).unwrap();
+        let EthRequest::EthSimulateV1(payload, _) = request else { panic!() };
+        let transaction = &payload.block_state_calls[0].calls[0];
+
+        assert_eq!(transaction.other["tempoExtension"], serde_json::json!("preserved"));
     }
 
     #[test]

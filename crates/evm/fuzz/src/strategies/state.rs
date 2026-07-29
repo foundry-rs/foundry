@@ -307,13 +307,9 @@ impl FuzzDictionary {
             misses: Default::default(),
             hits: Default::default(),
         };
-        dictionary.prefill();
+        // Zero is a useful default seed even before state or literals populate the dictionary.
+        dictionary.insert_value(B256::ZERO);
         dictionary
-    }
-
-    /// Insert common values into the dictionary at initialization.
-    fn prefill(&mut self) {
-        self.insert_value(B256::ZERO);
     }
 
     /// Seeds `sample_values` with all words from the [`LiteralsDictionary`].

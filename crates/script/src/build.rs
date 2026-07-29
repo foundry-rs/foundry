@@ -33,7 +33,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 /// Returns whether every scoped signer needed for resume is already available.
 ///
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
-/// session signer lives in the session registry instead, so resume needs to treat the session
+/// session signer lives in the Accounts store instead, so resume needs to treat the session
 /// root account as available only on the chain covered by the session.
 fn has_available_script_signers(
     tempo: &TempoOpts,

@@ -57,7 +57,7 @@ mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
 use foundry_config::{ExecutionSpec, evm_spec_id_from_str};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeMap};
 
 mod fork;
 pub(crate) mod mapping;
@@ -74,6 +74,21 @@ struct LogJson {
     data: String,
     /// The address of the log's emitter.
     emitter: String,
+}
+
+struct StateDump<'a>(&'a [(Address, GenesisAccount)]);
+
+impl Serialize for StateDump<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (address, account) in self.0 {
+            map.serialize_entry(address, account)?;
+        }
+        map.end()
+    }
 }
 
 /// Records storage slots reads and writes.
@@ -361,6 +376,16 @@ impl Cheatcode for dumpStateCall {
         let Self { pathToStateJson } = self;
         let path = Path::new(pathToStateJson);
 
+        let fork_id = ccx.ecx.db().active_fork_id();
+        let created_accounts = ccx
+            .state
+            .created_accounts(fork_id)
+            .into_iter()
+            .filter(|address| {
+                ccx.ecx.journal().evm_state().get(address).is_some_and(Account::is_created)
+            })
+            .collect::<Vec<_>>();
+
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
             key == &CHEATCODE_ADDRESS
@@ -372,16 +397,24 @@ impl Cheatcode for dumpStateCall {
                 || val.is_empty()
         };
 
-        let alloc = ccx
+        let mut alloc = ccx
             .ecx
             .journal_mut()
             .evm_state_mut()
             .iter_mut()
             .filter(|(key, val)| !skip(key, val))
-            .map(|(key, val)| (key, genesis_account(val)))
+            .map(|(key, val)| (*key, genesis_account(val)))
             .collect::<BTreeMap<_, _>>();
 
-        write_json_file(path, &alloc)?;
+        let mut ordered_alloc = Vec::with_capacity(alloc.len());
+        for address in created_accounts {
+            if let Some(account) = alloc.remove(&address) {
+                ordered_alloc.push((address, account));
+            }
+        }
+        ordered_alloc.extend(alloc);
+
+        write_json_file(path, &StateDump(&ordered_alloc))?;
         Ok(Default::default())
     }
 }
@@ -1016,6 +1049,7 @@ impl Cheatcode for deleteSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -1025,6 +1059,7 @@ impl Cheatcode for deleteStateSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -1035,6 +1070,7 @@ impl Cheatcode for deleteSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
 }
@@ -1044,6 +1080,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
 }
@@ -1251,6 +1288,7 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
+        let created_address = tx_env.kind().is_create().then(|| sender.create(tx_env.nonce()));
 
         // Save current env for restoration after execution.
         let cached_evm_env = ccx.ecx.evm_clone();
@@ -1281,6 +1319,10 @@ impl Cheatcode for executeTransactionCall {
         // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
         // when the inner EVM executes calls at depth == 1.
         executor.set_in_inner_context(true, Some(sender));
+        if let Some(address) = created_address {
+            let fork_id = ccx.ecx.db().active_fork_id();
+            ccx.state.record_created_account(fork_id, address);
+        }
 
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = {
@@ -1488,12 +1530,14 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
             active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
         }
     }
+    let fork_id = ccx.ecx.db().active_fork_id();
     let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
+    ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
 }
 
@@ -1558,6 +1602,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         if let Some(snap) = ccx.state.env_overrides_snapshots.get(&snapshot_id) {
             ccx.state.env_overrides = snap.clone();
         }
+        ccx.state.revert_created_accounts(snapshot_id, false);
         sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
@@ -1584,6 +1629,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;
         }
+        ccx.state.revert_created_accounts(snapshot_id, true);
         sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
@@ -1828,9 +1874,6 @@ fn restore_eip2935_cold_state<
 // crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
 // fixture, where `logoUri` has slot "5".
 const TIP20_LOGO_URI_SLOT_INDEX: u64 = 5;
-fn tip20_logo_uri_slot() -> U256 {
-    U256::from(TIP20_LOGO_URI_SLOT_INDEX)
-}
 
 fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
@@ -1843,7 +1886,12 @@ fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     })?;
     ccx.ensure_not_precompile(token)?;
     ensure_loaded_account(ccx.ecx, *token)?;
-    store_solidity_string(ccx.ecx, *token, tip20_logo_uri_slot(), new_logo_uri.as_bytes())
+    store_solidity_string(
+        ccx.ecx,
+        *token,
+        U256::from(TIP20_LOGO_URI_SLOT_INDEX),
+        new_logo_uri.as_bytes(),
+    )
 }
 
 fn store_solidity_string<CTX>(

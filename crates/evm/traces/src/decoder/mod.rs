@@ -880,7 +880,8 @@ impl CallTraceDecoder {
                         .collect(),
                 )
             }
-            "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
+            "addr" | "createEd25519Key" | "createWallet" | "deriveKey" | "publicKeyEd25519" |
+            "publicKeyP256" | "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
             }
@@ -894,16 +895,16 @@ impl CallTraceDecoder {
                 // getNonce(Wallet)
                 (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
-            "sign" | "signP256" | "signCompact" | "signKeychain" | "signKeychainAdmin" => {
+            "sign" | "signCompact" | "signP256" | "signKeychain" | "signKeychainAdmin" => {
                 // Fail closed: when the arguments of a key-taking cheatcode cannot be
                 // decoded, redact everything instead of deferring to generic rendering.
                 let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
                     return Some(vec!["<redacted>".to_string()]);
                 };
 
-                // Redact private key and replace in trace when the first input is a raw
-                // private key (uint256) or a Wallet (tuple); overloads like sign(bytes32)
-                // and sign(address,bytes32) take no key and are left untouched.
+                // Redact private key and replace in trace when the first parameter is a raw
+                // private key (uint256) or a Wallet struct (tuple); digest-only and
+                // signer-address overloads carry no key material and are left as-is.
                 if !decoded.is_empty() &&
                     (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
                 {
@@ -1062,7 +1063,7 @@ impl CallTraceDecoder {
     fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
-            "createWallet" | "deriveKey" => Some("<pk>"),
+            "createEd25519Key" | "createWallet" | "deriveKey" => Some("<pk>"),
             "promptSecret" | "promptSecretUint" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
@@ -1525,10 +1526,7 @@ mod tests {
     #[test]
     fn test_should_redact() {
         let mut decoder = CallTraceDecoder::new().clone();
-        decoder.labels.insert(
-            address!("0x2222222222222222222222222222222222222222"),
-            "compact-signer".to_string(),
-        );
+        decoder.labels.insert(Address::from([0x22; 20]), "signer".to_string());
 
         let expected_revert_bytes4 = vec![0xde, 0xad, 0xbe, 0xef];
         let expect_revert_bytes4_data = Function::parse("expectRevert(bytes4)")
@@ -1639,12 +1637,15 @@ mod tests {
             ),
             // Should redact private key from traces in all cases:
             ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createEd25519Key(bytes32)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("publicKeyEd25519(bytes32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("publicKeyP256(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("rememberKey(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             //
             // Should redact private key from traces in specific cases with exceptions:
@@ -1705,14 +1706,15 @@ mod tests {
                 ]),
             ),
             (
+                // signCompact(Wallet,bytes32)
                 "signCompact((address,uint256,uint256,uint256),bytes32)",
                 hex!(
                     "
                     3d0e292f
                     0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000002
                     7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
-                    0000000000000000000000000000000000000000000000000000000000000000
-                    0000000000000000000000000000000000000000000000000000000000000000
                     0000000000000000000000000000000000000000000000000000000000000000
                 "
                 )
@@ -1724,7 +1726,7 @@ mod tests {
                 ]),
             ),
             (
-                // Digest-only overload: no private key to redact.
+                // Ignore: `private key` is not passed, digest is signed by the script signer.
                 "signCompact(bytes32)",
                 hex!(
                     "
@@ -1739,18 +1741,18 @@ mod tests {
                 ]),
             ),
             (
-                // Signer overload: no private key to redact, address labels are preserved.
+                // Ignore: `signer` is a public address.
                 "signCompact(address,bytes32)",
                 hex!(
                     "
                     8e2f97bf
-                    0000000000000000000000002222222222222222222222222222222222222222
+                    0000000000000000000000001111111111111111111111111111111111111111
                     0000000000000000000000000000000000000000000000000000000000000000
                 "
                 )
                 .to_vec(),
                 Some(vec![
-                    "compact-signer: [0x2222222222222222222222222222222222222222]".to_string(),
+                    "0x1111111111111111111111111111111111111111".to_string(),
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
                         .to_string(),
                 ]),
@@ -1810,7 +1812,27 @@ mod tests {
                 ]),
             ),
             (
-                // cast calldata "signEd25519(bytes,bytes,bytes32)" 0x6e73 0x6d7367 <pk>
+                // Labels are applied to address arguments while the key is redacted.
+                "signKeychain(uint256,address,bytes32)",
+                hex!(
+                    "
+                    5804c690
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000002222222222222222222222222222222222222222
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "signer: [0x2222222222222222222222222222222222222222]".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "signEd25519(bytes,bytes,bytes32)" "0x6e73" "0x6d7367"
+                // 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
                 "signEd25519(bytes,bytes,bytes32)",
                 hex!(
                     "
@@ -2101,6 +2123,7 @@ mod tests {
         // [function_signature, expected]
         let cheatcode_output_test_cases = vec![
             // Should redact private key on output in all cases:
+            ("createEd25519Key(bytes32)", Some("<pk>".to_string())),
             ("createWallet(string)", Some("<pk>".to_string())),
             ("deriveKey(string,uint32)", Some("<pk>".to_string())),
             // Should redact RPC URL if defined, except if referenced by an alias:

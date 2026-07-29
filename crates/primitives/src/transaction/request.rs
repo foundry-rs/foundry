@@ -14,11 +14,12 @@ use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit};
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DepositTransactionParts;
 use serde::{Deserialize, Serialize};
-use tempo_alloy::rpc::TempoTransactionRequest;
 use tempo_primitives::{
     SignatureType, TEMPO_TX_TYPE_ID, TempoTxType,
     transaction::{Call, SignedKeyAuthorization, TempoSignedAuthorization},
 };
+
+pub use tempo_alloy::rpc::TempoTransactionRequest;
 
 #[cfg(feature = "optimism")]
 use super::optimism::get_deposit_tx_parts;
@@ -295,7 +296,18 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
         );
 
         if tx.transaction_type == Some(TEMPO_TX_TYPE_ID)
-            || TEMPO_REQUEST_FIELDS.iter().any(|field| tx.other.contains_key(*field))
+            || TEMPO_REQUEST_FIELDS.iter().any(|field| {
+                tx.other.get(*field).is_some_and(|value| {
+                    !value.is_null()
+                        && !matches!(
+                            (*field, value),
+                            (
+                                "calls" | "aaAuthorizationList",
+                                serde_json::Value::Array(values)
+                            ) if values.is_empty()
+                        )
+                })
+            })
         {
             let mut tempo_tx_req: TempoTransactionRequest = tx.inner.into();
             tempo_tx_req.fee_token =
@@ -345,6 +357,12 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
             return Ok(Self::Op(tx));
         }
         Ok(Self::Ethereum(tx.into_inner()))
+    }
+}
+
+impl From<TransactionRequest> for FoundryTransactionRequest {
+    fn from(tx: TransactionRequest) -> Self {
+        Self::Ethereum(tx)
     }
 }
 
@@ -705,6 +723,20 @@ mod tests {
 
         assert!(req.is_tempo());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
+    }
+
+    #[test]
+    fn test_routing_serialized_non_aa_tempo_request_to_ethereum() {
+        let request = TempoTransactionRequest { inner: default_tx_req(), ..Default::default() };
+        let request = serde_json::from_value::<WithOtherFields<TransactionRequest>>(
+            serde_json::to_value(request).unwrap(),
+        )
+        .unwrap();
+
+        let request = FoundryTransactionRequest::try_from(request).unwrap();
+
+        assert!(matches!(request, FoundryTransactionRequest::Ethereum(_)));
+        assert!(matches!(request.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
     }
 
     #[test]

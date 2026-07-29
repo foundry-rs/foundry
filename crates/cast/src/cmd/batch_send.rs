@@ -162,6 +162,7 @@ impl BatchSendArgs {
                     Some(chain),
                     None,
                     send_tx.cast_async,
+                    send_tx.sync,
                     send_tx.confirmations,
                     timeout,
                     !config.eth_rpc_curl,
