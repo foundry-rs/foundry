@@ -89,7 +89,7 @@ pub enum KeychainSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Inspect an access key policy using the local key registry and on-chain state.
+    /// Inspect an access key policy using the Tempo Accounts store and on-chain state.
     Inspect {
         /// The key address to inspect.
         key_address: Address,
@@ -104,14 +104,14 @@ pub enum KeychainSubcommand {
 
     /// Diagnose access-key signing issues end-to-end.
     ///
-    /// Walks the local registry, RPC, and on-chain key state and prints a green
+    /// Walks the Tempo Accounts store, RPC, and on-chain key state and prints a green
     /// checklist. The first failing step turns red and includes a one-line hint.
     Doctor {
         /// The key address to diagnose. Optional when `--root-account` is provided.
         #[arg(required_unless_present = "root_account")]
         key_address: Option<Address>,
 
-        /// Root account address. Required if the key cannot be resolved from the local registry,
+        /// Root account address. Required if the key cannot be resolved from the Accounts store,
         /// or to diagnose the default key for a sender.
         #[arg(long, visible_alias = "wallet-address", value_name = "ADDRESS")]
         root_account: Option<Address>,
@@ -1222,7 +1222,7 @@ struct DoctorContext {
     fee_token: Address,
 }
 
-/// Result of resolving a local registry entry for the doctor.
+/// Result of resolving a Tempo Accounts store entry for the doctor.
 #[derive(Debug)]
 struct DoctorSubject {
     root_account: Address,
@@ -1342,7 +1342,7 @@ async fn run_doctor(
         fee_token: requested_fee_token.unwrap_or(DEFAULT_FEE_TOKEN),
     };
 
-    // Step 1: local registry lookup.
+    // Step 1: Tempo Accounts store lookup.
     let candidates = match collect_local_candidates(key_address, root_account) {
         Ok(resolution) => {
             steps.push(resolution.step);
@@ -1562,7 +1562,7 @@ async fn run_doctor(
     finalize_doctor(steps, context)
 }
 
-/// Step 1 helper: collect local registry candidates.
+/// Step 1 helper: collect Tempo Accounts store candidates.
 fn collect_local_candidates(
     key_address: Option<Address>,
     root_account: Option<Address>,
@@ -1577,8 +1577,8 @@ fn collect_local_candidates(
         if let Some(candidate) = explicit_candidate() {
             return Ok(LocalCandidateResolution {
                 step: DoctorStep::pass(
-                    "local_registry",
-                    "Local registry",
+                    "accounts_store",
+                    "Accounts store",
                     format!(
                         "could not read {}; using explicit root/key",
                         tempo_accounts_store_path_display()
@@ -1589,8 +1589,8 @@ fn collect_local_candidates(
         }
 
         return Err(DoctorStep::fail(
-            "local_registry",
-            "Local registry",
+            "accounts_store",
+            "Accounts store",
             format!(
                 "could not read Tempo Accounts store at {}",
                 tempo_accounts_store_path_display()
@@ -1614,8 +1614,8 @@ fn collect_local_candidates(
         if let Some(candidate) = explicit_candidate() {
             return Ok(LocalCandidateResolution {
                 step: DoctorStep::pass(
-                    "local_registry",
-                    "Local registry",
+                    "accounts_store",
+                    "Accounts store",
                     format!(
                         "no local entry for key {} and root {}; using explicit root/key",
                         candidate.key_address, candidate.root_account
@@ -1633,12 +1633,12 @@ fn collect_local_candidates(
         };
         let hint = match (key_address, root_account) {
             (Some(_), None) => "pass --root-account to diagnose an explicit key/root pair",
-            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key without a local registry entry",
+            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key absent from the Accounts store",
             _ => "run `cast tempo login` to add a key to ~/.tempo/wallet/store.json",
         };
         return Err(DoctorStep::fail(
-            "local_registry",
-            "Local registry",
+            "accounts_store",
+            "Accounts store",
             format!("no entry for {descriptor} in {}", tempo_accounts_store_path_display()),
             hint,
         ));
@@ -1653,8 +1653,8 @@ fn collect_local_candidates(
 
     Ok(LocalCandidateResolution {
         step: DoctorStep::pass(
-            "local_registry",
-            "Local registry",
+            "accounts_store",
+            "Accounts store",
             format!("{count} candidate(s) in {}", tempo_accounts_store_path_display()),
         ),
         candidates,
@@ -1710,7 +1710,7 @@ fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
         return DoctorStep::warn(
             "local_signing",
             "Local signing",
-            "not verified; using explicit root/key without a local registry entry",
+            "not verified; using explicit root/key absent from the Accounts store",
             "pass --tempo.access-key in the send command or run `cast tempo login`",
         );
     };
