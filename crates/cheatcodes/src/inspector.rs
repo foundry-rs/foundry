@@ -537,6 +537,34 @@ impl ArbitraryStorage {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CreatedAccountsFrameKind {
+    Call,
+    Create,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CreatedAccountsFrame {
+    kind: CreatedAccountsFrameKind,
+    depth: usize,
+    checkpoint: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CreatedAccountChange {
+    fork_id: Option<LocalForkId>,
+    address: Address,
+    creation: usize,
+    previous: Option<usize>,
+    committed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CreatedAccountsSnapshot {
+    fork_id: Option<LocalForkId>,
+    bindings: AddressHashMap<usize>,
+}
+
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -612,6 +640,21 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Completed account accesses prepended to the active user recording session.
     recorded_account_diffs_prefix: Option<Arc<[AccountAccess]>>,
+
+    /// Successfully created accounts in execution order.
+    created_accounts: Vec<Address>,
+
+    /// The creation currently represented by each address on each fork.
+    created_account_bindings: HashMap<(Option<LocalForkId>, Address), usize>,
+
+    /// Revertible changes to creation bindings made by EVM create frames.
+    created_account_changes: Vec<CreatedAccountChange>,
+
+    /// Creation-list checkpoints for frames observed by this inspector.
+    created_accounts_frames: Vec<CreatedAccountsFrame>,
+
+    /// Creation lists captured by state snapshots.
+    created_accounts_snapshots: HashMap<U256, CreatedAccountsSnapshot>,
 
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
@@ -768,6 +811,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             recorded_account_diffs_stack: Default::default(),
             pending_account_diffs: Default::default(),
             recorded_account_diffs_prefix: Default::default(),
+            created_accounts: Default::default(),
+            created_account_bindings: Default::default(),
+            created_account_changes: Default::default(),
+            created_accounts_frames: Default::default(),
+            created_accounts_snapshots: Default::default(),
             recorded_logs: Default::default(),
             record_debug_steps_info: Default::default(),
             mocked_calls: Default::default(),
@@ -849,6 +897,176 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .take()
             .map(|prefix| prefix.as_ref().to_vec())
             .unwrap_or_default()
+    }
+
+    /// Returns the current creation bound to each address on the given fork.
+    pub(crate) fn created_account_bindings(
+        &self,
+        fork_id: Option<LocalForkId>,
+    ) -> AddressHashMap<usize> {
+        self.created_account_bindings
+            .iter()
+            .filter_map(|(&(event_fork_id, address), &creation)| {
+                (event_fork_id == fork_id).then_some((address, creation))
+            })
+            .collect()
+    }
+
+    /// Returns successfully created accounts bound to the given fork in creation order.
+    pub(crate) fn created_accounts(&self, fork_id: Option<LocalForkId>) -> Vec<Address> {
+        let bindings = self.created_account_bindings(fork_id);
+        self.created_accounts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &address)| {
+                (bindings.get(&address) == Some(&index)).then_some(address)
+            })
+            .collect()
+    }
+
+    /// Records a successfully created account.
+    pub(crate) fn record_created_account(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        address: Address,
+    ) {
+        let creation = self.created_accounts.len();
+        self.created_accounts.push(address);
+        let previous = self.created_account_bindings.insert((fork_id, address), creation);
+        self.created_account_changes.push(CreatedAccountChange {
+            fork_id,
+            address,
+            creation,
+            previous,
+            committed: false,
+        });
+    }
+
+    /// Keeps creation bindings saved with an outgoing fork across later frame reverts.
+    pub(crate) fn commit_created_account_changes(&mut self, fork_id: Option<LocalForkId>) {
+        for change in &mut self.created_account_changes {
+            if change.fork_id == fork_id {
+                change.committed = true;
+            }
+        }
+    }
+
+    /// Records shared pre-fork creations on a newly selected fork without replacing local ones.
+    pub(crate) fn record_initial_created_accounts(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        accounts: impl IntoIterator<Item = (Address, usize)>,
+    ) {
+        for (address, creation) in accounts {
+            self.created_account_bindings.entry((fork_id, address)).or_insert(creation);
+        }
+    }
+
+    /// Records creations propagated to a fork with persistent account state.
+    pub(crate) fn record_propagated_accounts(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        accounts: impl IntoIterator<Item = (Address, usize)>,
+    ) {
+        self.created_account_bindings
+            .extend(accounts.into_iter().map(|(address, creation)| ((fork_id, address), creation)));
+    }
+
+    /// Captures creation ordering alongside a state snapshot.
+    pub(crate) fn snapshot_created_accounts(
+        &mut self,
+        snapshot_id: U256,
+        fork_id: Option<LocalForkId>,
+    ) {
+        let bindings = self.created_account_bindings(fork_id);
+        self.created_accounts_snapshots
+            .insert(snapshot_id, CreatedAccountsSnapshot { fork_id, bindings });
+    }
+
+    /// Restores creation ordering from a state snapshot.
+    pub(crate) fn revert_created_accounts(&mut self, snapshot_id: U256, remove: bool) {
+        let snapshot = if remove {
+            self.created_accounts_snapshots.remove(&snapshot_id)
+        } else {
+            self.created_accounts_snapshots.get(&snapshot_id).cloned()
+        };
+        if let Some(snapshot) = snapshot {
+            self.created_account_bindings.retain(|(fork_id, _), _| *fork_id != snapshot.fork_id);
+            self.created_account_bindings.extend(
+                snapshot
+                    .bindings
+                    .into_iter()
+                    .map(|(address, creation)| ((snapshot.fork_id, address), creation)),
+            );
+        }
+    }
+
+    /// Deletes one captured creation-order snapshot.
+    pub(crate) fn delete_created_accounts_snapshot(&mut self, snapshot_id: U256) {
+        self.created_accounts_snapshots.remove(&snapshot_id);
+    }
+
+    /// Deletes all captured creation-order snapshots.
+    pub(crate) fn clear_created_accounts_snapshots(&mut self) {
+        self.created_accounts_snapshots.clear();
+    }
+
+    fn start_created_accounts_frame(
+        &mut self,
+        reset: bool,
+        kind: CreatedAccountsFrameKind,
+        depth: usize,
+    ) {
+        if reset {
+            self.created_accounts.clear();
+            self.created_account_bindings.clear();
+            self.created_account_changes.clear();
+            self.created_accounts_frames.clear();
+            // Earlier snapshots contain no creations from the new root transaction.
+            for snapshot in self.created_accounts_snapshots.values_mut() {
+                snapshot.bindings.clear();
+            }
+        }
+        self.created_accounts_frames.push(CreatedAccountsFrame {
+            kind,
+            depth,
+            checkpoint: self.created_account_changes.len(),
+        });
+    }
+
+    fn finish_created_accounts_frame(
+        &mut self,
+        success: bool,
+        kind: CreatedAccountsFrameKind,
+        depth: usize,
+    ) {
+        let Some(frame) = self
+            .created_accounts_frames
+            .last()
+            .copied()
+            .filter(|frame| frame.kind == kind && frame.depth == depth)
+        else {
+            return;
+        };
+        let checkpoint = frame.checkpoint;
+        self.created_accounts_frames.pop();
+        if !success {
+            while self.created_account_changes.len() > checkpoint {
+                let change = self.created_account_changes.pop().expect("length checked");
+                if change.committed {
+                    continue;
+                }
+                let key = (change.fork_id, change.address);
+                if self.created_account_bindings.get(&key) != Some(&change.creation) {
+                    continue;
+                }
+                if let Some(previous) = change.previous {
+                    self.created_account_bindings.insert(key, previous);
+                } else {
+                    self.created_account_bindings.remove(&key);
+                }
+            }
+        }
     }
 
     /// Returns the env overrides for the given fork (`None` = no-fork / local).
@@ -1023,6 +1241,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journal().depth();
+        self.start_created_accounts_frame(
+            curr_depth == 0,
+            CreatedAccountsFrameKind::Call,
+            curr_depth,
+        );
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
@@ -1788,21 +2011,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
-        #[cfg(feature = "monad")]
-        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
-            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
-        #[cfg(not(feature = "monad"))]
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
         #[cfg(feature = "monad")]
         let cheatcode_call = cheatcode_call || is_monad_cheatcode_call::<FEN>(call.target_address);
+        let curr_depth = ecx.journal().depth();
+
+        self.finish_created_accounts_frame(
+            outcome.result.is_ok(),
+            CreatedAccountsFrameKind::Call,
+            curr_depth,
+        );
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
-            let curr_depth = ecx.journal().depth();
             if let Some(prank) = &self.get_prank(curr_depth)
                 && curr_depth == prank.depth
             {
@@ -2249,6 +2474,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         let gas = Gas::new(input.gas_limit());
+        let curr_depth = ecx.journal().depth();
+        self.start_created_accounts_frame(
+            curr_depth == 0,
+            CreatedAccountsFrameKind::Create,
+            curr_depth,
+        );
+
         // Check if we should intercept this create
         if self.intercept_next_create_call {
             // Reset the flag
@@ -2263,8 +2495,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 address: None,
             });
         }
-
-        let curr_depth = ecx.journal().depth();
 
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth)
@@ -2345,6 +2575,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // Allow cheatcodes from the address of the new contract
         let address = input.allow_cheatcodes(self, ecx);
 
+        self.record_created_account(ecx.db().active_fork_id(), address);
+
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             recorded_account_diffs_stack.push(vec![AccountAccess {
@@ -2380,6 +2612,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) {
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
+
+        self.finish_created_accounts_frame(
+            outcome.result.is_ok(),
+            CreatedAccountsFrameKind::Create,
+            curr_depth,
+        );
 
         // Clean up pranks
         if let Some(prank) = &self.get_prank(curr_depth)
@@ -3264,7 +3502,11 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
             }
         };
     }
-    let mut result = vm_calls!(dispatch);
+    let mut result = if ccx.state.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
+        Err(fmt_err!("disabled during restricted execution"))
+    } else {
+        vm_calls!(dispatch)
+    };
 
     // Format the error message to include the cheatcode name.
     if let Err(e) = &mut result

@@ -5,8 +5,8 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{
-        FuzzMinimizeObservation, LibraryDeployment, TestContract, TestFunctionMatcher,
-        TestRunnerConfig, is_generated_symbolic_regression_contract,
+        FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment, TestContract,
+        TestFunctionMatcher, TestRunnerConfig, is_generated_symbolic_regression_contract,
     },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
@@ -29,7 +29,9 @@ use alloy_primitives::{
     Address, B256, Bytes, Selector, U256, address, hex, keccak256, map::HashMap,
 };
 use eyre::Result;
-use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
+use foundry_common::{
+    LIBRARY_DEPLOYER, TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress,
+};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
@@ -86,13 +88,6 @@ use std::{
 };
 use tokio::signal;
 use tracing::Span;
-
-/// When running tests, we deploy all external libraries present in the project. To avoid additional
-/// libraries affecting nonces of senders used in tests, we are using separate address to
-/// predeploy libraries.
-///
-/// `address(uint160(uint256(keccak256("foundry library deployer"))))`
-pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
@@ -3761,6 +3756,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &invariant_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: None,
@@ -4898,6 +4894,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &fuzz_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: Some(StatelessReplayTarget {

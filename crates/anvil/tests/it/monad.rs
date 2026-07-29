@@ -778,6 +778,7 @@ async fn direct_monad_fork_reset_to_memory_publishes_local_hardfork() {
     let (api, handle) = spawn(
         NodeConfig::test_monad()
             .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+            .with_fork_chain_id(Some(U256::from(143u64)))
             .with_genesis_timestamp(Some(timestamp))
             .with_no_storage_caching(true)
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))

@@ -86,8 +86,15 @@ const SYMBOLIC_KEYS: &[&str] = &[
 /// Allowed keys for TracingConfig.
 /// Required because empty labels and optional trace depth are skipped by default serialization,
 /// but they are still valid user-facing config keys.
-const TRACING_KEYS: &[&str] =
-    &["verbosity", "labels", "disable_labels", "compact_labels", "trace_depth", "decode_internal"];
+const TRACING_KEYS: &[&str] = &[
+    "verbosity",
+    "labels",
+    "disable_labels",
+    "compact_labels",
+    "trace_depth",
+    "decode_internal",
+    "external_identification_timeout",
+];
 
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];

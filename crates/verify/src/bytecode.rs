@@ -47,6 +47,7 @@ use foundry_evm::{
     },
     executors::EvmError,
     opts::{EvmOpts, ForkEndpointIdentity},
+    utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
 use foundry_evm_networks::NetworkVariant;
 use revm::{context::Block as _, state::AccountInfo};
@@ -795,7 +796,7 @@ impl VerifyBytecodeArgs {
                 endpoint_identity.as_ref(),
                 network_was_inferred,
             );
-            let (evm_env, _tx_env, mut executor) = crate::utils::get_tracing_executor::<FEN>(
+            let (mut evm_env, _tx_env, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 simulation_block - 1, // env.fork_block_number
                 simulation_block,
@@ -814,6 +815,7 @@ impl VerifyBytecodeArgs {
             let prev_block_nonce =
                 provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
 
+            apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
             let factory = FEN::EvmFactory::default();
             let mut target_context = None::<ContextAuxFor<FEN>>;
             if let Some(ref block) = block {

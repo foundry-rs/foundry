@@ -1134,113 +1134,117 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
             true,
             str![[r#"
 {
-    "$message_type": "diagnostic",
-    "message": "wrap modifier logic to reduce code size",
-    "code": {
+  "$message_type": "diagnostic",
+  "message": "wrap modifier logic to reduce code size",
+  "code": {
     "code": "unwrapped-modifier-logic",
     "explanation": null
-    },
-    "level": "note",
-    "spans": [
+  },
+  "level": "note",
+  "spans": [
     {
-        "file_name": "src/UnwrappedModifierTest.sol",
-        "byte_start": 174,
-        "byte_end": 355,
-        "line_start": 8,
-        "line_end": 12,
-        "column_start": 13,
-        "column_end": 14,
-        "is_primary": true,
-        "text": [
+      "file_name": "src/UnwrappedModifierTest.sol",
+      "byte_start": 174,
+      "byte_end": 355,
+      "line_start": 8,
+      "line_end": 12,
+      "column_start": 13,
+      "column_end": 14,
+      "is_primary": true,
+      "text": [
         {
-            "text": "            modifier onlyOwner() {",
-            "highlight_start": 13,
-            "highlight_end": 35
+          "text": "            modifier onlyOwner() {",
+          "highlight_start": 13,
+          "highlight_end": 35
         },
         {
-            "text": "                require(isOwner[msg.sender], \"Not owner\");",
-            "highlight_start": 1,
-            "highlight_end": 59
+          "text": "                require(isOwner[msg.sender], \"Not owner\");",
+          "highlight_start": 1,
+          "highlight_end": 59
         },
         {
-            "text": "                require(msg.sender != address(0), \"Zero address\");",
-            "highlight_start": 1,
-            "highlight_end": 67
+          "text": "                require(msg.sender != address(0), \"Zero address\");",
+          "highlight_start": 1,
+          "highlight_end": 67
         },
         {
-            "text": "                _;",
-            "highlight_start": 1,
-            "highlight_end": 19
+          "text": "                _;",
+          "highlight_start": 1,
+          "highlight_end": 19
         },
         {
-            "text": "            }",
-            "highlight_start": 1,
-            "highlight_end": 14
+          "text": "            }",
+          "highlight_start": 1,
+          "highlight_end": 14
         }
-        ],
-        "label": null,
-        "suggested_replacement": null
+      ],
+      "label": null,
+      "suggested_replacement": null,
+      "suggestion_applicability": null,
+      "expansion": null
     }
-    ],
-    "children": [
+  ],
+  "children": [
     {
-        "message": "https://getfoundry.sh/forge/linting/unwrapped-modifier-logic",
-        "code": null,
-        "level": "help",
-        "spans": [],
-        "children": [],
-        "rendered": null
+      "message": "https://getfoundry.sh/forge/linting/unwrapped-modifier-logic",
+      "code": null,
+      "level": "help",
+      "spans": [],
+      "children": [],
+      "rendered": null
     },
     {
-        "message": "wrap modifier logic to reduce code size",
-        "code": null,
-        "level": "help",
-        "spans": [
+      "message": "wrap modifier logic to reduce code size",
+      "code": null,
+      "level": "help",
+      "spans": [
         {
-            "file_name": "src/UnwrappedModifierTest.sol",
-            "byte_start": 174,
-            "byte_end": 355,
-            "line_start": 8,
-            "line_end": 12,
-            "column_start": 13,
-            "column_end": 14,
-            "is_primary": true,
-            "text": [
+          "file_name": "src/UnwrappedModifierTest.sol",
+          "byte_start": 174,
+          "byte_end": 355,
+          "line_start": 8,
+          "line_end": 12,
+          "column_start": 13,
+          "column_end": 14,
+          "is_primary": true,
+          "text": [
             {
-                "text": "            modifier onlyOwner() {",
-                "highlight_start": 13,
-                "highlight_end": 35
+              "text": "            modifier onlyOwner() {",
+              "highlight_start": 13,
+              "highlight_end": 35
             },
             {
-                "text": "                require(isOwner[msg.sender], \"Not owner\");",
-                "highlight_start": 1,
-                "highlight_end": 59
+              "text": "                require(isOwner[msg.sender], \"Not owner\");",
+              "highlight_start": 1,
+              "highlight_end": 59
             },
             {
-                "text": "                require(msg.sender != address(0), \"Zero address\");",
-                "highlight_start": 1,
-                "highlight_end": 67
+              "text": "                require(msg.sender != address(0), \"Zero address\");",
+              "highlight_start": 1,
+              "highlight_end": 67
             },
             {
-                "text": "                _;",
-                "highlight_start": 1,
-                "highlight_end": 19
+              "text": "                _;",
+              "highlight_start": 1,
+              "highlight_end": 19
             },
             {
-                "text": "            }",
-                "highlight_start": 1,
-                "highlight_end": 14
+              "text": "            }",
+              "highlight_start": 1,
+              "highlight_end": 14
             }
-            ],
-            "label": null,
-            "suggested_replacement": "modifier onlyOwner() {\n                _onlyOwner();\n                _;\n            }\n\n            function _onlyOwner() internal {\n                require(isOwner[msg.sender], \"Not owner\");\n                require(msg.sender != address(0), \"Zero address\");\n            }"
+          ],
+          "label": null,
+          "suggested_replacement": "modifier onlyOwner() {\n                _onlyOwner();\n                _;\n            }\n\n            function _onlyOwner() internal {\n                require(isOwner[msg.sender], \"Not owner\");\n                require(msg.sender != address(0), \"Zero address\");\n            }",
+          "suggestion_applicability": "MachineApplicable",
+          "expansion": null
         }
-        ],
-        "children": [],
-        "rendered": null
+      ],
+      "children": [],
+      "rendered": null
     }
-    ],
-    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
+  ],
+  "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
         )
@@ -1285,7 +1289,9 @@ contract Broken {
         }
       ],
       "label": null,
-      "suggested_replacement": null
+      "suggested_replacement": null,
+      "suggestion_applicability": null,
+      "expansion": null
     }
   ],
   "children": [],

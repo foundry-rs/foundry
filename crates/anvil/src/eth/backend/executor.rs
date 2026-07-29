@@ -340,7 +340,7 @@ pub fn execute_pool_transactions<B, BeforeTransaction, OnExecutionError>(
     inspector_config: &InspectorTxConfig,
     cheats: &CheatsManager,
     validator: &dyn Fn(
-        &PendingTransaction<B::Transaction>,
+        &PoolTransaction<B::Transaction>,
         &AccountInfo,
     ) -> Result<(), InvalidTransactionError>,
     hooks: &mut PoolTransactionHooks<BeforeTransaction, OnExecutionError>,
@@ -416,7 +416,7 @@ where
         }
 
         // Validate
-        if let Err(err) = validator(pending, &account) {
+        if let Err(err) = validator(pool_tx, &account) {
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", pool_tx.hash(), err);
             invalid.push(pool_tx.clone());
             continue;

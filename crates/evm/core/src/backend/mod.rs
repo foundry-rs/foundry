@@ -11,7 +11,9 @@ use crate::{
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::get_blob_base_fee_update_fraction,
+    utils::{
+        apply_chain_specific_tx_replay_env_changes_for_chain, get_blob_base_fee_update_fraction,
+    },
 };
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
@@ -19,7 +21,7 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, uint};
+use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::AddressSet, uint};
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
@@ -610,6 +612,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
                 context.block_number,
+                context.source_chain_id,
                 fork_db,
                 backend.inner.new_journaled_state(),
             );
@@ -1111,13 +1114,30 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
     }
 
+    /// Applies replay changes using the targeted fork's chain rather than the active environment.
+    fn apply_fork_tx_replay_env_changes(
+        &self,
+        id: LocalForkId,
+        evm_env: &mut EvmEnvFor<FEN>,
+    ) -> eyre::Result<()> {
+        let fork_id = self.inner.ensure_fork_id(id).cloned()?;
+        let fork_evm_env = self
+            .forks
+            .get_evm_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{id}` does not exist"))?;
+        let source_chain_id = self.inner.get_fork_by_id(id)?.source_chain_id;
+        evm_env.cfg_env.chain_id = fork_evm_env.cfg_env.chain_id;
+        apply_chain_specific_tx_replay_env_changes_for_chain(evm_env, source_chain_id);
+        Ok(())
+    }
+
     /// Replays all the transactions at the forks current block that were mined before the `tx`
     ///
     /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         full_block: &AnyRpcBlock,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
@@ -1125,6 +1145,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
+
         let BlockTransactions::Full(transactions) = full_block.transactions() else {
             eyre::bail!(
                 "block {} does not contain full transactions",
@@ -1323,6 +1345,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let (id, _) = self.inner.insert_new_fork(
             fork_id,
             context.block_number,
+            context.source_chain_id,
             fork_db,
             self.fork_init_journaled_state.clone(),
         );
@@ -1504,7 +1527,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let (fork_id, backend, fork_env, context) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
         // this will update the local mapping
-        self.inner.roll_fork(id, fork_id, context.block_number, backend)?;
+        self.inner.roll_fork(
+            id,
+            fork_id,
+            context.block_number,
+            context.source_chain_id,
+            backend,
+        )?;
 
         if let Some((active_id, active_idx)) = self.active_fork_ids {
             // the currently active fork is the targeted fork of this call
@@ -1637,6 +1666,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
         update_env_block(&mut evm_env, block.header());
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let factory = FEN::EvmFactory::default();
         let current_tx_position = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
@@ -2035,6 +2065,7 @@ pub enum BackendDatabaseSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
 pub struct Fork<N: Network, B: ForkBlockEnv = BlockEnv> {
     db: ForkDB<N, B>,
     journaled_state: JournaledState,
+    source_chain_id: ChainId,
     position: ForkPosition,
 }
 
@@ -2256,6 +2287,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         id: LocalForkId,
         fork_id: ForkId,
         block_number: u64,
+        source_chain_id: ChainId,
         db: ForkDB<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
     ) -> ForkLookupIndex {
@@ -2263,8 +2295,12 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.insert(id, fork_id.clone());
         self.created_forks.insert(fork_id, idx);
 
-        let fork =
-            Fork { db, journaled_state, position: ForkPosition::AfterBlock { block_number } };
+        let fork = Fork {
+            db,
+            journaled_state,
+            source_chain_id,
+            position: ForkPosition::AfterBlock { block_number },
+        };
         self.forks.push(Some(fork));
         idx
     }
@@ -2274,6 +2310,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         id: LocalForkId,
         new_fork_id: ForkId,
         block_number: u64,
+        source_chain_id: ChainId,
         backend: SharedBackend<AnyNetwork, BlockEnvFor<FEN>>,
     ) -> eyre::Result<ForkLookupIndex> {
         let fork_id = self.ensure_fork_id(id)?;
@@ -2286,6 +2323,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
                 merge_db_account_data(addr, &active.db, &mut new_db);
             }
             active.db = new_db;
+            active.source_chain_id = source_chain_id;
             active.position = ForkPosition::AfterBlock { block_number };
         }
         // update mappings
@@ -2301,12 +2339,18 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         &mut self,
         fork_id: ForkId,
         block_number: u64,
+        source_chain_id: ChainId,
         db: ForkDB<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
     ) -> (LocalForkId, ForkLookupIndex) {
         self.insert_fork(
             fork_id,
-            Fork { db, journaled_state, position: ForkPosition::AfterBlock { block_number } },
+            Fork {
+                db,
+                journaled_state,
+                source_chain_id,
+                position: ForkPosition::AfterBlock { block_number },
+            },
         )
     }
 

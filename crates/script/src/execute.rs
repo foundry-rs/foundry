@@ -107,7 +107,16 @@ pub struct PreExecutionState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
     /// Executes the script and returns the state after execution.
     /// Might require executing script twice in cases when we determine sender from execution.
-    pub async fn execute(mut self) -> Result<ExecutedState<FEN>> {
+    pub async fn execute(self) -> Result<ExecutedState<FEN>> {
+        self.execute_inner(false).await
+    }
+
+    /// Executes an optimization candidate while blocking externally observable cheatcodes.
+    pub(crate) async fn execute_restricted(self) -> Result<ExecutedState<FEN>> {
+        self.execute_inner(true).await
+    }
+
+    async fn execute_inner(mut self, restricted: bool) -> Result<ExecutedState<FEN>> {
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
@@ -115,6 +124,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
                 self.script_wallets.clone(),
                 self.args.debug,
                 self.build_data.build_data.target.clone(),
+                restricted,
             )
             .await?;
         let result = self.execute_with_runner(&mut runner).await?;
@@ -133,7 +143,10 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
                 build_data: self.build_data.build_data,
             };
 
-            return Box::pin(state.link().await?.prepare_execution().await?.execute()).await;
+            return Box::pin(
+                state.link().await?.prepare_execution().await?.execute_inner(restricted),
+            )
+            .await;
         }
 
         Ok(ExecutedState {
@@ -297,6 +310,16 @@ pub struct ExecutedState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     /// Collects the data we need for simulation and various post-execution tasks.
     pub async fn prepare_simulation(self) -> Result<PreSimulationState<FEN>> {
+        self.prepare_simulation_inner(false).await
+    }
+
+    /// Collects simulation data without emitting warnings for an optimization candidate that may
+    /// be discarded.
+    pub(crate) async fn prepare_simulation_silent(self) -> Result<PreSimulationState<FEN>> {
+        self.prepare_simulation_inner(true).await
+    }
+
+    async fn prepare_simulation_inner(self, silent: bool) -> Result<PreSimulationState<FEN>> {
         let returns = self.get_returns()?;
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
@@ -315,7 +338,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         }
         let rpc_data = RpcData::from_transactions(&txs);
 
-        if rpc_data.is_multi_chain() {
+        if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
             if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
@@ -323,7 +346,9 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 );
             }
         }
-        rpc_data.check_shanghai_support().await?;
+        if !silent {
+            rpc_data.check_shanghai_support().await?;
+        }
 
         Ok(PreSimulationState {
             args: self.args,

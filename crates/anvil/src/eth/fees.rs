@@ -217,12 +217,11 @@ impl FeeManager {
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
-        calculate_next_block_base_fee_per_gas(
-            self.state.read().rules,
-            gas_used,
-            gas_limit,
-            last_fee_per_gas,
-        )
+        let rules = self.state.read().rules;
+        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+            return 0;
+        }
+        calculate_next_block_base_fee_per_gas(rules, gas_used, gas_limit, last_fee_per_gas)
     }
 
     /// Calculates the next block blob base fee.
@@ -556,5 +555,38 @@ impl fmt::Debug for FeeDetails {
         write!(fmt, "max_priority_fee_per_gas: {:?}, ", self.max_priority_fee_per_gas)?;
         write!(fmt, "}}")?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fee_manager(spec_id: SpecId) -> FeeManager {
+        FeeManager::new(
+            spec_id,
+            INITIAL_BASE_FEE,
+            true,
+            INITIAL_GAS_PRICE,
+            BlobExcessGasAndPrice::new_with_spec(0, SpecId::CANCUN),
+            BlobParams::cancun(),
+            BaseFeeParams::ethereum(),
+            None,
+        )
+    }
+
+    #[test]
+    fn raw_next_base_fee_respects_london_activation() {
+        let berlin = fee_manager(SpecId::BERLIN);
+        assert_eq!(
+            berlin.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
+            0
+        );
+
+        let london = fee_manager(SpecId::LONDON);
+        assert_ne!(
+            london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
+            0
+        );
     }
 }

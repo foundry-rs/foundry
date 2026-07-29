@@ -365,7 +365,8 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
 
-    /// Dump a genesis JSON file's `allocs` to disk.
+    /// Dumps a genesis JSON file's `allocs` to disk. Accounts created in the current transaction
+    /// are ordered by deployment, followed by the remaining accounts in ascending address order.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function dumpState(string calldata pathToStateJson) external;
 

@@ -1,4 +1,3 @@
-use super::{MixedCaseFunction, MixedCaseVariable};
 use crate::{
     linter::{EarlyLintPass, LintContext, Suggestion},
     sol::{
@@ -6,7 +5,9 @@ use crate::{
         naming::{check_mixed_case as check_mixed_case_pure, check_screaming_snake_case},
     },
 };
+use foundry_config::lint::LintSpecificConfig;
 use solar::ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
+use std::sync::Arc;
 
 declare_forge_lint!(
     MIXED_CASE_FUNCTION,
@@ -15,14 +16,22 @@ declare_forge_lint!(
     "function names should use mixedCase"
 );
 
-impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
+#[derive(Debug)]
+pub(super) struct MixedCaseFunctionPass {
+    config: Arc<LintSpecificConfig>,
+}
+
+impl MixedCaseFunctionPass {
+    pub(super) const fn new(config: Arc<LintSpecificConfig>) -> Self {
+        Self { config }
+    }
+}
+
+impl<'ast> EarlyLintPass<'ast> for MixedCaseFunctionPass {
     fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
         if let Some(name) = func.header.name
-            && let Some(expected) = check_mixed_case(
-                name.as_str(),
-                true,
-                &ctx.config.lint_specific.mixed_case_exceptions,
-            )
+            && let Some(expected) =
+                check_mixed_case(name.as_str(), true, &self.config.mixed_case_exceptions)
             && !is_constant_getter(&func.header)
         {
             ctx.emit_with_suggestion(
@@ -45,7 +54,18 @@ declare_forge_lint!(
     "mutable variables should use mixedCase"
 );
 
-impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
+#[derive(Debug)]
+pub(super) struct MixedCaseVariablePass {
+    config: Arc<LintSpecificConfig>,
+}
+
+impl MixedCaseVariablePass {
+    pub(super) const fn new(config: Arc<LintSpecificConfig>) -> Self {
+        Self { config }
+    }
+}
+
+impl<'ast> EarlyLintPass<'ast> for MixedCaseVariablePass {
     fn check_variable_definition(
         &mut self,
         ctx: &LintContext,
@@ -53,11 +73,8 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
     ) {
         if var.mutability.is_none()
             && let Some(name) = var.name
-            && let Some(expected) = check_mixed_case(
-                name.as_str(),
-                false,
-                &ctx.config.lint_specific.mixed_case_exceptions,
-            )
+            && let Some(expected) =
+                check_mixed_case(name.as_str(), false, &self.config.mixed_case_exceptions)
         {
             ctx.emit_with_suggestion(
                 &MIXED_CASE_VARIABLE,

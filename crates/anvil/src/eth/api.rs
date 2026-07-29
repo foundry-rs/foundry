@@ -1,8 +1,5 @@
-use super::{
-    backend::mem::{
-        BlockRequest, DatabaseRef, MonadReplayContext, State, sanitize_simulation_blocks,
-    },
-    sign::build_impersonated,
+use super::backend::mem::{
+    BlockRequest, DatabaseRef, MonadReplayContext, State, sanitize_simulation_blocks,
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
@@ -26,7 +23,7 @@ use crate::{
                 PoolTransaction, TransactionOrder, TransactionPriority, TxMarker, to_marker,
             },
         },
-        sign::{self, Signer},
+        sign::Signer,
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -78,7 +75,7 @@ use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         EthRequest,
-        block::{BlockInfo, canonical_block, canonical_block_transaction},
+        block::{BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
     types::{ReorgOptions, TransactionData},
@@ -2212,7 +2209,7 @@ impl EthApi<FoundryNetwork> {
     fn sign_request(&self, from: &Address, typed_tx: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
         match typed_tx {
             #[cfg(feature = "optimism")]
-            FoundryTypedTx::Deposit(_) => return Ok(build_impersonated(typed_tx)),
+            FoundryTypedTx::Deposit(_) => return Ok(typed_tx.into_impersonated()),
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
@@ -2615,7 +2612,7 @@ impl EthApi<FoundryNetwork> {
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = sign::build_impersonated(typed_tx);
+            let transaction = typed_tx.into_impersonated();
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -2667,7 +2664,7 @@ impl EthApi<FoundryNetwork> {
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = sign::build_impersonated(typed_tx);
+            let transaction = typed_tx.into_impersonated();
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_resend: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -2786,7 +2783,7 @@ impl EthApi<FoundryNetwork> {
         };
 
         let pool_transaction =
-            PoolTransaction { requires, provides, pending_transaction, priority };
+            PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
@@ -3171,7 +3168,7 @@ impl EthApi<FoundryNetwork> {
         }
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
-        let tx = build_impersonated(typed_tx);
+        let tx = typed_tx.into_impersonated();
 
         let raw = tx.encoded_2718().into();
 
@@ -3463,7 +3460,7 @@ impl EthApi<FoundryNetwork> {
                 .body
                 .transactions
                 .into_iter()
-                .map(|tx| canonical_block_transaction(tx.into_inner()).encoded_2718().into())
+                .map(|tx| tx.into_inner().into_canonical().encoded_2718().into())
                 .collect());
         }
 
@@ -3916,7 +3913,7 @@ impl EthApi<FoundryNetwork> {
 
                         // Handle signer and convert to pending transaction
                         if self.is_impersonated(from) {
-                            let transaction = sign::build_impersonated(typed_tx);
+                            let transaction = typed_tx.into_impersonated();
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)
                         } else {
@@ -3927,7 +3924,7 @@ impl EthApi<FoundryNetwork> {
                     }
                 };
 
-                let pooled = PoolTransaction::new(pending);
+                let pooled = PoolTransaction::new(pending).with_replay();
                 txs.entry(block_index).or_default().push(Arc::new(pooled));
             }
 
@@ -4020,7 +4017,7 @@ impl EthApi<FoundryNetwork> {
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
-        let transaction = sign::build_impersonated(typed_tx);
+        let transaction = typed_tx.into_impersonated();
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -4532,7 +4529,7 @@ impl EthApi<FoundryNetwork> {
         let from = *pending_transaction.sender();
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction =
-            PoolTransaction { requires, provides, pending_transaction, priority };
+            PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())

@@ -19,7 +19,9 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{Address, B256, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{
+    Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
+};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockNumberOrTag,
@@ -725,9 +727,7 @@ impl NodeConfig {
 
     /// Returns the chain ID that defines protocol behavior.
     fn protocol_chain_id(&self) -> u64 {
-        self.fork_source_chain_id
-            .or_else(|| self.fork_chain_id.map(|chain_id| chain_id.to()))
-            .unwrap_or_else(|| self.get_chain_id())
+        self.fork_source_chain_id.unwrap_or_else(|| self.get_chain_id())
     }
 
     /// Sets the chain id and updates all wallets
@@ -1135,19 +1135,28 @@ impl NodeConfig {
         Ok(())
     }
 
-    /// Returns the path where the cache file should be stored
+    /// Returns the endpoint-specific path where the cache file should be stored.
     ///
-    /// See also [ Config::foundry_block_cache_file()]
+    /// See also [`Config::foundry_block_cache_file`].
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
-        self.block_cache_path_for_chain(self.protocol_chain_id(), block)
+        self.block_cache_path_for_rpc(self.protocol_chain_id(), block, self.fork_urls.first()?)
     }
 
-    fn block_cache_path_for_chain(&self, chain_id: u64, block: u64) -> Option<PathBuf> {
+    fn block_cache_path_for_rpc(
+        &self,
+        source_chain_id: u64,
+        block: u64,
+        rpc_url: &str,
+    ) -> Option<PathBuf> {
         if self.no_storage_caching || self.fork_urls.is_empty() {
             return None;
         }
 
-        Config::foundry_block_cache_file(chain_id, block)
+        let rpc_url_hash = hex::encode(keccak256(rpc_url));
+        Some(
+            Config::foundry_block_cache_file(source_chain_id, block)?
+                .with_file_name(format!("storage-{rpc_url_hash}.json")),
+        )
     }
 
     /// Sets whether to disable the default create2 deployer
@@ -1219,8 +1228,8 @@ impl NodeConfig {
 
     /// Sets the path where persisted states are cached (used with `max_persisted_states`).
     ///
-    /// Note: This does not control the fork RPC cache location (`storage.json`), which uses
-    /// `~/.foundry/cache/rpc/<chain>/<block>/` via [`Config::foundry_block_cache_file`].
+    /// Note: This does not control the fork RPC cache location, which uses endpoint-specific files
+    /// under `~/.foundry/cache/rpc/<chain>/<block>/`.
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
@@ -1886,7 +1895,8 @@ latest block number: {latest_block}"
         }
 
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
-        let cache_path = self.block_cache_path_for_chain(source_chain_id, fork_block_number);
+        let cache_path =
+            self.block_cache_path_for_rpc(source_chain_id, fork_block_number, &eth_rpc_url);
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, cache_path)
         } else {
@@ -2048,7 +2058,9 @@ async fn derive_block_and_transactions(
             // Convert the transactions to PoolTransactions
             let force_transactions = filtered_transactions
                 .iter()
-                .map(|&transaction| PoolTransaction::try_from(transaction.clone()))
+                .map(|&transaction| {
+                    PoolTransaction::try_from(transaction.clone()).map(PoolTransaction::with_replay)
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| eyre::eyre!("Err converting to pool transactions {e}"))?;
             Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))
@@ -2253,13 +2265,21 @@ mod tests {
 
     #[test]
     fn fork_cache_path_can_use_source_chain() {
+        let rpc_url = "http://localhost:8545";
         let mut config = NodeConfig::test()
-            .with_eth_rpc_url(Some("http://localhost:8545".to_string()))
+            .with_eth_rpc_url(Some(rpc_url.to_string()))
             .with_chain_id(Some(1u64));
         let block = 42;
         config.fork_source_chain_id = Some(143);
+        let expected = Config::foundry_block_cache_file(143, block).map(|path| {
+            path.with_file_name(format!("storage-{}.json", hex::encode(keccak256(rpc_url))))
+        });
 
-        assert_eq!(config.block_cache_path(block), Config::foundry_block_cache_file(143, block));
+        assert_eq!(config.block_cache_path(block), expected);
+        assert_ne!(
+            config.block_cache_path_for_rpc(143, block, rpc_url),
+            config.block_cache_path_for_rpc(143, block, "http://localhost:8546")
+        );
     }
 
     #[test]
@@ -2270,6 +2290,21 @@ mod tests {
 
         assert_eq!(config.get_chain_id(), 1);
         assert_eq!(config.protocol_chain_id(), 143);
+    }
+
+    #[test]
+    fn fork_chain_id_is_only_an_offline_discovery_hint() {
+        let mut config = NodeConfig::test()
+            .with_chain_id(Some(31_337u64))
+            .with_fork_chain_id(Some(U256::from(143)));
+
+        assert_eq!(config.protocol_chain_id(), 31_337);
+
+        config.fork_source_chain_id = Some(143);
+        assert_eq!(config.protocol_chain_id(), 143);
+
+        config.fork_source_chain_id = None;
+        assert_eq!(config.protocol_chain_id(), 31_337);
     }
 
     #[test]

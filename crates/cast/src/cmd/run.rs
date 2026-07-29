@@ -4,7 +4,10 @@ use crate::{
         call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
     },
     traces::TraceKind,
-    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
+    utils::{
+        apply_chain_and_block_specific_env_changes_for_chain,
+        apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
+    },
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
@@ -181,7 +184,8 @@ impl RunArgs {
         let mut config = load_config_from_provider(figment)?;
         config.networks = evm_opts.networks;
         self.tracing.labels.append(&mut self.legacy_labels);
-        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        let tracing = config.tracing.clone();
 
         let with_local_artifacts = self.with_local_artifacts;
         let debug = self.debug;
@@ -412,6 +416,7 @@ impl RunArgs {
         } else {
             None
         };
+        apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
 
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)

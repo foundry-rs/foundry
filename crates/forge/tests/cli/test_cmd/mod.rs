@@ -984,6 +984,29 @@ contract BlobForkTest is Test {
     cmd.args(["test", "-vvvv"]).assert_success();
 });
 
+// https://github.com/foundry-rs/foundry/issues/10689
+forgetest_init!(flaky_roll_fork_arbitrum_priority_fee_above_max_fee, |prj, cmd| {
+    let endpoint = "https://arb-mainnet.g.alchemy.com/public";
+
+    prj.add_test(
+        "ArbitrumFork.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ArbitrumForkTest is Test {
+    function test_rollFork() public {
+        uint256 forkId = vm.createFork("<url>");
+        bytes32 txHash = 0x2e43e9ececcbb9cd08ce061edc3b4d39ca2b0ba480034e5f4650ba0065bf6b62;
+        vm.rollFork(forkId, txHash);
+    }
+}
+    "#
+        .replace("<url>", endpoint),
+    );
+
+    cmd.arg("test").assert_success();
+});
+
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
     prj.add_test(
@@ -2849,8 +2872,8 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
 
     cmd.args(["test", "--junit"]).assert_failure().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="6" failures="2" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0" errors="0" failures="2" time="[..]">
+<testsuites name="Test run" tests="6" skipped="2" failures="2" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" skipped="0" errors="0" failures="2" time="[..]">
         <testcase name="test_junit_assert_fail()" time="[..]">
             <failure message="panic: assertion failed (0x01)"/>
             <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
@@ -2861,7 +2884,7 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
-    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" disabled="2" errors="0" failures="0" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" skipped="2" errors="0" failures="0" time="[..]">
         <testcase name="test_junit_pass()" time="[..]">
             <system-out>[PASS] test_junit_pass() ([GAS])</system-out>
         </testcase>
@@ -2902,8 +2925,8 @@ contract JunitReportTest is Test {
 
     cmd.args(["test", "--junit", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="1" failures="0" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0" failures="0" time="[..]">
+<testsuites name="Test run" tests="1" skipped="0" failures="0" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" skipped="0" errors="0" failures="0" time="[..]">
         <testcase name="test_junit_with_logs()" time="[..]">
             <system-out>[PASS] test_junit_with_logs() ([GAS])/nLogs:/n  Step1/n  Step2/n  Step3/n</system-out>
         </testcase>
