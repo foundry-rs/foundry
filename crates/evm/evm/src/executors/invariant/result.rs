@@ -143,12 +143,10 @@ fn is_revert_assertion_failure(data: &[u8]) -> bool {
 }
 
 fn is_cheatcode_assert_revert<FEN: FoundryEvmNetwork>(call_result: &RawCallResult<FEN>) -> bool {
-    fn decoded_cheatcode_message(data: &[u8]) -> Option<String> {
-        Vm::VmErrors::abi_decode(data).ok().map(|error| error.to_string())
-    }
-
     call_result.reverter == Some(CHEATCODE_ADDRESS)
-        && decoded_cheatcode_message(call_result.result.as_ref())
+        && Vm::VmErrors::abi_decode(call_result.result.as_ref())
+            .ok()
+            .map(|error| error.to_string())
             .is_some_and(|message| message.starts_with(ASSERTION_FAILED_PREFIX))
 }
 
