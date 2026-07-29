@@ -5984,7 +5984,10 @@ impl Backend<FoundryNetwork> {
                             || account.nonce.is_some()
                             || account.code.is_some()
                             || account.state.is_some()
-                            || account.state_diff.is_some()
+                            || account
+                                .state_diff
+                                .as_ref()
+                                .is_some_and(|state_diff| !state_diff.is_empty())
                     });
                     let previously_deleted = previously_deleted_accounts(
                         &cache_db.cache.accounts,
