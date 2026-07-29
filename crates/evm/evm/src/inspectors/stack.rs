@@ -1116,7 +1116,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         if let Some(cheats) = self.cheatcodes.as_mut() {
-            if cheats.has_storage_hooks() && cheats.finish_storage_hook_callback(interpreter) {
+            if cheats.has_storage_hooks() && cheats.finish_storage_hook_callback(interpreter, ecx) {
                 return;
             }
             cheats.pc = interpreter.bytecode.pc();

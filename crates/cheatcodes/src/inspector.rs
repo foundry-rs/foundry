@@ -54,7 +54,10 @@ use rand::Rng;
 use revm::{
     Inspector,
     bytecode::opcode as op,
-    context::{Cfg, ContextTr, Host, JournalTr, Transaction, TransactionType, result::EVMError},
+    context::{
+        Cfg, ContextTr, Host, JournalTr, Transaction, TransactionType,
+        journal::warm_addresses::WarmAddresses, result::EVMError,
+    },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     interpreter::{
@@ -63,6 +66,7 @@ use revm::{
         interpreter_types::{Jumps, LoopControl, MemoryTr, ReturnData},
         return_ok,
     },
+    state::{AccountStatus, TransactionId},
 };
 use serde_json::Value;
 use std::{
@@ -358,7 +362,63 @@ struct ActiveStorageHook {
     callback_input: Bytes,
     saved_gas: Gas,
     saved_return_data: Bytes,
+    access_snapshot: StorageHookAccessSnapshot,
     outcome: Option<(InstructionResult, Bytes)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct StorageHookAccessState {
+    transaction_id: TransactionId,
+    is_cold: bool,
+}
+
+#[derive(Clone, Debug)]
+struct StorageHookAccountAccessState {
+    access: StorageHookAccessState,
+    storage: HashMap<U256, StorageHookAccessState>,
+}
+
+#[derive(Clone, Debug)]
+struct StorageHookAccessSnapshot {
+    warm_addresses: WarmAddresses,
+    accounts: AddressHashMap<StorageHookAccountAccessState>,
+}
+
+impl StorageHookAccessSnapshot {
+    fn restore<FEN: FoundryEvmNetwork>(self, ecx: &mut FoundryContextFor<'_, FEN>) {
+        let (_, journal) = ecx.db_journal_inner_mut();
+        journal.warm_addresses = self.warm_addresses;
+
+        for (address, account) in &mut journal.state {
+            let Some(saved_account) = self.accounts.get(address) else {
+                if journal.warm_addresses.is_cold(address) {
+                    account.mark_cold();
+                }
+                for (slot, value) in &mut account.storage {
+                    if !journal.warm_addresses.is_storage_warm(address, slot) {
+                        value.mark_cold();
+                    }
+                }
+                continue;
+            };
+
+            account.transaction_id = saved_account.access.transaction_id;
+            if saved_account.access.is_cold {
+                account.status |= AccountStatus::Cold;
+            } else {
+                account.status -= AccountStatus::Cold;
+            }
+
+            for (slot, value) in &mut account.storage {
+                if let Some(saved_slot) = saved_account.storage.get(slot) {
+                    value.transaction_id = saved_slot.transaction_id;
+                    value.is_cold = saved_slot.is_cold;
+                } else if !journal.warm_addresses.is_storage_warm(address, slot) {
+                    value.mark_cold();
+                }
+            }
+        }
+    }
 }
 
 /// Holds gas metering state.
@@ -1924,7 +1984,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        if self.finish_storage_hook_callback(interpreter) {
+        if self.finish_storage_hook_callback(interpreter, ecx) {
             return;
         }
 
@@ -3096,11 +3156,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ///
     /// Returns whether a failed callback was propagated to the parent frame.
     #[inline]
-    pub fn finish_storage_hook_callback(&mut self, interpreter: &mut Interpreter) -> bool {
+    pub fn finish_storage_hook_callback(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) -> bool {
         let Some(active) = self.active_storage_hook.as_ref() else { return false };
         let Some((result, output)) = active.outcome.clone() else { return false };
 
         let active = self.active_storage_hook.take().expect("active storage hook exists");
+        active.access_snapshot.restore::<FEN>(ecx);
         let _ = interpreter.stack.pop();
         interpreter.gas = active.saved_gas;
         interpreter.return_data.set_buffer(active.saved_return_data);
@@ -3115,6 +3180,42 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             ));
             true
         }
+    }
+
+    fn snapshot_storage_hook_access(
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) -> StorageHookAccessSnapshot {
+        let (_, journal) = ecx.db_journal_inner_mut();
+        let accounts = journal
+            .state
+            .iter()
+            .map(|(address, account)| {
+                let storage = account
+                    .storage
+                    .iter()
+                    .map(|(slot, value)| {
+                        (
+                            *slot,
+                            StorageHookAccessState {
+                                transaction_id: value.transaction_id,
+                                is_cold: value.is_cold,
+                            },
+                        )
+                    })
+                    .collect();
+                (
+                    *address,
+                    StorageHookAccountAccessState {
+                        access: StorageHookAccessState {
+                            transaction_id: account.transaction_id,
+                            is_cold: account.status.contains(AccountStatus::Cold),
+                        },
+                        storage,
+                    },
+                )
+            })
+            .collect();
+        StorageHookAccessSnapshot { warm_addresses: journal.warm_addresses.clone(), accounts }
     }
 
     fn capture_storage_hook(
@@ -3186,6 +3287,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         };
 
+        let access_snapshot = Self::snapshot_storage_hook_access(ecx);
         let account = match ecx.journal_mut().load_account_with_code(hook.callback_target) {
             Ok(account) => account,
             Err(err) => {
@@ -3210,6 +3312,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             callback_input: input.clone(),
             saved_gas,
             saved_return_data,
+            access_snapshot,
             outcome: None,
         });
         interpreter.bytecode.set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(

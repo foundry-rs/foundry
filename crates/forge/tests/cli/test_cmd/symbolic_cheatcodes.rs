@@ -4294,6 +4294,14 @@ contract StorageHookReturner {
     }
 }
 
+contract StorageHookGasProbe {
+    function readCost(StorageHookTarget target) external view returns (uint256) {
+        uint256 gasBefore = gasleft();
+        target.value();
+        return gasBefore - gasleft();
+    }
+}
+
 contract StorageHookCaller {
     function store(StorageHookTarget target, uint256 newValue) external {
         target.store(newValue);
@@ -4356,6 +4364,7 @@ contract StorageHooksTest is Test {
     StorageHookCaller caller;
     StorageHookProxy proxy;
     StorageHookReturner returner;
+    StorageHookTarget coldReadTarget;
 
     uint256 ghostValue;
     bytes32 lastSlot;
@@ -4385,6 +4394,10 @@ contract StorageHooksTest is Test {
         lastSlot = slot;
         ghostValue = uint256(value);
         loadCount++;
+    }
+
+    function onLoadReadingColdSlot(address, bytes32, bytes32) external view {
+        coldReadTarget.value();
     }
 
     function onStore(address account, bytes32 slot, bytes32 oldValue, bytes32 newValue) external {
@@ -4452,6 +4465,21 @@ contract StorageHooksTest is Test {
 
     function testConcreteCallbackPreservesReturnData() public {
         assertEq(target.storeAfterReturningCall(address(returner), 1), 32);
+    }
+
+    function testConcreteCallbackDoesNotWarmAccesses() public {
+        StorageHookTarget baselineReadTarget = new StorageHookTarget();
+        StorageHookGasProbe probe = new StorageHookGasProbe();
+        coldReadTarget = new StorageHookTarget();
+        hookVm.registerSloadHook(address(target), this.onLoadReadingColdSlot.selector);
+        vm.cool(address(coldReadTarget));
+        vm.coolSlot(address(coldReadTarget), bytes32(0));
+        vm.cool(address(baselineReadTarget));
+        vm.coolSlot(address(baselineReadTarget), bytes32(0));
+
+        target.value();
+
+        assertEq(probe.readCost(coldReadTarget), probe.readCost(baselineReadTarget));
     }
 
     function testConcreteTraceSuccess() public {
