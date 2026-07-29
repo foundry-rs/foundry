@@ -2,7 +2,7 @@
 
 use crate::abi::Greeter;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{B256, Bytes, U256, Uint, address, b256, bytes, utils::Unit};
+use alloy_primitives::{Address, B256, Bytes, U256, Uint, address, b256, bytes, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockId, TransactionRequest,
@@ -10,13 +10,35 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc::next_http_archive_rpc_url;
 use revm::{
     context_interface::block::BlobExcessGasAndPrice,
     primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use std::str::FromStr;
+
+async fn state_without_block_history() -> (Value, Address, U256, u64) {
+    let account = address!("0000000000000000000000000000000000010363");
+    let balance = U256::from(10363);
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_balance(account, balance).await.unwrap();
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let mut state = serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
+    let state = state.as_object_mut().unwrap();
+    state.remove("blocks");
+    state.remove("transactions");
+    state.remove("historical_states");
+
+    let block = state.get_mut("block").unwrap().as_object_mut().unwrap();
+    let beneficiary = block.remove("beneficiary").unwrap();
+    block.insert("coinbase".to_string(), beneficiary);
+
+    (Value::Object(state.clone()), account, balance, api.backend.fees().base_fee())
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_state() {
@@ -118,6 +140,100 @@ async fn can_load_existing_state_legacy() {
 
     let block_number = api.block_number().unwrap();
     assert_eq!(block_number, Uint::from(2));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/10363>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_load_state_without_block_history() {
+    let (state, account, balance, next_base_fee) = state_without_block_history().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let state_file = tmp.path().join("state.json");
+    foundry_common::fs::write_json_file(&state_file, &state).unwrap();
+
+    let (api, handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
+    let provider = handle.http_provider();
+
+    assert_eq!(provider.get_balance(account).await.unwrap(), balance);
+    assert_eq!(api.block_number().unwrap(), U256::from(2));
+
+    let checkpoint =
+        api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(checkpoint.header.number, 2);
+    assert_eq!(checkpoint.header.hash, api.backend.best_hash());
+    assert_eq!(api.backend.fees().base_fee(), next_base_fee);
+
+    api.mine_one().await;
+    let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(latest.header.number, 3);
+    assert_eq!(latest.header.parent_hash, checkpoint.header.hash);
+    assert_eq!(latest.header.base_fee_per_gas, Some(next_base_fee));
+
+    let dumped = api.serialized_state(false).await.unwrap();
+    assert!(dumped.blocks.iter().any(|block| block.header.number == 2));
+
+    let (reloaded, _handle) = spawn(NodeConfig::test().with_init_state(Some(dumped))).await;
+    let reloaded_latest =
+        reloaded.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(reloaded_latest.header.number, 3);
+    assert_eq!(reloaded_latest.header.hash, latest.header.hash);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/10363>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_load_state_without_block_history_at_runtime() {
+    let (state, _, _, _) = state_without_block_history().await;
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await;
+    let parent =
+        api.block_by_number(alloy_eips::BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+
+    let checkpoint =
+        api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(checkpoint.header.number, 2);
+    assert_eq!(checkpoint.header.parent_hash, parent.header.hash);
+
+    api.mine_one().await;
+    let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(latest.header.number, 3);
+    assert_eq!(latest.header.parent_hash, checkpoint.header.hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn state_without_block_history_restores_osaka_blob_excess_gas() {
+    let (mut state, _, _, _) = state_without_block_history().await;
+    let blob_params = alloy_eips::eip7840::BlobParams::osaka();
+    let target_blob_gas = blob_params.target_blob_gas_per_block();
+    state["block"]["basefee"] = json!(1);
+    state["block"]["blob_excess_gas_and_price"]["excess_blob_gas"] = json!(target_blob_gas);
+    state["block"]["blob_excess_gas_and_price"]["blob_gasprice"] =
+        json!(blob_params.calc_blob_fee(target_blob_gas));
+
+    let state = serde_json::from_value(state).unwrap();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .with_init_state(Some(state)),
+    )
+    .await;
+
+    assert_eq!(api.backend.fees().excess_blob_gas_and_price().unwrap().excess_blob_gas, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejects_nonempty_block_history_without_best_block() {
+    let (source, _handle) = spawn(NodeConfig::test()).await;
+    source.mine_one().await;
+    source.mine_one().await;
+    let mut state = source.serialized_state(false).await.unwrap();
+    state.blocks.retain(|block| block.header.number != 2);
+    assert!(!state.blocks.is_empty());
+
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let err =
+        api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap_err();
+    assert!(err.to_string().contains("Best hash not found for best number 2"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -437,8 +553,8 @@ async fn test_backward_compatibility_deserialization_v1_2() {
             "difficulty": "0x0",
             "prevrandao": "0xecc5f0af8ff6b65c14bfdac55ba9db870d89482eb2b87200c6d7e7cd3a3a5ad5",
             "blob_excess_gas_and_price": {
-                "excess_blob_gas": 0,
-                "blob_gasprice": 1
+                "excess_blob_gas": 173990704,
+                "blob_gasprice": 43056053164891617135028
             }
         },
         "accounts": {},
@@ -453,6 +569,9 @@ async fn test_backward_compatibility_deserialization_v1_2() {
     assert_eq!(block_env.number, U256::from(5));
     // Verify coinbase was converted to beneficiary
     assert_eq!(block_env.beneficiary, address!("0x1234567890123456789012345678901234567890"));
+    let blob = block_env.blob_excess_gas_and_price.unwrap();
+    assert_eq!(blob.excess_blob_gas, 173990704);
+    assert_eq!(blob.blob_gasprice, 43056053164891617135028);
 
     // New format with beneficiary and numeric values
     let new_format = r#"{

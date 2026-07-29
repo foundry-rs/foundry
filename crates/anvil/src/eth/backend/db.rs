@@ -500,7 +500,7 @@ pub struct LegacyBlockEnv {
 #[derive(Debug, Deserialize)]
 pub struct LegacyBlobExcessGasAndPrice {
     pub excess_blob_gas: u64,
-    pub blob_gasprice: u64,
+    pub blob_gasprice: u128,
 }
 
 /// Legacy string or u64 type from before v1.3.
@@ -543,7 +543,10 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             slot_num: 0,
             blob_excess_gas_and_price: legacy
                 .blob_excess_gas_and_price
-                .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
+                .map(|v| BlobExcessGasAndPrice {
+                    excess_blob_gas: v.excess_blob_gas,
+                    blob_gasprice: v.blob_gasprice,
+                })
                 .or_else(|| {
                     Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
                 }),

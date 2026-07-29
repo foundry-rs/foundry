@@ -5255,6 +5255,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             storage.load_blocks(state.blocks.clone());
             storage.load_transactions(state.transactions.clone());
         }
+        let mut checkpoint_header = None;
         // reset the block env
         if let Some(block) = state.block.clone() {
             {
@@ -5270,50 +5271,83 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
             let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
-            let selected_best_number = if let Some((number, hash)) = fork_num_and_hash {
+            let (selected_best_number, selected_best_hash) = if let Some((number, hash)) =
+                fork_num_and_hash
+            {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
                 if best_number > number {
-                    self.blockchain.storage.write().best_number = best_number;
-                    let best_hash = self
-                        .blockchain
-                        .storage
-                        .read()
-                        .hash(best_number.into(), self.slots_in_an_epoch)
-                        .ok_or_else(|| {
-                            BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                                "Best hash not found for best number {best_number}",
-                            )))
-                        })?;
-                    self.blockchain.storage.write().best_hash = best_hash;
-                    best_number
+                    (best_number, None)
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
-                    self.blockchain.storage.write().best_number = number;
-                    self.blockchain.storage.write().best_hash = hash;
-                    number
+                    (number, Some(hash))
                 }
             } else {
-                self.blockchain.storage.write().best_number = best_number;
+                (best_number, None)
+            };
 
-                // Set the current best block hash;
-                let best_hash = self
+            let best_hash = if let Some(hash) = selected_best_hash {
+                hash
+            } else if let Some(hash) = self
+                .blockchain
+                .storage
+                .read()
+                .hash(selected_best_number.into(), self.slots_in_an_epoch)
+            {
+                hash
+            } else if state.blocks.is_empty() {
+                let spec_id = self.spec_id();
+                let is_cancun = spec_id >= SpecId::CANCUN;
+                let parent_hash = self
                     .blockchain
                     .storage
                     .read()
-                    .hash(best_number.into(), self.slots_in_an_epoch)
-                    .ok_or_else(|| {
-                        BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                            "Best hash not found for best number {best_number}",
-                        )))
-                    })?;
-
-                self.blockchain.storage.write().best_hash = best_hash;
-                best_number
+                    .hashes
+                    .get(&selected_best_number.saturating_sub(1))
+                    .copied()
+                    .unwrap_or_default();
+                let header = Header {
+                    parent_hash,
+                    beneficiary: block.beneficiary,
+                    difficulty: block.difficulty,
+                    number: selected_best_number,
+                    gas_limit: block.gas_limit,
+                    timestamp: block.timestamp.saturating_to(),
+                    mix_hash: block.prevrandao.unwrap_or_default(),
+                    base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block.basefee),
+                    parent_beacon_block_root: is_cancun.then_some(Default::default()),
+                    blob_gas_used: is_cancun.then_some(0),
+                    excess_blob_gas: if is_cancun { block.blob_excess_gas() } else { None },
+                    withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
+                    requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+                    ..Default::default()
+                };
+                let header = FoundryHeader::new(header, self.is_tempo());
+                checkpoint_header = Some(header.clone());
+                let checkpoint = create_block(
+                    header,
+                    Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+                );
+                warn!(
+                    target: "backend",
+                    block_number = selected_best_number,
+                    "state dump has no block history; created a synthetic checkpoint block"
+                );
+                self.blockchain.storage.write().insert_block(checkpoint)
+            } else {
+                return Err(BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                    "Best hash not found for best number {selected_best_number}",
+                ))));
             };
+
+            {
+                let mut storage = self.blockchain.storage.write();
+                storage.best_number = selected_best_number;
+                storage.best_hash = best_hash;
+            }
 
             // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
             // can intentionally keep BlockEnv.number distinct from the best L2 block number.
@@ -5322,17 +5356,24 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             }
         }
 
-        if let Some(latest) = state.blocks.iter().max_by_key(|b| b.header.number()) {
-            let header = &latest.header;
+        let latest_header = state
+            .blocks
+            .iter()
+            .max_by_key(|block| block.header.number())
+            .map(|block| &block.header)
+            .or(checkpoint_header.as_ref());
+        if let Some(header) = latest_header {
             let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                 header.gas_used(),
                 header.gas_limit(),
                 header.base_fee_per_gas().unwrap_or_default(),
             );
-            let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-                header.excess_blob_gas().unwrap_or_default(),
-                header.blob_gas_used().unwrap_or_default(),
-            );
+            let next_block_excess_blob_gas =
+                self.fees.blob_params().next_block_excess_blob_gas_osaka(
+                    header.excess_blob_gas().unwrap_or_default(),
+                    header.blob_gas_used().unwrap_or_default(),
+                    header.base_fee_per_gas().unwrap_or_default(),
+                );
 
             // update next base fee
             self.fees.set_base_fee(next_block_base_fee);
