@@ -1,7 +1,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
 use foundry_wallets::BrowserWalletOpts;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
@@ -2624,10 +2624,6 @@ async fn check_sponsorship(tempo: &TempoOpts, sender: Address) -> SponsorshipDia
     }
 }
 
-fn unix_timestamp_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
 const fn key_type_matches_authorization(key_type: &KeyType, auth_type: &AuthSignatureType) -> bool {
     matches!(
         (key_type, auth_type),
@@ -4083,7 +4079,8 @@ fn format_timestamp_iso(timestamp: u64) -> String {
 }
 
 fn format_relative_timestamp(timestamp: u64) -> String {
-    format_relative_timestamp_from(timestamp, unix_timestamp_now())
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    format_relative_timestamp_from(timestamp, now)
 }
 
 fn format_relative_timestamp_from(timestamp: u64, now: u64) -> String {

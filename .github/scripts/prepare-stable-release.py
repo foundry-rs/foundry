@@ -223,6 +223,51 @@ def verify_changed_paths(root: Path, fragments: list[Path]) -> None:
         raise ReleaseError(f"release preparation changed unexpected paths: {', '.join(unexpected)}")
 
 
+def validate_merged(
+    root: Path,
+    expected_sha: str,
+    expected_version: str,
+    expected_tag: str,
+    expected_package_count: int,
+) -> None:
+    head = run(["git", "rev-parse", "HEAD"], root, capture_output=True).stdout.strip()
+    if head != expected_sha:
+        raise ReleaseError(f"checked out commit {head} does not match merged commit {expected_sha}")
+
+    candidate = workspace_version(root / "Cargo.toml")
+    parse_version(candidate)
+    if candidate != expected_version:
+        raise ReleaseError(
+            f"workspace version {candidate} does not match pull request metadata {expected_version}"
+        )
+    derived_tag = f"v{candidate}"
+    if derived_tag != expected_tag:
+        raise ReleaseError(
+            f"derived tag {derived_tag} does not match pull request metadata {expected_tag}"
+        )
+
+    fragments = pending_fragments(root)
+    if fragments:
+        names = ", ".join(str(path.relative_to(root)) for path in fragments)
+        raise ReleaseError(f"merged release still contains pending changelog fragments: {names}")
+    verify_release_heading_count(root / "CHANGELOG.md", candidate, 1)
+
+    metadata = json.loads(
+        run(
+            ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"],
+            root,
+            capture_output=True,
+        ).stdout
+    )
+    package_count = verify_workspace_versions(metadata, candidate)
+    if package_count != expected_package_count:
+        raise ReleaseError(
+            f"verified {package_count} workspace packages, pull request metadata records "
+            f"{expected_package_count}"
+        )
+    print(f"Validated {expected_tag} at merged commit {expected_sha}.")
+
+
 def prepare(root: Path, changelogs: Path) -> None:
     manifest = root / "Cargo.toml"
     lockfile = root / "Cargo.lock"
@@ -319,12 +364,38 @@ def prepare(root: Path, changelogs: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--changelogs", type=Path, required=True, help="Pinned changelogs binary")
+    parser.add_argument("--changelogs", type=Path, help="Pinned changelogs binary")
+    parser.add_argument("--validate-merged", action="store_true")
+    parser.add_argument("--expected-sha")
+    parser.add_argument("--expected-version")
+    parser.add_argument("--expected-tag")
+    parser.add_argument("--expected-package-count", type=int)
     parser.add_argument("--root", type=Path, default=Path.cwd())
     args = parser.parse_args()
 
     try:
-        prepare(args.root.resolve(), args.changelogs.resolve())
+        root = args.root.resolve()
+        if args.validate_merged:
+            expected = {
+                "--expected-sha": args.expected_sha,
+                "--expected-version": args.expected_version,
+                "--expected-tag": args.expected_tag,
+                "--expected-package-count": args.expected_package_count,
+            }
+            missing = [name for name, value in expected.items() if value is None]
+            if missing:
+                parser.error(f"--validate-merged requires {', '.join(missing)}")
+            validate_merged(
+                root,
+                args.expected_sha,
+                args.expected_version,
+                args.expected_tag,
+                args.expected_package_count,
+            )
+        else:
+            if args.changelogs is None:
+                parser.error("--changelogs is required unless --validate-merged is used")
+            prepare(root, args.changelogs.resolve())
     except (OSError, KeyError, subprocess.CalledProcessError, tomllib.TOMLDecodeError, ReleaseError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

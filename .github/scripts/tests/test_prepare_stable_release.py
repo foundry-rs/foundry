@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -238,6 +239,73 @@ class WorkspaceTests(unittest.TestCase):
             with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
                 prepare_stable_release.prepare(root, root / "changelogs")
             self.assertEqual(output.read_text(), "base_branch=master\nchanged=false\n")
+
+
+class MergedReleaseTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        (self.root / ".changelog").mkdir()
+        (self.root / "Cargo.toml").write_text(
+            '[workspace.package]\nversion = "1.7.2"\n'
+        )
+        (self.root / "CHANGELOG.md").write_text("## 1.7.2 (2026-07-29)\n")
+        self.metadata = {
+            "workspace_members": ["forge", "cast"],
+            "packages": [
+                {"id": "forge", "name": "forge", "version": "1.7.2"},
+                {"id": "cast", "name": "cast", "version": "1.7.2"},
+            ],
+        }
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def completed(self, command, root, capture_output=False):
+        output = (
+            "merged-sha\n"
+            if command[:2] == ["git", "rev-parse"]
+            else json.dumps(self.metadata)
+        )
+        return subprocess.CompletedProcess(command, returncode=0, stdout=output)
+
+    def test_validates_merged_release(self) -> None:
+        with patch.object(prepare_stable_release, "run", side_effect=self.completed):
+            prepare_stable_release.validate_merged(
+                self.root, "merged-sha", "1.7.2", "v1.7.2", 2
+            )
+
+    def test_rejects_wrong_checkout(self) -> None:
+        with patch.object(
+            prepare_stable_release,
+            "run",
+            return_value=subprocess.CompletedProcess([], returncode=0, stdout="later-sha\n"),
+        ), self.assertRaisesRegex(prepare_stable_release.ReleaseError, "does not match merged"):
+            prepare_stable_release.validate_merged(
+                self.root, "merged-sha", "1.7.2", "v1.7.2", 2
+            )
+
+    def test_rejects_metadata_mismatch(self) -> None:
+        with patch.object(prepare_stable_release, "run", side_effect=self.completed), \
+            self.assertRaisesRegex(prepare_stable_release.ReleaseError, "pull request metadata"):
+            prepare_stable_release.validate_merged(
+                self.root, "merged-sha", "1.7.3", "v1.7.3", 2
+            )
+
+    def test_rejects_pending_fragment(self) -> None:
+        (self.root / ".changelog" / "pending.md").write_text("pending\n")
+        with patch.object(prepare_stable_release, "run", side_effect=self.completed), \
+            self.assertRaisesRegex(prepare_stable_release.ReleaseError, "pending changelog"):
+            prepare_stable_release.validate_merged(
+                self.root, "merged-sha", "1.7.2", "v1.7.2", 2
+            )
+
+    def test_rejects_package_count_mismatch(self) -> None:
+        with patch.object(prepare_stable_release, "run", side_effect=self.completed), \
+            self.assertRaisesRegex(prepare_stable_release.ReleaseError, "metadata records 3"):
+            prepare_stable_release.validate_merged(
+                self.root, "merged-sha", "1.7.2", "v1.7.2", 3
+            )
 
 
 if __name__ == "__main__":

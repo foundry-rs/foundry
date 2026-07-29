@@ -108,7 +108,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Test GitHub scripts
-        run: python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
+        run: |
+          python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
+          node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
     runs-on: depot-ubuntu-latest
