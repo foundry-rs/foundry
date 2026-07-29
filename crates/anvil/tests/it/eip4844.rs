@@ -627,7 +627,7 @@ async fn simulate_v1_defaults_blob_fee_cap_to_zero() {
     });
     let response: Value =
         provider.client().request("eth_simulateV1", (payload, "latest")).await.unwrap();
-    assert_eq!(response[0]["calls"][0]["returnData"], format!("0x{:064x}", 0));
+    assert_eq!(response[0]["calls"][0]["returnData"], format!("0x{:064x}", 1));
     assert_eq!(response[0]["transactions"][0]["maxFeePerBlobGas"], "0x0");
 
     let payload = json!({
@@ -639,6 +639,54 @@ async fn simulate_v1_defaults_blob_fee_cap_to_zero() {
         provider.client().request("eth_simulateV1", (payload, "latest")).await.unwrap();
     assert_eq!(response[0]["calls"][0]["returnData"], format!("0x{:064x}", 21));
     assert_eq!(response[0]["transactions"][0]["maxFeePerBlobGas"], "0x0");
+
+    let sender = Address::with_last_byte(0x43);
+    let payload = |max_fee_per_blob_gas, balance| {
+        let mut request = request.clone();
+        request.from = Some(sender);
+        request.gas = Some(30_000);
+        request.max_fee_per_gas = Some(0);
+        request.max_priority_fee_per_gas = Some(0);
+        request.max_fee_per_blob_gas = max_fee_per_blob_gas;
+        json!({
+            "blockStateCalls": [{
+                "blockOverrides": {"blobBaseFee": "0x15"},
+                "stateOverrides": {
+                    sender.to_string(): {"balance": format!("0x{balance:x}")},
+                    contract.to_string(): {"code": "0x4a5f5260205ff3"}
+                },
+                "calls": [request]
+            }],
+            "validation": false,
+            "returnFullTransactions": true
+        })
+    };
+
+    for max_fee_per_blob_gas in [None, Some(0)] {
+        let response: Value = provider
+            .client()
+            .request("eth_simulateV1", (payload(max_fee_per_blob_gas, 0), "latest"))
+            .await
+            .unwrap();
+        assert_eq!(response[0]["calls"][0]["returnData"], format!("0x{:064x}", 21));
+        assert_eq!(response[0]["transactions"][0]["maxFeePerBlobGas"], "0x0");
+    }
+
+    let response: Result<Value, _> =
+        provider.client().request("eth_simulateV1", (payload(Some(20), 4_000_000), "latest")).await;
+    assert_eq!(response.unwrap_err().as_error_resp().unwrap().code, -32003);
+
+    let response: Result<Value, _> =
+        provider.client().request("eth_simulateV1", (payload(Some(30), 3_000_000), "latest")).await;
+    assert_eq!(response.unwrap_err().as_error_resp().unwrap().code, -38014);
+
+    let response: Value = provider
+        .client()
+        .request("eth_simulateV1", (payload(Some(30), 4_000_000), "latest"))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["calls"][0]["returnData"], format!("0x{:064x}", 21));
+    assert_eq!(response[0]["transactions"][0]["maxFeePerBlobGas"], "0x1e");
 }
 
 #[tokio::test(flavor = "multi_thread")]

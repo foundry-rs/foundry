@@ -161,6 +161,70 @@ const SIMULATE_GAS_CAP: u64 = 50_000_000;
 /// Fixed transaction context for direct Tempo RPC simulations.
 const TEMPO_RPC_SIMULATION_CONTEXT: B256 = B256::new(*b"TEMPO_RPC_SIMULATION_MPP_CONTEXT");
 
+/// Ethereum handler that skips blob fee cap validation for non-validating calls with a zero cap.
+struct SimulationHandler<EVM, ERROR, FRAME> {
+    _phantom: PhantomData<(EVM, ERROR, FRAME)>,
+}
+
+impl<EVM, ERROR, FRAME> Default for SimulationHandler<EVM, ERROR, FRAME> {
+    fn default() -> Self {
+        Self { _phantom: PhantomData }
+    }
+}
+
+impl<EVM, ERROR, FRAME> EvmHandler for SimulationHandler<EVM, ERROR, FRAME>
+where
+    EVM: EvmTr<
+            Context: ContextTr<
+                Block = BlockEnv,
+                Tx = TxEnv,
+                Journal: JournalTr<State = EvmState>,
+            > + ContextSetters,
+            Frame = FRAME,
+        >,
+    ERROR: EvmTrError<EVM>,
+    FRAME: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit>,
+{
+    type Evm = EVM;
+    type Error = ERROR;
+    type HaltReason = HaltReason;
+
+    fn validate_env(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
+        let skip_blob_fee_check = evm.ctx_ref().cfg().is_base_fee_check_disabled()
+            && evm.ctx_ref().tx().tx_type == 3
+            && evm.ctx_ref().tx().max_fee_per_blob_gas == 0;
+        if !skip_blob_fee_check {
+            return validation::validate_env(evm.ctx());
+        }
+
+        let block = evm.ctx_ref().block().clone();
+        let mut validation_block = block.clone();
+        if let Some(blob_gas_and_price) = &mut validation_block.blob_excess_gas_and_price {
+            blob_gas_and_price.blob_gasprice = 0;
+        }
+        evm.ctx().set_block(validation_block);
+        let result = validation::validate_env(evm.ctx());
+        evm.ctx().set_block(block);
+        result
+    }
+}
+
+impl<EVM, ERROR> InspectorHandler for SimulationHandler<EVM, ERROR, EthFrame<EthInterpreter>>
+where
+    EVM: InspectorEvmTr<
+            Context: ContextTr<
+                Block = BlockEnv,
+                Tx = TxEnv,
+                Journal: JournalTr<State = EvmState>,
+            > + ContextSetters,
+            Frame = EthFrame<EthInterpreter>,
+            Inspector: Inspector<<EVM as EvmTr>::Context, EthInterpreter>,
+        >,
+    ERROR: EvmTrError<EVM>,
+{
+    type IT = EthInterpreter;
+}
+
 #[derive(Clone)]
 enum CallTxEnv {
     Eth(TxEnv),
@@ -265,23 +329,28 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, Cfg, ContextTr, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, ContextSetters, ContextTr, TxEnv},
     context_interface::{
         JournalTr,
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{AccountState, CacheDB, DbAccount, WrapDatabaseRef},
-    interpreter::InstructionResult,
+    handler::{
+        EthFrame, EvmTr, EvmTrError, FrameResult, FrameTr, Handler as EvmHandler, validation,
+    },
+    inspector::{InspectorEvmTr, InspectorHandler},
+    interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
-    state::AccountInfo,
+    state::{AccountInfo, EvmState},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
     io::{Read, Write},
+    marker::PhantomData,
     ops::Mul,
     path::PathBuf,
     sync::Arc,
@@ -1668,6 +1737,44 @@ impl<N: Network> Backend<N> {
             evm.ctx_mut().journal_mut().warm_precompiles(&warm_addresses);
         }
         Ok(evm.transact(tx_env)?)
+    }
+
+    fn transact_eth_simulation_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let mut evm = EthEvmFactory::default().create_evm_with_inspector(
+            WrapDatabaseRef(db),
+            evm_env.clone(),
+            inspector,
+        );
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        if !overrides.moves.is_empty() {
+            let warm_addresses =
+                self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
+            evm.ctx_mut().journal_mut().warm_precompiles(&warm_addresses);
+        }
+
+        let mut evm = evm.into_inner();
+        evm.ctx_mut().set_tx(tx_env);
+        let mut handler = SimulationHandler::<
+            _,
+            revm::context::result::EVMError<DatabaseError>,
+            EthFrame<EthInterpreter>,
+        >::default();
+        let result = handler.inspect_run(&mut evm)?;
+        let state = evm.ctx_mut().journal_mut().finalize();
+        Ok(ResultAndState { result, state })
     }
 
     /// Builds the appropriate tx env from a [`FoundryTxEnvelope`], executes via the correct
@@ -5912,9 +6019,6 @@ impl Backend<FoundryNetwork> {
             // execute the blocks
             for block in block_state_calls {
                 let SimBlock { block_overrides, state_overrides, calls } = block;
-                let has_blob_base_fee_override = block_overrides
-                    .as_ref()
-                    .is_some_and(|overrides| overrides.blob_base_fee.is_some());
                 let mut block_env = inherited_block_env.clone();
                 let block_timestamp = block_overrides
                     .as_ref()
@@ -5961,13 +6065,6 @@ impl Backend<FoundryNetwork> {
 
                 if let Some(block_overrides) = block_overrides {
                     cache_db.apply_block_overrides(block_overrides, &mut block_env);
-                }
-                let mut call_block_env = block_env.clone();
-                if !validation
-                    && !has_blob_base_fee_override
-                    && let Some(blob_gas_and_price) = &mut call_block_env.blob_excess_gas_and_price
-                {
-                    blob_gas_and_price.blob_gasprice = 0;
                 }
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
@@ -6103,21 +6200,17 @@ impl Backend<FoundryNetwork> {
                                 &cache_db,
                                 parsed_request,
                                 fee_details,
-                                call_block_env.clone(),
+                                block_env.clone(),
                             )?
                         } else {
                             self.prepare_call_env(
                                 &cache_db,
                                 request.clone(),
                                 fee_details,
-                                call_block_env.clone(),
+                                block_env.clone(),
                             )?
                         };
                     tx_env.base_mut().gas_limit = execution_gas_limit;
-                    if !validation && has_blob_base_fee_override && is_ethereum_request {
-                        tx_env.base_mut().max_fee_per_blob_gas =
-                            call_block_env.blob_gasprice().unwrap_or_default();
-                    }
                     apply_tempo_envelope_identity(&mut tx_env, simulated_tempo_tx.as_ref());
                     if !validation
                         && tempo_nonce_key.is_none_or(|key| key.is_zero())
@@ -6148,21 +6241,34 @@ impl Backend<FoundryNetwork> {
                     // transact
                     inspector = inspector.with_simulation_logs(trace_transfers);
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let execution_result = if precompile_overrides.moves.is_empty() {
-                        self.transact_call_with_inspector_ref(
-                            &cache_db,
-                            &evm_env,
-                            &mut inspector,
-                            tx_env,
-                        )
-                    } else {
-                        self.transact_eth_with_inspector_ref_and_precompile_overrides(
+                    let execution_result = match tx_env {
+                        CallTxEnv::Eth(tx_env)
+                            if !validation
+                                && tx_env.tx_type == 3
+                                && tx_env.max_fee_per_blob_gas == 0 =>
+                        {
+                            self.transact_eth_simulation_with_inspector_ref(
+                                &cache_db,
+                                &evm_env,
+                                &mut inspector,
+                                tx_env,
+                                &precompile_overrides,
+                            )
+                        }
+                        tx_env if precompile_overrides.moves.is_empty() => self
+                            .transact_call_with_inspector_ref(
+                                &cache_db,
+                                &evm_env,
+                                &mut inspector,
+                                tx_env,
+                            ),
+                        tx_env => self.transact_eth_with_inspector_ref_and_precompile_overrides(
                             &cache_db,
                             &evm_env,
                             &mut inspector,
                             tx_env.into_base(),
                             &precompile_overrides,
-                        )
+                        ),
                     };
                     let ResultAndState { result, mut state } = match execution_result {
                         Err(BlockchainError::InvalidTransaction(error)) => {
