@@ -37,7 +37,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, TxType, Typed2718,
+    TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
@@ -5717,6 +5717,9 @@ impl Backend<FoundryNetwork> {
             // execute the blocks
             for block in block_state_calls {
                 let SimBlock { block_overrides, state_overrides, calls } = block;
+                let has_blob_base_fee_override = block_overrides
+                    .as_ref()
+                    .is_some_and(|overrides| overrides.blob_base_fee.is_some());
                 let mut block_env = inherited_block_env.clone();
                 let block_timestamp = block_overrides
                     .as_ref()
@@ -5764,6 +5767,13 @@ impl Backend<FoundryNetwork> {
                 if let Some(block_overrides) = block_overrides {
                     cache_db.apply_block_overrides(block_overrides, &mut block_env);
                 }
+                let mut call_block_env = block_env.clone();
+                if !validation
+                    && !has_blob_base_fee_override
+                    && let Some(blob_gas_and_price) = &mut call_block_env.blob_excess_gas_and_price
+                {
+                    blob_gas_and_price.blob_gasprice = 0;
+                }
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
                 let precompile_overrides = self.simulation_precompile_overrides(
@@ -5788,11 +5798,6 @@ impl Backend<FoundryNetwork> {
                         request.transaction_type = Some(preferred_type as u8);
                         request.trim_conflicting_keys();
                         request.populate_blob_hashes();
-                        if preferred_type == TxType::Eip4844
-                            && request.max_fee_per_blob_gas.is_none()
-                        {
-                            request.max_fee_per_blob_gas = block_env.blob_gasprice();
-                        }
                     }
                     let request_blob_gas_used = if is_ethereum_request {
                         u64::try_from(request.blob_versioned_hashes.as_ref().map_or(0, Vec::len))
@@ -5891,17 +5896,21 @@ impl Backend<FoundryNetwork> {
                                 &cache_db,
                                 parsed_request,
                                 fee_details,
-                                block_env.clone(),
+                                call_block_env.clone(),
                             )?
                         } else {
                             self.prepare_call_env(
                                 &cache_db,
                                 request.clone(),
                                 fee_details,
-                                block_env.clone(),
+                                call_block_env.clone(),
                             )?
                         };
                     tx_env.base_mut().gas_limit = execution_gas_limit;
+                    if !validation && has_blob_base_fee_override && is_ethereum_request {
+                        tx_env.base_mut().max_fee_per_blob_gas =
+                            call_block_env.blob_gasprice().unwrap_or_default();
+                    }
                     apply_tempo_envelope_identity(&mut tx_env, simulated_tempo_tx.as_ref());
                     if !validation
                         && tempo_nonce_key.is_none_or(|key| key.is_zero())

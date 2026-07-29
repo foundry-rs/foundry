@@ -575,31 +575,70 @@ async fn simulate_v1_derives_blob_hashes_from_sidecars() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn simulate_v1_uses_same_default_blob_fee_cap_for_execution_and_output() {
+async fn simulate_v1_defaults_blob_fee_cap_to_zero() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (_api, handle) = spawn(node_config).await;
     let provider = http_provider(&handle.http_endpoint());
     let accounts = provider.get_accounts().await.unwrap();
+    let contract = Address::with_last_byte(0x42);
     let sidecar: BlobTransactionSidecar =
         SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
     let request = TransactionRequest {
         from: Some(accounts[0]),
-        to: Some(accounts[1].into()),
+        to: Some(contract.into()),
         blob_versioned_hashes: Some(vec![sidecar.versioned_hash_for_blob(0).unwrap()]),
         max_fee_per_gas: Some(2_000_000_000),
         max_priority_fee_per_gas: Some(0),
         ..Default::default()
     };
+    let block = |blob_base_fee: Option<u64>| {
+        json!({
+            "blockOverrides": blob_base_fee.map(|blob_base_fee| {
+                json!({"blobBaseFee": format!("0x{blob_base_fee:x}")})
+            }),
+            "stateOverrides": {
+                contract.to_string(): {
+                    "code": "0x4a5f5260205ff3"
+                }
+            },
+            "calls": [request.clone()]
+        })
+    };
     let payload = json!({
-        "blockStateCalls": [{"calls": [request]}],
+        "blockStateCalls": [block(None)],
         "validation": true,
         "returnFullTransactions": true
     });
 
+    let response: Result<Value, _> =
+        provider.client().request("eth_simulateV1", (payload, "latest")).await;
+    let error = response.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, -32003);
+    assert_eq!(
+        error.message,
+        "Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`"
+    );
+
+    let payload = json!({
+        "blockStateCalls": [block(None)],
+        "validation": false,
+        "returnFullTransactions": true
+    });
     let response: Value =
         provider.client().request("eth_simulateV1", (payload, "latest")).await.unwrap();
+    assert_eq!(response[0]["calls"][0]["returnData"], format!("0x{:064x}", 0));
+    assert_eq!(response[0]["transactions"][0]["maxFeePerBlobGas"], "0x0");
 
-    assert_eq!(response[0]["transactions"][0]["maxFeePerBlobGas"], "0x1");
+    let payload = json!({
+        "blockStateCalls": [block(Some(21))],
+        "validation": false,
+        "returnFullTransactions": true
+    });
+    let response: Value =
+        provider.client().request("eth_simulateV1", (payload, "latest")).await.unwrap();
+    assert_eq!(response[0]["calls"][0]["returnData"], format!("0x{:064x}", 21));
+    assert_eq!(response[0]["transactions"][0]["maxFeePerBlobGas"], "0x0");
 }
 
 #[tokio::test(flavor = "multi_thread")]
