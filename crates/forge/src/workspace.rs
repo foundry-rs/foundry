@@ -5,13 +5,15 @@
 
 use std::{
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
 
 use alloy_primitives::keccak256;
 use eyre::Result;
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
-use foundry_config::{Config, fs_permissions::FsAccessKind};
+use foundry_config::{
+    Config, fs_permissions::FsAccessKind, providers::relative_remapping_preserving_context_boundary,
+};
 
 /// Check if a path is safe for use as a relative path within a workspace.
 /// Rejects absolute paths, parent directory components (..), and other unsafe patterns.
@@ -202,13 +204,18 @@ fn rebase_remapping(
     temp_path: &Path,
     remapping: &RelativeRemapping,
 ) -> RelativeRemapping {
+    let context_has_boundary =
+        remapping.context.as_deref().is_some_and(|context| context.ends_with(['/', '\\']));
     let mut remapping: Remapping = remapping.clone().into();
     remapping.path =
         rebase_project_path(root, temp_path, Path::new(&remapping.path)).display().to_string();
     if let Some(context) = &mut remapping.context {
         *context = rebase_project_path(root, temp_path, Path::new(context)).display().to_string();
+        if context_has_boundary && !context.ends_with(['/', '\\']) {
+            context.push(MAIN_SEPARATOR);
+        }
     }
-    RelativeRemapping::new(remapping, temp_path)
+    relative_remapping_preserving_context_boundary(remapping, temp_path)
 }
 
 /// Verify that `candidate` resolves (after following symlinks) to a path that lives
@@ -755,6 +762,18 @@ mod tests {
                 fs::write(&full_path, format!("// {path}")).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn test_rebase_remapping_preserves_context_directory_boundary() {
+        let remapping = RelativeRemapping::from(Remapping {
+            context: Some(format!("lib{MAIN_SEPARATOR}outer{MAIN_SEPARATOR}")),
+            name: "inner/".to_string(),
+            path: format!("lib{MAIN_SEPARATOR}outer{MAIN_SEPARATOR}lib{MAIN_SEPARATOR}inner"),
+        });
+
+        let remapping = rebase_remapping(Path::new("project"), Path::new("workspace"), &remapping);
+        assert!(remapping.context.unwrap().ends_with(MAIN_SEPARATOR));
     }
 
     #[test]
