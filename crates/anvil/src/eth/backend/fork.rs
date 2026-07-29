@@ -441,6 +441,17 @@ impl<N: Network> ClientFork<N> {
         Ok(res)
     }
 
+    /// Sends `eth_call` with a network-specific request.
+    pub async fn call_raw(
+        &self,
+        request: &WithOtherFields<TransactionRequest>,
+        block: Option<BlockNumber>,
+    ) -> Result<Bytes, TransportError> {
+        self.provider()
+            .raw_request("eth_call".into(), (request, block.unwrap_or(BlockNumber::Latest)))
+            .await
+    }
+
     /// Sends `eth_callMany`
     pub async fn call_many(
         &self,
@@ -464,17 +475,10 @@ impl<N: Network> ClientFork<N> {
     /// Sends `eth_simulateV1`
     pub async fn simulate_v1(
         &self,
-        request: &SimulatePayload,
+        request: &SimulatePayload<WithOtherFields<TransactionRequest>>,
         block: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
-        let mut simulate_call = self.provider().simulate(request);
-        if let Some(block) = block {
-            simulate_call = simulate_call.block_id(block);
-        }
-
-        let res = simulate_call.await?;
-
-        Ok(res)
+        self.provider().raw_request("eth_simulateV1".into(), (request, block)).await
     }
 
     /// Sends `eth_estimateGas`
@@ -489,6 +493,19 @@ impl<N: Network> ClientFork<N> {
         Ok(res as u128)
     }
 
+    /// Sends `eth_estimateGas` with a network-specific request.
+    pub async fn estimate_gas_raw(
+        &self,
+        request: &WithOtherFields<TransactionRequest>,
+        block: Option<BlockNumber>,
+    ) -> Result<u128, TransportError> {
+        let gas: U256 = self
+            .provider()
+            .raw_request("eth_estimateGas".into(), (request, block.unwrap_or_default()))
+            .await?;
+        Ok(gas.saturating_to())
+    }
+
     /// Sends `eth_createAccessList`
     pub async fn create_access_list(
         &self,
@@ -496,6 +513,17 @@ impl<N: Network> ClientFork<N> {
         block: Option<BlockNumber>,
     ) -> Result<AccessListResult, TransportError> {
         self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
+    }
+
+    /// Sends `eth_createAccessList` with a network-specific request.
+    pub async fn create_access_list_raw(
+        &self,
+        request: &WithOtherFields<TransactionRequest>,
+        block: Option<BlockNumber>,
+    ) -> Result<AccessListResult, TransportError> {
+        self.provider()
+            .raw_request("eth_createAccessList".into(), (request, block.unwrap_or_default()))
+            .await
     }
 
     pub async fn transaction_by_block_number_and_index(

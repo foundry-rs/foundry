@@ -116,6 +116,41 @@ async fn monad_simulate_tracks_current_block_senders() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_simulate_ages_reserve_participants_across_empty_blocks() {
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let sender = handle.http_provider().get_accounts().await.unwrap()[0];
+
+    api.anvil_set_code(RESERVE_PROBE_ADDRESS, RESERVE_RETURN_PROBE_CODE.into()).await.unwrap();
+    api.anvil_set_balance(sender, mon(12)).await.unwrap();
+
+    let request = |value| {
+        TransactionRequest::default()
+            .with_from(sender)
+            .with_to(RESERVE_PROBE_ADDRESS)
+            .with_value(value)
+            .with_gas_limit(100_000)
+    };
+    let blocks = api
+        .simulate_v1(
+            SimulatePayload {
+                block_state_calls: vec![
+                    SimBlock { calls: vec![request(mon(2))], ..Default::default() },
+                    SimBlock::default(),
+                    SimBlock::default(),
+                    SimBlock { calls: vec![request(mon(1))], ..Default::default() },
+                ],
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(blocks[0].calls[0].return_data, Bytes::from(U256::ZERO.to_be_bytes::<32>()));
+    assert_eq!(blocks[3].calls[0].return_data, Bytes::from(U256::ZERO.to_be_bytes::<32>()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_call_many_ages_reserve_participants_across_empty_bundles() {
     let (api, handle) = spawn(monad_nine_config()).await;
     let provider = handle.http_provider();

@@ -31,7 +31,6 @@ foundry-evm-networks.workspace = true
 alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
 foundry-primitives = { workspace = true, default-features = false }
-tempo-alloy = { workspace = true, features = ["revm"] }
 tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 tempo-precompiles.workspace = true
@@ -125,6 +124,8 @@ rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
+
+tempo-alloy.workspace = true
 
 [features]
 default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
