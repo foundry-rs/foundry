@@ -2835,3 +2835,71 @@ contract InvariantMsgValue is Test {
 ...
 "#]]);
 });
+
+forgetest_init!(invariant_call_override_skips_storage_hook_callbacks, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 16;
+        config.invariant.depth = 8;
+        config.invariant.call_override = true;
+    });
+
+    prj.add_test(
+        "InvariantStorageHooks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookTarget {
+    uint256 public value;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract StorageHookHandler {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    StorageHookTarget public immutable target;
+    uint256 public ghostValue;
+
+    constructor(StorageHookTarget target_) {
+        target = target_;
+        hookVm.registerSstoreHook(address(target_), StorageHookHandler.onStore.selector);
+    }
+
+    function mutate(uint256 newValue) external {
+        target.store(newValue);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        ghostValue = uint256(newValue);
+    }
+}
+
+contract InvariantStorageHooks is Test {
+    StorageHookTarget target;
+    StorageHookHandler handler;
+
+    function setUp() public {
+        target = new StorageHookTarget();
+        handler = new StorageHookHandler(target);
+
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.mutate.selector;
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+    }
+
+    function invariant_hook_tracks_target() public view {
+        assertEq(handler.ghostValue(), target.value());
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).success();
+});

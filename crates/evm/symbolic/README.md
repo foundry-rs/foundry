@@ -217,6 +217,36 @@ Current modeling notes:
 Stateless symbolic tests use ordinary ABI parameters. The executor creates
 symbolic calldata from the function ABI and explores feasible EVM paths.
 
+Storage hooks can maintain revert-aware ghost state for raw storage accesses.
+Register a callback during `setUp` for each target and access kind:
+
+```solidity
+function setUp() public {
+    vm.registerSloadHook(address(vault), this.onLoad.selector);
+    vm.registerSstoreHook(address(vault), this.onStore.selector);
+}
+
+function onLoad(address account, bytes32 slot, bytes32 value) external {
+    // Update ghost state from the observed load.
+}
+
+function onStore(
+    address account,
+    bytes32 slot,
+    bytes32 oldValue,
+    bytes32 newValue
+) external {
+    // Update ghost state from the observed write.
+}
+```
+
+Concrete and symbolic execution use the same callback contract. Re-registering
+an access kind replaces its callback for that target. Callback reverts propagate
+through the instrumented access, and successful callback updates roll back if
+the enclosing target call later reverts. Hooks use the active storage address,
+so a `delegatecall` is attributed to the caller's storage context. The slot is
+the computed effective slot; mapping roots and decoded keys are not included.
+
 ```solidity
 contract RiddleTest is Test {
     function check_riddle(uint256 x) external pure {

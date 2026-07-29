@@ -32,6 +32,10 @@ pub(crate) struct PathState {
     pub(crate) persistent_accounts: HashSet<Address>,
     pub(crate) wallets: IndexSet<Address>,
     pub(crate) labels: HashMap<Address, String>,
+    pub(crate) storage_load_hooks: HashMap<Address, SymbolicStorageHook>,
+    pub(crate) storage_store_hooks: HashMap<Address, SymbolicStorageHook>,
+    pub(crate) storage_hook_active: bool,
+    pub(crate) pending_storage_hook_revert: bool,
 }
 
 impl PathState {
@@ -82,6 +86,10 @@ impl PathState {
             persistent_accounts: HashSet::default(),
             wallets: IndexSet::default(),
             labels: HashMap::default(),
+            storage_load_hooks: HashMap::default(),
+            storage_store_hooks: HashMap::default(),
+            storage_hook_active: false,
+            pending_storage_hook_revert: false,
         }
     }
 
@@ -130,6 +138,10 @@ impl PathState {
             persistent_accounts: HashSet::default(),
             wallets: IndexSet::default(),
             labels: HashMap::default(),
+            storage_load_hooks: HashMap::default(),
+            storage_store_hooks: HashMap::default(),
+            storage_hook_active: false,
+            pending_storage_hook_revert: false,
         }
     }
 
@@ -153,6 +165,24 @@ impl PathState {
             for (target, source) in cheats.arbitrary_storage_copied_target_sources() {
                 self.world.enable_arbitrary_storage_copy(source, target);
             }
+            self.storage_load_hooks.extend(cheats.storage_load_hooks().map(|(target, hook)| {
+                (
+                    target,
+                    SymbolicStorageHook {
+                        callback_target: hook.callback_target,
+                        callback_selector: hook.callback_selector,
+                    },
+                )
+            }));
+            self.storage_store_hooks.extend(cheats.storage_store_hooks().map(|(target, hook)| {
+                (
+                    target,
+                    SymbolicStorageHook {
+                        callback_target: hook.callback_target,
+                        callback_selector: hook.callback_selector,
+                    },
+                )
+            }));
         }
     }
 
@@ -190,6 +220,10 @@ impl PathState {
             persistent_accounts: self.persistent_accounts.clone(),
             wallets: self.wallets.clone(),
             labels: self.labels.clone(),
+            storage_load_hooks: self.storage_load_hooks.clone(),
+            storage_store_hooks: self.storage_store_hooks.clone(),
+            storage_hook_active: self.storage_hook_active,
+            pending_storage_hook_revert: self.pending_storage_hook_revert,
         }
     }
 
@@ -366,6 +400,8 @@ impl PathState {
         self.expected_creates = reverted.expected_creates.clone();
         self.call_mocks = reverted.call_mocks.clone();
         self.function_mocks = reverted.function_mocks.clone();
+        self.storage_load_hooks = reverted.storage_load_hooks.clone();
+        self.storage_store_hooks = reverted.storage_store_hooks.clone();
     }
 
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
@@ -808,6 +844,12 @@ impl PathState {
             && self.expected_calls.iter().all(ExpectedCall::is_satisfied)
             && self.expected_creates.is_empty()
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SymbolicStorageHook {
+    pub(crate) callback_target: Address,
+    pub(crate) callback_selector: [u8; 4],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2280,6 +2322,25 @@ fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reverted_top_level_effects_preserve_storage_hook_registrations() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let mut reverted = state.clone();
+        let target = Address::repeat_byte(0x11);
+        let hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x22),
+            callback_selector: [0x12, 0x34, 0x56, 0x78],
+        };
+        reverted.storage_load_hooks.insert(target, hook);
+        reverted.storage_store_hooks.insert(target, hook);
+
+        state.merge_reverted_top_level_effects(&reverted);
+
+        assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
+        assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+    }
 
     #[test]
     fn copied_arbitrary_storage_uses_source_symbol_and_replays_both_accounts() {

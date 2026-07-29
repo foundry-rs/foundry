@@ -9150,6 +9150,46 @@
     },
     {
       "func": {
+        "id": "registerSloadHook",
+        "description": "Registers a callback invoked after every SLOAD in the target's storage context.\nThe callback must have the signature `function(address,bytes32,bytes32) external`.\nRegistering another callback for the same target replaces the previous callback.",
+        "declaration": "function registerSloadHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSloadHook(address,bytes4)",
+        "selector": "0x37c7cf5e",
+        "selectorBytes": [
+          55,
+          199,
+          207,
+          94
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSstoreHook",
+        "description": "Registers a callback invoked after every SSTORE in the target's storage context.\nThe callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.\nRegistering another callback for the same target replaces the previous callback.",
+        "declaration": "function registerSstoreHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSstoreHook(address,bytes4)",
+        "selector": "0xe0c3bdd9",
+        "selectorBytes": [
+          224,
+          195,
+          189,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "rememberKey",
         "description": "Adds a private key to the local forge wallet and returns the address.",
         "declaration": "function rememberKey(uint256 privateKey) external returns (address keyAddr);",

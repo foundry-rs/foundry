@@ -416,6 +416,20 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
 
+    /// Registers a callback invoked after every SLOAD in the target's storage context.
+    ///
+    /// The callback must have the signature `function(address,bytes32,bytes32) external`.
+    /// Registering another callback for the same target replaces the previous callback.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function registerSloadHook(address target, bytes4 callback) external;
+
+    /// Registers a callback invoked after every SSTORE in the target's storage context.
+    ///
+    /// The callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.
+    /// Registering another callback for the same target replaces the previous callback.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function registerSstoreHook(address target, bytes4 callback) external;
+
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
     /// along with the context of the calls
     #[cheatcode(group = Evm, safety = Safe)]

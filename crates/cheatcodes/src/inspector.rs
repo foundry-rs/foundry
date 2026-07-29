@@ -58,9 +58,9 @@ use revm::{
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
-        interpreter_types::{Jumps, LoopControl, MemoryTr},
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        FrameInput, Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        interpreter_types::{Jumps, LoopControl, MemoryTr, ReturnData},
         return_ok,
     },
 };
@@ -334,6 +334,31 @@ impl EnvOverrides {
     pub const fn is_any_set(&self) -> bool {
         self.basefee.is_some() || self.gas_price.is_some() || self.blob_hashes.is_some()
     }
+}
+
+/// A callback registered for a storage access hook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageHook {
+    /// Contract that receives the callback.
+    pub callback_target: Address,
+    /// Callback function selector.
+    pub callback_selector: [u8; 4],
+}
+
+#[derive(Clone, Debug)]
+enum PendingStorageHook {
+    Load { account: Address, slot: U256, hook: StorageHook },
+    Store { account: Address, slot: U256, old_value: U256, hook: StorageHook },
+}
+
+#[derive(Clone, Debug)]
+struct ActiveStorageHook {
+    parent_depth: usize,
+    callback_target: Address,
+    callback_input: Bytes,
+    saved_gas: Gas,
+    saved_return_data: Bytes,
+    outcome: Option<(InstructionResult, Bytes)>,
 }
 
 /// Holds gas metering state.
@@ -742,6 +767,17 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Addresses with arbitrary storage.
     pub arbitrary_storage: Option<ArbitraryStorage>,
 
+    /// SLOAD callbacks keyed by effective storage address.
+    storage_load_hooks: AddressHashMap<StorageHook>,
+    /// SSTORE callbacks keyed by effective storage address.
+    storage_store_hooks: AddressHashMap<StorageHook>,
+    /// Whether either storage hook map contains a callback.
+    storage_hooks_registered: bool,
+    /// Matching storage access captured before the opcode executes.
+    pending_storage_hook: Option<PendingStorageHook>,
+    /// Synthetic callback frame currently executing or awaiting parent cleanup.
+    active_storage_hook: Option<ActiveStorageHook>,
+
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
@@ -847,6 +883,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
+            storage_load_hooks: Default::default(),
+            storage_store_hooks: Default::default(),
+            storage_hooks_registered: Default::default(),
+            pending_storage_hook: Default::default(),
+            active_storage_hook: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
             private_key_signers: Default::default(),
@@ -1725,6 +1766,78 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Registers an SLOAD callback, replacing the existing callback for `target`.
+    pub fn register_storage_load_hook(
+        &mut self,
+        target: Address,
+        callback_target: Address,
+        callback_selector: [u8; 4],
+    ) {
+        self.storage_load_hooks.insert(target, StorageHook { callback_target, callback_selector });
+        self.storage_hooks_registered = true;
+    }
+
+    /// Registers an SSTORE callback, replacing the existing callback for `target`.
+    pub fn register_storage_store_hook(
+        &mut self,
+        target: Address,
+        callback_target: Address,
+        callback_selector: [u8; 4],
+    ) {
+        self.storage_store_hooks.insert(target, StorageHook { callback_target, callback_selector });
+        self.storage_hooks_registered = true;
+    }
+
+    /// Returns registered SLOAD callbacks.
+    pub fn storage_load_hooks(&self) -> impl Iterator<Item = (Address, StorageHook)> + '_ {
+        self.storage_load_hooks.iter().map(|(target, hook)| (*target, *hook))
+    }
+
+    /// Returns registered SSTORE callbacks.
+    pub fn storage_store_hooks(&self) -> impl Iterator<Item = (Address, StorageHook)> + '_ {
+        self.storage_store_hooks.iter().map(|(target, hook)| (*target, *hook))
+    }
+
+    /// Returns whether any storage callback is registered.
+    #[inline]
+    pub const fn has_storage_hooks(&self) -> bool {
+        self.storage_hooks_registered
+    }
+
+    /// Returns whether `call` is the synthetic callback for the active storage hook.
+    pub fn is_storage_hook_callback(
+        &self,
+        ecx: &FoundryContextFor<'_, FEN>,
+        call: &CallInputs,
+    ) -> bool {
+        self.active_storage_hook.as_ref().is_some_and(|active| {
+            active.outcome.is_none()
+                && ecx.journal().depth() == active.parent_depth
+                && call.caller == CHEATCODE_ADDRESS
+                && call.target_address == active.callback_target
+                && call.input.bytes(ecx) == active.callback_input
+        })
+    }
+
+    fn finish_storage_hook_call(
+        &mut self,
+        ecx: &FoundryContextFor<'_, FEN>,
+        call: &CallInputs,
+        outcome: &CallOutcome,
+    ) -> bool {
+        let Some(active) = self.active_storage_hook.as_mut() else { return false };
+        if active.outcome.is_some()
+            || ecx.journal().depth() != active.parent_depth
+            || call.caller != CHEATCODE_ADDRESS
+            || call.target_address != active.callback_target
+            || call.input.bytes(ecx) != active.callback_input
+        {
+            return false;
+        }
+        active.outcome = Some((outcome.result.result, outcome.result.output.clone()));
+        true
+    }
+
     #[inline(always)]
     pub fn has_step_hooks(&self) -> bool {
         self.broadcast.is_some()
@@ -1736,6 +1849,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.mapping_slots.is_some()
             || self.gas_metering.recording
             || self.has_active_env_overrides()
+            || self.has_storage_hooks()
     }
 
     #[inline(always)]
@@ -1744,6 +1858,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.touched
             || self.arbitrary_storage.is_some()
             || self.has_active_env_overrides()
+            || self.has_storage_hooks()
     }
 
     #[inline(always)]
@@ -1760,6 +1875,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && self.recorded_account_diffs_stack.is_none()
             && self.allowed_mem_writes.is_empty()
             && self.mapping_slots.is_none()
+            && !self.has_storage_hooks()
             && !self.gas_metering.recording
             && !self.has_active_env_overrides()
     }
@@ -1805,6 +1921,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         self.pc = interpreter.bytecode.pc();
 
         if !self.has_step_hooks() {
+            return;
+        }
+
+        if self.finish_storage_hook_callback(interpreter) {
             return;
         }
 
@@ -1879,6 +1999,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 }
             }
         }
+
+        if self.active_storage_hook.is_none() {
+            self.capture_storage_hook(interpreter, ecx);
+        }
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
@@ -1897,6 +2021,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
         if self.arbitrary_storage.is_some() {
             self.arbitrary_storage_end(interpreter, ecx);
+        }
+
+        if self.active_storage_hook.is_none() {
+            self.invoke_pending_storage_hook(interpreter, ecx);
         }
 
         // Apply opcode-level env overrides (basefee/gasprice/blobhash). Needed
@@ -1967,6 +2095,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         ecx: &mut FoundryContextFor<'_, FEN>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
+        if self.is_storage_hook_callback(ecx, inputs) {
+            return None;
+        }
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
@@ -1976,6 +2107,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        if self.finish_storage_hook_call(ecx, call, outcome) {
+            return;
+        }
+
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
         let curr_depth = ecx.journal().depth();
@@ -2957,6 +3092,144 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Restores parent interpreter state after a synthetic storage-hook callback.
+    ///
+    /// Returns whether a failed callback was propagated to the parent frame.
+    #[inline]
+    pub fn finish_storage_hook_callback(&mut self, interpreter: &mut Interpreter) -> bool {
+        let Some(active) = self.active_storage_hook.as_ref() else { return false };
+        let Some((result, output)) = active.outcome.clone() else { return false };
+
+        let active = self.active_storage_hook.take().expect("active storage hook exists");
+        let _ = interpreter.stack.pop();
+        interpreter.gas = active.saved_gas;
+        interpreter.return_data.set_buffer(active.saved_return_data);
+
+        if result.is_ok() {
+            false
+        } else {
+            interpreter.bytecode.set_action(InterpreterAction::new_return(
+                InstructionResult::Revert,
+                output,
+                interpreter.gas,
+            ));
+            true
+        }
+    }
+
+    fn capture_storage_hook(
+        &mut self,
+        interpreter: &Interpreter,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) {
+        self.pending_storage_hook = None;
+        if self.active_storage_hook.is_some() {
+            return;
+        }
+        let account = interpreter.input.target_address;
+        match interpreter.bytecode.opcode() {
+            op::SLOAD => {
+                let Some(hook) = self.storage_load_hooks.get(&account).copied() else { return };
+                let slot = try_or_return!(interpreter.stack.peek(0));
+                self.pending_storage_hook = Some(PendingStorageHook::Load { account, slot, hook });
+            }
+            op::SSTORE => {
+                let Some(hook) = self.storage_store_hooks.get(&account).copied() else { return };
+                let slot = try_or_return!(interpreter.stack.peek(0));
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let old_value =
+                    ecx.sload(account, slot).map(|value| value.data).unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
+                self.pending_storage_hook =
+                    Some(PendingStorageHook::Store { account, slot, old_value, hook });
+            }
+            _ => {}
+        }
+    }
+
+    fn invoke_pending_storage_hook(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) {
+        let Some(pending) = self.pending_storage_hook.take() else { return };
+        if interpreter
+            .bytecode
+            .action
+            .as_ref()
+            .and_then(InterpreterAction::instruction_result)
+            .is_some()
+        {
+            return;
+        }
+
+        let (hook, input) = match pending {
+            PendingStorageHook::Load { account, slot, hook } => {
+                let value = try_or_return!(interpreter.stack.peek(0));
+                let mut input = Vec::with_capacity(4 + 32 * 3);
+                input.extend_from_slice(&hook.callback_selector);
+                input.extend_from_slice(account.into_word().as_slice());
+                input.extend_from_slice(&slot.to_be_bytes::<32>());
+                input.extend_from_slice(&value.to_be_bytes::<32>());
+                (hook, Bytes::from(input))
+            }
+            PendingStorageHook::Store { account, slot, old_value, hook } => {
+                let new_value =
+                    ecx.sload(account, slot).map(|value| value.data).unwrap_or_default();
+                let mut input = Vec::with_capacity(4 + 32 * 4);
+                input.extend_from_slice(&hook.callback_selector);
+                input.extend_from_slice(account.into_word().as_slice());
+                input.extend_from_slice(&slot.to_be_bytes::<32>());
+                input.extend_from_slice(&old_value.to_be_bytes::<32>());
+                input.extend_from_slice(&new_value.to_be_bytes::<32>());
+                (hook, Bytes::from(input))
+            }
+        };
+
+        let account = match ecx.journal_mut().load_account_with_code(hook.callback_target) {
+            Ok(account) => account,
+            Err(err) => {
+                interpreter.bytecode.set_action(InterpreterAction::new_return(
+                    InstructionResult::Revert,
+                    Error::encode(err),
+                    interpreter.gas,
+                ));
+                return;
+            }
+        };
+        let known_bytecode =
+            (account.info.code_hash, account.info.code.clone().unwrap_or_default());
+        let saved_gas = interpreter.gas;
+        let saved_return_data = Bytes::copy_from_slice(interpreter.return_data.buffer());
+        let gas_limit = interpreter.gas.remaining();
+        let parent_depth = ecx.journal().depth();
+
+        self.active_storage_hook = Some(ActiveStorageHook {
+            parent_depth,
+            callback_target: hook.callback_target,
+            callback_input: input.clone(),
+            saved_gas,
+            saved_return_data,
+            outcome: None,
+        });
+        interpreter.bytecode.set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(
+            CallInputs {
+                input: CallInput::Bytes(input),
+                return_memory_offset: 0..0,
+                gas_limit,
+                reservoir: 0,
+                bytecode_address: hook.callback_target,
+                known_bytecode,
+                target_address: hook.callback_target,
+                caller: CHEATCODE_ADDRESS,
+                value: CallValue::Transfer(U256::ZERO),
+                scheme: CallScheme::Call,
+                is_static: false,
+                charged_new_account_state_gas: false,
+            },
+        ))));
+    }
+
     /// Records storage slots reads and writes.
     #[cold]
     fn record_accesses(&mut self, interpreter: &mut Interpreter) {
@@ -3572,6 +3845,12 @@ mod tests {
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
         assert!(!cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+
+        cheats.gas_metering.touched = false;
+        cheats.register_storage_load_hook(Address::ZERO, Address::ZERO, [0; 4]);
+        assert!(cheats.has_step_hooks());
         assert!(cheats.has_step_end_hooks());
         assert!(!cheats.has_recording_accesses_only_step_hook());
     }
