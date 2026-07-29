@@ -434,6 +434,70 @@ For more information, try '--help'.
 "#]]);
 });
 
+casttest!(erc20_units_reject_auto_curl, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    cmd.args([
+        "erc20",
+        "balance",
+        anvil_const::TOKEN,
+        anvil_const::ADDR1,
+        "--units",
+        "auto",
+        "--rpc-url",
+        rpc,
+        "--curl",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#""#]])
+    .stderr_eq(str![[r#"
+Error: `--units auto` cannot be used with `--curl`; use `--units <DECIMALS>` or omit `--units` for raw amounts
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            anvil_const::TOKEN,
+            anvil_const::ADDR2,
+            "1",
+            "--units",
+            "auto",
+            "--rpc-url",
+            rpc,
+            "--curl",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: `--units auto` cannot be used with `--curl`; use `--units <DECIMALS>` or omit `--units` for raw amounts
+
+"#]]);
+});
+
+casttest!(erc20_units_reject_malformed_amount, |_prj, cmd| {
+    cmd.args([
+        "erc20",
+        "transfer",
+        anvil_const::TOKEN,
+        anvil_const::ADDR2,
+        "1.💥",
+        "--units",
+        "1",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+        "--private-key",
+        anvil_const::PK1,
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#""#]])
+    .stderr_eq(str![[r#"
+Error: invalid ERC-20 amount `1.💥`; expected an unsigned ASCII decimal
+
+"#]]);
+});
+
 forgetest_async!(erc20_units_reject_precision_loss, |prj, cmd| {
     let (rpc, token, _handle) =
         setup_units_contract(&prj, &mut cmd, "TestTokenUnits", &["6"]).await;
@@ -513,6 +577,29 @@ forgetest_async!(erc20_units_auto_rejects_reverting_metadata, |prj, cmd| {
 Error: failed to query ERC-20 decimals() for `--units auto`; use `--units <DECIMALS>` or omit `--units` for raw amounts
 
 ...
+"#]]);
+});
+
+forgetest_async!(erc20_units_auto_rejects_excess_metadata, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "ExcessDecimalsToken", &[]).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR1,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: ERC-20 decimals() returned 78, but at most 77 decimals are supported; omit `--units` to use raw amounts
+
 "#]]);
 });
 

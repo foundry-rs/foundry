@@ -36,7 +36,6 @@ use foundry_common::{
     shell,
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
-use foundry_config::Config;
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
@@ -118,10 +117,21 @@ fn decode_erc20_decimals(output: &[u8]) -> eyre::Result<u8> {
     Ok(output[31])
 }
 
+fn validate_erc20_decimals(decimals: u8) -> eyre::Result<u8> {
+    if Unit::new(decimals).is_none() {
+        eyre::bail!(
+            "ERC-20 decimals() returned {decimals}, but at most 77 decimals are supported; omit \
+             `--units` to use raw amounts"
+        );
+    }
+    Ok(decimals)
+}
+
 fn normalize_decimal_amount(value: &str) -> Option<String> {
     let (integer, fractional) = value.split_once('.').unwrap_or((value, ""));
-    if integer.chars().any(|character| !character.is_ascii_digit())
-        || fractional.chars().any(|character| !character.is_ascii_digit())
+    if (integer.is_empty() && fractional.is_empty())
+        || integer.bytes().any(|byte| !byte.is_ascii_digit())
+        || fractional.bytes().any(|byte| !byte.is_ascii_digit())
     {
         return None;
     }
@@ -134,6 +144,35 @@ fn normalize_decimal_amount(value: &str) -> Option<String> {
     } else {
         Some(format!("{integer}.{fractional}"))
     }
+}
+
+fn parse_erc20_amount(amount: &str, decimals: u8) -> eyre::Result<U256> {
+    let normalized = normalize_decimal_amount(amount).ok_or_else(|| {
+        eyre::eyre!("invalid ERC-20 amount `{amount}`; expected an unsigned ASCII decimal")
+    })?;
+
+    if let Some((_, fractional)) = amount.split_once('.')
+        && fractional
+            .as_bytes()
+            .get(decimals as usize..)
+            .is_some_and(|extra| extra.iter().any(|byte| *byte != b'0'))
+    {
+        eyre::bail!(
+            "ERC-20 amount `{amount}` has more than {decimals} decimal places and would lose \
+             precision"
+        );
+    }
+
+    let parsed = SimpleCast::parse_units(amount, decimals)
+        .wrap_err_with(|| format!("invalid ERC-20 amount `{amount}` for {decimals} decimals"))?;
+    let parsed = U256::from_str(&parsed).wrap_err("ERC-20 amounts must be unsigned")?;
+    let formatted = SimpleCast::format_units(&parsed.to_string(), decimals)?;
+    if normalized != normalize_decimal_amount(&formatted).expect("formatted amount is valid") {
+        eyre::bail!(
+            "ERC-20 amount `{amount}` cannot be represented exactly with {decimals} decimals"
+        );
+    }
+    Ok(parsed)
 }
 
 /// Decimal unit options for ERC-20 amounts.
@@ -149,6 +188,10 @@ pub struct Erc20UnitsOpts {
 }
 
 impl Erc20UnitsOpts {
+    const fn is_auto(&self) -> bool {
+        matches!(self.units, Some(Erc20Units::Auto))
+    }
+
     async fn decimals<P, N>(
         &self,
         token: &IERC20::IERC20Instance<P, N>,
@@ -171,60 +214,32 @@ impl Erc20UnitsOpts {
             if let Some(overrides) = overrides { overrides.apply(call)?.await } else { call.await }
                 .wrap_err(AUTO_UNITS_CONTEXT)?;
         let decimals = decode_erc20_decimals(&output).wrap_err(AUTO_UNITS_CONTEXT)?;
-
-        if Unit::new(decimals).is_none() {
-            eyre::bail!(
-                "ERC-20 decimals() returned {decimals}, but at most 77 decimals are supported; \
-                 use an explicit `--units <DECIMALS>` value or omit `--units` for raw amounts"
-            );
-        }
-        Ok(Some(decimals))
+        validate_erc20_decimals(decimals).map(Some)
     }
 
-    async fn parse_amount<N>(
+    async fn parse_amount<P, N>(
         &self,
         amount: &str,
-        token: &NameOrAddress,
-        config: &Config,
+        token: &IERC20::IERC20Instance<P, N>,
     ) -> eyre::Result<U256>
     where
-        N: Network + RecommendedFillers,
+        P: Provider<N>,
+        N: Network,
     {
         let Some(units) = self.units else {
             return U256::from_str(amount).wrap_err("invalid raw ERC-20 amount");
         };
+        if normalize_decimal_amount(amount).is_none() {
+            eyre::bail!("invalid ERC-20 amount `{amount}`; expected an unsigned ASCII decimal");
+        }
         let decimals = match units {
-            Erc20Units::Auto => {
-                let provider = ProviderBuilder::<N>::from_config(config)?.build()?;
-                let token = IERC20::new(token.resolve(&provider).await?, &provider);
-                self.decimals(&token, BlockId::default(), None)
-                    .await?
-                    .expect("auto units always resolve decimals")
-            }
+            Erc20Units::Auto => self
+                .decimals(token, BlockId::default(), None)
+                .await?
+                .expect("auto units always resolve decimals"),
             Erc20Units::Decimals(decimals) => decimals,
         };
-
-        if let Some((_, fractional)) = amount.split_once('.')
-            && fractional.len() > decimals as usize
-            && fractional[decimals as usize..].chars().any(|character| character != '0')
-        {
-            eyre::bail!(
-                "ERC-20 amount `{amount}` has more than {decimals} decimal places and would lose \
-                 precision"
-            );
-        }
-
-        let parsed = SimpleCast::parse_units(amount, decimals).wrap_err_with(|| {
-            format!("invalid ERC-20 amount `{amount}` for {decimals} decimals")
-        })?;
-        let parsed = U256::from_str(&parsed).wrap_err("ERC-20 amounts must be unsigned")?;
-        let formatted = SimpleCast::format_units(&parsed.to_string(), decimals)?;
-        if normalize_decimal_amount(amount) != normalize_decimal_amount(&formatted) {
-            eyre::bail!(
-                "ERC-20 amount `{amount}` cannot be represented exactly with {decimals} decimals"
-            );
-        }
-        Ok(parsed)
+        parse_erc20_amount(amount, decimals)
     }
 
     async fn format_amount<P, N>(
@@ -458,6 +473,19 @@ pub enum Erc20Subcommand {
 }
 
 impl Erc20Subcommand {
+    const fn units_opts(&self) -> Option<&Erc20UnitsOpts> {
+        match self {
+            Self::Allowance { units, .. }
+            | Self::Approve { units, .. }
+            | Self::Balance { units, .. }
+            | Self::Burn { units, .. }
+            | Self::Mint { units, .. }
+            | Self::TotalSupply { units, .. }
+            | Self::Transfer { units, .. } => Some(units),
+            Self::Name { .. } | Self::Symbol { .. } | Self::Decimals { .. } => None,
+        }
+    }
+
     const fn rpc_opts(&self) -> &RpcOpts {
         match self {
             Self::Allowance { rpc, .. } => rpc,
@@ -523,6 +551,13 @@ impl Erc20Subcommand {
     }
 
     pub async fn run(self) -> eyre::Result<()> {
+        if self.rpc_opts().curl && self.units_opts().is_some_and(Erc20UnitsOpts::is_auto) {
+            eyre::bail!(
+                "`--units auto` cannot be used with `--curl`; use `--units <DECIMALS>` or omit \
+                 `--units` for raw amounts"
+            );
+        }
+
         let has_session = self.has_tempo_session()?;
         // Resolve the signer once for state-changing variants.
         let (resolved_tempo, signer, tempo_access_key) = match &self {
@@ -953,26 +988,33 @@ impl Erc20Subcommand {
             }
             // State-changing
             Self::Transfer { token, to, amount, units, send_tx, tx: tx_opts, .. } => {
-                let amount = units.parse_amount::<N>(&amount, &token, &config).await?;
                 erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
-                    erc20.transfer(to.resolve(&provider).await?, amount)
+                    erc20.transfer(
+                        to.resolve(&provider).await?,
+                        units.parse_amount(&amount, &erc20).await?,
+                    )
                 })
             }
             Self::Approve { token, spender, amount, units, send_tx, tx: tx_opts, .. } => {
-                let amount = units.parse_amount::<N>(&amount, &token, &config).await?;
                 erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
-                    erc20.approve(spender.resolve(&provider).await?, amount)
+                    erc20.approve(
+                        spender.resolve(&provider).await?,
+                        units.parse_amount(&amount, &erc20).await?,
+                    )
                 })
             }
             Self::Mint { token, to, amount, units, send_tx, tx: tx_opts, .. } => {
-                let amount = units.parse_amount::<N>(&amount, &token, &config).await?;
                 erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
-                    erc20.mint(to.resolve(&provider).await?, amount)
+                    erc20.mint(
+                        to.resolve(&provider).await?,
+                        units.parse_amount(&amount, &erc20).await?,
+                    )
                 })
             }
             Self::Burn { token, amount, units, send_tx, tx: tx_opts, .. } => {
-                let amount = units.parse_amount::<N>(&amount, &token, &config).await?;
-                erc20_send!(token, send_tx, tx_opts, |erc20, provider| erc20.burn(amount))
+                erc20_send!(token, send_tx, tx_opts, |erc20, _provider| {
+                    erc20.burn(units.parse_amount(&amount, &erc20).await?)
+                })
             }
         };
         Ok(())
@@ -1019,4 +1061,54 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn erc20_units_validate_boundaries() {
+        assert_eq!("0".parse::<Erc20Units>().unwrap(), Erc20Units::Decimals(0));
+        assert_eq!("77".parse::<Erc20Units>().unwrap(), Erc20Units::Decimals(77));
+        assert!("78".parse::<Erc20Units>().is_err());
+
+        assert_eq!(parse_erc20_amount("1.000", 0).unwrap(), U256::from(1));
+        assert_eq!(parse_erc20_amount("1.23000", 2).unwrap(), U256::from(123));
+        assert!(parse_erc20_amount("1.001", 2).is_err());
+
+        let one_e77 = U256::from_str(&format!("1{}", "0".repeat(77))).unwrap();
+        assert_eq!(parse_erc20_amount("1", 77).unwrap(), one_e77);
+        assert!(parse_erc20_amount("2", 77).is_err());
+
+        assert_eq!(parse_erc20_amount(&U256::MAX.to_string(), 0).unwrap(), U256::MAX);
+    }
+
+    #[test]
+    fn erc20_units_reject_malformed_amounts() {
+        for amount in ["", ".", "1.💥", "１", "1..0", "-1", "1_0"] {
+            let error = parse_erc20_amount(amount, 1).unwrap_err().to_string();
+            assert!(
+                error.contains("expected an unsigned ASCII decimal"),
+                "unexpected error for {amount:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn erc20_units_validate_metadata_encoding() {
+        let mut word = vec![0; 32];
+        word[31] = 77;
+        assert_eq!(decode_erc20_decimals(&word).unwrap(), 77);
+
+        let mut high_padding = vec![0; 32];
+        high_padding[0] = 1;
+        for malformed in [Vec::new(), vec![0; 31], vec![0; 64], high_padding] {
+            assert!(decode_erc20_decimals(&malformed).is_err());
+        }
+
+        let error = validate_erc20_decimals(78).unwrap_err().to_string();
+        assert!(error.contains("omit `--units` to use raw amounts"));
+        assert!(!error.contains("--units <DECIMALS>"));
+    }
 }

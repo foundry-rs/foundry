@@ -56,6 +56,16 @@ contract RevertingDecimalsToken {
     }
 }
 
+contract ExcessDecimalsToken {
+    function decimals() external pure returns (uint8) {
+        return 78;
+    }
+
+    function balanceOf(address) external pure returns (uint256) {
+        return 1;
+    }
+}
+
 contract NonstandardDecimalsToken {
     function decimals() external pure returns (string memory) {
         return "6";

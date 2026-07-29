@@ -107,8 +107,8 @@ Each row's status is one of:
 | `cast wallet sign`     | Signature                                            | JSON                                                           | migrated |
 | `cast wallet sign-auth`| Signed authorization RLP                             | JSON                                                           | migrated |
 | `cast erc20 balance`   | Smallest-unit integer, or decimal amount with `--units` | JSON string                                                 | migrated |
-| `cast erc20 allowance` | Smallest-unit integer, or decimal amount with `--units` | JSON string                                                 | migrated |
-| `cast erc20 total-supply` | Smallest-unit integer, or decimal amount with `--units` | JSON string                                              | migrated |
+| `cast erc20 allowance` | Smallest-unit integer with exponent hint for large values, or decimal amount with `--units` | JSON string                         | migrated |
+| `cast erc20 total-supply` | Smallest-unit integer with exponent hint for large values, or decimal amount with `--units` | JSON string                      | migrated |
 | `cast create2`         | `address\tsalt` (tab-separated)                      | n/a                                                            | migrated |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast interface`       | Solidity interface source                            | JSON ABI array                                                 | migrated |
