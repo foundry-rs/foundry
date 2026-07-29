@@ -1,6 +1,6 @@
 use super::{
     install,
-    test::{TestArgs, TestExecutionOptions},
+    test::{ProjectPathsAwareFilter, TestArgs, TestExecutionOptions},
     watch::WatchArgs,
 };
 use crate::coverage::{
@@ -13,11 +13,13 @@ use crate::coverage::{
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
+use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
+use foundry_common::{TestFilter, compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
+    compilers::{Language, multi::MultiCompilerLanguage},
+    utils::source_files_iter,
 };
 use foundry_config::{
     Config, CoverageConfig, CoverageReportKind, InlineConfig, parse_lcov_version,
@@ -27,6 +29,7 @@ use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
 use semver::Version;
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -157,9 +160,10 @@ impl CoverageArgs {
         // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
         // flags take precedence; unset CLI flags fall back to the config.
         self.resolve_with(&config.coverage);
+        let filter = self.test.filter(&config)?;
 
         let (paths, mut output) = {
-            let (project, output) = self.build(&config)?;
+            let (project, output) = self.build(&config, &filter)?;
             (project.paths, output)
         };
 
@@ -176,7 +180,7 @@ impl CoverageArgs {
         let report = self.prepare(&paths, &mut output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, config, evm_opts).await
+        self.collect(&paths.root, &output, report, config, evm_opts, filter).await
     }
 
     /// Merge `[profile.<name>.coverage]` config values into this struct. CLI
@@ -233,7 +237,11 @@ impl CoverageArgs {
     }
 
     /// Builds the project.
-    fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
+    fn build(
+        &self,
+        config: &Config,
+        filter: &ProjectPathsAwareFilter,
+    ) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
 
         if self.ir_minimum {
@@ -255,10 +263,21 @@ impl CoverageArgs {
 
         config.disable_optimizations(&mut project, self.ir_minimum);
 
-        let output = ProjectCompiler::new()
-            .dynamic_test_linking(config.dynamic_test_linking)
-            .compile(&project)?
-            .with_stripped_file_prefixes(project.root());
+        let mut compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
+        if filter.args().path_pattern.is_some() || filter.args().path_pattern_inverse.is_some() {
+            let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(
+                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                        // Preserve path-filter behavior for conventional test files while still
+                        // scanning non-test fixtures under the test root.
+                        .filter(|path| !path.is_sol_test() || filter.matches_path(path)),
+                )
+                // Coverage reports include scripts even though they are not test targets.
+                .chain(source_files_iter(&config.script, MultiCompilerLanguage::FILE_EXTENSIONS))
+                .collect::<BTreeSet<_>>();
+            compiler = compiler.files(sources);
+        }
+        let output = compiler.compile(&project)?.with_stripped_file_prefixes(project.root());
 
         Ok((project, output))
     }
@@ -353,8 +372,8 @@ impl CoverageArgs {
         mut report: CoverageReport,
         config: Config,
         evm_opts: EvmOpts,
+        filter: ProjectPathsAwareFilter,
     ) -> Result<()> {
-        let filter = self.test.filter(&config)?;
         let inline_config = Arc::new(InlineConfig::new_parsed(output, &config)?);
         let outcome = self
             .test
