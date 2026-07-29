@@ -28,6 +28,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     hardforks::TempoHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
+    opts::EvmOpts,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
         decode_trace_arena,
@@ -243,15 +244,26 @@ pub struct RpcData {
     pub total_rpcs: HashSet<String>,
     /// If true, one of the transactions did not have a rpc.
     pub missing_rpc: bool,
+    /// Chain IDs already fetched for each RPC URL.
+    pub(crate) chain_ids: HashMap<String, u64>,
 }
 
 impl RpcData {
     /// Iterates over script transactions and collects RPC urls.
-    fn from_transactions<N: Network>(txs: &BroadcastableTransactions<N>) -> Self {
+    fn from_transactions<N: Network>(
+        txs: &BroadcastableTransactions<N>,
+        evm_opts: &EvmOpts,
+    ) -> Self {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
         let total_rpcs = txs.iter().filter_map(|tx| tx.rpc.clone()).collect::<HashSet<_>>();
+        let mut chain_ids = HashMap::default();
+        if let Some((url, chain_id)) = &evm_opts.cached_fork_chain_id
+            && total_rpcs.contains(url)
+        {
+            chain_ids.insert(url.clone(), *chain_id);
+        }
 
-        Self { total_rpcs, missing_rpc }
+        Self { total_rpcs, missing_rpc, chain_ids }
     }
 
     /// Returns true if script might be multi-chain.
@@ -261,15 +273,26 @@ impl RpcData {
     }
 
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
-    async fn check_shanghai_support(&self) -> Result<()> {
-        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
+    async fn check_shanghai_support(&mut self) -> Result<()> {
+        let missing_rpcs = self
+            .total_rpcs
+            .iter()
+            .filter(|rpc| !self.chain_ids.contains_key(*rpc))
+            .cloned()
+            .collect::<Vec<_>>();
+        let chain_ids = missing_rpcs.iter().map(|rpc| async move {
             let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
-            let id = provider.get_chain_id().await.ok()?;
-            NamedChain::try_from(id).ok()
+            provider.get_chain_id().await.ok()
         });
 
         let chains = join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
+        self.chain_ids
+            .extend(missing_rpcs.into_iter().zip(chains).filter_map(|(rpc, id)| Some((rpc, id?))));
+        let iter = self
+            .chain_ids
+            .values()
+            .filter_map(|id| NamedChain::try_from(*id).ok())
+            .map(|chain| (chain.supports_shanghai(), chain));
         if iter.clone().any(|(s, _)| !s) {
             let msg = format!(
                 "\
@@ -278,7 +301,7 @@ Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
 For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                 iter.filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| *chain as u64)
+                    .map(|(_, chain)| chain as u64)
                     .format(", ")
             );
             sh_warn!("{msg}")?;
@@ -337,7 +360,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 *req = req.clone().with_input_kind(input, TransactionInputKind::Both);
             }
         }
-        let rpc_data = RpcData::from_transactions(&txs);
+        let mut rpc_data = RpcData::from_transactions(&txs, &self.script_config.evm_opts);
 
         if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;

@@ -8,6 +8,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use anvil::{NodeConfig, spawn};
+use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
@@ -20,6 +21,10 @@ use serde_json::Value;
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
@@ -1164,6 +1169,50 @@ forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 25)])
         .await;
+});
+
+forgetest_async!(fork_script_reuses_inferred_chain_id, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let chain_id_requests = Arc::new(AtomicUsize::new(0));
+    let client = reqwest::Client::new();
+    let app = Router::new().fallback({
+        let chain_id_requests = Arc::clone(&chain_id_requests);
+        move |body: BodyBytes| {
+            let upstream = upstream.clone();
+            let client = client.clone();
+            let chain_id_requests = Arc::clone(&chain_id_requests);
+            async move {
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                if request.get("method").and_then(Value::as_str) == Some("eth_chainId") {
+                    chain_id_requests.fetch_add(1, Ordering::Relaxed);
+                }
+                let response = client
+                    .post(upstream)
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let body = response.bytes().await.unwrap();
+                (status, [("content-type", "application/json")], body)
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &endpoint, prj.root());
+    tester
+        .add_deployer(0)
+        .add_sig("ScriptAdditionalContracts", "run()")
+        .args(&["--chain", "1"])
+        .simulate(ScriptOutcome::OkSimulation);
+
+    assert_eq!(chain_id_requests.load(Ordering::Relaxed), 1);
+    assert_eq!(latest_dry_run_sequence(prj.root()).chain, 31337);
 });
 
 forgetest_async!(can_deploy_and_simulate_mixed_broadcast_modes, |prj, cmd| {
