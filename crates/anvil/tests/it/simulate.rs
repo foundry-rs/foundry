@@ -856,6 +856,28 @@ async fn test_simulate_returns_unchanged_state_root_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_empty_state_override_preserves_root_rpc() {
+    let (_, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let account = address!("0000000000000000000000000000000000000042").to_string();
+    let without_override =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}])).await;
+    let with_empty_override = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{"stateOverrides": {(account): {}}}]}]),
+    )
+    .await;
+
+    assert!(without_override.get("error").is_none(), "{without_override}");
+    assert!(with_empty_override.get("error").is_none(), "{with_empty_override}");
+    assert_eq!(
+        without_override["result"][0]["stateRoot"],
+        with_empty_override["result"][0]["stateRoot"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::London.into()))

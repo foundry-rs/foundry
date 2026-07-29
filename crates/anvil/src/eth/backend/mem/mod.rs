@@ -5695,7 +5695,14 @@ impl Backend<FoundryNetwork> {
 
                 // Apply state overrides after validating precompile moves against this block's
                 // active precompile set.
-                if let Some(state_overrides) = state_overrides {
+                if let Some(mut state_overrides) = state_overrides {
+                    state_overrides.retain(|_, account| {
+                        account.balance.is_some()
+                            || account.nonce.is_some()
+                            || account.code.is_some()
+                            || account.state.is_some()
+                            || account.state_diff.is_some()
+                    });
                     let previously_deleted = previously_deleted_accounts(
                         &cache_db.cache.accounts,
                         state_overrides.keys().copied(),
