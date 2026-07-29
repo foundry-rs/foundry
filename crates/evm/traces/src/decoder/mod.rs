@@ -776,6 +776,19 @@ impl CallTraceDecoder {
                 return_data: self.decode_function_output(trace, contract_functions).await,
             }
         } else {
+            // Calls to the cheatcode address with a known selector must not fall back to raw
+            // calldata rendering: even malformed calldata can contain sensitive inputs like
+            // private keys that the custom cheatcode decoding redacts.
+            if trace.address == CHEATCODE_ADDRESS
+                && let Some(selector) = cdata.first_chunk().map(Selector::from)
+                && let Some([func, ..]) = self.functions_for_selector(trace.address, &selector)
+            {
+                return DecodedCallTrace {
+                    label,
+                    call_data: Some(self.decode_function_input(trace, func)),
+                    return_data: self.default_return_data(trace).await,
+                };
+            }
             DecodedCallTrace {
                 label,
                 call_data: self.fallback_call_data(trace),
@@ -882,7 +895,11 @@ impl CallTraceDecoder {
                 (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
             "sign" | "signP256" | "signCompact" | "signKeychain" | "signKeychainAdmin" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                // Fail closed: when the arguments of a key-taking cheatcode cannot be
+                // decoded, redact everything instead of deferring to generic rendering.
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
 
                 // Redact private key and replace in trace when the first input is a raw
                 // private key (uint256) or a Wallet (tuple); overloads like sign(bytes32)
@@ -896,7 +913,9 @@ impl CallTraceDecoder {
                 Some(decoded.iter().map(|value| self.format_value(value)).collect())
             }
             "signWithNonceUnsafe" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
                 // Redact private key and nonce and replace in trace for
                 // signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce).
                 // The nonce is the raw ECDSA k value: together with the digest and the
@@ -906,14 +925,18 @@ impl CallTraceDecoder {
                 Some(decoded.iter().map(|value| self.format_value(value)).collect())
             }
             "signEd25519" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
                 // Redact private key and replace in trace for
                 // signEd25519(bytes namespace, bytes message, bytes32 privateKey)
                 decoded[2] = DynSolValue::String("<pk>".to_string());
                 Some(decoded.iter().map(|value| self.format_value(value)).collect())
             }
             "signDelegation" | "signAndAttachDelegation" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
                 // Redact private key and replace in trace for
                 // signAndAttachDelegation(address implementation, uint256 privateKey)
                 // signDelegation(address implementation, uint256 privateKey)
@@ -2097,6 +2120,57 @@ mod tests {
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
             assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_should_redact_end_to_end() {
+        let decoder = CallTraceDecoder::new();
+        let pk_hex = "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
+        let pk = hex!("7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6");
+        let cheatcode_trace = |data: Vec<u8>| CallTrace {
+            address: CHEATCODE_ADDRESS,
+            data: data.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        // Well-formed sign(uint256,bytes32) resolves through selector lookup and redacts the
+        // private key.
+        let call = Vm::sign_1Call { privateKey: U256::from_be_bytes(pk), digest: B256::ZERO };
+        let decoded = decoder.decode_function(&cheatcode_trace(call.abi_encode())).await;
+        let call_data = decoded.call_data.expect("sign should decode");
+        assert_eq!(call_data.signature, "sign(uint256,bytes32)");
+        assert_eq!(call_data.args[0], "\"<pk>\"");
+        assert!(!call_data.args.join(",").contains(pk_hex));
+
+        // signEd25519 redacts the trailing private key argument.
+        let call = Vm::signEd25519Call {
+            namespace: b"ns".to_vec().into(),
+            message: b"msg".to_vec().into(),
+            privateKey: B256::from(pk),
+        };
+        let decoded = decoder.decode_function(&cheatcode_trace(call.abi_encode())).await;
+        let call_data = decoded.call_data.expect("signEd25519 should decode");
+        assert_eq!(call_data.signature, "signEd25519(bytes,bytes,bytes32)");
+        assert_eq!(call_data.args[2], "\"<pk>\"");
+        assert!(!call_data.args.join(",").contains(pk_hex));
+
+        // Malformed calldata (nonzero trailing byte fails the ABI shape heuristic) must not
+        // fall back to raw calldata rendering.
+        let call = Vm::sign_1Call { privateKey: U256::from_be_bytes(pk), digest: B256::ZERO };
+        let mut data = call.abi_encode();
+        data.push(0xff);
+        let decoded = decoder.decode_function(&cheatcode_trace(data)).await;
+        let call_data = decoded.call_data.expect("malformed calldata must not fall back to raw");
+        assert_eq!(call_data.signature, "sign(uint256,bytes32)");
+        assert!(!call_data.args.join(",").contains(pk_hex));
+
+        // Truncated calldata cannot be decoded at all and fails closed.
+        let data = Vm::sign_1Call::SELECTOR.iter().copied().chain(pk).collect::<Vec<u8>>();
+        let decoded = decoder.decode_function(&cheatcode_trace(data)).await;
+        let call_data = decoded.call_data.expect("truncated calldata must not fall back to raw");
+        assert_eq!(call_data.signature, "sign(uint256,bytes32)");
+        assert_eq!(call_data.args, vec!["<redacted>".to_string()]);
     }
 
     #[tokio::test]
