@@ -123,7 +123,7 @@ reqwest.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
-tempo-alloy.workspace = true
+tempo-alloy = { workspace = true, features = ["reth"] }
 
 [features]
 default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
