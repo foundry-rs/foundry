@@ -2249,22 +2249,20 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     fork: &mut Fork<N, B>,
     persistent_accounts: &HashSet<Address>,
 ) -> Result<(), BackendError> {
-    // Refresh cloned journals against an overlay so a failed database read cannot publish only
-    // part of the transaction state.
+    // Refresh cloned journals against a cloned database so a failed read cannot publish only part
+    // of the transaction state.
+    let mut staged_db = fork.db.clone();
     let mut staged_journaled_state = journaled_state.clone();
     let mut staged_fork_journaled_state = fork.journaled_state.clone();
-    {
-        let mut staged_db = CacheDB::new(&mut fork.db);
-        staged_db.commit(state.clone());
-        update_state(&mut staged_journaled_state.state, &mut staged_db, Some(persistent_accounts))?;
-        update_state(
-            &mut staged_fork_journaled_state.state,
-            &mut staged_db,
-            Some(persistent_accounts),
-        )?;
-    }
+    staged_db.commit(state);
+    update_state(&mut staged_journaled_state.state, &mut staged_db, Some(persistent_accounts))?;
+    update_state(
+        &mut staged_fork_journaled_state.state,
+        &mut staged_db,
+        Some(persistent_accounts),
+    )?;
 
-    fork.db.commit(state);
+    fork.db = staged_db;
     *journaled_state = staged_journaled_state;
     fork.journaled_state = staged_fork_journaled_state;
     Ok(())
@@ -2292,7 +2290,7 @@ mod tests {
     };
     use revm::{
         context::{BlockEnv, JournalInner, TxEnv},
-        database::{CacheDB, DatabaseRef},
+        database::{AccountState, CacheDB, DatabaseRef, DbAccount},
         primitives::hardfork::SpecId,
         state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
     };
@@ -2346,6 +2344,37 @@ mod tests {
         assert!(!fork.db.cache.accounts.contains_key(&committed));
         assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
         assert_eq!(fork.journaled_state.state[&fork_loaded].info.balance, U256::from(2));
+    }
+
+    #[test]
+    fn failed_fork_state_refresh_preserves_not_existing_account() {
+        let mut fork = fork_with_closed_backend();
+        let address = Address::with_last_byte(1);
+        let missing_slot = U256::from(1);
+        fork.db.cache.accounts.insert(address, DbAccount::new_not_existing());
+
+        let mut journaled_state = JournalInner::new();
+        let mut journaled_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        journaled_account
+            .storage
+            .insert(missing_slot, EvmStorageSlot::new(U256::from(7), TransactionId::ZERO));
+        journaled_state.state.insert(address, journaled_account);
+
+        let mut touched_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(13), ..Default::default() });
+        touched_account.mark_touch();
+        let mut state = EvmState::default();
+        state.insert(address, touched_account);
+
+        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        assert!(result.is_err());
+        assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
+        assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));
+        assert_eq!(
+            journaled_state.state[&address].storage[&missing_slot].present_value(),
+            U256::from(7)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
