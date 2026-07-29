@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo update
+      - run: rm Cargo.lock && cargo generate-lockfile
       - uses: actions/upload-artifact@v6
         with:
           name: refreshed-tempo-lock
