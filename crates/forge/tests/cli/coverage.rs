@@ -193,6 +193,132 @@ forgetest_init!(basic_crlf, |prj, cmd| {
     basic_base(prj, cmd);
 });
 
+forgetest_init!(json_summary_report, |prj, cmd| {
+    prj.initialize_default_contracts();
+
+    cmd.args(["coverage", "--report=json-summary", "--fail-under-branches=100"]).assert_success();
+
+    let summary_path = prj.root().join("coverage-summary.json");
+    let summary: Value = serde_json::from_str(&fs::read_to_string(&summary_path).unwrap()).unwrap();
+    assert_eq!(
+        summary,
+        serde_json::json!({
+            "total": {
+                "lines": {"total": 9, "covered": 4, "skipped": 0, "pct": 44.44},
+                "statements": {"total": 5, "covered": 2, "skipped": 0, "pct": 40.0},
+                "functions": {"total": 4, "covered": 2, "skipped": 0, "pct": 50.0},
+                "branches": {"total": 0, "covered": 0, "skipped": 0, "pct": 100.0}
+            },
+            "script/Counter.s.sol": {
+                "lines": {"total": 5, "covered": 0, "skipped": 0, "pct": 0.0},
+                "statements": {"total": 3, "covered": 0, "skipped": 0, "pct": 0.0},
+                "functions": {"total": 2, "covered": 0, "skipped": 0, "pct": 0.0},
+                "branches": {"total": 0, "covered": 0, "skipped": 0, "pct": 100.0}
+            },
+            "src/Counter.sol": {
+                "lines": {"total": 4, "covered": 4, "skipped": 0, "pct": 100.0},
+                "statements": {"total": 2, "covered": 2, "skipped": 0, "pct": 100.0},
+                "functions": {"total": 2, "covered": 2, "skipped": 0, "pct": 100.0},
+                "branches": {"total": 0, "covered": 0, "skipped": 0, "pct": 100.0}
+            }
+        })
+    );
+
+    let custom_path = prj.root().join("custom-summary.json");
+    cmd.forge_fuse()
+        .args(["coverage", "--report=json-summary", "--report-file=custom-summary.json"])
+        .assert_success();
+    assert!(custom_path.exists(), "custom JSON summary report was not created");
+
+    let ignored_path = prj.root().join("ignored-summary.json");
+    cmd.forge_fuse()
+        .args([
+            "coverage",
+            "--report=json-summary",
+            "--report=lcov",
+            "--report-file=ignored-summary.json",
+        ])
+        .assert_success();
+    assert!(!ignored_path.exists(), "custom path should be ignored for multiple file reports");
+    assert!(prj.root().join("coverage-summary.json").exists());
+    assert!(prj.root().join("lcov.info").exists());
+});
+
+forgetest!(coverage_thresholds, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Policy.sol",
+        r#"
+contract Policy {
+    function covered(uint256 value) public pure returns (uint256) {
+        require(value > 0, "zero");
+        return 1;
+    }
+
+    function uncovered() public pure returns (uint256) {
+        return 2;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "PolicyTest.sol",
+        r#"
+import "./test.sol";
+import "./Policy.sol";
+
+contract PolicyTest is DSTest {
+    function testCovered() public {
+        Policy policy = new Policy();
+        assertEq(policy.covered(1), 1);
+    }
+}
+    "#,
+    );
+
+    let output = cmd
+        .args([
+            "coverage",
+            "--report=json-summary",
+            "--fail-under-lines=100",
+            "--fail-under-statements=100",
+            "--fail-under-branches=100",
+            "--fail-under-functions=100",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("coverage thresholds not met:"), "{stderr}");
+    for metric in ["lines", "statements", "branches", "functions"] {
+        assert!(stderr.contains(&format!("{metric}:")), "{stderr}");
+    }
+    assert!(
+        prj.root().join("coverage-summary.json").exists(),
+        "reports should be written before threshold failure"
+    );
+
+    prj.update_config(|config| {
+        config.coverage.thresholds.lines = Some(100.0.to_string().parse().unwrap());
+        config.coverage.thresholds.statements = Some(100.0.to_string().parse().unwrap());
+        config.coverage.thresholds.branches = Some(100.0.to_string().parse().unwrap());
+        config.coverage.thresholds.functions = Some(100.0.to_string().parse().unwrap());
+    });
+    let output = cmd.forge_fuse().args(["coverage", "--report=json-summary"]).assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("coverage thresholds not met:"), "{stderr}");
+    assert!(stderr.contains("lines:"), "{stderr}");
+
+    cmd.forge_fuse()
+        .args([
+            "coverage",
+            "--report=json-summary",
+            "--fail-under-lines=0",
+            "--fail-under-statements=0",
+            "--fail-under-branches=0",
+            "--fail-under-functions=0",
+        ])
+        .assert_success();
+});
+
 forgetest!(setup, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(

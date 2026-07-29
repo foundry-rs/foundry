@@ -89,6 +89,23 @@ impl CoverageReporter for CoverageSummaryReporter {
     }
 }
 
+/// Returns the aggregate coverage summary for a report.
+pub fn aggregate_summary(report: &CoverageReport) -> CoverageSummary {
+    let mut total = CoverageSummary::default();
+    for (_, summary) in report.summary_by_file() {
+        total.merge(&summary);
+    }
+    total
+}
+
+/// Returns a coverage percentage truncated to two decimal places.
+///
+/// Istanbul treats an empty metric as fully covered in JSON summaries. Foundry's
+/// human-readable summary continues to display the same metric as not applicable.
+pub fn coverage_percentage(covered: usize, total: usize) -> f64 {
+    if total == 0 { 100.0 } else { ((covered as f64 * 10_000.0 / total as f64).floor()) / 100.0 }
+}
+
 fn format_cell(hits: usize, total: usize) -> Cell {
     if total == 0 {
         return Cell::new(format!("N/A ({hits}/{total})"))
@@ -104,6 +121,88 @@ fn format_cell(hits: usize, total: usize) -> Cell {
     })
 }
 
+/// Writes an aggregate summary in Istanbul's [`json-summary`] format.
+///
+/// [`json-summary`]: https://istanbul.js.org/docs/advanced/alternative-reporters/#json-summary
+pub struct JsonSummaryReporter {
+    path: PathBuf,
+}
+
+impl JsonSummaryReporter {
+    /// Creates a new JSON summary reporter.
+    pub const fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl CoverageReporter for JsonSummaryReporter {
+    fn name(&self) -> &'static str {
+        "json-summary"
+    }
+
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
+        let mut summaries = BTreeMap::new();
+        let mut total = CoverageSummary::default();
+
+        for (path, summary) in report.summary_by_file() {
+            total.merge(&summary);
+            summaries.insert(path.display().to_string(), JsonCoverageSummary::from(&summary));
+        }
+
+        let payload = JsonSummaryReport { total: JsonCoverageSummary::from(&total), summaries };
+        let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
+        serde_json::to_writer(&mut out, &payload)?;
+        writeln!(out)?;
+        out.flush()?;
+
+        sh_status!("Wrote JSON summary report.")?;
+        Ok(())
+    }
+}
+
+/// Istanbul `json-summary` payload.
+#[derive(Serialize)]
+struct JsonSummaryReport {
+    total: JsonCoverageSummary,
+    #[serde(flatten)]
+    summaries: BTreeMap<String, JsonCoverageSummary>,
+}
+
+/// Aggregate coverage for one source or the entire report.
+#[derive(Serialize)]
+struct JsonCoverageSummary {
+    lines: JsonCoverageMetric,
+    statements: JsonCoverageMetric,
+    functions: JsonCoverageMetric,
+    branches: JsonCoverageMetric,
+}
+
+impl From<&CoverageSummary> for JsonCoverageSummary {
+    fn from(summary: &CoverageSummary) -> Self {
+        Self {
+            lines: JsonCoverageMetric::new(summary.line_hits, summary.line_count),
+            statements: JsonCoverageMetric::new(summary.statement_hits, summary.statement_count),
+            functions: JsonCoverageMetric::new(summary.function_hits, summary.function_count),
+            branches: JsonCoverageMetric::new(summary.branch_hits, summary.branch_count),
+        }
+    }
+}
+
+/// Istanbul aggregate counter.
+#[derive(Serialize)]
+struct JsonCoverageMetric {
+    total: usize,
+    covered: usize,
+    skipped: usize,
+    pct: f64,
+}
+
+impl JsonCoverageMetric {
+    fn new(covered: usize, total: usize) -> Self {
+        Self { total, covered, skipped: 0, pct: coverage_percentage(covered, total) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +213,12 @@ mod tests {
             format_cell(0, 0),
             Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
         );
+    }
+
+    #[test]
+    fn istanbul_percentage_is_truncated_and_empty_is_full() {
+        assert_eq!(coverage_percentage(2, 3), 66.66);
+        assert_eq!(coverage_percentage(0, 0), 100.0);
     }
 }
 

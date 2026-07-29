@@ -1223,9 +1223,9 @@ impl TestArgs {
         }
         if !conflicts.is_empty() {
             bail!(
-                "`forge coverage` cannot be combined with: {}. Use `--report lcov` for an \
-                 interoperable coverage report or `--report attribution` for per-test JSON \
-                attribution.",
+                "`forge coverage` cannot be combined with: {}. Use `--report json-summary` for \
+                 aggregate JSON, `--report lcov` for an interoperable coverage report, or \
+                 `--report attribution` for per-test JSON attribution.",
                 conflicts.join(", ")
             );
         }

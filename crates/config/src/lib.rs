@@ -117,7 +117,9 @@ mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 
 mod coverage;
-pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
+pub use coverage::{
+    CoverageConfig, CoverageReportKind, CoverageThreshold, CoverageThresholds, parse_lcov_version,
+};
 
 mod trace;
 pub use trace::TracingConfig;
@@ -5303,6 +5305,7 @@ mod tests {
             jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
             jail.set_env("FOUNDRY_SYMBOLIC_MAX_PATHS", "64");
             jail.set_env("FOUNDRY_SYMBOLIC_DUMP_SMT", "true");
+            jail.set_env("FOUNDRY_COVERAGE_LINES", "95.5");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
@@ -5321,6 +5324,7 @@ mod tests {
             assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
             assert_eq!(config.symbolic.max_paths, 64);
             assert!(config.symbolic.dump_smt);
+            assert_eq!(config.coverage.thresholds.lines.unwrap().get(), 95.5);
 
             Ok(())
         });
@@ -8564,19 +8568,28 @@ mod tests {
                 "foundry.toml",
                 r#"
                 [profile.default.coverage]
-                report = ["summary", "lcov"]
+                report = ["summary", "json-summary", "lcov"]
                 lcov_version = "2.2.0"
                 ir_minimum = true
                 report_file = "out/lcov.info"
                 include_libs = true
                 exclude_tests = true
                 skip_files = ["test/**", "src/mocks/**"]
+
+                lines = 95
+                statements = 94.5
+                branches = 80
+                functions = 90
                 "#,
             )?;
             let config = Config::load_with_root(jail.directory()).unwrap();
             assert_eq!(
                 config.coverage.report,
-                vec![CoverageReportKind::Summary, CoverageReportKind::Lcov]
+                vec![
+                    CoverageReportKind::Summary,
+                    CoverageReportKind::JsonSummary,
+                    CoverageReportKind::Lcov
+                ]
             );
             assert_eq!(config.coverage.lcov_version, semver::Version::new(2, 2, 0));
             assert!(config.coverage.ir_minimum);
@@ -8590,6 +8603,10 @@ mod tests {
                 config.coverage.skip_files,
                 vec!["test/**".to_string(), "src/mocks/**".to_string()]
             );
+            assert_eq!(config.coverage.thresholds.lines.unwrap().get(), 95.0);
+            assert_eq!(config.coverage.thresholds.statements.unwrap().get(), 94.5);
+            assert_eq!(config.coverage.thresholds.branches.unwrap().get(), 80.0);
+            assert_eq!(config.coverage.thresholds.functions.unwrap().get(), 90.0);
             Ok(())
         });
     }
@@ -8605,11 +8622,14 @@ mod tests {
                 [coverage]
                 skip_files = ["script/**"]
                 exclude_tests = true
+
+                lines = 85
                 "#,
             )?;
             let config = Config::load_with_root(jail.directory()).unwrap();
             assert_eq!(config.coverage.skip_files, vec!["script/**".to_string()]);
             assert!(config.coverage.exclude_tests);
+            assert_eq!(config.coverage.thresholds.lines.unwrap().get(), 85.0);
             // Untouched fields keep their defaults.
             assert_eq!(config.coverage.report, vec![CoverageReportKind::Summary]);
             assert_eq!(config.coverage.lcov_version, semver::Version::new(1, 0, 0));
@@ -8626,9 +8646,12 @@ mod tests {
                 [profile.default.coverage]
                 skip_files = ["script/**"]
 
+                lines = 90
+
                 [profile.ci.coverage]
                 skip_files = ["test/**", "lib/**"]
                 exclude_tests = true
+                lines = 95
                 "#,
             )?;
 
@@ -8636,6 +8659,7 @@ mod tests {
             let config = Config::load_with_root(jail.directory()).unwrap();
             assert_eq!(config.coverage.skip_files, vec!["script/**".to_string()]);
             assert!(!config.coverage.exclude_tests);
+            assert_eq!(config.coverage.thresholds.lines.unwrap().get(), 90.0);
 
             // CI profile sees its own override.
             jail.set_env("FOUNDRY_PROFILE", "ci");
@@ -8645,6 +8669,7 @@ mod tests {
                 vec!["test/**".to_string(), "lib/**".to_string()]
             );
             assert!(config.coverage.exclude_tests);
+            assert_eq!(config.coverage.thresholds.lines.unwrap().get(), 95.0);
             Ok(())
         });
     }

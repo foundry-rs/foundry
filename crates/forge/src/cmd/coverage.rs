@@ -5,10 +5,11 @@ use super::{
 };
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
-    ResolvedHitMaps,
+    CoverageSummaryReporter, DebugReporter, ItemAnchor, JsonSummaryReporter, LcovReporter,
+    ResolvedHitMap, ResolvedHitMaps, aggregate_summary,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
+    coverage_percentage,
 };
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueHint};
@@ -22,7 +23,8 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, CoverageConfig, CoverageReportKind, InlineConfig, parse_lcov_version,
+    Config, CoverageConfig, CoverageReportKind, CoverageThreshold, CoverageThresholds,
+    InlineConfig, parse_lcov_version,
 };
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use globset::{Glob, GlobSetBuilder};
@@ -52,8 +54,9 @@ Compatibility:
   `forge coverage` supports test filters and `--watch`, but not test-only output or
   execution modes such as `--json`, `--junit`, `--list`, `--debug`, flame profiles,
   symbolic artifact replay, showmap replay, brutalization, or mutation testing. Use
-  `--report lcov` for interoperable coverage data or `--report attribution` for
-  Foundry's per-test JSON attribution report."#)]
+  `--report lcov` for interoperable coverage data, `--report json-summary` for an
+  Istanbul-compatible aggregate JSON report, or `--report attribution` for Foundry's
+  per-test JSON attribution report."#)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -107,6 +110,34 @@ pub struct CoverageArgs {
     #[arg(long)]
     exclude_tests: bool,
 
+    /// Fail if aggregate line coverage is below this percentage.
+    ///
+    /// Overrides `[profile.<name>.coverage] lines`.
+    #[arg(long, value_name = "PERCENT")]
+    fail_under_lines: Option<CoverageThreshold>,
+
+    /// Fail if aggregate statement coverage is below this percentage.
+    ///
+    /// Overrides `[profile.<name>.coverage] statements`.
+    #[arg(long, value_name = "PERCENT")]
+    fail_under_statements: Option<CoverageThreshold>,
+
+    /// Fail if aggregate branch coverage is below this percentage.
+    ///
+    /// Overrides `[profile.<name>.coverage] branches`.
+    #[arg(long, value_name = "PERCENT")]
+    fail_under_branches: Option<CoverageThreshold>,
+
+    /// Fail if aggregate function coverage is below this percentage.
+    ///
+    /// Overrides `[profile.<name>.coverage] functions`.
+    #[arg(long, value_name = "PERCENT")]
+    fail_under_functions: Option<CoverageThreshold>,
+
+    /// Resolved aggregate coverage thresholds.
+    #[arg(skip)]
+    thresholds: CoverageThresholds,
+
     /// The coverage reporters to use. Constructed from the other fields.
     #[arg(skip)]
     reporters: Vec<Box<dyn CoverageReporter>>,
@@ -130,9 +161,11 @@ impl CoverageArgs {
 
     fn file_report_count(&self) -> usize {
         let has_lcov = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Lcov));
+        let has_json_summary =
+            self.report.iter().any(|kind| matches!(kind, CoverageReportKind::JsonSummary));
         let has_attribution =
             self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution));
-        usize::from(has_lcov) + usize::from(has_attribution)
+        usize::from(has_lcov) + usize::from(has_json_summary) + usize::from(has_attribution)
     }
 
     pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
@@ -212,6 +245,12 @@ impl CoverageArgs {
         // Glob filters are additive — there's no CLI flag for these, so always
         // take from config.
         self.skip_files.clone_from(&config.skip_files);
+
+        self.thresholds = config.thresholds;
+        self.thresholds.lines = self.fail_under_lines.or(self.thresholds.lines);
+        self.thresholds.statements = self.fail_under_statements.or(self.thresholds.statements);
+        self.thresholds.branches = self.fail_under_branches.or(self.thresholds.branches);
+        self.thresholds.functions = self.fail_under_functions.or(self.thresholds.functions);
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -221,6 +260,10 @@ impl CoverageArgs {
             .filter_map(|report_kind| match report_kind {
                 CoverageReportKind::Summary => {
                     Some(Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>)
+                }
+                CoverageReportKind::JsonSummary => {
+                    let path = self.report_path(root, "coverage-summary.json");
+                    Some(Box::new(JsonSummaryReporter::new(path)))
                 }
                 CoverageReportKind::Lcov => {
                     let path = self.report_path(root, "lcov.info");
@@ -476,7 +519,40 @@ impl CoverageArgs {
         // This ensures coverage data is written even when tests fail.
         outcome.ensure_ok(false)?;
 
+        self.ensure_thresholds(&report)?;
+
         Ok(())
+    }
+
+    fn ensure_thresholds(&self, report: &CoverageReport) -> Result<()> {
+        let summary = aggregate_summary(report);
+        let metrics = [
+            ("lines", summary.line_hits, summary.line_count, self.thresholds.lines),
+            (
+                "statements",
+                summary.statement_hits,
+                summary.statement_count,
+                self.thresholds.statements,
+            ),
+            ("branches", summary.branch_hits, summary.branch_count, self.thresholds.branches),
+            ("functions", summary.function_hits, summary.function_count, self.thresholds.functions),
+        ];
+        let misses = metrics
+            .into_iter()
+            .filter_map(|(name, covered, total, threshold)| {
+                let threshold = threshold?;
+                let percentage = coverage_percentage(covered, total);
+                threshold_missed(covered, total, threshold).then(|| {
+                    format!("{name}: {percentage:.2}% ({covered}/{total}) is below {threshold}%")
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if misses.is_empty() {
+            Ok(())
+        } else {
+            eyre::bail!("coverage thresholds not met:\n{}", misses.join("\n"))
+        }
     }
 
     #[instrument(name = "Coverage::report", skip_all)]
@@ -495,6 +571,10 @@ impl CoverageArgs {
     pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
+}
+
+fn threshold_missed(covered: usize, total: usize, threshold: CoverageThreshold) -> bool {
+    total > 0 && covered as f64 * 100.0 < threshold.get() * total as f64
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.
@@ -614,5 +694,30 @@ mod tests {
         args.resolve_with(&config);
 
         assert_eq!(args.lcov_version, Version::new(2, 0, 0));
+    }
+
+    #[test]
+    fn thresholds_use_unrounded_aggregate_and_skip_empty_metrics() {
+        assert!(!threshold_missed(2, 3, CoverageThreshold::new(66.66).unwrap()));
+        assert!(threshold_missed(2, 3, CoverageThreshold::new(66.67).unwrap()));
+        assert!(!threshold_missed(0, 0, CoverageThreshold::new(100.0).unwrap()));
+    }
+
+    #[test]
+    fn resolve_thresholds_uses_per_metric_cli_precedence() {
+        let mut args = CoverageArgs::parse_from(["coverage", "--fail-under-lines", "95.5"]);
+        let config = CoverageConfig {
+            thresholds: CoverageThresholds {
+                lines: Some(CoverageThreshold::new(90.0).unwrap()),
+                branches: Some(CoverageThreshold::new(80.0).unwrap()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        args.resolve_with(&config);
+
+        assert_eq!(args.thresholds.lines.unwrap().get(), 95.5);
+        assert_eq!(args.thresholds.branches.unwrap().get(), 80.0);
     }
 }
