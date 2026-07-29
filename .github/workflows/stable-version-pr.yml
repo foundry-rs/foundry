@@ -13,6 +13,8 @@ permissions: {}
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - 'CHANGELOG.md'
+      - '.github/scripts/prepare-stable-release.py'
+      - '.github/workflows/stable-version-pr.yml'
   workflow_dispatch:
 
 concurrency:
