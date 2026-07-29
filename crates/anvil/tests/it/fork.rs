@@ -289,6 +289,87 @@ async fn test_spawn_fork() {
     assert_eq!(head, U256::from(BLOCK_NUMBER))
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_resolves_hardfork() {
+    const CANCUN_TIMESTAMP: u64 = 1_710_338_135;
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(CANCUN_TIMESTAMP - 1)),
+    )
+    .await;
+    origin_api.evm_set_next_block_timestamp(CANCUN_TIMESTAMP).unwrap();
+    origin_api.evm_mine(None).await.unwrap();
+
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(31337u64))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Shanghai");
+    assert_eq!(fork_api.chain_id(), 31337);
+    fork_api
+        .anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) }))
+        .await
+        .unwrap();
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Cancun");
+
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Shanghai");
+    fork_api
+        .anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) }))
+        .await
+        .unwrap();
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Shanghai");
+}
+
+#[cfg(feature = "optimism")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_optimism_mines_with_resolved_hardfork() {
+    let (_origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64))
+            .with_genesis_timestamp(Some(0u64)),
+    )
+    .await;
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Regolith");
+
+    let target = Address::random();
+    // TSTORE is unavailable before Ecotone.
+    fork_api.anvil_set_code(target, bytes!("600160005d00")).await.unwrap();
+
+    let signer: EthereumWallet = fork_handle.dev_wallets().next().unwrap().into();
+    let provider = http_provider_with_signer(&fork_handle.http_endpoint(), signer);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().to(target).gas_limit(100_000),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert!(!receipt.status());
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9743>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_set_storage_visible_to_call() {

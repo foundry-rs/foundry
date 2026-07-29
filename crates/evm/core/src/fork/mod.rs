@@ -2,6 +2,9 @@ use super::opts::EvmOpts;
 
 pub mod database;
 
+mod hardfork;
+pub use hardfork::resolve_fork_hardfork;
+
 mod multi;
 pub use multi::{ForkId, MultiFork, MultiForkHandler};
 
