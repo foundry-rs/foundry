@@ -1,6 +1,7 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::{
+    SimpleCast,
     cmd::{
         call_overrides::CallOverrideOpts,
         send::{
@@ -21,7 +22,8 @@ use alloy_provider::{
 };
 use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
-use clap::Parser;
+use clap::{Args, Parser};
+use eyre::WrapErr;
 use foundry_cli::{
     json::{print_json_success, print_scalar},
     opts::RpcOpts,
@@ -46,7 +48,7 @@ sol! {
         #[derive(Debug)]
         function name() external view returns (string);
         function symbol() external view returns (string);
-        function decimals() external view returns (uint8);
+        function decimals() external view returns (uint256);
         function totalSupply() external view returns (uint256);
         function balanceOf(address owner) external view returns (uint256);
         function transfer(address to, uint256 amount) external returns (bool);
@@ -55,6 +57,102 @@ sol! {
         function mint(address to, uint256 amount) external;
         function burn(uint256 amount) external;
     }
+}
+
+const AUTO_UNITS_ERROR: &str = "failed to query ERC-20 `decimals()`; use an explicit decimal \
+                                count with `--units` for tokens with missing or nonstandard \
+                                metadata";
+
+/// How ERC-20 amounts are interpreted.
+#[derive(Clone, Copy, Debug, Default)]
+enum Erc20Units {
+    /// Base-unit integers.
+    #[default]
+    Raw,
+    /// The value returned by the token's `decimals()` function.
+    Auto,
+    /// An explicit decimal count.
+    Decimals(u8),
+}
+
+impl FromStr for Erc20Units {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "raw" => Ok(Self::Raw),
+            "auto" => Ok(Self::Auto),
+            _ => value.parse().map(Self::Decimals).map_err(|_| {
+                format!("invalid units `{value}`: expected `raw`, `auto`, or a decimal count")
+            }),
+        }
+    }
+}
+
+/// ERC-20 amount unit options.
+#[derive(Args, Clone, Copy, Debug, Default)]
+pub struct Erc20UnitsOpts {
+    /// Interpret amounts as raw base units, with a decimal count, or by querying `decimals()`.
+    ///
+    /// `auto` accepts an ABI integer from 0 to 255, including an ABI-compatible `uint256`,
+    /// and fails if `decimals()` is missing, reverts, or returns invalid data. Pass a decimal
+    /// count to bypass token metadata.
+    #[arg(long, default_value = "raw", value_name = "DECIMALS|auto|raw")]
+    units: Erc20Units,
+}
+
+macro_rules! resolve_erc20_decimals {
+    ($erc20:expr, $units:expr, $block:expr) => {{
+        match $units.units {
+            Erc20Units::Raw => None,
+            Erc20Units::Decimals(decimals) => Some(decimals),
+            Erc20Units::Auto => {
+                let decimals =
+                    $erc20.decimals().block($block).call().await.wrap_err(AUTO_UNITS_ERROR)?;
+                Some(parse_erc20_decimals(decimals).wrap_err(AUTO_UNITS_ERROR)?)
+            }
+        }
+    }};
+}
+
+fn parse_erc20_decimals(decimals: U256) -> eyre::Result<u8> {
+    eyre::ensure!(
+        decimals <= U256::from(u8::MAX),
+        "expected a value between 0 and 255, got {decimals}"
+    );
+    Ok(decimals.to::<u8>())
+}
+
+fn validate_erc20_amount_precision(amount: &str, decimals: u8) -> eyre::Result<()> {
+    if let Some((_, fractional)) = amount.split_once('.') {
+        let precision = usize::from(decimals);
+        let fractional = fractional.as_bytes();
+        eyre::ensure!(
+            fractional.len() <= precision
+                || fractional[precision..].iter().all(|&digit| digit == b'0'),
+            "amount has more than {decimals} decimal places"
+        );
+    }
+    Ok(())
+}
+
+fn parse_erc20_amount(amount: &str, decimals: Option<u8>) -> eyre::Result<U256> {
+    let Some(decimals) = decimals else {
+        return Ok(U256::from_str(amount)?);
+    };
+
+    validate_erc20_amount_precision(amount, decimals).wrap_err_with(|| {
+        format!("failed to parse ERC-20 amount `{amount}` with {decimals} decimals")
+    })?;
+    let amount = SimpleCast::parse_units(amount, decimals).wrap_err_with(|| {
+        format!("failed to parse ERC-20 amount `{amount}` with {decimals} decimals")
+    })?;
+    Ok(U256::from_str(&amount)?)
+}
+
+fn format_erc20_amount(amount: U256, decimals: u8) -> eyre::Result<String> {
+    SimpleCast::format_units(&amount.to_string(), decimals)
+        .wrap_err_with(|| format!("failed to format ERC-20 amount with {decimals} decimals"))
 }
 
 /// Creates a provider with a pre-resolved signer.
@@ -98,6 +196,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         overrides: CallOverrideOpts,
+
+        #[command(flatten)]
+        units: Erc20UnitsOpts,
     },
 
     /// Transfer ERC20 tokens.
@@ -113,6 +214,9 @@ pub enum Erc20Subcommand {
 
         /// The amount to transfer.
         amount: String,
+
+        #[command(flatten)]
+        units: Erc20UnitsOpts,
 
         #[command(flatten)]
         send_tx: SendTxOpts,
@@ -134,6 +238,9 @@ pub enum Erc20Subcommand {
 
         /// The amount to approve.
         amount: String,
+
+        #[command(flatten)]
+        units: Erc20UnitsOpts,
 
         #[command(flatten)]
         send_tx: SendTxOpts,
@@ -163,6 +270,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        #[command(flatten)]
+        units: Erc20UnitsOpts,
     },
 
     /// Query ERC20 token name.
@@ -223,6 +333,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        #[command(flatten)]
+        units: Erc20UnitsOpts,
     },
 
     /// Mint ERC20 tokens (if the token supports minting).
@@ -240,6 +353,9 @@ pub enum Erc20Subcommand {
         amount: String,
 
         #[command(flatten)]
+        units: Erc20UnitsOpts,
+
+        #[command(flatten)]
         send_tx: SendTxOpts,
 
         #[command(flatten)]
@@ -255,6 +371,9 @@ pub enum Erc20Subcommand {
 
         /// The amount to burn.
         amount: String,
+
+        #[command(flatten)]
+        units: Erc20UnitsOpts,
 
         #[command(flatten)]
         send_tx: SendTxOpts,
@@ -666,35 +785,61 @@ impl Erc20Subcommand {
 
         match self {
             // Read-only
-            Self::Allowance { token, owner, spender, block, .. } => {
+            Self::Allowance { token, owner, spender, block, units, .. } => {
                 let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
                 let spender = spender.resolve(&provider).await?;
+                let block = block.unwrap_or_default();
+                let erc20 = IERC20::new(token, &provider);
+                let decimals = resolve_erc20_decimals!(erc20, units, block);
 
-                let allowance = IERC20::new(token, &provider)
-                    .allowance(owner, spender)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let allowance = erc20.allowance(owner, spender).block(block).call().await?;
 
-                if shell::is_json() {
+                if let Some(decimals) = decimals {
+                    let allowance = format_erc20_amount(allowance, decimals)?;
+                    if shell::is_json() {
+                        print_json_success(allowance)?;
+                    } else {
+                        sh_println!("{allowance}")?;
+                    }
+                } else if shell::is_json() {
                     print_json_success(allowance.to_string())?;
                 } else {
                     sh_println!("{}", format_uint_exp(allowance))?;
                 }
             }
-            Self::Balance { token, owner, block, overrides, .. } => {
+            Self::Balance { token, owner, block, overrides, units, .. } => {
                 let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
+                let block = block.unwrap_or_default();
 
-                let token = IERC20::new(token, &provider);
-                let balance_call = token.balanceOf(owner).block(block.unwrap_or_default());
+                let erc20 = IERC20::new(token, &provider);
+                let decimals = match units.units {
+                    Erc20Units::Raw => None,
+                    Erc20Units::Decimals(decimals) => Some(decimals),
+                    Erc20Units::Auto => {
+                        let decimals_call = erc20.decimals().block(block);
+                        let decimals = overrides
+                            .apply(decimals_call.call())?
+                            .await
+                            .wrap_err(AUTO_UNITS_ERROR)?;
+                        Some(parse_erc20_decimals(decimals).wrap_err(AUTO_UNITS_ERROR)?)
+                    }
+                };
+                let balance_call = erc20.balanceOf(owner).block(block);
                 let call = balance_call.call();
                 let balance = overrides.apply(call)?.await?;
 
-                if shell::is_json() {
+                if let Some(decimals) = decimals {
+                    let balance = format_erc20_amount(balance, decimals)?;
+                    if shell::is_json() {
+                        print_json_success(balance)?;
+                    } else {
+                        sh_println!("{balance}")?;
+                    }
+                } else if shell::is_json() {
                     print_json_success(balance.to_string())?;
                 } else {
                     sh_println!("{balance}")?;
@@ -733,43 +878,61 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
+                let decimals =
+                    parse_erc20_decimals(decimals).wrap_err("invalid ERC-20 `decimals()` value")?;
                 print_scalar(decimals)?;
             }
-            Self::TotalSupply { token, block, .. } => {
+            Self::TotalSupply { token, block, units, .. } => {
                 let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
+                let block = block.unwrap_or_default();
+                let erc20 = IERC20::new(token, &provider);
+                let decimals = resolve_erc20_decimals!(erc20, units, block);
 
-                let total_supply = IERC20::new(token, &provider)
-                    .totalSupply()
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let total_supply = erc20.totalSupply().block(block).call().await?;
 
-                if shell::is_json() {
+                if let Some(decimals) = decimals {
+                    let total_supply = format_erc20_amount(total_supply, decimals)?;
+                    if shell::is_json() {
+                        print_json_success(total_supply)?;
+                    } else {
+                        sh_println!("{total_supply}")?;
+                    }
+                } else if shell::is_json() {
                     print_json_success(total_supply.to_string())?;
                 } else {
                     sh_println!("{}", format_uint_exp(total_supply))?
                 }
             }
             // State-changing
-            Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
+            Self::Transfer { token, to, amount, units, send_tx, tx: tx_opts, .. } => {
                 erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
-                    erc20.transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                    let decimals = resolve_erc20_decimals!(erc20, units, BlockId::default());
+                    erc20.transfer(
+                        to.resolve(&provider).await?,
+                        parse_erc20_amount(&amount, decimals)?,
+                    )
                 })
             }
-            Self::Approve { token, spender, amount, send_tx, tx: tx_opts, .. } => {
+            Self::Approve { token, spender, amount, units, send_tx, tx: tx_opts, .. } => {
                 erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
-                    erc20.approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
+                    let decimals = resolve_erc20_decimals!(erc20, units, BlockId::default());
+                    erc20.approve(
+                        spender.resolve(&provider).await?,
+                        parse_erc20_amount(&amount, decimals)?,
+                    )
                 })
             }
-            Self::Mint { token, to, amount, send_tx, tx: tx_opts, .. } => {
+            Self::Mint { token, to, amount, units, send_tx, tx: tx_opts, .. } => {
                 erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
-                    erc20.mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                    let decimals = resolve_erc20_decimals!(erc20, units, BlockId::default());
+                    erc20.mint(to.resolve(&provider).await?, parse_erc20_amount(&amount, decimals)?)
                 })
             }
-            Self::Burn { token, amount, send_tx, tx: tx_opts, .. } => {
+            Self::Burn { token, amount, units, send_tx, tx: tx_opts, .. } => {
                 erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
-                    erc20.burn(U256::from_str(&amount)?)
+                    let decimals = resolve_erc20_decimals!(erc20, units, BlockId::default());
+                    erc20.burn(parse_erc20_amount(&amount, decimals)?)
                 })
             }
         };

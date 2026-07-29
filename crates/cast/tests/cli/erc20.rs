@@ -48,17 +48,10 @@ fn deploy_test_token(
     cmd: &mut foundry_test_utils::TestCommand,
     rpc: &str,
     private_key: &str,
+    contract: &str,
 ) -> String {
-    cmd.args([
-        "create",
-        "--private-key",
-        private_key,
-        "--rpc-url",
-        rpc,
-        "--broadcast",
-        "src/TestToken.sol:TestToken",
-    ])
-    .assert_success();
+    cmd.args(["create", "--private-key", private_key, "--rpc-url", rpc, "--broadcast", contract])
+        .assert_success();
 
     // Return the standard deployment address (nonce 0 from first account)
     anvil_const::TOKEN.to_string()
@@ -75,7 +68,22 @@ async fn setup_token_test(
     // Deploy TestToken contract
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source("TestToken.sol", include_str!("../fixtures/TestToken.sol"));
-    let token = deploy_test_token(cmd, &rpc, anvil_const::PK1);
+    let token = deploy_test_token(cmd, &rpc, anvil_const::PK1, "src/TestToken.sol:TestToken");
+
+    (rpc, token, handle)
+}
+
+/// Helper to setup anvil node and deploy a six-decimal test token.
+async fn setup_six_decimal_token_test(
+    prj: &foundry_test_utils::TestProject,
+    cmd: &mut foundry_test_utils::TestCommand,
+) -> (String, String, NodeHandle) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source("TestToken6.sol", include_str!("../fixtures/TestToken6.sol"));
+    let token = deploy_test_token(cmd, &rpc, anvil_const::PK1, "src/TestToken6.sol:TestToken6");
 
     (rpc, token, handle)
 }
@@ -212,6 +220,292 @@ forgetest_async!(erc20_approval_allowance, |prj, cmd| {
     // Verify allowance was set
     let allowance = get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc);
     assert_eq!(allowance, approve_amount);
+});
+
+forgetest_async!(erc20_units_raw_default_and_explicit, |prj, cmd| {
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
+
+    for units in [None, Some("raw")] {
+        let mut args = vec![
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            "1",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ];
+        if let Some(units) = units {
+            args.extend(["--units", units]);
+        }
+        cmd.cast_fuse().args(args).assert_success();
+    }
+
+    let balance = get_u256_from_cmd(
+        &mut cmd,
+        &["erc20", "balance", &token, anvil_const::ADDR2, "--units", "raw", "--rpc-url", &rpc],
+    );
+    assert_eq!(balance, U256::from(2));
+});
+
+forgetest_async!(erc20_units_auto_18_decimals, |prj, cmd| {
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            "1.5",
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR2,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1.500000000000000000
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "approve",
+            &token,
+            anvil_const::ADDR2,
+            "2.25",
+            "--units",
+            "18",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "allowance",
+            &token,
+            anvil_const::ADDR1,
+            anvil_const::ADDR2,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+2.250000000000000000
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "mint",
+            &token,
+            anvil_const::ADDR2,
+            "0.5",
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "burn",
+            &token,
+            "1.25",
+            "--units",
+            "18",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args(["erc20", "total-supply", &token, "--units", "auto", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+999.250000000000000000
+
+"#]]);
+});
+
+forgetest_async!(erc20_units_explicit_and_auto_6_decimals, |prj, cmd| {
+    let (rpc, token, _handle) = setup_six_decimal_token_test(&prj, &mut cmd).await;
+
+    for (amount, units) in [("1.25", "6"), ("0.5", "auto")] {
+        cmd.cast_fuse()
+            .args([
+                "erc20",
+                "transfer",
+                &token,
+                anvil_const::ADDR2,
+                amount,
+                "--units",
+                units,
+                "--rpc-url",
+                &rpc,
+                "--private-key",
+                anvil_const::PK1,
+            ])
+            .assert_success();
+    }
+
+    assert_eq!(get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc), U256::from(1_750_000),);
+
+    cmd.cast_fuse()
+        .args([
+            "--json",
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR2,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_json_stdout(str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": "1.750000",
+  "errors": [],
+  "warnings": []
+}
+
+"#]]);
+});
+
+casttest!(erc20_units_auto_metadata_failures, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let token = "0x00000000000000000000000000000000000000aa";
+
+    for override_code in [None, Some("0x60006000fd"), Some("0x61010060005260206000f3")] {
+        let mut args = vec![
+            "erc20",
+            "balance",
+            token,
+            anvil_const::ADDR1,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ];
+        let override_arg;
+        if let Some(code) = override_code {
+            override_arg = format!("{token}:{code}");
+            args.extend(["--override-code", &override_arg]);
+        }
+
+        let assert = cmd.cast_fuse().args(args).assert_failure();
+        let output = assert.get_output();
+        assert!(output.stdout.is_empty());
+        assert!(
+            output.stderr_lossy().starts_with("Error: failed to query ERC-20 `decimals()`"),
+            "unexpected metadata error: {}",
+            output.stderr_lossy(),
+        );
+    }
+
+    let override_arg = format!("{token}:0x61010060005260206000f3");
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            token,
+            anvil_const::ADDR1,
+            "--units",
+            "6",
+            "--rpc-url",
+            &rpc,
+            "--override-code",
+            &override_arg,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0.000256
+
+"#]]);
+});
+
+forgetest_async!(erc20_units_reject_malformed_amounts, |prj, cmd| {
+    let (rpc, token, _handle) = setup_six_decimal_token_test(&prj, &mut cmd).await;
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            "0.0000001",
+            "--units",
+            "6",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_failure();
+    let output = assert.get_output();
+    assert!(output.stdout.is_empty());
+    assert!(
+        output
+            .stderr_lossy()
+            .starts_with("Error: failed to parse ERC-20 amount `0.0000001` with 6 decimals"),
+        "unexpected amount error: {}",
+        output.stderr_lossy(),
+    );
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            "1.5",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_failure();
+    let output = assert.get_output();
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty(), "fractional amounts must fail in raw mode",);
 });
 
 // tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly
@@ -583,6 +877,23 @@ casttest!(erc20_transfer_help_includes_tempo_expires, |_prj, cmd| {
         output.contains("--tempo.expires <SECONDS>"),
         "expected erc20 transfer help to expose --tempo.expires, got:\n{output}",
     );
+});
+
+casttest!(erc20_units_help, |_prj, cmd| {
+    for subcommand in ["balance", "transfer"] {
+        let output = cmd
+            .cast_fuse()
+            .args(["erc20", subcommand, "--help"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+
+        assert!(output.contains("--units <DECIMALS|auto|raw>"), "{output}");
+        assert!(output.contains("[default: raw]"), "{output}");
+        assert!(output.contains("fails if `decimals()` is missing"), "{output}");
+        assert!(output.contains("Pass a decimal count"), "{output}");
+        assert!(output.contains("to bypass token metadata"), "{output}");
+    }
 });
 
 forgetest_async!(erc20_transfer_prints_tempo_sponsor_hash, |_prj, cmd| {
