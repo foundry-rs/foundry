@@ -3,7 +3,7 @@ use crate::cmd::{
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
     fmt::FmtArgs, fuzz::FuzzArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
     lint::LintArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
-    snapshot, soldeer, test, tree, update,
+    snapshot, soldeer, storage_layout::StorageLayoutArgs, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -194,6 +194,27 @@ pub enum ForgeSubcommand {
     /// - forge inspect src/Counter.sol:Counter storageLayout
     #[command(verbatim_doc_comment, visible_alias = "in")]
     Inspect(inspect::InspectArgs),
+
+    /// Check a contract's compiler storage layout against a previous layout.
+    ///
+    /// This compares storage slots, offsets, types, and declaring contracts semantically. Compiler
+    /// type and AST identifiers are ignored, while compatible state-variable appends are allowed.
+    /// The command exits unsuccessfully when it cannot establish compatibility.
+    ///
+    /// The reference may be a compiler storage layout, a contract artifact containing
+    /// `storageLayout`, or a `.clone.meta` file. It defaults to `.clone.meta` in the project root.
+    ///
+    /// Namespaced (including EIP-7201) and manually computed slots are checked only when
+    /// represented in the compiler `storage` array. This does not check contract behavior or
+    /// complete upgrade safety.
+    ///
+    /// Examples:
+    /// - forge storage-layout
+    /// - forge storage-layout Counter
+    /// - forge storage-layout Counter --reference previous-layout.json
+    /// - forge storage-layout Counter --reference previous-artifact.json --json
+    #[command(verbatim_doc_comment)]
+    StorageLayout(StorageLayoutArgs),
 
     /// Display a tree visualization of the project's dependency graph.
     #[command(visible_alias = "tr")]
