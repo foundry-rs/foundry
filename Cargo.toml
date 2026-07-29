@@ -634,5 +634,12 @@ tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f3186ee0c90bd4922b1dea779f4073d1" }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f3186ee0c90bd4922b1dea779f4073d1" }
 
+[patch."https://github.com/tempoxyz/tempo?rev=ddbe8350c5b449a6bb98660e21bb6e9107f3cbe1"]
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f3186ee0c90bd4922b1dea779f4073d1" }
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f3186ee0c90bd4922b1dea779f4073d1" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f3186ee0c90bd4922b1dea779f4073d1" }
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f3186ee0c90bd4922b1dea779f4073d1" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "3e34bb94f3186ee0c90bd4922b1dea779f4073d1" }
+
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
