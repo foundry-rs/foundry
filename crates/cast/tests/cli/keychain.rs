@@ -18,7 +18,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tempo_alloy_accounts::accounts::TempoAccountsStore;
+use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
 use tempo_primitives::TempoTxEnvelope;
 

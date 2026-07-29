@@ -20,7 +20,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
-use tempo_alloy_accounts::accounts::TempoAccountsKeyAuthorization;
+use tempo_alloy::accounts::TempoAccountsKeyAuthorization;
 use tempo_primitives::transaction::{SignatureType, SignedKeyAuthorization};
 use tokio::sync::Mutex;
 

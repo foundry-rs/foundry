@@ -6,7 +6,7 @@ use eyre::ensure;
 use foundry_wallets::TempoAccountsWallet;
 use serde::{Deserialize, Serialize};
 use std::{fmt, num::NonZeroU64, time::SystemTime};
-use tempo_alloy_accounts::accounts::TempoAccountsStore;
+use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_primitives::transaction::{
     CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
 };
