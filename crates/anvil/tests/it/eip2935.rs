@@ -1,15 +1,49 @@
 use crate::utils::http_provider;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2935::HISTORY_STORAGE_ADDRESS};
+use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{B256, U256, address, bytes};
+use alloy_primitives::{Address, B256, Bytes, U256, address, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     TransactionRequest,
-    trace::{opcode::BlockOpcodeGas, parity::TraceType},
+    trace::{
+        opcode::BlockOpcodeGas,
+        parity::{TraceResults, TraceResultsWithTransactionHash, TraceType},
+    },
 };
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, PrecompileFactory, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
+use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+const REPLAY_PRE_EXECUTION_ERROR: &str = "replay pre-execution sentinel";
+
+#[derive(Debug)]
+struct FailingHistoryPrecompile(Arc<AtomicBool>);
+
+impl PrecompileFactory for FailingHistoryPrecompile {
+    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+        let fail = Arc::clone(&self.0);
+        let precompile = DynPrecompile::from(move |input: PrecompileInput<'_>| {
+            if fail.load(Ordering::SeqCst) {
+                return Err(PrecompileError::Fatal(REPLAY_PRE_EXECUTION_ERROR.to_string()));
+            }
+            Ok(PrecompileOutput {
+                status: PrecompileStatus::Success,
+                bytes: Bytes::new(),
+                gas_used: 0,
+                gas_refunded: 0,
+                state_gas_used: 0,
+                reservoir: input.reservoir,
+            })
+        });
+        vec![(HISTORY_STORAGE_ADDRESS, precompile)]
+    }
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn eip2935_contract_deployed_at_genesis() {
@@ -137,4 +171,51 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
         .await
         .unwrap();
     assert!(opcode_gas.expect("block should exist").contains("SSTORE"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
+    let fail = Arc::new(AtomicBool::new(false));
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_precompile_factory(FailingHistoryPrecompile(Arc::clone(&fail)));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = handle.http_provider();
+
+    let mut wallets = handle.dev_wallets();
+    let from = wallets.next().unwrap().address();
+    let to = wallets.next().unwrap().address();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(to).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    fail.store(true, Ordering::SeqCst);
+
+    let block_replay: Result<Vec<TraceResultsWithTransactionHash>, _> = provider
+        .client()
+        .request("trace_replayBlockTransactions", (block_number, vec![TraceType::Trace]))
+        .await;
+    let transaction_replay: Result<TraceResults, _> = provider
+        .client()
+        .request("trace_replayTransaction", (receipt.transaction_hash, vec![TraceType::Trace]))
+        .await;
+    let opcode_replay: Result<Option<BlockOpcodeGas>, _> =
+        provider.raw_request("trace_blockOpcodeGas".into(), (BlockId::number(block_number),)).await;
+
+    for error in
+        [block_replay.unwrap_err(), transaction_replay.unwrap_err(), opcode_replay.unwrap_err()]
+    {
+        let response = error.as_error_resp().expect("should return a JSON-RPC error");
+        assert_eq!(response.code, -32603);
+        assert!(response.message.contains(REPLAY_PRE_EXECUTION_ERROR), "{response:?}");
+    }
+
+    assert_eq!(provider.get_block_number().await.unwrap(), block_number);
 }
