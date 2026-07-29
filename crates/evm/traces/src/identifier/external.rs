@@ -183,10 +183,6 @@ impl ExternalIdentifier {
         }
     }
 
-    fn fetch_addresses(&mut self, addresses: &[Address]) {
-        foundry_common::block_on(self.fetch_addresses_async(addresses));
-    }
-
     async fn fetch_addresses_async(&mut self, addresses: &[Address]) {
         if addresses.is_empty() || self.remaining_budget.is_zero() {
             return;
@@ -248,7 +244,7 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "fetching {} addresses", to_fetch.len());
 
         let to_fetch = to_fetch.into_iter().collect::<Vec<_>>();
-        self.fetch_addresses(&to_fetch);
+        foundry_common::block_on(self.fetch_addresses_async(&to_fetch));
 
         for address in to_fetch {
             if let Some((_, Some(metadata))) = self.contracts.get(&address) {

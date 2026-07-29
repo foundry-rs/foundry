@@ -303,7 +303,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 value: failure.value,
             },
         };
-        self.resolve_stateless_tx(&mut tx)?;
+        self.resolve_stateless_tx_with_executor(&self.executor_f, &mut tx)?;
         let mut call = self.executor_f.call_raw(
             tx.sender,
             tx.call_details.target,
@@ -455,10 +455,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 breakpoints,
             }))
         }
-    }
-
-    fn resolve_stateless_tx(&self, tx: &mut BasicTxDetails) -> Result<()> {
-        self.resolve_stateless_tx_with_executor(&self.executor_f, tx)
     }
 
     fn resolve_stateless_tx_with_executor(

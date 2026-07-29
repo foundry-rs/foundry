@@ -240,11 +240,14 @@ fn emit_halmos_arg(values: &mut Vec<String>, arg: HalmosArg, value: &str) -> Res
         HalmosArgParser::ArrayLengths => push_halmos_array_lengths(values, value),
         HalmosArgParser::Lengths => push_halmos_lengths(values, arg.foundry_field, value, arg.flag),
         HalmosArgParser::U32 => {
-            push_halmos_u32(values, arg.foundry_field, parse_halmos_u32(value, arg.flag)?);
+            let value = value
+                .parse::<u32>()
+                .map_err(|_| format!("invalid value `{value}` for {}", arg.flag))?;
+            values.push(format!("default.symbolic.{} = {value}", arg.foundry_field));
             Ok(())
         }
         HalmosArgParser::String => {
-            push_halmos_string(values, arg.foundry_field, value);
+            values.push(format!("default.symbolic.{} = {}", arg.foundry_field, toml_string(value)));
             Ok(())
         }
     }
@@ -284,20 +287,8 @@ fn push_halmos_lengths(
     Ok(())
 }
 
-fn push_halmos_u32(values: &mut Vec<String>, field: &str, value: u32) {
-    values.push(format!("default.symbolic.{field} = {value}"));
-}
-
-fn push_halmos_string(values: &mut Vec<String>, field: &str, value: &str) {
-    values.push(format!("default.symbolic.{field} = {}", toml_string(value)));
-}
-
 fn toml_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn parse_halmos_u32(value: &str, flag: &str) -> Result<u32, String> {
-    value.parse::<u32>().map_err(|_| format!("invalid value `{value}` for {flag}"))
 }
 
 enum HalmosArrayLengths {

@@ -106,7 +106,9 @@ pub struct ResolvedSessionSigner {
 }
 
 pub fn read_session_entry(session_id: B256) -> eyre::Result<Option<SessionEntry>> {
-    Ok(read_session_entries(now_unix())?
+    let now =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+    Ok(read_session_entries(now)?
         .and_then(|entries| entries.into_iter().find(|entry| entry.session_id == session_id)))
 }
 
@@ -424,10 +426,6 @@ fn read_session_entries(now: u64) -> eyre::Result<Option<Vec<SessionEntry>>> {
         })
         .collect();
     Ok(Some(sessions))
-}
-
-fn now_unix() -> u64 {
-    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
 #[cfg(test)]

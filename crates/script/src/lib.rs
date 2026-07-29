@@ -885,10 +885,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(())
     }
 
-    async fn get_runner(&mut self) -> Result<ScriptRunner<FEN>> {
-        self._get_runner(None, false, false).await
-    }
-
     async fn get_runner_with_cheatcodes(
         &mut self,
         known_contracts: ContractsByArtifact,
