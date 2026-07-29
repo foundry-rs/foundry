@@ -20,9 +20,8 @@ pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::utils::StateChangeset;
 
-type DynamicTargetCacheKey = (Address, B256);
 type DynamicTargetArtifactMatchCache =
-    Rc<RefCell<HashMap<DynamicTargetCacheKey, Option<CachedTargetContract>>>>;
+    Rc<RefCell<HashMap<(Address, B256), Option<CachedTargetContract>>>>;
 type FuzzedFunction = (Address, Function);
 type FunctionLookup = HashMap<Selector, Function>;
 
@@ -716,10 +715,6 @@ mod tests {
         }
     }
 
-    fn project_contracts_with_runtime_code(name: &str, code: Bytes) -> ContractsByArtifact {
-        project_contracts_with_runtime_code_and_abi(name, code, JsonAbi::new())
-    }
-
     fn project_contracts_with_runtime_code_and_abi(
         name: &str,
         code: Bytes,
@@ -832,8 +827,11 @@ mod tests {
         let setup = Address::from([0x44; 20]);
         let untouched = Address::from([0x45; 20]);
         let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
-        let project_contracts =
-            project_contracts_with_runtime_code("DynamicTarget", runtime_code.clone());
+        let project_contracts = project_contracts_with_runtime_code_and_abi(
+            "DynamicTarget",
+            runtime_code.clone(),
+            JsonAbi::new(),
+        );
         let mut targets = TargetedContracts::new();
         for address in [existing, setup, untouched] {
             targets.inner.insert(
