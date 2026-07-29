@@ -181,11 +181,18 @@ async fn can_load_state_without_block_history() {
 // <https://github.com/foundry-rs/foundry/issues/10363>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_state_without_block_history_at_runtime() {
-    let (state, _, _, _) = state_without_block_history().await;
+    let (mut state, _, _, _) = state_without_block_history().await;
+    let loaded_beneficiary = address!("0000000000000000000000000000000000010363");
+    state["block"]["coinbase"] = json!(loaded_beneficiary);
+
     let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.backend.set_coinbase(address!("0000000000000000000000000000000000000001"));
     api.mine_one().await;
     let parent =
         api.block_by_number(alloy_eips::BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    api.mine_one().await;
+    let previous =
+        api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
 
@@ -193,6 +200,9 @@ async fn can_load_state_without_block_history_at_runtime() {
         api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(checkpoint.header.number, 2);
     assert_eq!(checkpoint.header.parent_hash, parent.header.hash);
+    assert_eq!(checkpoint.header.beneficiary, loaded_beneficiary);
+    assert_ne!(checkpoint.header.hash, previous.header.hash);
+    assert_eq!(checkpoint.header.hash, api.backend.best_hash());
 
     api.mine_one().await;
     let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
@@ -224,16 +234,63 @@ async fn state_without_block_history_restores_osaka_blob_excess_gas() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_nonempty_block_history_without_best_block() {
     let (source, _handle) = spawn(NodeConfig::test()).await;
+    source.backend.set_coinbase(address!("0000000000000000000000000000000000000002"));
+    source.mine_one().await;
     source.mine_one().await;
     source.mine_one().await;
     let mut state = source.serialized_state(false).await.unwrap();
-    state.blocks.retain(|block| block.header.number != 2);
+    state.blocks.retain(|block| block.header.number != 3);
     assert!(!state.blocks.is_empty());
+    let incoming_hash =
+        state.blocks.iter().find(|block| block.header.number == 2).unwrap().header.hash_slow();
 
     let (api, _handle) = spawn(NodeConfig::test()).await;
+    let original_coinbase = address!("0000000000000000000000000000000000000001");
+    api.backend.set_coinbase(original_coinbase);
+    api.mine_one().await;
+    let original =
+        api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert!(api.block_by_hash(incoming_hash).await.unwrap().is_none());
+
     let err =
         api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap_err();
-    assert!(err.to_string().contains("Best hash not found for best number 2"));
+    assert!(err.to_string().contains("Best hash not found for best number 3"));
+    assert_eq!(api.backend.best_number(), original.header.number);
+    assert_eq!(api.backend.best_hash(), original.header.hash);
+    assert_eq!(api.backend.coinbase(), original_coinbase);
+    assert!(api.block_by_hash(incoming_hash).await.unwrap().is_none());
+
+    api.mine_one().await;
+    let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(latest.header.number, original.header.number + 1);
+    assert_eq!(latest.header.parent_hash, original.header.hash);
+    assert_eq!(latest.header.beneficiary, original_coinbase);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn loaded_state_fees_use_selected_head() {
+    let (source, _handle) = spawn(NodeConfig::test()).await;
+    source.mine_one().await;
+    let mut state = source.serialized_state(false).await.unwrap();
+    let selected_hash = source.backend.best_hash();
+    let selected_next_base_fee = source.backend.fees().base_fee();
+
+    source.mine_one().await;
+    let newer_state = source.serialized_state(false).await.unwrap();
+    let newer_block =
+        newer_state.blocks.into_iter().find(|block| block.header.number == 2).unwrap();
+    assert_ne!(source.backend.fees().base_fee(), selected_next_base_fee);
+    state.blocks.push(newer_block);
+
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+    assert_eq!(api.backend.best_hash(), selected_hash);
+    assert_eq!(api.backend.fees().base_fee(), selected_next_base_fee);
+
+    api.mine_one().await;
+    let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(latest.header.parent_hash, selected_hash);
+    assert_eq!(latest.header.base_fee_per_gas, Some(selected_next_base_fee));
 }
 
 #[tokio::test(flavor = "multi_thread")]

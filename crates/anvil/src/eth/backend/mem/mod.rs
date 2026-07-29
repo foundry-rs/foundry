@@ -5248,24 +5248,14 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage atomically so concurrent readers
-        // never observe blocks without their transactions
-        {
-            let mut storage = self.blockchain.storage.write();
-            storage.load_blocks(state.blocks.clone());
-            storage.load_transactions(state.transactions.clone());
-        }
-        let mut checkpoint_header = None;
-        // reset the block env
-        if let Some(block) = state.block.clone() {
-            {
-                let mut env = self.evm_env.write();
-                env.block_env = block.clone();
-                if self.is_tempo() && self.is_fork() && env.block_env.beneficiary.is_zero() {
-                    env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
-                }
+        let mut block_env = state.block.clone();
+        let mut selected_head = None;
+        let mut selected_header = None;
+        let mut checkpoint = None;
+        if let Some(block) = &mut block_env {
+            if self.is_tempo() && self.is_fork() && block.beneficiary.is_zero() {
+                block.beneficiary = TIP_FEE_MANAGER_ADDRESS;
             }
-
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
@@ -5290,24 +5280,19 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             };
 
             let best_hash = if let Some(hash) = selected_best_hash {
-                hash
-            } else if let Some(hash) = self
-                .blockchain
-                .storage
-                .read()
-                .hash(selected_best_number.into(), self.slots_in_an_epoch)
-            {
+                selected_header = state
+                    .blocks
+                    .iter()
+                    .rev()
+                    .find(|block| block.header.hash_slow() == hash)
+                    .map(|block| block.header.clone());
                 hash
             } else if state.blocks.is_empty() {
                 let spec_id = self.spec_id();
                 let is_cancun = spec_id >= SpecId::CANCUN;
-                let parent_hash = self
-                    .blockchain
-                    .storage
-                    .read()
-                    .hashes
-                    .get(&selected_best_number.saturating_sub(1))
-                    .copied()
+                let parent_hash = selected_best_number
+                    .checked_sub(1)
+                    .and_then(|number| self.blockchain.storage.read().hashes.get(&number).copied())
                     .unwrap_or_default();
                 let header = Header {
                     parent_hash,
@@ -5326,43 +5311,65 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     ..Default::default()
                 };
                 let header = FoundryHeader::new(header, self.is_tempo());
-                checkpoint_header = Some(header.clone());
-                let checkpoint = create_block(
+                let best_hash = header.hash_slow();
+                selected_header = Some(header.clone());
+                checkpoint = Some(create_block(
                     header,
                     Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
-                );
+                ));
                 warn!(
                     target: "backend",
                     block_number = selected_best_number,
                     "state dump has no block history; created a synthetic checkpoint block"
                 );
-                self.blockchain.storage.write().insert_block(checkpoint)
+                best_hash
+            } else if let Some(header) = state
+                .blocks
+                .iter()
+                .rev()
+                .find(|block| block.header.number() == selected_best_number)
+                .map(|block| block.header.clone())
+            {
+                let best_hash = header.hash_slow();
+                selected_header = Some(header);
+                best_hash
             } else {
                 return Err(BlockchainError::RpcError(RpcError::internal_error_with(format!(
                     "Best hash not found for best number {selected_best_number}",
                 ))));
             };
 
-            {
-                let mut storage = self.blockchain.storage.write();
-                storage.best_number = selected_best_number;
-                storage.best_hash = best_hash;
-            }
+            selected_head = Some((selected_best_number, best_hash));
+        }
 
-            // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
-            // can intentionally keep BlockEnv.number distinct from the best L2 block number.
-            if !is_arbitrum(self.chain_id().to()) {
-                self.set_block_number(selected_best_number);
+        // Apply the prepared chain data atomically so concurrent readers never observe blocks
+        // without their transactions or a partially updated head.
+        {
+            let mut storage = self.blockchain.storage.write();
+            storage.load_blocks(state.blocks.clone());
+            storage.load_transactions(state.transactions.clone());
+            if let Some(checkpoint) = checkpoint {
+                storage.insert_block(checkpoint);
+            }
+            if let Some((number, hash)) = selected_head {
+                storage.hashes.insert(number, hash);
+                storage.best_number = number;
+                storage.best_hash = hash;
             }
         }
 
-        let latest_header = state
-            .blocks
-            .iter()
-            .max_by_key(|block| block.header.number())
-            .map(|block| &block.header)
-            .or(checkpoint_header.as_ref());
-        if let Some(header) = latest_header {
+        if let Some(mut block) = block_env {
+            // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
+            // can intentionally keep BlockEnv.number distinct from the best L2 block number.
+            if !is_arbitrum(self.chain_id().to())
+                && let Some((number, _)) = selected_head
+            {
+                block.number = U256::from(number);
+            }
+            self.evm_env.write().block_env = block;
+        }
+
+        if let Some(header) = selected_header.as_ref() {
             let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                 header.gas_used(),
                 header.gas_limit(),
