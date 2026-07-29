@@ -8,6 +8,7 @@ use crate::mutation::mutators::Mutator;
 use crate::mutation::{
     mutant::{Mutant, OwnedLiteral},
     mutators::{MutationContext, mutator_registry::MutatorRegistry},
+    type_analysis::{EquivalentMutation, EquivalentMutationSet},
 };
 use foundry_config::MutatorType;
 
@@ -33,6 +34,7 @@ pub struct MutantVisitor<'src> {
     /// matched the filter. Top-level items (outside any contract) are always
     /// considered "allowed".
     in_allowed_contract: bool,
+    equivalent_mutations: EquivalentMutationSet,
 }
 
 impl<'src> MutantVisitor<'src> {
@@ -46,6 +48,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
+            equivalent_mutations: EquivalentMutationSet::new(),
         }
     }
 
@@ -60,6 +63,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
+            equivalent_mutations: EquivalentMutationSet::new(),
         }
     }
 
@@ -74,6 +78,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
+            equivalent_mutations: EquivalentMutationSet::new(),
         }
     }
 
@@ -93,13 +98,26 @@ impl<'src> MutantVisitor<'src> {
         self
     }
 
+    /// Exclude binary operator replacements proven equivalent by type analysis.
+    pub fn with_equivalent_mutations(mut self, mutations: EquivalentMutationSet) -> Self {
+        self.equivalent_mutations = mutations;
+        self
+    }
+
     pub fn take_errors(&mut self) -> Vec<Report> {
         std::mem::take(&mut self.errors)
     }
 
     fn collect_mutations(&mut self, context: &MutationContext<'_>) {
         let result = self.mutator_registry.generate_mutations(context);
-        self.mutation_to_conduct.extend(result.mutations);
+        self.mutation_to_conduct.extend(result.mutations.into_iter().filter(|mutant| {
+            let crate::mutation::mutant::MutationType::BinaryOpExpr { new_op, .. } =
+                mutant.mutation
+            else {
+                return true;
+            };
+            !self.equivalent_mutations.contains(&EquivalentMutation::new(mutant.span, new_op))
+        }));
 
         for err in result.errors {
             self.errors.push(err.wrap_err(format!(
@@ -286,6 +304,53 @@ contract Test {
             let err = format!("{:?}", errors[0]);
             assert!(err.contains("failed to generate mutations for test.sol:"));
             assert!(err.contains("synthetic visitor failure"));
+        });
+    }
+
+    #[test]
+    fn visitor_excludes_proven_equivalent_binary_mutations() {
+        let source = "\
+pragma solidity ^0.8.0;
+contract Test {
+    function check(uint256 x) public pure returns (bool) {
+        return x == 0;
+    }
+}
+";
+        let path = PathBuf::from("test.sol");
+        let lo = source.find("x == 0").unwrap() as u32;
+        let span = solar::ast::Span::new(
+            solar::interface::BytePos(lo),
+            solar::interface::BytePos(lo + "x == 0".len() as u32),
+        );
+        let equivalent_mutations =
+            [EquivalentMutation::new(span, solar::ast::BinOpKind::Le)].into_iter().collect();
+        let sess = Session::builder().with_silent_emitter(None).build();
+
+        sess.enter(|| {
+            let arena = Arena::new();
+            let mut parser =
+                Parser::from_lazy_source_code(&sess, &arena, FileName::Real(path.clone()), || {
+                    Ok(source.to_string())
+                })
+                .unwrap();
+            let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+            drop(parser);
+            let mut visitor = MutantVisitor::default(path)
+                .with_source(source)
+                .with_equivalent_mutations(equivalent_mutations);
+
+            let _ = visitor.visit_source_unit(&ast);
+            let comparison_mutations = visitor.mutation_to_conduct.iter().filter_map(|mutant| {
+                let MutationType::BinaryOpExpr { new_op, .. } = mutant.mutation else {
+                    return None;
+                };
+                (mutant.span == span).then_some(new_op)
+            });
+            let comparison_mutations = comparison_mutations.collect::<Vec<_>>();
+
+            assert!(!comparison_mutations.contains(&solar::ast::BinOpKind::Le));
+            assert!(comparison_mutations.contains(&solar::ast::BinOpKind::Lt));
         });
     }
 }
