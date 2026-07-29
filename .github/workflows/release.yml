@@ -65,17 +65,16 @@ jobs:
           }
 
           if [[ ${IS_NIGHTLY} == 'true' ]]; then
-            printf 'tag_name=%s\n' "nightly-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-            printf 'release_name=%s\n' "Nightly ($(date '+%Y-%m-%d'))" >> "$GITHUB_OUTPUT"
-            printf 'is_prerelease=true\n' >> "$GITHUB_OUTPUT"
+            tag_name="nightly-${GITHUB_SHA}"
+            release_name="Nightly ($(date '+%Y-%m-%d'))"
+            is_prerelease=true
             # Find the previous nightly tag for changelog generation,
             # sorted by tag creation date (most recent first).
-            PREV_NIGHTLY=$(git for-each-ref --sort=-creatordate --count=1 \
+            from_tag=$(git for-each-ref --sort=-creatordate --count=1 \
               --format='%(refname:strip=2)' 'refs/tags/nightly-*')
-            printf 'from_tag=%s\n' "$PREV_NIGHTLY" >> "$GITHUB_OUTPUT"
           else
-            printf 'tag_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-            printf 'release_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            tag_name="$GITHUB_REF_NAME"
+            release_name="$GITHUB_REF_NAME"
 
             if [[ "$GITHUB_REF_NAME" =~ $stable_pattern ]]; then
               PREV_STABLE=$(previous_tag "$GITHUB_REF_NAME" "$stable_pattern")
@@ -83,13 +82,13 @@ jobs:
                 echo "::error::No preceding strict stable tag found for $GITHUB_REF_NAME."
                 exit 1
               fi
-              printf 'is_prerelease=false\n' >> "$GITHUB_OUTPUT"
-              printf 'from_tag=%s\n' "$PREV_STABLE" >> "$GITHUB_OUTPUT"
+              is_prerelease=false
+              from_tag="$PREV_STABLE"
             elif [[ "$GITHUB_REF_NAME" =~ $rc_pattern ]]; then
               core="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
               core_rc_pattern="^v${BASH_REMATCH[1]}\.${BASH_REMATCH[2]}\.${BASH_REMATCH[3]}-rc([1-9][0-9]*)$"
               rc_number=${BASH_REMATCH[4]}
-              printf 'is_prerelease=true\n' >> "$GITHUB_OUTPUT"
+              is_prerelease=true
 
               # Prefer the preceding strict RC for this version. For rc1, fall
               # back to the preceding strict stable release.
@@ -106,12 +105,17 @@ jobs:
                 echo "::error::No preceding strict stable tag found for $GITHUB_REF_NAME."
                 exit 1
               fi
-              printf 'from_tag=%s\n' "$from_tag" >> "$GITHUB_OUTPUT"
             else
               echo "::error::Release tag must be vX.Y.Z or vX.Y.Z-rcN without leading zeroes."
               exit 1
             fi
           fi
+          {
+            printf 'tag_name=%s\n' "$tag_name"
+            printf 'release_name=%s\n' "$release_name"
+            printf 'is_prerelease=%s\n' "$is_prerelease"
+            printf 'from_tag=%s\n' "$from_tag"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Check existing nightly release
         id: existing_release
