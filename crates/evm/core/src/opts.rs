@@ -29,11 +29,6 @@ pub struct EvmOpts {
     #[serde(rename = "eth_rpc_url")]
     pub fork_url: Option<String>,
 
-    /// Chain ID fetched from the fork URL during network inference.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub cached_fork_chain_id: Option<(String, ChainId)>,
-
     /// Pins the block number for the state fork.
     pub fork_block_number: Option<u64>,
 
@@ -98,7 +93,6 @@ impl Default for EvmOpts {
         Self {
             env: Env::default(),
             fork_url: None,
-            cached_fork_chain_id: None,
             fork_block_number: None,
             fork_retries: None,
             fork_retry_backoff: None,
@@ -186,7 +180,6 @@ impl EvmOpts {
             && let Ok(chain_id) = provider.get_chain_id().await
         {
             self.env.chain_id.get_or_insert(chain_id);
-            self.cached_fork_chain_id = Some((fork_url.clone(), chain_id));
 
             // If Anvil's chain, request anvil_nodeInfo to determine if the network is Tempo.
             if chain_id == NamedChain::AnvilHardhat as u64 {
@@ -418,16 +411,9 @@ impl EvmOpts {
 
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
-        if let Some(url) = &self.fork_url {
-            if let Some((cached_url, chain_id)) = &self.cached_fork_chain_id
-                && cached_url == url
-            {
-                return Some(Chain::from(*chain_id));
-            }
-
-            let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(url) else {
-                return None;
-            };
+        if let Some(url) = &self.fork_url
+            && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(url)
+        {
             trace!(?url, "retrieving chain via eth_chainId");
 
             if let Ok(id) = provider.get_chain_id().await {
@@ -519,16 +505,13 @@ mod tests {
 
         let config = Config::figment();
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
-        let fork_url = handle.http_endpoint();
-        evm_opts.fork_url = Some(fork_url.clone());
+        evm_opts.fork_url = Some(handle.http_endpoint());
         assert_eq!(evm_opts.networks, NetworkConfigs::default());
 
         evm_opts.infer_network_from_fork().await;
 
         // Plain anvil (chain id 31337) without tempo flag -> Ethereum (no network flags set).
         assert_eq!(evm_opts.env.chain_id, Some(31337));
-        assert_eq!(evm_opts.cached_fork_chain_id, Some((fork_url, 31337)));
-        assert_eq!(evm_opts.get_remote_chain_id().await, Some(Chain::from(31337)));
         assert!(!evm_opts.networks.is_tempo());
         #[cfg(feature = "optimism")]
         assert!(!evm_opts.networks.is_optimism());
@@ -552,22 +535,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn infer_network_keeps_remote_chain_separate_from_explicit_chain() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let fork_url = handle.http_endpoint();
-        let mut evm_opts = EvmOpts {
-            env: Env { chain_id: Some(1), ..Default::default() },
-            fork_url: Some(fork_url.clone()),
-            ..Default::default()
-        };
-
-        evm_opts.infer_network_from_fork().await;
-
-        assert_eq!(evm_opts.env.chain_id, Some(1));
-        assert_eq!(evm_opts.cached_fork_chain_id, Some((fork_url, 31337)));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn infer_network_tempo_anvil_skips_rpc_when_already_set() {
         // Use a URL that would fail if any RPC call were attempted (connection refused).
         // This proves the early-return guard prevents all network requests.
@@ -581,21 +548,6 @@ mod tests {
 
         // Should still be tempo, the early-return guard skips the RPC call.
         assert!(evm_opts.networks.is_tempo());
-    }
-
-    #[tokio::test]
-    async fn cached_fork_chain_id_is_url_scoped() {
-        let cached_url = "http://cached.invalid".to_string();
-        let mut evm_opts = EvmOpts {
-            fork_url: Some(cached_url.clone()),
-            cached_fork_chain_id: Some((cached_url, 1)),
-            ..Default::default()
-        };
-
-        assert_eq!(evm_opts.get_remote_chain_id().await, Some(Chain::mainnet()));
-
-        evm_opts.fork_url = Some("not a valid URL".to_string());
-        assert_eq!(evm_opts.get_remote_chain_id().await, None);
     }
 
     #[tokio::test]
