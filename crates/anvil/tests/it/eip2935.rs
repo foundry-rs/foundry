@@ -179,7 +179,7 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
     let node_config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Prague.into()))
         .with_precompile_factory(FailingHistoryPrecompile(Arc::clone(&fail)));
-    let (_api, handle) = spawn(node_config).await;
+    let (api, handle) = spawn(node_config).await;
     let provider = handle.http_provider();
 
     let mut wallets = handle.dev_wallets();
@@ -195,6 +195,9 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
         .await
         .unwrap();
     let block_number = receipt.block_number.unwrap();
+    api.mine_one().await;
+    let empty_block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(empty_block_number, block_number + 1);
 
     fail.store(true, Ordering::SeqCst);
 
@@ -208,14 +211,23 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
         .await;
     let opcode_replay: Result<Option<BlockOpcodeGas>, _> =
         provider.raw_request("trace_blockOpcodeGas".into(), (BlockId::number(block_number),)).await;
+    let empty_opcode_replay: Result<Option<BlockOpcodeGas>, _> = provider
+        .raw_request("trace_blockOpcodeGas".into(), (BlockId::number(empty_block_number),))
+        .await;
 
-    for error in
-        [block_replay.unwrap_err(), transaction_replay.unwrap_err(), opcode_replay.unwrap_err()]
-    {
+    for error in [
+        block_replay.unwrap_err(),
+        transaction_replay.unwrap_err(),
+        opcode_replay.unwrap_err(),
+        empty_opcode_replay.unwrap_err(),
+    ] {
         let response = error.as_error_resp().expect("should return a JSON-RPC error");
         assert_eq!(response.code, -32603);
         assert!(response.message.contains(REPLAY_PRE_EXECUTION_ERROR), "{response:?}");
     }
 
-    assert_eq!(provider.get_block_number().await.unwrap(), block_number);
+    let genesis_opcode_gas: Option<BlockOpcodeGas> =
+        provider.raw_request("trace_blockOpcodeGas".into(), (BlockId::number(0),)).await.unwrap();
+    assert!(genesis_opcode_gas.expect("genesis block should exist").transactions.is_empty());
+    assert_eq!(provider.get_block_number().await.unwrap(), empty_block_number);
 }

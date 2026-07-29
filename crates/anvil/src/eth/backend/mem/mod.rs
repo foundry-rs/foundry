@@ -4643,7 +4643,8 @@ where
         block: &Block,
         block_hash: B256,
     ) -> Result<BlockOpcodeGas, BlockchainError> {
-        if block.body.transactions.is_empty() {
+        // Genesis has no parent state or protocol pre-execution to replay.
+        if block.header.number() == self.genesis_number() {
             return Ok(BlockOpcodeGas {
                 block_hash,
                 block_number: block.header.number(),
