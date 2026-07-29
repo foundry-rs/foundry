@@ -549,10 +549,10 @@ impl CoverageArgs {
             .collect::<Vec<_>>();
 
         if misses.is_empty() {
-            Ok(())
-        } else {
-            eyre::bail!("coverage thresholds not met:\n{}", misses.join("\n"))
+            return Ok(());
         }
+
+        eyre::bail!("coverage thresholds not met:\n{}", misses.join("\n"));
     }
 
     #[instrument(name = "Coverage::report", skip_all)]
