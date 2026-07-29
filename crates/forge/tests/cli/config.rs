@@ -292,6 +292,7 @@ verbosity = 0
 disable_labels = false
 compact_labels = false
 decode_internal = false
+external_identification_timeout = 5
 
 [vyper]
 
@@ -1727,7 +1728,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "verbosity": 0,
     "disable_labels": false,
     "compact_labels": false,
-    "decode_internal": false
+    "decode_internal": false,
+    "external_identification_timeout": 5
   },
   "ffi": false,
   "live_logs": false,

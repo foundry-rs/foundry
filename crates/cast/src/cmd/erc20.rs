@@ -3,7 +3,10 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::{
         call_overrides::CallOverrideOpts,
-        send::{cast_send, cast_send_with_tempo_wallet, validate_sponsor_url},
+        send::{
+            cast_send, cast_send_with_tempo_wallet, cast_send_with_tempo_wallet_via_sponsor,
+            validate_sponsor_url,
+        },
     },
     format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
@@ -413,9 +416,6 @@ impl Erc20Subcommand {
                     if $send_tx.browser.browser {
                         eyre::bail!("--sponsor-url cannot be combined with --browser");
                     }
-                    if tempo_keychain.is_some() {
-                        eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
-                    }
                 }
                 if let Some(ts) = expires_at {
                     sh_status!("Transaction expires at unix timestamp {ts}")?;
@@ -474,18 +474,33 @@ impl Erc20Subcommand {
                                 .await?;
                         }
                     }
-                    cast_send_with_tempo_wallet(
-                        &$provider,
-                        tx,
-                        &prepared_access_key,
-                        tempo_sponsor.is_none().then_some(chain),
-                        None,
-                        $send_tx.cast_async,
-                        $send_tx.confirmations,
-                        timeout,
-                        tempo_sponsor.is_none() && !config.eth_rpc_curl,
-                    )
-                    .await?;
+                    if let Some(sponsor_url) = sponsor_url.as_deref() {
+                        cast_send_with_tempo_wallet_via_sponsor(
+                            &$provider,
+                            tx,
+                            &prepared_access_key,
+                            sponsor_url,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?;
+                    } else {
+                        cast_send_with_tempo_wallet(
+                            &$provider,
+                            tx,
+                            &prepared_access_key,
+                            tempo_sponsor.is_none().then_some(chain),
+                            None,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                            tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                        )
+                        .await?;
+                    }
                 } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
                     let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
                     if let Some(interval) = $send_tx.poll_interval {

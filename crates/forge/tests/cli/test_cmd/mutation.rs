@@ -115,6 +115,69 @@ Survived mutants
 "#]]);
 });
 
+forgetest_init!(mutation_testing_prunes_typed_boundary_equivalents, |prj, cmd| {
+    prj.add_source(
+        "Boundary.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Boundary {
+    function isZero(uint256 value) public pure returns (bool) {
+        return value == 0;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Boundary.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Boundary.sol";
+
+contract BoundaryTest {
+    Boundary private boundary = new Boundary();
+
+    function testZero() public view {
+        assert(boundary.isZero(0));
+    }
+
+    function testNonzero() public view {
+        assert(!boundary.isZero(1));
+    }
+}
+"#,
+    );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[mutation]
+exclude_operators = [
+    "assembly",
+    "assignment",
+    "delete-expression",
+    "elim-delegate",
+    "require",
+    "unary-op",
+]
+"#,
+    )
+    .unwrap();
+
+    let output = cmd
+        .args(["test", "--mutate", "src/Boundary.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success();
+    let summary = mutation_summary(&output.get_output().stdout_lossy());
+
+    assert_eq!(summary["total"], 6);
+    assert_eq!(summary["killed"], 4);
+    assert_eq!(summary["survived"], 0);
+    assert_eq!(summary["invalid"], 2);
+    assert_eq!(summary["mutation_score"], 100.0);
+});
+
 forgetest_init!(mutation_testing_rejects_list_mode, |prj, cmd| {
     prj.add_source(
         "Counter.sol",
@@ -1574,7 +1637,7 @@ contract VaultTest is Test {
 "#,
     );
 
-    // The surviving mutant (msg.value > 0 -> msg.value != 0) is equivalent for uint256
+    // Type analysis excludes the equivalent msg.value > 0 -> msg.value != 0 mutant.
     let mut cmd2 = prj.forge_command();
     cmd2.args(["test", "--mutate", "src/Vault.sol", "--mutation-jobs", "2"]);
     cmd2.assert_success().stdout_eq(str![[r#"
@@ -1588,16 +1651,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 3         ┆ 5.0%       │
+│ Survived ┆ 2         ┆ 3.4%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 48        ┆ 80.0%      │
+│ Killed   ┆ 48        ┆ 81.4%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 7         ┆ 11.7%      │
+│ Invalid  ┆ 7         ┆ 11.9%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 2         ┆ 3.3%       │
+│ Skipped  ┆ 2         ┆ 3.4%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 94.1% (48/51 mutants killed); [ELAPSED]
+Mutation Score: 96.0% (48/50 mutants killed); [ELAPSED]
 ...
 "#]]);
 });

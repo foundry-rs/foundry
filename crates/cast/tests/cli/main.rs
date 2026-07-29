@@ -24,7 +24,7 @@ use foundry_test_utils::{
     util::OutputExt,
 };
 use serde_json::json;
-use std::{fs, path::Path, process::Command, str::FromStr};
+use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::{
     TempoTxEnvelope,
@@ -4442,6 +4442,67 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
             &chain_id.to_string(),
         ])
         .assert_success();
+});
+
+casttest!(cast_call_disables_external_identification, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    // Leave the listener unserved: correct flag propagation prevents a connection, while an
+    // enabled identifier connects before exhausting the configured timeout.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let etherscan_url = format!("http://{}", listener.local_addr().unwrap());
+    let target = Address::random().to_string();
+    let override_code = format!("{target}:0x60006000f3");
+    fs::write(
+        prj.root().join("foundry.toml"),
+        format!(
+            r#"[profile.default]
+etherscan_api_key = "local"
+eth_rpc_no_proxy = true
+offline = false
+
+[tracing]
+external_identification_timeout = 1
+
+[etherscan]
+local = {{ key = "test", url = "{etherscan_url}" }}
+"#,
+        ),
+    )
+    .unwrap();
+
+    for var in [
+        "ETHERSCAN_API_KEY",
+        "FOUNDRY_CONFIG",
+        "FOUNDRY_ETHERSCAN_API_KEY",
+        "FOUNDRY_OFFLINE",
+        "FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT",
+    ] {
+        cmd.unset_env(var);
+    }
+    let assert = cmd
+        .args([
+            "call",
+            &target,
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            &override_code,
+            "--trace",
+            "--disable-external-identification",
+        ])
+        .assert_success();
+    let stdout = assert.get_output().stdout_lossy().to_lowercase();
+    assert!(
+        stdout.contains("traces:") && stdout.contains(&target.to_lowercase()),
+        "expected trace for {target}, got:\n{stdout}"
+    );
+
+    match listener.accept() {
+        Err(err) if err.kind() == ErrorKind::WouldBlock => {}
+        Ok(_) => panic!("external identification made an Etherscan request"),
+        Err(err) => panic!("failed to inspect mock Etherscan listener: {err}"),
+    }
 });
 
 // https://github.com/foundry-rs/foundry/issues/10848

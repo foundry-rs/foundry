@@ -5,8 +5,8 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{
-        FuzzMinimizeObservation, LibraryDeployment, TestContract, TestFunctionMatcher,
-        TestRunnerConfig, is_generated_symbolic_regression_contract,
+        FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment, TestContract,
+        TestFunctionMatcher, TestRunnerConfig, is_generated_symbolic_regression_contract,
     },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
@@ -3760,6 +3760,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &invariant_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: None,
@@ -4897,6 +4898,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &fuzz_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: Some(StatelessReplayTarget {

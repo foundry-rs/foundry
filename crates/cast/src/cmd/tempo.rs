@@ -2,8 +2,10 @@ use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
 use eyre::Result;
-use foundry_common::tempo::{EnsureAccessKeyConfig, decode_key_authorization, ensure_access_key};
-use tempo_alloy::accounts::TempoAccountsStore;
+use foundry_common::tempo::{
+    EnsureAccessKeyConfig, decode_key_authorization, ensure_access_key,
+    with_tempo_accounts_store_lock,
+};
 use tempo_primitives::transaction::SignedKeyAuthorization;
 
 /// Tempo wallet integration commands.
@@ -72,14 +74,16 @@ impl TempoSubcommand {
                     decode_key_authorization::<SignedKeyAuthorization>(&authorization)?;
                 let chain_id = authorization.chain_id;
                 let key_address = access_key.address();
-                let store = TempoAccountsStore::default_path()?;
-                store.upsert_secp256k1_access_key(account, &access_key, &authorization)?;
+                let store_path = with_tempo_accounts_store_lock(|store| {
+                    store.upsert_secp256k1_access_key(account, &access_key, &authorization)?;
+                    Ok(store.path().to_path_buf())
+                })?;
                 let _ = foundry_common::sh_status!(
                     "Imported access key {} for wallet {} on chain {} into {}",
                     key_address,
                     account,
                     chain_id,
-                    store.path().display(),
+                    store_path.display(),
                 );
                 Ok(())
             }

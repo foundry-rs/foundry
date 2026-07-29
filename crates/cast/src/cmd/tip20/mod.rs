@@ -1,5 +1,8 @@
 use crate::{
-    cmd::send::{cast_send, cast_send_with_tempo_wallet, validate_sponsor_url},
+    cmd::send::{
+        cast_send, cast_send_with_tempo_wallet, cast_send_with_tempo_wallet_via_sponsor,
+        validate_sponsor_url,
+    },
     tempo,
     tx::{CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
@@ -215,9 +218,6 @@ pub(crate) async fn send_tip20_transaction(
         if send_tx.browser.browser {
             eyre::bail!("--sponsor-url cannot be combined with --browser");
         }
-        if access_key.is_some() {
-            eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
-        }
     }
 
     let config = send_tx.eth.load_config()?;
@@ -319,18 +319,33 @@ pub(crate) async fn send_tip20_transaction(
             )
             .await?;
         }
-        cast_send_with_tempo_wallet(
-            &provider,
-            tx,
-            &prepared,
-            tempo_sponsor.is_none().then_some(chain),
-            None,
-            send_tx.cast_async,
-            send_tx.confirmations,
-            timeout,
-            tempo_sponsor.is_none() && !config.eth_rpc_curl,
-        )
-        .await?;
+        if let Some(sponsor_url) = sponsor_url.as_deref() {
+            cast_send_with_tempo_wallet_via_sponsor(
+                &provider,
+                tx,
+                &prepared,
+                sponsor_url,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+            )
+            .await?;
+        } else {
+            cast_send_with_tempo_wallet(
+                &provider,
+                tx,
+                &prepared,
+                tempo_sponsor.is_none().then_some(chain),
+                None,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+                tempo_sponsor.is_none() && !config.eth_rpc_curl,
+            )
+            .await?;
+        }
     } else if let Some(sponsor_url) = sponsor_url {
         let (signer, _) = resolve_send_signer(pre_resolved_signer, &send_tx.eth).await?;
 

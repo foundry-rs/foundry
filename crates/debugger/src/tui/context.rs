@@ -552,22 +552,39 @@ impl TUIContext<'_> {
     }
 
     fn search_opcode(&mut self, query: &str, direction: SearchDirection) {
-        let Some(step_index) =
-            find_opcode_match(&self.opcode_list, self.current_step, query, direction)
-        else {
+        let Some((node_index, step_index)) = find_opcode_match(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            query,
+            direction,
+        ) else {
             self.set_error(format!("No opcode matching `{query}` in current call"));
             return;
         };
 
+        self.draw_memory.inner_call_index = node_index;
         self.current_step = step_index;
         self.update_scroll_positions();
 
         let pc = self.current_step().pc;
-        let opcode = self.opcode_list.get(step_index).map(String::as_str).unwrap_or_default();
+        let opcode = pretty_opcode(self.current_step());
         self.set_info(format!("Found `{query}` at PC 0x{pc:x} ({pc}): {opcode}"));
     }
 
     fn goto_pc_from_input(&mut self, input: &str) {
+        self.move_to_pc_from_input(input, find_pc_target);
+    }
+
+    fn continue_to_pc_from_input(&mut self, input: &str) {
+        self.move_to_pc_from_input(input, find_next_pc_target);
+    }
+
+    fn move_to_pc_from_input(
+        &mut self,
+        input: &str,
+        find_target: impl Fn(&[DebugNode], usize, usize, usize) -> Option<StepTarget>,
+    ) {
         let candidates = match parse_pc_candidates(input) {
             Ok(candidates) => candidates,
             Err(err) => {
@@ -578,7 +595,7 @@ impl TUIContext<'_> {
 
         let mut found = Vec::new();
         for &candidate in &candidates {
-            if let Some(target) = find_pc_target(
+            if let Some(target) = find_target(
                 self.debug_arena(),
                 self.draw_memory.inner_call_index,
                 self.current_step,
@@ -683,14 +700,19 @@ impl TUIContext<'_> {
 
         let mut parts = input.split_whitespace();
         let command = parts.next().unwrap();
-        if CONTINUE_COMMANDS.contains(&command) || PC_COMMANDS.contains(&command) {
+        let is_continue_command = CONTINUE_COMMANDS.contains(&command);
+        if is_continue_command || PC_COMMANDS.contains(&command) {
             let Some(pc) = parts.next() else {
                 return self.set_error(command_usage(command, "<pc>"));
             };
             if parts.next().is_some() {
                 return self.set_error(command_usage(command, "<pc>"));
             }
-            self.goto_pc_from_input(pc);
+            if is_continue_command {
+                self.continue_to_pc_from_input(pc);
+            } else {
+                self.goto_pc_from_input(pc);
+            }
         } else if MEMORY_COMMANDS.contains(&command) {
             self.run_buffer_command(command, BufferKind::Memory, parts);
         } else if CALLDATA_COMMANDS.contains(&command) {
@@ -1482,6 +1504,26 @@ fn find_pc_target(
     find_step_target(arena, current_node_index, current_step, |_, step| step.pc == pc)
 }
 
+fn find_next_pc_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    pc: usize,
+) -> Option<StepTarget> {
+    let current_node = arena.get(current_node_index)?;
+    let (node_index, step_index) =
+        find_next_step_target(arena, current_node_index, current_step, |node, step| {
+            same_code_context(current_node, node) && step.pc == pc
+        })?;
+    let scope = if node_index == current_node_index {
+        StepTargetScope::CurrentNode
+    } else {
+        StepTargetScope::SameCodeContext
+    };
+
+    Some(StepTarget { node_index, step_index, scope })
+}
+
 fn find_next_step_target(
     arena: &[DebugNode],
     current_node_index: usize,
@@ -1613,31 +1655,47 @@ fn pc_exists_outside_code_context(arena: &[DebugNode], current: &DebugNode, pc: 
 }
 
 fn find_opcode_match(
-    opcodes: &[String],
+    arena: &[DebugNode],
+    current_node_index: usize,
     current_step: usize,
     query: &str,
     direction: SearchDirection,
-) -> Option<usize> {
-    if opcodes.is_empty() {
-        return None;
-    }
-
+) -> Option<(usize, usize)> {
     let needle = query.trim().to_ascii_lowercase();
     if needle.is_empty() {
         return None;
     }
 
-    let current = current_step.min(opcodes.len() - 1);
-    let matches = |i: usize| opcodes[i].to_ascii_lowercase().contains(&needle);
-
-    match direction {
-        SearchDirection::Forward => {
-            ((current + 1)..opcodes.len()).chain(0..=current).find(|&i| matches(i))
-        }
-        SearchDirection::Backward => {
-            (0..current).rev().chain((current..opcodes.len()).rev()).find(|&i| matches(i))
-        }
-    }
+    let current_node = arena.get(current_node_index)?;
+    let trace_node_idx = current_node.trace_node_idx;
+    let current_absolute_step = current_node.step_offset.saturating_add(current_step);
+    let steps = || {
+        arena.iter().enumerate().filter(|(_, node)| node.trace_node_idx == trace_node_idx).flat_map(
+            |(node_index, node)| {
+                node.steps.iter().enumerate().map(move |(step_index, step)| {
+                    (node_index, step_index, node.step_offset.saturating_add(step_index), step)
+                })
+            },
+        )
+    };
+    let target = match direction {
+        SearchDirection::Forward => steps()
+            .filter(|(_, _, absolute_step, _)| *absolute_step > current_absolute_step)
+            .chain(
+                steps().filter(|(_, _, absolute_step, _)| *absolute_step <= current_absolute_step),
+            )
+            .find(|(_, _, _, step)| pretty_opcode(step).to_ascii_lowercase().contains(&needle)),
+        SearchDirection::Backward => steps()
+            .rev()
+            .filter(|(_, _, absolute_step, _)| *absolute_step < current_absolute_step)
+            .chain(
+                steps()
+                    .rev()
+                    .filter(|(_, _, absolute_step, _)| *absolute_step >= current_absolute_step),
+            )
+            .find(|(_, _, _, step)| pretty_opcode(step).to_ascii_lowercase().contains(&needle)),
+    };
+    target.map(|(node_index, step_index, _, _)| (node_index, step_index))
 }
 
 fn pretty_opcode(step: &CallTraceStep) -> String {
@@ -2500,6 +2558,21 @@ mod tests {
     }
 
     #[test]
+    fn command_prompt_continues_to_next_pc_hit() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42, 2, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.current_step = 1;
+
+        tui.run_command_from_input("pc 2a");
+        assert_eq!(tui.current_step, 1);
+
+        tui.run_command_from_input("continue 2a");
+        assert_eq!(tui.current_step, 3);
+    }
+
+    #[test]
     fn command_prompt_jumps_to_source_line() {
         let address = Address::repeat_byte(1);
         let mut context = context_with_source_lines(address);
@@ -2790,13 +2863,32 @@ mod tests {
 
     #[test]
     fn opcode_search_wraps_and_is_case_insensitive() {
-        let opcodes =
-            vec!["STOP".to_string(), "PUSH4(0x95d89b41)".to_string(), "MSTORE".to_string()];
+        let arena = vec![DebugNode::new(
+            Address::repeat_byte(1),
+            CallKind::Call,
+            vec![
+                step(1),
+                step_with_immediate(2, OpCode::PUSH4, &[0x95, 0xd8, 0x9b, 0x41]),
+                step_with_stack(3, OpCode::MSTORE, &[]),
+            ],
+            Bytes::new(),
+            0,
+            None,
+        )];
 
-        assert_eq!(find_opcode_match(&opcodes, 0, "push4", SearchDirection::Forward), Some(1));
-        assert_eq!(find_opcode_match(&opcodes, 0, "95D89B41", SearchDirection::Forward), Some(1));
-        assert_eq!(find_opcode_match(&opcodes, 0, "mstore", SearchDirection::Backward), Some(2));
-        assert_eq!(find_opcode_match(&opcodes, 0, "sload", SearchDirection::Forward), None);
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "push4", SearchDirection::Forward),
+            Some((0, 1))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "95D89B41", SearchDirection::Forward),
+            Some((0, 1))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "mstore", SearchDirection::Backward),
+            Some((0, 2))
+        );
+        assert_eq!(find_opcode_match(&arena, 0, 0, "sload", SearchDirection::Forward), None);
     }
 
     #[test]
@@ -2865,6 +2957,35 @@ mod tests {
 
         let _ = tui.handle_key_event(key(KeyCode::Char('N')));
         assert_eq!(tui.current_step, 2);
+    }
+
+    #[test]
+    fn opcode_search_crosses_split_call_segments() {
+        let address = Address::repeat_byte(1);
+        let node = |address, trace_node_idx, step_offset, steps| {
+            let mut node = DebugNode::new(address, CallKind::Call, steps, Bytes::new(), 0, None);
+            node.trace_node_idx = trace_node_idx;
+            node.step_offset = step_offset;
+            node
+        };
+        let arena = vec![
+            node(address, 0, 0, vec![step_with_stack(1, OpCode::MSTORE, &[]), step(2)]),
+            node(Address::repeat_byte(2), 1, 0, vec![step_with_stack(3, OpCode::MSTORE, &[])]),
+            node(address, 0, 2, vec![step(4), step_with_stack(5, OpCode::MSTORE, &[])]),
+        ];
+
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "mstore", SearchDirection::Forward),
+            Some((2, 1))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 2, 1, "mstore", SearchDirection::Forward),
+            Some((0, 0))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "mstore", SearchDirection::Backward),
+            Some((2, 1))
+        );
     }
 
     #[test]
