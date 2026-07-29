@@ -951,6 +951,83 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_state_override_preserves_selfdestructed_storage_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::London.into()))
+        .with_base_fee(Some(0));
+    let (api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let contract = address!("0xc000000000000000000000000000000000000000");
+    let contract_key = contract.to_string();
+    let beneficiary = address!("0xc100000000000000000000000000000000000000");
+    let mut selfdestruct_code = vec![0x73];
+    selfdestruct_code.extend_from_slice(beneficiary.as_slice());
+    selfdestruct_code.push(0xff);
+
+    api.anvil_set_code(contract, selfdestruct_code.into()).await.unwrap();
+    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+    api.mine_one().await;
+
+    let selfdestruct = json!({
+        "from": sender,
+        "to": contract,
+        "gas": "0x186a0",
+        "gasPrice": "0x0"
+    });
+    let read_storage = json!({
+        "from": sender,
+        "to": contract,
+        "gas": "0x186a0",
+        "gasPrice": "0x0"
+    });
+    let code_only = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {"calls": [selfdestruct.clone()]},
+                {
+                    "stateOverrides": {
+                        (contract_key.clone()): {"code": "0x60005460005260206000f3"}
+                    },
+                    "calls": [read_storage.clone()]
+                }
+            ],
+            "validation": true
+        }]),
+    )
+    .await;
+    let cleared_state = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {"calls": [selfdestruct]},
+                {
+                    "stateOverrides": {
+                        (contract_key): {
+                            "code": "0x60005460005260206000f3",
+                            "state": {}
+                        }
+                    },
+                    "calls": [read_storage]
+                }
+            ],
+            "validation": true
+        }]),
+    )
+    .await;
+
+    assert!(code_only.get("error").is_none(), "{code_only}");
+    assert!(cleared_state.get("error").is_none(), "{cleared_state}");
+    assert_eq!(code_only["result"][1]["calls"][0]["returnData"], B256::ZERO.to_string());
+    assert_eq!(cleared_state["result"][1]["calls"][0]["returnData"], B256::ZERO.to_string());
+    assert_eq!(code_only["result"][1]["stateRoot"], cleared_state["result"][1]["stateRoot"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_historical_tombstone_matches_latest_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Frontier.into()))

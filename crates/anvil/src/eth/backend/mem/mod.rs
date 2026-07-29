@@ -5696,7 +5696,12 @@ impl Backend<FoundryNetwork> {
                 // Apply state overrides after validating precompile moves against this block's
                 // active precompile set.
                 if let Some(state_overrides) = state_overrides {
+                    let previously_deleted = previously_deleted_accounts(
+                        &cache_db.cache.accounts,
+                        state_overrides.keys().copied(),
+                    );
                     apply_state_overrides(state_overrides, &mut cache_db)?;
+                    preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                 }
 
                 // execute all calls in that block
@@ -5861,25 +5866,14 @@ impl Backend<FoundryNetwork> {
                     // REVM turns a previously deleted account into `Touched` when a later call
                     // recreates it without storage. Preserve the cleared-storage provenance so
                     // subsequent calls and the recursively merged state cannot reload old slots.
-                    let previously_deleted = state
-                        .keys()
-                        .filter(|address| {
-                            cache_db.cache.accounts.get(*address).is_some_and(|account| {
-                                account.account_state == AccountState::NotExisting
-                            })
-                        })
-                        .copied()
-                        .collect::<Vec<_>>();
+                    let previously_deleted = previously_deleted_accounts(
+                        &cache_db.cache.accounts,
+                        state.keys().copied(),
+                    );
 
                     // commit the transaction
                     cache_db.commit(state);
-                    for address in previously_deleted {
-                        if let Some(account) = cache_db.cache.accounts.get_mut(&address)
-                            && account.account_state != AccountState::NotExisting
-                        {
-                            account.account_state = AccountState::StorageCleared;
-                        }
-                    }
+                    preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used
@@ -6741,6 +6735,33 @@ fn simulate_rpc_error(code: i64, message: impl Into<String>) -> BlockchainError 
         message: message.into().into(),
         data: None,
     })
+}
+
+fn previously_deleted_accounts(
+    accounts: &AddressMap<DbAccount>,
+    addresses: impl IntoIterator<Item = Address>,
+) -> Vec<Address> {
+    addresses
+        .into_iter()
+        .filter(|address| {
+            accounts
+                .get(address)
+                .is_some_and(|account| account.account_state == AccountState::NotExisting)
+        })
+        .collect()
+}
+
+fn preserve_deleted_storage(
+    accounts: &mut AddressMap<DbAccount>,
+    previously_deleted: Vec<Address>,
+) {
+    for address in previously_deleted {
+        if let Some(account) = accounts.get_mut(&address)
+            && account.account_state != AccountState::NotExisting
+        {
+            account.account_state = AccountState::StorageCleared;
+        }
+    }
 }
 
 fn simulate_transaction_error(error: InvalidTransactionError) -> BlockchainError {
