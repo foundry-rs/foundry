@@ -89,6 +89,8 @@ pub use wallet_session::ScriptWalletSessionArgs;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 
+const DEFAULT_CONFIRMATIONS: u64 = 1;
+
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
@@ -218,6 +220,14 @@ pub struct ScriptArgs {
     /// only after its previous one has been confirmed and succeeded.
     #[arg(long)]
     pub slow: bool,
+
+    /// The number of confirmations to wait for after broadcasting.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_CONFIRMATIONS,
+        value_parser = RangedU64ValueParser::<u64>::new().range(1..),
+    )]
+    pub confirmations: u64,
 
     /// Disables interactive prompts that might appear when deploying big contracts.
     ///
@@ -1205,6 +1215,20 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn parses_confirmations() {
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
+        assert_eq!(args.confirmations, DEFAULT_CONFIRMATIONS);
+
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--confirmations", "6"]);
+        assert_eq!(args.confirmations, 6);
+
+        let err =
+            ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--confirmations", "0"])
+                .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[test]

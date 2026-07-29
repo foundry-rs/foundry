@@ -384,6 +384,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         sequence,
                         &provider,
                         self.script_config.config.transaction_timeout,
+                        self.args.confirmations,
                     )
                     .await
             })
@@ -742,6 +743,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 sequence,
                                 &provider,
                                 self.script_config.config.transaction_timeout,
+                                self.args.confirmations,
                             )
                             .await?
                     }
@@ -912,18 +914,10 @@ impl BundledState<TempoEvmNetwork> {
             )?;
 
             let timeout = self.script_config.config.transaction_timeout;
-            let receipt_result = tokio::time::timeout(Duration::from_secs(timeout), async {
-                loop {
-                    if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
-                        return Ok::<_, eyre::Error>(Some(receipt));
-                    }
-                    // If the tx has left the mempool without a receipt it was dropped.
-                    if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
-                        return Ok(None);
-                    }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            })
+            let receipt_result = tokio::time::timeout(
+                Duration::from_secs(timeout),
+                wait_for_batch_receipt(provider.as_ref(), tx_hash, self.args.confirmations),
+            )
             .await;
 
             match receipt_result {
@@ -1255,16 +1249,13 @@ impl BundledState<TempoEvmNetwork> {
 
         // Wait for receipt
         let timeout = self.script_config.config.transaction_timeout;
-        let receipt = tokio::time::timeout(Duration::from_secs(timeout), async {
-            loop {
-                if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
-                    return Ok::<_, eyre::Error>(receipt);
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        })
+        let receipt = tokio::time::timeout(
+            Duration::from_secs(timeout),
+            wait_for_batch_receipt(provider.as_ref(), tx_hash, self.args.confirmations),
+        )
         .await
-        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??;
+        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??
+        .ok_or_else(|| eyre::eyre!("Batch transaction {tx_hash:#x} was dropped from the mempool. Run with --resume to retry."))?;
 
         let success = receipt.status();
         if success {
@@ -1351,6 +1342,29 @@ impl BundledState<TempoEvmNetwork> {
             build_data: self.build_data,
             sequence: self.sequence,
         })
+    }
+}
+
+async fn wait_for_batch_receipt<N: Network>(
+    provider: &RootProvider<N>,
+    tx_hash: TxHash,
+    confirmations: u64,
+) -> Result<Option<N::ReceiptResponse>> {
+    loop {
+        if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await?
+            && let Some(receipt_block) = receipt.block_number()
+        {
+            let latest_block = provider.get_block_number().await?;
+            if latest_block >= receipt_block.saturating_add(confirmations.saturating_sub(1)) {
+                return Ok(Some(receipt));
+            }
+        }
+
+        if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
+            return Ok(None);
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
