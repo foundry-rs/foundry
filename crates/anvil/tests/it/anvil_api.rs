@@ -1314,11 +1314,14 @@ async fn test_safe_and_finalized_use_configured_slots_in_epoch() {
 async fn test_anvil_reset_non_fork() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
+    let snapshot = api.evm_snapshot().await.unwrap();
 
     // Get initial state
     let init_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let init_accounts = api.accounts().unwrap();
     let init_balance = provider.get_balance(init_accounts[0]).await.unwrap();
+    let init_fee_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
 
     // Store the instance id before reset
     let instance_id_before = api.instance_id();
@@ -1348,6 +1351,7 @@ async fn test_anvil_reset_non_fork() {
 
     // Reset to fresh in-memory state (non-fork)
     api.anvil_reset(None).await.unwrap();
+    assert!(!api.backend.list_state_snapshots().contains_key(&snapshot));
 
     // Check instance id has changed
     let instance_id_after = api.instance_id();
@@ -1356,6 +1360,9 @@ async fn test_anvil_reset_non_fork() {
     // Check we're back at genesis
     let block_after_reset = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block_after_reset.header.number, 0);
+    let fee_history_after_reset =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    assert_eq!(fee_history_after_reset, init_fee_history);
 
     // Check accounts are restored to initial state
     let balance_after_reset = provider.get_balance(init_accounts[0]).await.unwrap();
@@ -1372,13 +1379,44 @@ async fn test_anvil_reset_non_fork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_backend_reset_uses_attached_runtime_pool() {
+    let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let from = api.accounts().unwrap()[0];
+    let tx = TransactionRequest::default().with_from(from).with_to(Address::random());
+    let _pending = handle.http_provider().send_transaction(tx.into()).await.unwrap();
+    assert_eq!(api.txpool_status().await.unwrap().pending, 1);
+
+    api.backend.reset_to_in_mem().await.unwrap();
+
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_fork_to_non_fork() {
-    let (api, handle) = spawn(fork_config()).await;
+    let remote_account = Address::random();
+    let remote_balance = U256::from(123_456u64);
+    let configured_account = Address::random();
+    let configured_balance = U256::from(654_321u64);
+    let (source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_funded_accounts([(remote_account, remote_balance)].into_iter().collect()),
+    )
+    .await;
+    source_api.mine_one().await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_funded_accounts([(configured_account, configured_balance)].into_iter().collect())
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
     let provider = handle.http_provider();
 
     // Verify we're in fork mode
     let metadata = api.anvil_metadata().await.unwrap();
     assert!(metadata.forked_network.is_some());
+    assert_eq!(provider.get_balance(remote_account).await.unwrap(), remote_balance);
+    assert_eq!(provider.get_balance(configured_account).await.unwrap(), configured_balance);
 
     // Mine some blocks
     for _ in 0..3 {
@@ -1395,6 +1433,8 @@ async fn test_anvil_reset_fork_to_non_fork() {
     // Check we're at block 0
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block.header.number, 0);
+    assert_eq!(provider.get_balance(remote_account).await.unwrap(), U256::ZERO);
+    assert_eq!(provider.get_balance(configured_account).await.unwrap(), configured_balance);
 
     // Verify we can still mine blocks
     api.mine_one().await;
@@ -1552,6 +1592,31 @@ async fn test_anvil_reset_fork_refreshes_inferred_chain_id() {
     .await
     .unwrap();
     assert_eq!(api.chain_id(), 31337);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_uses_remote_chain_for_hardfork_with_local_chain_id() {
+    let (source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Berlin.into()))
+            .with_genesis_timestamp(Some(1_618_481_223u64)),
+    )
+    .await;
+    source_api.evm_set_next_block_timestamp(1_618_481_224u64).unwrap();
+    source_api.mine_one().await;
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(31337u64))
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+
+    assert_eq!(api.chain_id(), 31337);
+    assert_eq!(api.backend.hardfork(), EthereumHardfork::Berlin.into());
+    assert!(!api.backend.is_eip1559());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1715,6 +1780,7 @@ async fn test_anvil_failed_fork_reset_preserves_live_state() {
     let base_fee = api.backend.base_fee();
     let gas_price = api.gas_price();
     let instance_id = api.instance_id();
+    let snapshot = api.evm_snapshot().await.unwrap();
     let overridden = Address::random();
     let overridden_balance = U256::from(123_456u64);
     api.anvil_set_balance(overridden, overridden_balance).await.unwrap();
@@ -1737,6 +1803,7 @@ async fn test_anvil_failed_fork_reset_preserves_live_state() {
     assert_eq!(api.backend.base_fee(), base_fee);
     assert_eq!(api.gas_price(), gas_price);
     assert_eq!(api.instance_id(), instance_id);
+    assert!(api.backend.list_state_snapshots().contains_key(&snapshot));
     assert_eq!(api.balance(overridden, None).await.unwrap(), overridden_balance);
 }
 

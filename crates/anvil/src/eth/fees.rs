@@ -2,7 +2,10 @@ use std::{
     collections::BTreeMap,
     fmt,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll},
 };
 
@@ -16,7 +19,10 @@ use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 use crate::eth::{
-    backend::{info::StorageInfo, notifications::ChainNotifications},
+    backend::{
+        info::StorageInfo,
+        notifications::{ChainNotifications, FeeHistoryNotification},
+    },
     error::BlockchainError,
 };
 
@@ -121,6 +127,11 @@ impl FeeManager {
     /// Returns the active Tempo hardfork, if running a Tempo chain.
     pub fn tempo_hardfork(&self) -> Option<TempoHardfork> {
         self.state.read().tempo_hardfork
+    }
+
+    /// Sets the active Tempo hardfork.
+    pub fn set_tempo_hardfork(&self, hardfork: Option<TempoHardfork>) {
+        self.state.write().tempo_hardfork = hardfork;
     }
 
     /// Sets the EVM and Tempo hardfork identifiers atomically.
@@ -303,10 +314,14 @@ pub struct FeeHistoryService<N: Network>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    /// Active fee state shared with the backend.
-    fees: FeeManager,
-    /// incoming notifications about new blocks
-    new_blocks: ChainNotifications,
+    /// Current backend reset generation for lifecycle-aware notifications.
+    generation: Option<Arc<AtomicU64>>,
+    /// Blob parameters used by the compatibility notification path.
+    blob_params: Option<BlobParams>,
+    /// Public notifications used by the compatibility constructor.
+    new_blocks: Option<ChainNotifications>,
+    /// Internal notifications carrying reset lifecycle metadata.
+    lifecycle_blocks: Option<futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification>>,
     /// contains all fee history related entries
     cache: FeeHistoryCache,
     /// number of items to consider
@@ -320,14 +335,33 @@ where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     pub const fn new(
-        fees: FeeManager,
+        blob_params: BlobParams,
         new_blocks: ChainNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo<N>,
     ) -> Self {
         Self {
-            fees,
-            new_blocks,
+            generation: None,
+            blob_params: Some(blob_params),
+            new_blocks: Some(new_blocks),
+            lifecycle_blocks: None,
+            cache,
+            fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
+            storage_info,
+        }
+    }
+
+    pub(crate) const fn new_with_lifecycle(
+        generation: Arc<AtomicU64>,
+        lifecycle_blocks: futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification>,
+        cache: FeeHistoryCache,
+        storage_info: StorageInfo<N>,
+    ) -> Self {
+        Self {
+            generation: Some(generation),
+            blob_params: None,
+            new_blocks: None,
+            lifecycle_blocks: Some(lifecycle_blocks),
             cache,
             fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
             storage_info,
@@ -340,9 +374,14 @@ where
     }
 
     /// Inserts a new cache entry for the given block
-    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256, header: &impl BlockHeader) {
-        let (result, block_number) = self.create_cache_entry(hash, header);
-        self.insert_cache_entry(result, block_number);
+    pub(crate) fn insert_cache_entry_for_block(
+        &self,
+        hash: B256,
+        header: &impl BlockHeader,
+        blob_params: BlobParams,
+    ) {
+        let (result, block_number) = self.create_cache_entry(hash, header, blob_params);
+        self.insert_cache_entry(result, block_number, None);
     }
 
     /// Create a new history entry for the block
@@ -350,6 +389,7 @@ where
         &self,
         hash: B256,
         header: &impl BlockHeader,
+        blob_params: BlobParams,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
@@ -368,7 +408,6 @@ where
         let base_fee = header.base_fee_per_gas().unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
-        let blob_params = self.fees.blob_params();
         let base_fee_per_blob_gas = header.blob_fee(blob_params);
 
         let mut item = FeeHistoryCacheItem {
@@ -441,10 +480,22 @@ where
         (item, block_number)
     }
 
-    fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
+    fn insert_cache_entry(
+        &self,
+        item: FeeHistoryCacheItem,
+        block_number: Option<u64>,
+        generation: Option<u64>,
+    ) {
         if let Some(block_number) = block_number {
             trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
             let mut cache = self.cache.lock();
+            if generation.is_some_and(|generation| {
+                self.generation
+                    .as_ref()
+                    .is_some_and(|current| generation != current.load(Ordering::Acquire))
+            }) {
+                return;
+            }
             cache.insert(block_number, item);
 
             // adhere to cache limit
@@ -469,10 +520,30 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
 
-        while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
-            // add the imported block.
+        loop {
+            let next = pin
+                .lifecycle_blocks
+                .as_mut()
+                .map_or(Poll::Pending, |blocks| blocks.poll_next_unpin(cx));
+            let Poll::Ready(Some(block)) = next else { break };
+            let Some(generation) = &pin.generation else { continue };
+            if block.generation != generation.load(Ordering::Acquire) {
+                continue;
+            }
+            let (item, block_number) =
+                pin.create_cache_entry(block.hash, block.header.as_ref(), block.blob_params);
+            pin.insert_cache_entry(item, block_number, Some(block.generation));
+        }
+
+        loop {
+            let next =
+                pin.new_blocks.as_mut().map_or(Poll::Pending, |blocks| blocks.poll_next_unpin(cx));
+            let Poll::Ready(Some(notification)) = next else { break };
             if let Some(block) = notification.as_new_block() {
-                pin.insert_cache_entry_for_block(block.hash, block.header.as_ref());
+                let blob_params = pin.blob_params.expect("set by compatibility constructor");
+                let (item, block_number) =
+                    pin.create_cache_entry(block.hash, block.header.as_ref(), blob_params);
+                pin.insert_cache_entry(item, block_number, None);
             }
         }
 

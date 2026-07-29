@@ -3,7 +3,7 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
-            fork::{ClientFork, ClientForkConfig},
+            fork::{ClientFork, ClientForkConfig, ClientForkRuntime},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
             time::duration_since_unix_epoch,
@@ -1347,9 +1347,10 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
-        let (db, config) = self.setup_fork_db_config(eth_rpc_url, evm_env, fees).await?;
+        let (db, config, runtime) =
+            self.setup_fork_db_config_with_runtime(eth_rpc_url, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
-        let fork = ClientFork::new(config, Arc::clone(&db));
+        let fork = ClientFork::new_with_runtime(config, Arc::clone(&db), runtime);
         Ok((db, Some(fork)))
     }
 
@@ -1364,6 +1365,17 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
+        let (db, config, _) =
+            self.setup_fork_db_config_with_runtime(eth_rpc_url, evm_env, fees).await?;
+        Ok((db, config))
+    }
+
+    pub(crate) async fn setup_fork_db_config_with_runtime(
+        &mut self,
+        eth_rpc_url: String,
+        evm_env: &mut EvmEnv,
+        fees: &FeeManager,
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, ClientForkRuntime)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
 
         // Always bootstrap with the primary URL only to avoid race conditions
@@ -1450,17 +1462,19 @@ latest block number: {latest_block}"
         let override_chain_id = self.chain_id;
         let override_networks = self.networks;
 
-        // Determine chain_id early so we can use it consistently
+        // Resolve remote provenance independently from the local RPC/signing identity.
+        let remote_chain_id = if let Some(fork_chain_id) = self.fork_chain_id.or(fork_chain_id) {
+            fork_chain_id.to()
+        } else {
+            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+        };
+        self.networks = self.networks.with_chain_id(remote_chain_id);
         let chain_id = if let Some(chain_id) = self.chain_id {
+            evm_env.cfg_env.chain_id = chain_id;
             chain_id
         } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
-
-            // need to update the dev signers and env with the chain id
+            // Update the dev signers and environment with the adopted remote chain ID.
+            let chain_id = remote_chain_id;
             self.set_chain_id(Some(chain_id));
             evm_env.cfg_env.chain_id = chain_id;
             chain_id
@@ -1470,7 +1484,7 @@ latest block number: {latest_block}"
         // That field represents the user's explicit override; keeping inference on the fork
         // config lets a later reset re-resolve timestamp-based activations.
         let fork_hardfork = self.hardfork.or_else(|| {
-            FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
+            FoundryHardfork::from_chain_and_timestamp(remote_chain_id, block.header.timestamp())
         });
         let active_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let spec_id = SpecId::from(active_hardfork);
@@ -1506,7 +1520,7 @@ latest block number: {latest_block}"
             (block.header.excess_blob_gas(), block.header.blob_gas_used())
         {
             // Derive blob params using the fork block timestamp regardless of explicit base fee.
-            let blob_params = get_blob_params(chain_id, block.header.timestamp());
+            let blob_params = get_blob_params(remote_chain_id, block.header.timestamp());
 
             evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                 blob_excess_gas,
@@ -1586,12 +1600,9 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            override_networks,
             hardfork: fork_hardfork,
             timestamp: block.header.timestamp(),
             base_fee: fork_base_fee.map(|g| g as u128),
-            gas_price,
-            gas_limit,
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
@@ -1610,7 +1621,8 @@ latest block number: {latest_block}"
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
-        Ok((db, config))
+        let runtime = ClientForkRuntime { override_networks, gas_price, gas_limit };
+        Ok((db, config, runtime))
     }
 
     /// we only use the gas limit value of the block if it is non-zero and the block gas

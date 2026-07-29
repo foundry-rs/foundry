@@ -29,10 +29,12 @@ async fn test_reset_rejects_network_family_change_atomically() {
 
     let (api, _) = spawn(
         NodeConfig::test()
+            .with_chain_id(Some(31337u64))
             .with_eth_rpc_url(Some(ethereum_handle.http_endpoint()))
             .with_fork_block_number(Some(1u64)),
     )
     .await;
+    assert_eq!(api.chain_id(), 31337);
     let fork = api.get_fork().unwrap();
     let fork_url = fork.eth_rpc_url();
     let fork_hash = fork.block_hash();
@@ -100,6 +102,31 @@ async fn test_reset_rejects_network_family_change_atomically() {
     .await
     .unwrap();
     assert!(api.backend.is_optimism());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_inferred_optimism_fork_reset_to_memory_stays_coherent() {
+    let (source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64)),
+    )
+    .await;
+    source_api.mine_one().await;
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert!(api.backend.is_optimism());
+
+    api.anvil_reset(None).await.unwrap();
+
+    assert!(api.backend.is_optimism());
+    assert!(matches!(api.backend.hardfork(), foundry_evm::hardfork::FoundryHardfork::Optimism(_)));
+    assert_eq!(api.backend.spec_id(), api.backend.hardfork().into());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -62,17 +62,40 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// The RPC URL associated with the state in the underlying database.
     database_rpc_url: Option<String>,
+    runtime: Arc<RwLock<ClientForkRuntime>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClientForkRuntime {
+    pub(crate) override_networks: NetworkConfigs,
+    pub(crate) gas_price: u128,
+    pub(crate) gas_limit: u64,
 }
 
 impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
+        let chain_id = config.override_chain_id.unwrap_or(config.chain_id);
+        let runtime = ClientForkRuntime {
+            override_networks: NetworkConfigs::default().with_chain_id(chain_id),
+            gas_price: 0,
+            gas_limit: 0,
+        };
+        Self::new_with_runtime(config, database, runtime)
+    }
+
+    pub(crate) fn new_with_runtime(
+        config: ClientForkConfig<N>,
+        database: Arc<AsyncRwLock<Box<dyn Db>>>,
+        runtime: ClientForkRuntime,
+    ) -> Self {
         let database_rpc_url = config.eth_rpc_url().map(ToOwned::to_owned);
         Self {
             storage: Default::default(),
             config: Arc::new(RwLock::new(config)),
             database,
             database_rpc_url,
+            runtime: Arc::new(RwLock::new(runtime)),
         }
     }
 
@@ -113,11 +136,11 @@ impl<N: Network> ClientFork<N> {
     }
 
     pub fn gas_price(&self) -> u128 {
-        self.config.read().gas_price
+        self.runtime.read().gas_price
     }
 
     pub fn gas_limit(&self) -> u64 {
-        self.config.read().gas_limit
+        self.runtime.read().gas_limit
     }
 
     pub fn block_hash(&self) -> B256 {
@@ -143,7 +166,7 @@ impl<N: Network> ClientFork<N> {
 
     /// Returns the user-configured network mode before remote chain discovery.
     pub(crate) fn override_networks(&self) -> NetworkConfigs {
-        self.config.read().override_networks
+        self.runtime.read().override_networks
     }
 
     fn provider(&self) -> Arc<RetryProvider<N>> {
@@ -485,7 +508,7 @@ impl<N: Network> ClientFork<N> {
         let gas_limit = block.header().gas_limit();
         let total_difficulty = block.header().difficulty();
 
-        let fallback_gas_price = self.config.read().gas_price;
+        let fallback_gas_price = self.runtime.read().gas_price;
         let gas_price = provider.get_gas_price().await.unwrap_or(fallback_gas_price);
         let mut config = self.config.write();
         config.update_block(
@@ -495,8 +518,9 @@ impl<N: Network> ClientFork<N> {
             base_fee.map(|g| g as u128),
             total_difficulty,
         );
-        config.gas_price = gas_price;
-        config.gas_limit = gas_limit;
+        let mut runtime = self.runtime.write();
+        runtime.gas_price = gas_price;
+        runtime.gas_limit = gas_limit;
 
         self.clear_cached_storage();
 
@@ -857,18 +881,12 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub provider: Arc<RetryProvider<N>>,
     pub chain_id: u64,
     pub override_chain_id: Option<u64>,
-    /// Network mode configured before remote chain discovery.
-    pub(crate) override_networks: NetworkConfigs,
     /// The hardfork resolved for the forked block, if known.
     pub hardfork: Option<FoundryHardfork>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block
     pub base_fee: Option<u128>,
-    /// The resolved gas price for the fork.
-    pub gas_price: u128,
-    /// The resolved block gas limit for the fork.
-    pub gas_limit: u64,
     /// Blob gas used of the forked block
     pub blob_gas_used: Option<u128>,
     /// Blob excess gas and price of the forked block

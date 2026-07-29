@@ -111,7 +111,10 @@ use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tokio::{
-    sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
+    sync::{
+        RwLock as AsyncRwLock,
+        mpsc::{self, UnboundedReceiver, unbounded_channel},
+    },
     try_join,
 };
 
@@ -150,6 +153,8 @@ pub struct EthApi<N: Network> {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
+    /// Keeps reset publication and multi-field node metadata reads coherent.
+    lifecycle: Arc<AsyncRwLock<()>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -167,6 +172,7 @@ impl<N: Network> Clone for EthApi<N> {
             transaction_order: self.transaction_order.clone(),
             net_listening: self.net_listening,
             instance_id: self.instance_id.clone(),
+            lifecycle: self.lifecycle.clone(),
         }
     }
 }
@@ -187,6 +193,11 @@ impl<N: Network> EthApi<N> {
         filters: Filters<N>,
         transactions_order: TransactionOrder,
     ) -> Self {
+        let lifecycle = backend.attach_reset_runtime(
+            Arc::clone(&pool),
+            Arc::clone(&fee_history_cache),
+            Arc::new(AsyncRwLock::new(())),
+        );
         Self {
             pool,
             backend,
@@ -200,6 +211,7 @@ impl<N: Network> EthApi<N> {
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
+            lifecycle,
         }
     }
 
@@ -423,6 +435,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_nodeInfo`
     pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
         node_info!("anvil_nodeInfo");
+        let _lifecycle_guard = self.lifecycle.read().await;
 
         let evm_env = self.backend.evm_env().read();
         let fork_config = self.backend.get_fork();
@@ -464,6 +477,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_metadata`
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
+        let _lifecycle_guard = self.lifecycle.read().await;
         let fork_config = self.backend.get_fork();
 
         Ok(Metadata {
@@ -562,6 +576,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
+        let _lifecycle_guard = self.lifecycle.read().await;
         if let Some(fork) = self.backend.get_fork() {
             let mut config = fork.config.write();
             // let interval = config.provider.get_interval();
@@ -704,16 +719,17 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
+        let _lifecycle_guard = self.lifecycle.write().await;
         if let Some(forking) = forking {
-            self.backend.reset_fork(forking).await?;
+            self.backend
+                .reset_fork_with_runtime(forking, &self.pool, &self.fee_history_cache)
+                .await?;
         } else {
             // Reset to a fresh in-memory state
-            self.backend.reset_to_in_mem().await?;
+            self.backend.reset_to_in_mem_with_runtime(&self.pool, &self.fee_history_cache).await?;
         }
         // Only publish the new instance identity after the backend reset commits successfully.
         self.reset_instance_id();
-        // Clear pending transactions since they reference the old chain state.
-        self.pool.clear();
         Ok(())
     }
 
@@ -1525,6 +1541,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_rollback`
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
+        let generation = self.backend.current_reset_generation();
         let depth = depth.unwrap_or(1);
 
         // Check reorg depth doesn't exceed current chain height
@@ -1539,7 +1556,7 @@ impl EthApi<FoundryNetwork> {
         let common_block =
             self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
 
-        self.backend.rollback(common_block).await?;
+        self.backend.rollback_if_current(generation, common_block).await?;
         Ok(())
     }
 
@@ -2553,6 +2570,7 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
+        let _lifecycle_guard = self.lifecycle.read().await;
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
@@ -2590,6 +2608,7 @@ impl EthApi<FoundryNetwork> {
         gas_limit: Option<U64>,
     ) -> Result<TxHash> {
         node_info!("eth_resend");
+        let _lifecycle_guard = self.lifecycle.read().await;
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
@@ -2699,6 +2718,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
     pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
         node_info!("eth_sendRawTransaction");
+        let _lifecycle_guard = self.lifecycle.read().await;
         let mut data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
@@ -3786,6 +3806,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_reorg`
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
         node_info!("anvil_reorg");
+        let generation = self.backend.current_reset_generation();
         let depth = options.depth;
         let tx_block_pairs = options.tx_block_pairs;
 
@@ -3879,7 +3900,7 @@ impl EthApi<FoundryNetwork> {
             txs
         };
 
-        self.backend.reorg(depth, block_pool_txs, common_block).await?;
+        self.backend.reorg_if_current(generation, depth, block_pool_txs, common_block).await?;
         Ok(())
     }
 
@@ -3958,6 +3979,7 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
+        let _lifecycle_guard = self.lifecycle.read().await;
         // either use the impersonated account of the request's `from` field
         let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
 
@@ -4282,11 +4304,11 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) {
-        let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await;
+        let batch = self.pool.mining_batch(None);
+        let Some((generation, outcome)) = self.backend.mine_pool_batch(batch).await else { return };
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
-        self.pool.on_mined_block(outcome);
+        self.pool.on_mined_block_at_generation(generation, outcome);
     }
 
     /// Returns the pending block with tx hashes
@@ -4720,5 +4742,40 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{NodeConfig, spawn};
+    use std::collections::HashMap;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reset_discards_previously_selected_mining_batch() {
+        let (api, _) = spawn(NodeConfig::test()).await;
+        let batch = api.pool.mining_batch(None);
+
+        api.anvil_reset(None).await.unwrap();
+        let best_number = api.backend.best_number();
+
+        assert!(api.backend.mine_pool_batch(batch).await.is_none());
+        assert_eq!(api.backend.best_number(), best_number);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reset_rejects_previously_prepared_reorg() {
+        let (api, _) = spawn(NodeConfig::test()).await;
+        api.mine_one().await;
+        let generation = api.backend.current_reset_generation();
+        let common_block = api.backend.get_block(0).unwrap();
+
+        api.anvil_reset(None).await.unwrap();
+
+        let err = api
+            .backend
+            .reorg_if_current(generation, 1, HashMap::default(), common_block)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("chain reset during reorg"), "{err}");
     }
 }

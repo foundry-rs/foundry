@@ -42,7 +42,14 @@ use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::{Mutex, RwLock};
-use std::{collections::VecDeque, fmt, sync::Arc};
+use std::{
+    collections::VecDeque,
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 pub mod transactions;
 
@@ -52,17 +59,45 @@ pub struct Pool<T> {
     inner: RwLock<PoolInner<T>>,
     /// listeners for new ready transactions
     transaction_listener: Mutex<Vec<Sender<TxHash>>>,
+    /// Generation shared with the backend and reset consumers.
+    generation: Arc<AtomicU64>,
+}
+
+/// Transactions selected from one generation of the pool.
+pub struct MiningBatch<T> {
+    pub generation: u64,
+    pub transactions: Vec<Arc<PoolTransaction<T>>>,
 }
 
 impl<T> Default for Pool<T> {
     fn default() -> Self {
-        Self { inner: RwLock::new(PoolInner::default()), transaction_listener: Default::default() }
+        Self::new(Arc::new(AtomicU64::new(0)))
     }
 }
 
 // == impl Pool ==
 
 impl<T> Pool<T> {
+    pub(crate) fn new(generation: Arc<AtomicU64>) -> Self {
+        Self {
+            inner: RwLock::new(PoolInner::default()),
+            transaction_listener: Default::default(),
+            generation,
+        }
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Selects transactions while capturing the pool generation under the same lock.
+    pub fn mining_batch(&self, limit: Option<usize>) -> MiningBatch<T> {
+        let pool = self.inner.read();
+        let transactions = pool.ready_transactions().take(limit.unwrap_or(usize::MAX)).collect();
+        let generation = self.generation.load(Ordering::Acquire);
+        MiningBatch { generation, transactions }
+    }
+
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator<T> {
         self.inner.read().ready_transactions()
@@ -110,6 +145,29 @@ impl<T> Pool<T> {
     pub fn clear(&self) {
         let mut pool = self.inner.write();
         pool.clear();
+    }
+
+    /// Clears the pool and advances its reset generation.
+    #[cfg(test)]
+    pub(crate) fn reset(&self) {
+        let generation = Arc::clone(&self.generation);
+        self.reset_with_generation(&generation);
+    }
+
+    pub(crate) fn reset_with_generation(&self, canonical_generation: &AtomicU64) {
+        let mut pool = self.inner.write();
+        pool.clear();
+        let generation = canonical_generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        self.generation.store(generation, Ordering::Release);
+    }
+
+    pub(crate) fn synchronize_generation(&self, canonical_generation: &AtomicU64) {
+        let mut pool = self.inner.write();
+        let generation = canonical_generation.load(Ordering::Acquire);
+        if self.generation.load(Ordering::Acquire) != generation {
+            pool.clear();
+            self.generation.store(generation, Ordering::Release);
+        }
     }
 
     /// Remove the given transactions from the pool
@@ -192,14 +250,27 @@ impl<T: Transaction> Pool<T> {
     ///
     /// This will remove the transactions from the pool.
     pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
+        self.on_mined_block_at_generation(self.generation(), outcome)
+    }
+
+    pub(crate) fn on_mined_block_at_generation(
+        self: &Arc<Self>,
+        generation: u64,
+        outcome: MinedBlockOutcome<T>,
+    ) -> PruneResult<T> {
         let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
 
-        // remove invalid transactions from the pool
-        self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
-
-        // prune all the markers the mined transactions provide
-        let res = self
-            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+        let mut pool = self.inner.write();
+        if generation != self.generation.load(Ordering::Acquire) {
+            return PruneResult { promoted: Vec::new(), failed: Vec::new(), pruned: Vec::new() };
+        }
+        pool.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
+        debug!(target: "txpool", ?block_number, "pruning transactions");
+        let res = pool.prune_markers(included.into_iter().flat_map(|tx| tx.provides.clone()));
+        drop(pool);
+        for tx in &res.promoted {
+            self.notify_ready(tx);
+        }
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
 
         // Re-notify the miner about not-yet-valid transactions so they'll be retried.
@@ -526,5 +597,22 @@ impl<T> AddedTransaction<T> {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_synchronizes_an_independent_pool_generation() {
+        let pool = Pool::<()>::default();
+        let canonical = AtomicU64::new(0);
+        let old_batch = pool.mining_batch(None);
+
+        pool.reset_with_generation(&canonical);
+
+        assert_ne!(old_batch.generation, canonical.load(Ordering::Acquire));
+        assert_eq!(pool.mining_batch(None).generation, canonical.load(Ordering::Acquire));
     }
 }

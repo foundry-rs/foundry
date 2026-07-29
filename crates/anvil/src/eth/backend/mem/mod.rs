@@ -18,17 +18,23 @@ use crate::{
                 state::{storage_root, trie_accounts},
                 storage::MinedTransactionReceipt,
             },
-            notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
+            notifications::{
+                ChainNotification, ChainNotifications, FeeHistoryNotification, NewBlockNotification,
+            },
             tempo::AnvilStorageProvider,
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{
+            FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, FeeManager, FeeState,
+            MIN_SUGGESTED_PRIORITY_FEE,
+        },
         macros::node_info,
-        pool::transactions::PoolTransaction,
+        pool::{MiningBatch, Pool, transactions::PoolTransaction},
     },
     mem::{
+        in_memory_db::StateRootDb,
         inspector::{AnvilInspector, InspectorTxConfig},
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
@@ -103,7 +109,7 @@ use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
-    constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+    constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
     core::{
         evm::{EvmEnvFor, TempoEvmNetwork},
         precompiles::EC_RECOVER,
@@ -196,7 +202,10 @@ use std::{
     io::{Read, Write},
     ops::Mul,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
@@ -327,6 +336,8 @@ pub struct Backend<N: Network> {
     /// Listeners for new blocks that get notified when a new block was imported or when logs were
     /// removed from the canonical chain due to a reorg.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
+    /// Internal block notifications with reset lifecycle metadata.
+    fee_history_listeners: Arc<Mutex<Vec<UnboundedSender<FeeHistoryNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
     active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
@@ -345,8 +356,30 @@ pub struct Backend<N: Network> {
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
+    /// Generation used to reject pool selections made before a reset.
+    reset_generation: Arc<AtomicU64>,
+    /// Runtime-owned state that must participate in a live node reset.
+    reset_runtime: Arc<OnceLock<ResetRuntime<N::TxEnvelope>>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
+}
+
+/// Fully prepared replacement state for an atomic backend reset.
+struct PreparedReset<N: Network> {
+    node_config: NodeConfig,
+    db: Box<dyn Db>,
+    evm_env: EvmEnv,
+    fork: Option<ClientFork>,
+    fee_state: FeeState,
+    storage: BlockchainStorage<N>,
+    timestamp: u64,
+    fee_history: Option<(u64, FeeHistoryCacheItem)>,
+}
+
+struct ResetRuntime<T> {
+    pool: Arc<Pool<T>>,
+    fee_history_cache: FeeHistoryCache,
+    lifecycle: Arc<AsyncRwLock<()>>,
 }
 
 impl<N: Network> Clone for Backend<N> {
@@ -364,6 +397,7 @@ impl<N: Network> Clone for Backend<N> {
             fees: self.fees.clone(),
             genesis: self.genesis.clone(),
             new_block_listeners: self.new_block_listeners.clone(),
+            fee_history_listeners: self.fee_history_listeners.clone(),
             active_state_snapshots: self.active_state_snapshots.clone(),
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
@@ -375,6 +409,8 @@ impl<N: Network> Clone for Backend<N> {
             slots_in_an_epoch: self.slots_in_an_epoch,
             precompile_factory: self.precompile_factory.clone(),
             mining: self.mining.clone(),
+            reset_generation: self.reset_generation.clone(),
+            reset_runtime: self.reset_runtime.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
         }
     }
@@ -799,6 +835,7 @@ impl<N: Network> Backend<N> {
     ///
     /// Returns the id of the snapshot created.
     pub async fn create_state_snapshot(&self) -> U256 {
+        let _mining_guard = self.mining.lock().await;
         let num = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
@@ -868,10 +905,51 @@ impl<N: Network> Backend<N> {
         rx
     }
 
+    pub(crate) fn fee_history_notifications(
+        &self,
+    ) -> futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification> {
+        let (tx, rx) = unbounded();
+        self.fee_history_listeners.lock().push(tx);
+        rx
+    }
+
     /// Returns the number of new-block listeners. Closed listeners are pruned lazily on the next
     /// new block notification.
     pub fn new_block_listeners_count(&self) -> usize {
         self.new_block_listeners.lock().len()
+    }
+
+    pub(crate) fn reset_generation(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.reset_generation)
+    }
+
+    pub(crate) fn current_reset_generation(&self) -> u64 {
+        self.reset_generation.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn attach_reset_runtime(
+        &self,
+        pool: Arc<Pool<N::TxEnvelope>>,
+        fee_history_cache: FeeHistoryCache,
+        lifecycle: Arc<AsyncRwLock<()>>,
+    ) -> Arc<AsyncRwLock<()>> {
+        let runtime = ResetRuntime { pool, fee_history_cache, lifecycle: lifecycle.clone() };
+        if let Err(runtime) = self.reset_runtime.set(runtime) {
+            let attached = self.reset_runtime.get().expect("runtime was attached");
+            assert!(
+                Arc::ptr_eq(&attached.pool, &runtime.pool)
+                    && Arc::ptr_eq(&attached.fee_history_cache, &runtime.fee_history_cache),
+                "backend already attached to a different runtime",
+            );
+            attached.pool.synchronize_generation(&self.reset_generation);
+            return attached.lifecycle.clone();
+        }
+        self.reset_runtime
+            .get()
+            .expect("runtime was attached")
+            .pool
+            .synchronize_generation(&self.reset_generation);
+        lifecycle
     }
 
     /// Notifies all `new_block_listeners` about the new block
@@ -880,8 +958,19 @@ impl<N: Network> Backend<N> {
         // sender half for the set
         self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
 
-        let notification =
-            ChainNotification::Block(NewBlockNotification { hash, header: Arc::new(header) });
+        let header = Arc::new(header);
+        let fee_history_notification = FeeHistoryNotification {
+            hash,
+            header: Arc::clone(&header),
+            generation: self.reset_generation.load(Ordering::Acquire),
+            blob_params: self.fees.blob_params(),
+        };
+        self.fee_history_listeners.lock().retain(|tx| !tx.is_closed());
+        self.fee_history_listeners
+            .lock()
+            .retain(|tx| tx.unbounded_send(fee_history_notification.clone()).is_ok());
+
+        let notification = ChainNotification::Block(NewBlockNotification { hash, header });
 
         self.new_block_listeners
             .lock()
@@ -2492,6 +2581,7 @@ impl<N: Network> Backend<N> {
             time: TimeManager::new(start_timestamp),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
+            fee_history_listeners: Default::default(),
             fees,
             genesis,
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
@@ -2505,6 +2595,8 @@ impl<N: Network> Backend<N> {
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
+            reset_generation: Arc::new(AtomicU64::new(0)),
+            reset_runtime: Arc::new(OnceLock::new()),
             disable_pool_balance_checks,
         };
 
@@ -2606,8 +2698,71 @@ impl<N: Network> Backend<N> {
         self.genesis.apply_genesis_json_alloc_to(db)
     }
 
+    /// Publishes a fully prepared reset while mining is fenced.
+    async fn commit_reset(
+        &self,
+        candidate: PreparedReset<N>,
+        pool: &Pool<N::TxEnvelope>,
+        fee_history_cache: &FeeHistoryCache,
+    ) {
+        let _mining_guard = self.mining.lock().await;
+        let mut node_config = self.node_config.write().await;
+        let mut db = self.db.write().await;
+        let mut env = self.evm_env.write();
+        let mut fork = self.fork.write();
+        let mut fees = self.fees.write_state();
+        let mut storage = self.blockchain.storage.write();
+        let mut states = self.states.write();
+        let mut snapshots = self.active_state_snapshots.lock();
+        let mut fee_history = fee_history_cache.lock();
+
+        let retired_db = std::mem::replace(&mut *db, candidate.db);
+        *node_config = candidate.node_config;
+        *env = candidate.evm_env;
+        *fork = candidate.fork;
+        *fees = candidate.fee_state;
+        *storage = candidate.storage;
+        states.clear();
+        snapshots.clear();
+        fee_history.clear();
+        if let Some((block_number, item)) = candidate.fee_history {
+            fee_history.insert(block_number, item);
+        }
+        self.time.reset(candidate.timestamp);
+        self.cheats.clear_next_block_prevrandao();
+        pool.reset_with_generation(&self.reset_generation);
+
+        drop(snapshots);
+        drop(fee_history);
+        drop(states);
+        drop(storage);
+        drop(fees);
+        drop(fork);
+        drop(env);
+        drop(db);
+        drop(node_config);
+        drop(_mining_guard);
+        drop(retired_db);
+    }
+
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
+        if let Some(runtime) = self.reset_runtime.get() {
+            let _lifecycle_guard = runtime.lifecycle.write().await;
+            return self
+                .reset_fork_with_runtime(forking, &runtime.pool, &runtime.fee_history_cache)
+                .await;
+        }
+        let pool = Pool::new(self.reset_generation());
+        self.reset_fork_with_runtime(forking, &pool, &Default::default()).await
+    }
+
+    pub(crate) async fn reset_fork_with_runtime(
+        &self,
+        forking: Forking,
+        pool: &Pool<N::TxEnvelope>,
+        fee_history_cache: &FeeHistoryCache,
+    ) -> Result<(), BlockchainError> {
         let current_fork = self.get_fork();
         let target_rpc_url = forking
             .json_rpc_url
@@ -2641,8 +2796,9 @@ impl<N: Network> Backend<N> {
         let mut evm_env = self.evm_env.read().clone();
         node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
         let candidate_fees = self.fees.detached();
-        let (mut db, config) =
-            node_config.setup_fork_db_config(target_rpc_url, &mut evm_env, &candidate_fees).await?;
+        let (mut db, config, fork_runtime) = node_config
+            .setup_fork_db_config_with_runtime(target_rpc_url, &mut evm_env, &candidate_fees)
+            .await?;
         let active_network = self.networks.active_network_name().unwrap_or("ethereum");
         let target_network = node_config.networks.active_network_name().unwrap_or("ethereum");
         if active_network != target_network {
@@ -2652,35 +2808,22 @@ impl<N: Network> Backend<N> {
             .into());
         }
         self.apply_fork_genesis(&mut db)?;
-        let candidate_fee_state = candidate_fees.snapshot();
-        let fork = ClientFork::new(config, Arc::clone(&self.db));
-
-        let _mining_guard = self.mining.lock().await;
-
-        // Acquire every live-state guard before publishing the prepared fork. No fallible or
-        // asynchronous work occurs while these guards are held, so setup failures cannot expose a
-        // partially prepared fee spec while the old fork is still active.
-        {
-            let mut live_node_config = self.node_config.write().await;
-            let mut live_db = self.db.write().await;
-            let mut live_env = self.evm_env.write();
-            let mut live_fork = self.fork.write();
-            let mut live_fee_state = self.fees.write_state();
-            *live_node_config = node_config;
-            *live_db = Box::new(db);
-            *live_env = evm_env;
-            *live_fork = Some(fork.clone());
-            *live_fee_state = candidate_fee_state;
-        }
-
-        self.time.reset(fork.timestamp());
-        self.cheats.clear_next_block_prevrandao();
-        *self.blockchain.storage.write() = BlockchainStorage::forked(
-            fork.block_number(),
-            fork.block_hash(),
-            fork.total_difficulty(),
-        );
-        self.states.write().clear();
+        let fork = ClientFork::new_with_runtime(config, Arc::clone(&self.db), fork_runtime);
+        let candidate = PreparedReset {
+            node_config,
+            db: Box::new(db),
+            evm_env,
+            fork: Some(fork.clone()),
+            fee_state: candidate_fees.snapshot(),
+            storage: BlockchainStorage::forked(
+                fork.block_number(),
+                fork.block_hash(),
+                fork.total_difficulty(),
+            ),
+            timestamp: fork.timestamp(),
+            fee_history: None,
+        };
+        self.commit_reset(candidate, pool, fee_history_cache).await;
 
         trace!(target: "backend", "reset fork");
         Ok(())
@@ -2688,9 +2831,24 @@ impl<N: Network> Backend<N> {
 
     /// Resets the backend to a fresh in-memory state, clearing all existing data
     pub async fn reset_to_in_mem(&self) -> Result<(), BlockchainError> {
-        let _mining_guard = self.mining.lock().await;
+        if let Some(runtime) = self.reset_runtime.get() {
+            let _lifecycle_guard = runtime.lifecycle.write().await;
+            return self
+                .reset_to_in_mem_with_runtime(&runtime.pool, &runtime.fee_history_cache)
+                .await;
+        }
+        let pool = Pool::new(self.reset_generation());
+        self.reset_to_in_mem_with_runtime(&pool, &Default::default()).await
+    }
+
+    pub(crate) async fn reset_to_in_mem_with_runtime(
+        &self,
+        pool: &Pool<N::TxEnvelope>,
+        fee_history_cache: &FeeHistoryCache,
+    ) -> Result<(), BlockchainError> {
         let current_fork = self.get_fork();
         let (
+            node_config,
             fallback_chain_id,
             fallback_hardfork,
             fallback_base_fee,
@@ -2699,14 +2857,17 @@ impl<N: Network> Backend<N> {
             fallback_blob_excess_gas_and_price,
             fallback_blob_params,
         ) = {
-            let mut config = self.node_config.write().await;
+            let mut config = self.node_config.read().await.clone();
             if let Some(fork) = &current_fork {
                 config.set_chain_id(fork.override_chain_id());
-                config.networks = fork.override_networks();
             }
+            config.fork_urls.clear();
+            config.fork_choice = None;
+            config.networks = self.networks;
             (
+                config.clone(),
                 config.get_chain_id(),
-                config.get_hardfork(),
+                self.hardfork,
                 config.get_base_fee(),
                 config.get_gas_price(),
                 config.gas_limit(),
@@ -2716,70 +2877,118 @@ impl<N: Network> Backend<N> {
         };
         let fallback_spec_id = SpecId::from(fallback_hardfork);
 
-        // Clear the fork if any exists
-        *self.fork.write() = None;
-
         // Restore the configured non-fork hardfork after clearing an inferred fork. Explicit
         // hardfork overrides remain pinned, while auto-detected fork hardforks fall back to the
         // local node default.
-        self.fees.set_hardfork(
+        let candidate_fees = self.fees.detached();
+        candidate_fees.set_hardfork(
             fallback_spec_id,
             self.is_tempo().then(|| TempoHardfork::from(fallback_hardfork)),
         );
-        self.fees.set_base_fee(fallback_base_fee);
-        self.fees.set_gas_price(fallback_gas_price);
-        self.fees.set_blob_excess_gas_and_price(fallback_blob_excess_gas_and_price);
-        self.fees.set_blob_params(fallback_blob_params);
+        candidate_fees.set_base_fee(fallback_base_fee);
+        candidate_fees.set_gas_price(fallback_gas_price);
+        candidate_fees.set_blob_excess_gas_and_price(fallback_blob_excess_gas_and_price);
+        candidate_fees.set_blob_params(fallback_blob_params);
 
         let genesis_timestamp = self.genesis.timestamp;
-        self.fees.set_base_fee_params(self.networks.base_fee_params(genesis_timestamp));
+        candidate_fees.set_base_fee_params(self.networks.base_fee_params(genesis_timestamp));
         let genesis_number = self.genesis.number;
 
         let genesis_base_fee = fallback_base_fee;
 
-        // Reset environment to genesis state
-        {
-            let mut env = self.evm_env.write();
-            env.cfg_env.chain_id = fallback_chain_id;
-            env.cfg_env.set_spec_and_mainnet_gas_params(fallback_spec_id);
-            env.block_env.number = U256::from(genesis_number);
-            env.block_env.timestamp = U256::from(genesis_timestamp);
-            env.block_env.gas_limit = fallback_gas_limit;
-            // Reset other block env fields to their defaults
-            env.block_env.basefee = genesis_base_fee;
-            env.block_env.prevrandao = Some(B256::ZERO);
+        // Reset the environment from local configuration instead of retaining fork-only block
+        // fields such as beneficiary or blob excess gas.
+        let mut env = self.evm_env.read().clone();
+        env.cfg_env.chain_id = fallback_chain_id;
+        env.cfg_env.set_spec_and_mainnet_gas_params(fallback_spec_id);
+        env.block_env = BlockEnv {
+            number: U256::from(genesis_number),
+            timestamp: U256::from(genesis_timestamp),
+            gas_limit: fallback_gas_limit,
+            basefee: genesis_base_fee,
+            ..Default::default()
+        };
+        if let Some(genesis) = &node_config.genesis {
+            env.block_env.beneficiary = genesis.coinbase;
         }
+        node_config.apply_tempo_fork_beneficiary_default(&mut env);
 
         // Clear all storage and reinitialize with genesis
-        let base_fee = self.fees.is_eip1559().then_some(genesis_base_fee);
-        *self.blockchain.storage.write() = BlockchainStorage::new(
-            &self.evm_env.read(),
+        let base_fee = candidate_fees.is_eip1559().then_some(genesis_base_fee);
+        let storage = BlockchainStorage::new(
+            &env,
             base_fee,
             genesis_timestamp,
             genesis_number,
             self.is_tempo(),
         );
-        self.states.write().clear();
-
-        // Clear the database
-        self.db.write().await.clear();
-
-        // Reset time manager
-        self.time.reset(genesis_timestamp);
-        // drop any pending next-block prevrandao override so it does not leak into a block
-        self.cheats.clear_next_block_prevrandao();
+        let mut db = StateRootDb::new(self.prune_state_history_config.is_state_history_supported());
+        for (account, info) in self.genesis.account_infos() {
+            db.insert_account(account, info);
+        }
+        db.insert_block_hash(U256::from(genesis_number), storage.best_hash);
+        if fallback_spec_id >= SpecId::PRAGUE {
+            db.set_code(eip2935::HISTORY_STORAGE_ADDRESS, eip2935::HISTORY_STORAGE_CODE.clone())?;
+        }
+        self.genesis.apply_genesis_json_alloc_to(&mut db)?;
 
         // Tempo advances its configured genesis seed according to the active hardfork. Other
         // networks retain the configured local base fee for the first block after reset.
-        if self.fees.tempo_hardfork().is_some() {
-            let gas_limit = self.evm_env.read().block_env.gas_limit;
+        if candidate_fees.tempo_hardfork().is_some() {
+            let gas_limit = env.block_env.gas_limit;
             let next_base_fee =
-                self.fees.get_next_block_base_fee_per_gas(0, gas_limit, genesis_base_fee);
-            self.fees.set_base_fee(next_base_fee);
+                candidate_fees.get_next_block_base_fee_per_gas(0, gas_limit, genesis_base_fee);
+            candidate_fees.set_base_fee(next_base_fee);
         }
-
-        // Reapply genesis configuration
-        self.apply_genesis().await?;
+        if self.networks.is_tempo() {
+            crate::eth::backend::tempo::initialize_tempo_precompiles(
+                &mut db,
+                fallback_chain_id,
+                genesis_timestamp,
+                &self.genesis.accounts,
+                TempoHardfork::from(fallback_hardfork),
+            )
+            .map_err(|err| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{err}"))))?;
+        }
+        // Match startup ordering: network initialization may replace account state, while the
+        // configured CREATE2 deployer and funded accounts are final user-facing overlays.
+        if !node_config.disable_default_create2_deployer {
+            db.set_code(
+                DEFAULT_CREATE2_DEPLOYER,
+                Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+            )?;
+        }
+        for (address, balance) in &node_config.funded_accounts {
+            db.set_balance(*address, *balance)?;
+        }
+        let genesis_header = &storage.blocks[&storage.best_hash].header;
+        let blob_gas_used_ratio = genesis_header
+            .blob_gas_used()
+            .map(|gas| {
+                let max = fallback_blob_params.max_blob_gas_per_block();
+                if max == 0 { 0.0 } else { gas as f64 / max as f64 }
+            })
+            .unwrap_or_default();
+        let fee_history = FeeHistoryCacheItem {
+            base_fee: genesis_header.base_fee_per_gas().unwrap_or_default() as u128,
+            gas_used_ratio: genesis_header.gas_used() as f64 / genesis_header.gas_limit() as f64,
+            base_fee_per_blob_gas: genesis_header.blob_fee(fallback_blob_params),
+            blob_gas_used_ratio,
+            excess_blob_gas: genesis_header.excess_blob_gas().map(u128::from),
+            blob_gas_used: genesis_header.blob_gas_used().map(u128::from),
+            rewards: Vec::new(),
+        };
+        let candidate = PreparedReset {
+            node_config,
+            db: Box::new(db),
+            evm_env: env,
+            fork: None,
+            fee_state: candidate_fees.snapshot(),
+            storage,
+            timestamp: genesis_timestamp,
+            fee_history: Some((genesis_number, fee_history)),
+        };
+        self.commit_reset(candidate, pool, fee_history_cache).await;
 
         trace!(target: "backend", "reset to fresh in-memory state");
 
@@ -2788,6 +2997,7 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
         let block = { self.active_state_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
             let best_block_hash = {
@@ -3041,7 +3251,20 @@ where
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> MinedBlockOutcome<FoundryTxEnvelope> {
+        let _mining_guard = self.mining.lock().await;
         self.do_mine_block(pool_transactions).await
+    }
+
+    /// Mines a pool batch unless it was selected before the latest reset.
+    pub async fn mine_pool_batch(
+        &self,
+        batch: MiningBatch<FoundryTxEnvelope>,
+    ) -> Option<(u64, MinedBlockOutcome<FoundryTxEnvelope>)> {
+        let _mining_guard = self.mining.lock().await;
+        if batch.generation != self.reset_generation.load(Ordering::Acquire) {
+            return None;
+        }
+        Some((batch.generation, self.do_mine_block(batch.transactions).await))
     }
 
     /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
@@ -3102,7 +3325,6 @@ where
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> MinedBlockOutcome<FoundryTxEnvelope> {
-        let _mining_guard = self.mining.lock().await;
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -3322,7 +3544,23 @@ where
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
         common_block: Block,
     ) -> Result<(), BlockchainError> {
-        self.rollback(common_block).await?;
+        self.reorg_if_current(self.current_reset_generation(), depth, tx_pairs, common_block).await
+    }
+
+    pub(crate) async fn reorg_if_current(
+        &self,
+        generation: u64,
+        depth: u64,
+        tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
+        common_block: Block,
+    ) -> Result<(), BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
+        if generation != self.current_reset_generation() {
+            return Err(
+                RpcError::internal_error_with("chain reset during reorg; retry request").into()
+            );
+        }
+        self.do_rollback(common_block).await?;
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
@@ -4356,6 +4594,26 @@ where
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
+        self.do_rollback(common_block).await
+    }
+
+    pub(crate) async fn rollback_if_current(
+        &self,
+        generation: u64,
+        common_block: Block,
+    ) -> Result<(), BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
+        if generation != self.current_reset_generation() {
+            return Err(RpcError::internal_error_with(
+                "chain reset during rollback; retry request",
+            )
+            .into());
+        }
+        self.do_rollback(common_block).await
+    }
+
+    async fn do_rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         let hash = common_block.header.hash_slow();
 
         // Get the database at the common block
@@ -4811,6 +5069,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
         let at = self.evm_env.read().block_env.clone();
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
@@ -4846,6 +5105,14 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
+        let generation = self.current_reset_generation();
+        let _mining_guard = self.mining.lock().await;
+        if generation != self.current_reset_generation() {
+            return Err(RpcError::internal_error_with(
+                "chain reset while loading state; retry request",
+            )
+            .into());
+        }
         // load the blocks and transactions into the storage atomically so concurrent readers
         // never observe blocks without their transactions
         {
