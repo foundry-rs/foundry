@@ -117,7 +117,7 @@ mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 
 mod coverage;
-pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
+pub use coverage::{CoverageConfig, CoverageReportKind, CoverageThresholds, parse_lcov_version};
 
 mod trace;
 pub use trace::TracingConfig;
@@ -8571,6 +8571,12 @@ mod tests {
                 include_libs = true
                 exclude_tests = true
                 skip_files = ["test/**", "src/mocks/**"]
+
+                [profile.default.coverage.thresholds]
+                lines = 80
+                statements = 81
+                branches = 82
+                functions = 83
                 "#,
             )?;
             let config = Config::load_with_root(jail.directory()).unwrap();
@@ -8590,6 +8596,15 @@ mod tests {
                 config.coverage.skip_files,
                 vec!["test/**".to_string(), "src/mocks/**".to_string()]
             );
+            assert_eq!(
+                config.coverage.thresholds,
+                CoverageThresholds {
+                    lines: Some(80),
+                    statements: Some(81),
+                    branches: Some(82),
+                    functions: Some(83),
+                }
+            );
             Ok(())
         });
     }
@@ -8605,6 +8620,9 @@ mod tests {
                 [coverage]
                 skip_files = ["script/**"]
                 exclude_tests = true
+
+                [coverage.thresholds]
+                lines = 75
                 "#,
             )?;
             let config = Config::load_with_root(jail.directory()).unwrap();
@@ -8613,6 +8631,7 @@ mod tests {
             // Untouched fields keep their defaults.
             assert_eq!(config.coverage.report, vec![CoverageReportKind::Summary]);
             assert_eq!(config.coverage.lcov_version, semver::Version::new(1, 0, 0));
+            assert_eq!(config.coverage.thresholds.lines, Some(75));
             Ok(())
         });
     }
@@ -8626,9 +8645,16 @@ mod tests {
                 [profile.default.coverage]
                 skip_files = ["script/**"]
 
+                [profile.default.coverage.thresholds]
+                lines = 75
+
                 [profile.ci.coverage]
                 skip_files = ["test/**", "lib/**"]
                 exclude_tests = true
+
+                [profile.ci.coverage.thresholds]
+                lines = 90
+                branches = 80
                 "#,
             )?;
 
@@ -8636,6 +8662,8 @@ mod tests {
             let config = Config::load_with_root(jail.directory()).unwrap();
             assert_eq!(config.coverage.skip_files, vec!["script/**".to_string()]);
             assert!(!config.coverage.exclude_tests);
+            assert_eq!(config.coverage.thresholds.lines, Some(75));
+            assert!(config.coverage.thresholds.branches.is_none());
 
             // CI profile sees its own override.
             jail.set_env("FOUNDRY_PROFILE", "ci");
@@ -8645,6 +8673,8 @@ mod tests {
                 vec!["test/**".to_string(), "lib/**".to_string()]
             );
             assert!(config.coverage.exclude_tests);
+            assert_eq!(config.coverage.thresholds.lines, Some(90));
+            assert_eq!(config.coverage.thresholds.branches, Some(80));
             Ok(())
         });
     }

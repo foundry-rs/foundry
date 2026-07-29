@@ -93,6 +93,15 @@ impl CoverageReport {
         self.by_file(|summary: &mut CoverageSummary, item| summary.add_item(item))
     }
 
+    /// Returns the aggregate coverage summary across all reportable source files.
+    pub fn summary(&self) -> CoverageSummary {
+        let mut total = CoverageSummary::default();
+        for (_, summary) in self.summary_by_file() {
+            total.merge(&summary);
+        }
+        total
+    }
+
     /// Returns an iterator over coverage items by source file path.
     pub fn items_by_file(&self) -> impl Iterator<Item = (&Path, Vec<&CoverageItem>)> {
         self.by_file(|list: &mut Vec<_>, item| list.push(item))

@@ -1,6 +1,7 @@
 use clap::CommandFactory;
 use forge::cmd::coverage::CoverageArgs;
 use foundry_common::fs::{self, files_with_ext};
+use foundry_config::CoverageThresholds;
 use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData},
@@ -178,6 +179,71 @@ end_of_record
 forgetest_init!(basic, |prj, cmd| {
     prj.initialize_default_contracts();
     basic_base(prj, cmd);
+});
+
+forgetest_init!(json_summary_and_thresholds, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| {
+        config.coverage.thresholds = CoverageThresholds {
+            lines: Some(45),
+            statements: Some(41),
+            branches: Some(100),
+            functions: Some(51),
+        };
+    });
+
+    let output =
+        cmd.args(["coverage", "--report=json-summary"]).assert_failure().get_output().clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(!stdout.contains("Wrote JSON summary report."), "{stdout}");
+    assert!(stderr.contains("Wrote JSON summary report."), "{stderr}");
+    assert!(stderr.contains("coverage thresholds not met:"), "{stderr}");
+    assert!(stderr.contains("lines: 44.44% (4/9), required 45%"), "{stderr}");
+    assert!(stderr.contains("statements: 40.00% (2/5), required 41%"), "{stderr}");
+    assert!(!stderr.contains("branches:"), "{stderr}");
+    assert!(stderr.contains("functions: 50.00% (2/4), required 51%"), "{stderr}");
+
+    let summary_path = prj.root().join("coverage-summary.json");
+    let summary: Value =
+        serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
+    assert_eq!(
+        summary,
+        serde_json::json!({
+            "total": {
+                "lines": { "total": 9, "covered": 4, "skipped": 0, "pct": 44.44 },
+                "statements": { "total": 5, "covered": 2, "skipped": 0, "pct": 40.0 },
+                "functions": { "total": 4, "covered": 2, "skipped": 0, "pct": 50.0 },
+                "branches": { "total": 0, "covered": 0, "skipped": 0, "pct": 100.0 }
+            },
+            "script/Counter.s.sol": {
+                "lines": { "total": 5, "covered": 0, "skipped": 0, "pct": 0.0 },
+                "statements": { "total": 3, "covered": 0, "skipped": 0, "pct": 0.0 },
+                "functions": { "total": 2, "covered": 0, "skipped": 0, "pct": 0.0 },
+                "branches": { "total": 0, "covered": 0, "skipped": 0, "pct": 100.0 }
+            },
+            "src/Counter.sol": {
+                "lines": { "total": 4, "covered": 4, "skipped": 0, "pct": 100.0 },
+                "statements": { "total": 2, "covered": 2, "skipped": 0, "pct": 100.0 },
+                "functions": { "total": 2, "covered": 2, "skipped": 0, "pct": 100.0 },
+                "branches": { "total": 0, "covered": 0, "skipped": 0, "pct": 100.0 }
+            }
+        })
+    );
+
+    let custom_summary = prj.root().join("custom-summary.json");
+    cmd.forge_fuse()
+        .args([
+            "coverage",
+            "--report=json-summary",
+            "--report-file=custom-summary.json",
+            "--fail-under-lines=0",
+            "--fail-under-statements=0",
+            "--fail-under-branches=0",
+            "--fail-under-functions=0",
+        ])
+        .assert_success();
+    assert!(custom_summary.exists(), "custom JSON summary report was not created");
 });
 
 forgetest_init!(basic_crlf, |prj, cmd| {

@@ -283,6 +283,8 @@ include_libs = false
 exclude_tests = false
 skip_files = []
 
+[coverage.thresholds]
+
 [mutation]
 include_operators = []
 exclude_operators = []
@@ -1715,7 +1717,13 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "report_file": null,
     "include_libs": false,
     "exclude_tests": false,
-    "skip_files": []
+    "skip_files": [],
+    "thresholds": {
+      "lines": null,
+      "statements": null,
+      "branches": null,
+      "functions": null
+    }
   },
   "mutation": {
     "include_operators": [],

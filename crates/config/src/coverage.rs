@@ -1,6 +1,6 @@
 //! Configuration for `forge coverage`.
 
-use clap::ValueEnum;
+use clap::{Args, ValueEnum, builder::RangedU64ValueParser};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
@@ -10,15 +10,70 @@ use std::path::PathBuf;
 /// Used both as a CLI value (`--report <kind>`) and as a TOML configuration
 /// value under `[profile.<name>.coverage] report = ["..."]`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum CoverageReportKind {
     #[default]
     Summary,
+    /// Istanbul-compatible JSON summary report.
+    JsonSummary,
     Lcov,
     Debug,
     Bytecode,
     /// JSON report mapping each test to the source items it covers.
     Attribution,
+}
+
+/// Aggregate coverage thresholds.
+///
+/// Configured under `[profile.<name>.coverage.thresholds]`. The corresponding
+/// CLI flags are named `--fail-under-<kind>`.
+#[derive(Args, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoverageThresholds {
+    /// Fail if aggregate line coverage is below this percentage.
+    #[arg(
+        long = "fail-under-lines",
+        value_parser = RangedU64ValueParser::<u8>::new().range(0..=100),
+        value_name = "PERCENT"
+    )]
+    #[serde(default, deserialize_with = "deserialize_coverage_threshold")]
+    pub lines: Option<u8>,
+
+    /// Fail if aggregate statement coverage is below this percentage.
+    #[arg(
+        long = "fail-under-statements",
+        value_parser = RangedU64ValueParser::<u8>::new().range(0..=100),
+        value_name = "PERCENT"
+    )]
+    #[serde(default, deserialize_with = "deserialize_coverage_threshold")]
+    pub statements: Option<u8>,
+
+    /// Fail if aggregate branch coverage is below this percentage.
+    #[arg(
+        long = "fail-under-branches",
+        value_parser = RangedU64ValueParser::<u8>::new().range(0..=100),
+        value_name = "PERCENT"
+    )]
+    #[serde(default, deserialize_with = "deserialize_coverage_threshold")]
+    pub branches: Option<u8>,
+
+    /// Fail if aggregate function coverage is below this percentage.
+    #[arg(
+        long = "fail-under-functions",
+        value_parser = RangedU64ValueParser::<u8>::new().range(0..=100),
+        value_name = "PERCENT"
+    )]
+    #[serde(default, deserialize_with = "deserialize_coverage_threshold")]
+    pub functions: Option<u8>,
+}
+
+impl CoverageThresholds {
+    /// Resolves unset thresholds from configuration.
+    pub fn resolve_with(&mut self, config: &Self) {
+        self.lines = self.lines.or(config.lines);
+        self.statements = self.statements.or(config.statements);
+        self.branches = self.branches.or(config.branches);
+        self.functions = self.functions.or(config.functions);
+    }
 }
 
 /// Configuration for `forge coverage`, exposed under `[coverage]` and
@@ -71,6 +126,10 @@ pub struct CoverageConfig {
     /// ```
     #[serde(default)]
     pub skip_files: Vec<String>,
+
+    /// Aggregate coverage thresholds. Unset thresholds are not enforced.
+    #[serde(default)]
+    pub thresholds: CoverageThresholds,
 }
 
 impl Default for CoverageConfig {
@@ -83,6 +142,7 @@ impl Default for CoverageConfig {
             include_libs: false,
             exclude_tests: false,
             skip_files: Vec::new(),
+            thresholds: CoverageThresholds::default(),
         }
     }
 }
@@ -101,6 +161,17 @@ where
 {
     let version = String::deserialize(deserializer)?;
     parse_lcov_version(&version).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_coverage_threshold<'de, D>(deserializer: D) -> Result<Option<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let threshold = Option::<u8>::deserialize(deserializer)?;
+    if threshold.is_some_and(|threshold| threshold > 100) {
+        return Err(serde::de::Error::custom("coverage threshold must be between 0 and 100"));
+    }
+    Ok(threshold)
 }
 
 pub fn parse_lcov_version(s: &str) -> Result<Version, String> {
@@ -131,27 +202,51 @@ mod tests {
         assert!(!cfg.include_libs);
         assert!(!cfg.exclude_tests);
         assert!(cfg.skip_files.is_empty());
+        assert_eq!(cfg.thresholds, CoverageThresholds::default());
     }
 
     #[test]
     fn deserialize_from_toml() {
         let toml = r#"
-            report = ["summary", "lcov"]
+            report = ["summary", "json-summary", "lcov"]
             lcov_version = "2.2.0"
             ir_minimum = true
             report_file = "out/lcov.info"
             include_libs = true
             exclude_tests = true
             skip_files = ["test/**", "src/mocks/**"]
+
+            [thresholds]
+            lines = 80
+            statements = 81
+            branches = 82
+            functions = 83
         "#;
         let cfg: CoverageConfig = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.report, vec![CoverageReportKind::Summary, CoverageReportKind::Lcov]);
+        assert_eq!(
+            cfg.report,
+            vec![
+                CoverageReportKind::Summary,
+                CoverageReportKind::JsonSummary,
+                CoverageReportKind::Lcov,
+            ]
+        );
         assert_eq!(cfg.lcov_version, Version::new(2, 2, 0));
         assert!(cfg.ir_minimum);
         assert_eq!(cfg.report_file.as_deref(), Some(std::path::Path::new("out/lcov.info")));
         assert!(cfg.include_libs);
         assert!(cfg.exclude_tests);
         assert_eq!(cfg.skip_files, vec!["test/**".to_string(), "src/mocks/**".to_string()]);
+        assert_eq!(
+            cfg.thresholds,
+            CoverageThresholds {
+                lines: Some(80),
+                statements: Some(81),
+                branches: Some(82),
+                functions: Some(83),
+            }
+        );
+        assert_eq!(toml::from_str::<CoverageConfig>(&toml::to_string(&cfg).unwrap()).unwrap(), cfg);
     }
 
     #[test]
@@ -180,5 +275,12 @@ mod tests {
                 toml::from_str(&format!(r#"lcov_version = "{input}""#)).unwrap();
             assert_eq!(cfg.lcov_version, expected);
         }
+    }
+
+    #[test]
+    fn deserialize_threshold_rejects_percentage_above_100() {
+        let err =
+            toml::from_str::<CoverageConfig>("[thresholds]\nlines = 101").unwrap_err().to_string();
+        assert!(err.contains("coverage threshold must be between 0 and 100"), "{err}");
     }
 }

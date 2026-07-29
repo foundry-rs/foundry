@@ -7,6 +7,7 @@ use comfy_table::{
 };
 use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
+use foundry_config::CoverageThresholds;
 use semver::Version;
 use serde::{Serialize, ser::SerializeSeq};
 use std::{
@@ -35,8 +36,6 @@ pub trait CoverageReporter {
 pub struct CoverageSummaryReporter {
     /// The summary table.
     table: Table,
-    /// The total coverage of the entire project.
-    total: CoverageSummary,
 }
 
 impl Default for CoverageSummaryReporter {
@@ -56,7 +55,7 @@ impl Default for CoverageSummaryReporter {
             Cell::new("% Funcs"),
         ]);
 
-        Self { table, total: CoverageSummary::default() }
+        Self { table }
     }
 }
 
@@ -79,11 +78,10 @@ impl CoverageReporter for CoverageSummaryReporter {
 
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
-            self.total.merge(&summary);
             self.add_row(path.display(), summary);
         }
 
-        self.add_row("Total", self.total.clone());
+        self.add_row("Total", report.summary());
         sh_println!("\n{}", self.table)?;
         Ok(())
     }
@@ -114,6 +112,169 @@ mod tests {
             format_cell(0, 0),
             Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
         );
+    }
+
+    #[test]
+    fn json_summary_percentage_matches_istanbul() {
+        assert_eq!(json_summary_percentage(2, 3), 66.66);
+        assert_eq!(json_summary_percentage(0, 0), 100.0);
+    }
+
+    #[test]
+    fn aggregate_thresholds_report_all_misses() {
+        let summary = CoverageSummary {
+            line_count: 10,
+            line_hits: 8,
+            statement_count: 10,
+            statement_hits: 7,
+            branch_count: 4,
+            branch_hits: 3,
+            function_count: 4,
+            function_hits: 3,
+        };
+        let thresholds = CoverageThresholds {
+            lines: Some(80),
+            statements: Some(80),
+            branches: Some(100),
+            functions: Some(80),
+        };
+
+        let err = ensure_coverage_thresholds(&summary, &thresholds).unwrap_err().to_string();
+        assert!(!err.contains("lines"), "{err}");
+        assert!(err.contains("statements: 70.00% (7/10), required 80%"), "{err}");
+        assert!(err.contains("branches: 75.00% (3/4), required 100%"), "{err}");
+        assert!(err.contains("functions: 75.00% (3/4), required 80%"), "{err}");
+
+        assert!(
+            ensure_coverage_thresholds(
+                &CoverageSummary::default(),
+                &CoverageThresholds {
+                    lines: Some(100),
+                    statements: Some(100),
+                    branches: Some(100),
+                    functions: Some(100),
+                }
+            )
+            .is_ok()
+        );
+    }
+}
+
+/// Writes coverage summaries using Istanbul's `json-summary` schema.
+pub struct JsonSummaryReporter {
+    path: PathBuf,
+}
+
+impl JsonSummaryReporter {
+    /// Creates a new JSON summary reporter.
+    pub const fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl CoverageReporter for JsonSummaryReporter {
+    fn name(&self) -> &'static str {
+        "json-summary"
+    }
+
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
+        let summaries = report
+            .summary_by_file()
+            .map(|(path, summary)| {
+                (path.display().to_string(), JsonCoverageSummary::from(&summary))
+            })
+            .collect();
+        let payload =
+            JsonSummaryReport { total: JsonCoverageSummary::from(&report.summary()), summaries };
+        let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
+        serde_json::to_writer(&mut out, &payload)?;
+        writeln!(out)?;
+        out.flush()?;
+
+        sh_status!("Wrote JSON summary report.")?;
+        Ok(())
+    }
+}
+
+/// Istanbul-compatible JSON summary payload.
+#[derive(Serialize)]
+struct JsonSummaryReport {
+    total: JsonCoverageSummary,
+    #[serde(flatten)]
+    summaries: BTreeMap<String, JsonCoverageSummary>,
+}
+
+/// Summary counters for one source or the aggregate report.
+#[derive(Serialize)]
+struct JsonCoverageSummary {
+    lines: JsonCoverageMetric,
+    statements: JsonCoverageMetric,
+    functions: JsonCoverageMetric,
+    branches: JsonCoverageMetric,
+}
+
+impl From<&CoverageSummary> for JsonCoverageSummary {
+    fn from(summary: &CoverageSummary) -> Self {
+        Self {
+            lines: JsonCoverageMetric::new(summary.line_hits, summary.line_count),
+            statements: JsonCoverageMetric::new(summary.statement_hits, summary.statement_count),
+            functions: JsonCoverageMetric::new(summary.function_hits, summary.function_count),
+            branches: JsonCoverageMetric::new(summary.branch_hits, summary.branch_count),
+        }
+    }
+}
+
+/// Counters for one Istanbul coverage metric.
+#[derive(Serialize)]
+struct JsonCoverageMetric {
+    total: usize,
+    covered: usize,
+    skipped: usize,
+    pct: f64,
+}
+
+impl JsonCoverageMetric {
+    fn new(covered: usize, total: usize) -> Self {
+        Self { total, covered, skipped: 0, pct: json_summary_percentage(covered, total) }
+    }
+}
+
+fn json_summary_percentage(covered: usize, total: usize) -> f64 {
+    if total == 0 {
+        return 100.0;
+    }
+    let basis_points = (covered as u128 * 10_000) / total as u128;
+    basis_points as f64 / 100.0
+}
+
+/// Ensures aggregate coverage satisfies all configured thresholds.
+pub fn ensure_coverage_thresholds(
+    summary: &CoverageSummary,
+    thresholds: &CoverageThresholds,
+) -> eyre::Result<()> {
+    let metrics = [
+        ("lines", summary.line_hits, summary.line_count, thresholds.lines),
+        ("statements", summary.statement_hits, summary.statement_count, thresholds.statements),
+        ("branches", summary.branch_hits, summary.branch_count, thresholds.branches),
+        ("functions", summary.function_hits, summary.function_count, thresholds.functions),
+    ];
+    let failures = metrics
+        .into_iter()
+        .filter_map(|(name, covered, total, threshold)| {
+            let threshold = threshold?;
+            (total > 0 && covered as u128 * 100 < threshold as u128 * total as u128).then(|| {
+                format!(
+                    "- {name}: {:.2}% ({covered}/{total}), required {threshold}%",
+                    covered as f64 / total as f64 * 100.0
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        eyre::bail!("coverage thresholds not met:\n{}", failures.join("\n"));
     }
 }
 

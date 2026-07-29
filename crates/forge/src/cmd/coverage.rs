@@ -5,10 +5,11 @@ use super::{
 };
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
-    ResolvedHitMaps,
+    CoverageSummaryReporter, DebugReporter, ItemAnchor, JsonSummaryReporter, LcovReporter,
+    ResolvedHitMap, ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
+    ensure_coverage_thresholds,
 };
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueHint};
@@ -22,7 +23,8 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, CoverageConfig, CoverageReportKind, InlineConfig, parse_lcov_version,
+    Config, CoverageConfig, CoverageReportKind, CoverageThresholds, InlineConfig,
+    parse_lcov_version,
 };
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use globset::{Glob, GlobSetBuilder};
@@ -52,8 +54,9 @@ Compatibility:
   `forge coverage` supports test filters and `--watch`, but not test-only output or
   execution modes such as `--json`, `--junit`, `--list`, `--debug`, flame profiles,
   symbolic artifact replay, showmap replay, brutalization, or mutation testing. Use
-  `--report lcov` for interoperable coverage data or `--report attribution` for
-  Foundry's per-test JSON attribution report."#)]
+  `--report json-summary` for Istanbul-compatible summary JSON, `--report lcov` for
+  interoperable source coverage, or `--report attribution` for Foundry's per-test
+  JSON attribution report."#)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -118,6 +121,9 @@ pub struct CoverageArgs {
     skip_files: Vec<String>,
 
     #[command(flatten)]
+    thresholds: CoverageThresholds,
+
+    #[command(flatten)]
     test: TestArgs,
 }
 
@@ -132,7 +138,9 @@ impl CoverageArgs {
         let has_lcov = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Lcov));
         let has_attribution =
             self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution));
-        usize::from(has_lcov) + usize::from(has_attribution)
+        let has_json_summary =
+            self.report.iter().any(|kind| matches!(kind, CoverageReportKind::JsonSummary));
+        usize::from(has_lcov) + usize::from(has_attribution) + usize::from(has_json_summary)
     }
 
     pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
@@ -212,6 +220,7 @@ impl CoverageArgs {
         // Glob filters are additive — there's no CLI flag for these, so always
         // take from config.
         self.skip_files.clone_from(&config.skip_files);
+        self.thresholds.resolve_with(&config.thresholds);
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -221,6 +230,10 @@ impl CoverageArgs {
             .filter_map(|report_kind| match report_kind {
                 CoverageReportKind::Summary => {
                     Some(Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>)
+                }
+                CoverageReportKind::JsonSummary => {
+                    let path = self.report_path(root, "coverage-summary.json");
+                    Some(Box::new(JsonSummaryReporter::new(path)))
                 }
                 CoverageReportKind::Lcov => {
                     let path = self.report_path(root, "lcov.info");
@@ -464,6 +477,7 @@ impl CoverageArgs {
 
         // Output final reports.
         self.report(&report)?;
+        let threshold_result = ensure_coverage_thresholds(&report.summary(), &self.thresholds);
 
         if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
             let reporter = CoverageAttributionReporter::new(
@@ -475,6 +489,7 @@ impl CoverageArgs {
         // Check for test failures after generating coverage report.
         // This ensures coverage data is written even when tests fail.
         outcome.ensure_ok(false)?;
+        threshold_result?;
 
         Ok(())
     }
