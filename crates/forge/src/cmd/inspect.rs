@@ -1,5 +1,5 @@
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
@@ -22,7 +22,18 @@ use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
 use solar::sema::interface::source_map::FileName;
-use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::LazyLock,
+};
+
+use super::storage_layout::{
+    check_storage_layout, contains_namespaced_storage, read_storage_layout, write_check_report,
+};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -46,11 +57,35 @@ pub struct InspectArgs {
     /// Whether to wrap the table to the terminal width.
     #[arg(long, short, help_heading = "Display options")]
     pub wrap: bool,
+
+    /// Check storage layout compatibility against a reference JSON file.
+    ///
+    /// The reference may be a raw `forge inspect ... storageLayout --json` result or a
+    /// `.clone.meta` file. If PATH is omitted, `.clone.meta` is read from the project root.
+    ///
+    /// This option is only valid when inspecting `storageLayout`. An incompatible or unverifiable
+    /// layout exits with a non-zero status, making the check suitable for CI. Existing variables
+    /// are matched by their compiler labels, and only trailing non-overlapping variables are
+    /// accepted as additions. EIP-7201 declarations are unverifiable until compiler storage-layout
+    /// output includes their namespace roots.
+    #[arg(
+        long,
+        value_name = "PATH",
+        num_args = 0..=1,
+        default_missing_value = ".clone.meta",
+        value_hint = ValueHint::FilePath,
+        help_heading = "Storage layout options"
+    )]
+    pub check: Option<PathBuf>,
 }
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, strip_yul_comments, wrap } = self;
+        let Self { contract, field, build, strip_yul_comments, wrap, check } = self;
+
+        if check.is_some() && field != ContractArtifactField::StorageLayout {
+            eyre::bail!("`--check` is only supported with the `storageLayout` field");
+        }
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -81,6 +116,11 @@ impl InspectArgs {
 
         // Build the project
         let mut project = modified_build_args.project()?;
+        let check = check.map(|path| {
+            let resolved =
+                if path.is_absolute() { path.clone() } else { project.root().join(&path) };
+            (path, resolved)
+        });
         if !user_extra_output
             && !project.build_info
             && let Some(selection) = field.inspect_output_selection()
@@ -97,6 +137,11 @@ impl InspectArgs {
         }
         let compiler = ProjectCompiler::new().quiet(true);
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
+        let has_namespaced_storage = if check.is_some() {
+            contains_namespaced_storage(&output, &target_path)?
+        } else {
+            false
+        };
 
         // Find the artifact
         let artifact = find_matching_contract_artifact(&mut output, &target_path, contract.name())?;
@@ -129,7 +174,25 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                if let Some((reference_display, reference_path)) = check {
+                    let storage_layout = artifact
+                        .storage_layout
+                        .as_ref()
+                        .ok_or_else(|| missing_error("storage layout"))?;
+                    let reference = read_storage_layout(&reference_path)?;
+                    let report = check_storage_layout(
+                        &reference,
+                        storage_layout,
+                        &reference_display,
+                        has_namespaced_storage,
+                    );
+                    write_check_report(&report)?;
+                    if !report.is_compatible() {
+                        eyre::bail!("storage layout compatibility check failed");
+                    }
+                } else {
+                    print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                }
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
