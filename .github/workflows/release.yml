@@ -39,21 +39,78 @@ jobs:
 
       - name: Compute release name and tag
         id: release_info
+        shell: bash
         run: |
+          set -euo pipefail
+          stable_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          rc_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc([1-9][0-9]*)$'
+
+          previous_tag() {
+            local current="$1"
+            local pattern="$2"
+            {
+              while read -r tag; do
+                if [[ "$tag" =~ $pattern ]]; then
+                  printf '%s\n' "$tag"
+                fi
+              done < <(git tag -l)
+              printf '%s\n' "$current"
+            } |
+              sort -V -u |
+              awk -v current="$current" '
+                $0 == current { found=1 }
+                !found { previous=$0 }
+                END { print previous }
+              '
+          }
+
           if [[ ${IS_NIGHTLY} == 'true' ]]; then
             printf 'tag_name=%s\n' "nightly-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
             printf 'release_name=%s\n' "Nightly ($(date '+%Y-%m-%d'))" >> "$GITHUB_OUTPUT"
+            printf 'is_prerelease=true\n' >> "$GITHUB_OUTPUT"
             # Find the previous nightly tag for changelog generation,
             # sorted by tag creation date (most recent first).
-            PREV_NIGHTLY=$(git tag -l 'nightly-*' --sort=-creatordate | head -n1)
+            PREV_NIGHTLY=$(git for-each-ref --sort=-creatordate --count=1 \
+              --format='%(refname:strip=2)' 'refs/tags/nightly-*')
             printf 'from_tag=%s\n' "$PREV_NIGHTLY" >> "$GITHUB_OUTPUT"
           else
             printf 'tag_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
             printf 'release_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-            # Find the previous stable release tag (v*.*.*) for changelog generation,
-            # skipping the current tag so we diff from the last stable release.
-            PREV_STABLE=$(git tag -l 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -n1)
-            printf 'from_tag=%s\n' "$PREV_STABLE" >> "$GITHUB_OUTPUT"
+
+            if [[ "$GITHUB_REF_NAME" =~ $stable_pattern ]]; then
+              PREV_STABLE=$(previous_tag "$GITHUB_REF_NAME" "$stable_pattern")
+              if [[ -z "$PREV_STABLE" ]]; then
+                echo "::error::No preceding strict stable tag found for $GITHUB_REF_NAME."
+                exit 1
+              fi
+              printf 'is_prerelease=false\n' >> "$GITHUB_OUTPUT"
+              printf 'from_tag=%s\n' "$PREV_STABLE" >> "$GITHUB_OUTPUT"
+            elif [[ "$GITHUB_REF_NAME" =~ $rc_pattern ]]; then
+              core="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+              core_rc_pattern="^v${BASH_REMATCH[1]}\.${BASH_REMATCH[2]}\.${BASH_REMATCH[3]}-rc([1-9][0-9]*)$"
+              rc_number=${BASH_REMATCH[4]}
+              printf 'is_prerelease=true\n' >> "$GITHUB_OUTPUT"
+
+              # Prefer the preceding strict RC for this version. For rc1, fall
+              # back to the preceding strict stable release.
+              PREV_RC=$(previous_tag "$GITHUB_REF_NAME" "$core_rc_pattern")
+              if [[ -n "$PREV_RC" ]]; then
+                from_tag="$PREV_RC"
+              elif [[ "$rc_number" == 1 ]]; then
+                from_tag=$(previous_tag "$core" "$stable_pattern")
+              else
+                echo "::error::No preceding strict RC tag found for $GITHUB_REF_NAME."
+                exit 1
+              fi
+              if [[ -z "$from_tag" ]]; then
+                echo "::error::No preceding strict stable tag found for $GITHUB_REF_NAME."
+                exit 1
+              fi
+              printf 'from_tag=%s\n' "$from_tag" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::Release tag must be vX.Y.Z or vX.Y.Z-rcN without leading zeroes."
+              exit 1
+            fi
           fi
 
       - name: Check existing nightly release
@@ -105,7 +162,7 @@ jobs:
       # Create the GitHub release as a draft up-front so that all matrix jobs
       # only upload assets to an existing draft. With immutable releases
       # enabled, an immutable release is sealed when it is published, so all
-      # assets must be attached before that. Stable releases are then left as
+      # assets must be attached before that. Tagged releases are then left as
       # a draft for a maintainer to publish manually; nightlies are auto-
       # published by the `publish-nightly` job at the end of the workflow.
       - name: Create draft release
@@ -116,12 +173,17 @@ jobs:
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
           RELEASE_NAME: ${{ steps.release_info.outputs.release_name }}
           CHANGELOG: ${{ steps.build_changelog.outputs.changelog }}
+          IS_PRERELEASE: ${{ steps.release_info.outputs.is_prerelease }}
         shell: bash
         run: |
           set -euo pipefail
-          if release_json="$(gh release view "$TAG_NAME" --json isDraft 2>/dev/null)"; then
-            is_draft="$(printf '%s' "$release_json" | grep -o '"isDraft":[^,}]*' | cut -d: -f2 | tr -d ' ')"
+          if release_state="$(gh release view "$TAG_NAME" --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | @tsv' 2>/dev/null)"; then
+            read -r is_draft is_prerelease <<< "$release_state"
             if [[ "$is_draft" == "true" ]]; then
+              if [[ "$is_prerelease" != "$IS_PRERELEASE" ]]; then
+                echo "::error::Draft release $TAG_NAME has prerelease=$is_prerelease; expected $IS_PRERELEASE."
+                exit 1
+              fi
               echo "Draft release $TAG_NAME already exists; reusing it."
               exit 0
             fi
@@ -131,7 +193,7 @@ jobs:
           notes_file="$(mktemp)"
           printf '%s' "$CHANGELOG" > "$notes_file"
           flags=(--draft --verify-tag --title "$RELEASE_NAME" --notes-file "$notes_file")
-          if [[ "$IS_NIGHTLY" == "true" ]]; then
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
             flags+=(--prerelease)
           fi
           gh release create "$TAG_NAME" "${flags[@]}"
@@ -151,7 +213,7 @@ jobs:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
 
   # This job uploads assets to the draft release created in `prepare`.
-  # Stable releases stay as drafts for a maintainer to publish manually;
+  # Tagged releases stay as drafts for a maintainer to publish manually;
   # nightlies are auto-published by the `publish-nightly` job below. Either
   # way, GitHub's immutable-releases setting seals the release at publish.
   release:
@@ -400,8 +462,8 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$ATTESTATION_URL" > "$FOUNDRY_ATTESTATION"
 
-      # Upload assets to the draft release created in `prepare`. Stable
-      # releases stay as drafts after this workflow finishes; a maintainer
+      # Upload assets to the draft release created in `prepare`. Tagged releases
+      # stay as drafts after this workflow finishes; a maintainer
       # publishes them manually. Nightlies are auto-published below.
       - name: Upload assets to draft release
         env:
@@ -430,7 +492,7 @@ jobs:
           gh release upload "$TAG_NAME" "${files[@]}" --clobber
 
   # Auto-publish nightly releases once all assets have been uploaded so that
-  # foundryup and other consumers see them immediately. Stable releases are
+  # foundryup and other consumers see them immediately. Tagged releases are
   # left as drafts for a maintainer to publish manually.
   publish-nightly:
     name: Publish nightly release
