@@ -26,7 +26,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     task,
 };
-use tempo_alloy::accounts::{TempoAccountsError, TempoAccountsStore};
+use tempo_alloy_accounts::accounts::{TempoAccountsError, TempoAccountsStore};
 use tower::Service;
 use url::Url;
 

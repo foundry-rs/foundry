@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
     sync::Mutex,
 };
-use tempo_alloy::accounts::{TempoAccountsStore, default_accounts_store_path};
+use tempo_alloy_accounts::accounts::{TempoAccountsStore, default_accounts_store_path};
 use tempo_primitives::{
     SignatureType,
     transaction::{SignedKeyAuthorization, TokenLimit},

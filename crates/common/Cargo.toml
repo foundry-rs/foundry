@@ -79,6 +79,7 @@ ciborium.workspace = true
 
 flate2.workspace = true
 tempo-alloy.workspace = true
+tempo-alloy-accounts.workspace = true
 tempo-primitives.workspace = true
 mpp.workspace = true
 fs2.workspace = true
