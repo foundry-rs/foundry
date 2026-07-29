@@ -3,7 +3,7 @@ use self::state::trie_storage;
 
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
-    config::PruneStateHistoryConfig,
+    config::{ForkTransactionReplay, PruneStateHistoryConfig},
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
@@ -19,6 +19,10 @@ use crate::{
                 storage::MinedTransactionReceipt,
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
+            replay::{
+                ExecutedHistoricalReplay, HistoricalReplayTransaction, execute_historical_replay,
+                prepare_fork_transaction_replay,
+            },
             tempo::AnvilStorageProvider,
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
@@ -3446,6 +3450,197 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> MinedBlockOutcome<FoundryTxEnvelope> {
         self.do_mine_block(pool_transactions).await
+    }
+
+    /// Replays a transaction-hash fork prefix before the live pool and miner are created.
+    pub(crate) async fn apply_fork_transaction_replay(
+        &self,
+        replay: ForkTransactionReplay,
+    ) -> Result<()> {
+        let transactions = prepare_fork_transaction_replay(replay)?;
+        eyre::ensure!(!transactions.is_empty(), "fork transaction replay prefix is empty");
+
+        let _mining_guard = self.mining.lock().await;
+        let current_base_fee = self.base_fee();
+        let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
+        let mut evm_env = self.evm_env.read().clone();
+        if evm_env.block_env.basefee == 0 {
+            evm_env.cfg_env.disable_base_fee = true;
+        }
+
+        let block_number = self.blockchain.storage.read().best_number.saturating_add(1);
+        if is_arbitrum(evm_env.cfg_env.chain_id) {
+            evm_env.block_env.number = U256::from(block_number);
+        } else {
+            evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
+        }
+        evm_env.block_env.basefee = current_base_fee;
+        evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
+        evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
+
+        let best_hash = self.blockchain.storage.read().best_hash;
+        let mut prevrandao_input = [0u8; 40];
+        prevrandao_input[..32].copy_from_slice(best_hash.as_slice());
+        prevrandao_input[32..].copy_from_slice(&block_number.to_le_bytes());
+        evm_env.block_env.prevrandao = Some(
+            self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(prevrandao_input)),
+        );
+
+        let mut replay_env = evm_env.clone();
+        apply_chain_specific_tx_replay_env_changes(&mut replay_env);
+        let spec_id = *replay_env.spec_id();
+        let inspector_tx_config = self.inspector_tx_config();
+
+        let (block_info, state_changes, block_hash) = {
+            let db = self.db.read().await;
+            let mut overlay = AnvilCacheDB::new(&**db);
+            let ExecutedHistoricalReplay {
+                block_result,
+                transactions,
+                transaction_infos,
+                state_changes,
+            } = self.execute_with_replay_block_executor(
+                &mut overlay,
+                &replay_env,
+                best_hash,
+                spec_id,
+                &transactions,
+                &inspector_tx_config,
+            )?;
+            let state_root = overlay.maybe_state_root().unwrap_or_default();
+            let block_info = self.build_block_info(
+                &replay_env,
+                best_hash,
+                block_number,
+                state_root,
+                block_result,
+                transactions,
+                transaction_infos,
+            );
+            let block_hash = block_info.block.header.hash_slow();
+            (block_info, state_changes, block_hash)
+        };
+
+        if self.prune_state_history_config.is_state_history_supported() {
+            let state = self.db.read().await.current_state();
+            self.states.write().insert(best_hash, state);
+        }
+
+        {
+            let mut db = self.db.write().await;
+            for state in state_changes {
+                db.commit(state);
+            }
+            db.insert_block_hash(U256::from(block_number), block_hash);
+        }
+
+        let BlockInfo { block, transactions, receipts } = block_info;
+        let header = block.header.clone();
+        {
+            let mut storage = self.blockchain.storage.write();
+            storage.best_number = block_number;
+            storage.best_hash = block_hash;
+            if !self.is_eip3675() {
+                storage.total_difficulty =
+                    storage.total_difficulty.saturating_add(header.difficulty);
+            }
+            storage.blocks.insert(block_hash, block);
+            storage.hashes.insert(block_number, block_hash);
+            for (info, receipt) in transactions.into_iter().zip(receipts) {
+                let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
+                storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
+            }
+
+            if let Some(transaction_block_keeper) = self.transaction_block_keeper
+                && storage.blocks.len() > transaction_block_keeper
+            {
+                let to_clear = block_number
+                    .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
+                storage.remove_block_transactions_by_number(to_clear)
+            }
+        }
+
+        evm_env.block_env.difficulty = U256::ZERO;
+        *self.evm_env.write() = evm_env;
+
+        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+            header.gas_used,
+            header.gas_limit,
+            header.base_fee_per_gas.unwrap_or_default(),
+        );
+        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+            header.excess_blob_gas.unwrap_or_default(),
+            header.blob_gas_used.unwrap_or_default(),
+        );
+        self.fees.set_base_fee(next_block_base_fee);
+        self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+            next_block_excess_blob_gas,
+            get_blob_base_fee_update_fraction_by_spec_id(*self.evm_env.read().spec_id()),
+        ));
+        self.notify_on_new_block(header.into_inner(), block_hash);
+
+        Ok(())
+    }
+
+    fn execute_with_replay_block_executor<DB>(
+        &self,
+        db: DB,
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        spec_id: SpecId,
+        transactions: &[HistoricalReplayTransaction],
+        inspector_tx_config: &InspectorTxConfig,
+    ) -> Result<ExecutedHistoricalReplay>
+    where
+        DB: StateDB<Error = DatabaseError>,
+    {
+        let inspector = self.build_mining_inspector();
+
+        macro_rules! run {
+            ($evm:expr) => {{
+                self.inject_precompiles($evm.precompiles_mut(), evm_env);
+                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
+                let mut executor =
+                    AnvilBlockExecutor::new($evm, parent_hash, spec_id).with_state_changes();
+                executor
+                    .apply_pre_execution_changes()
+                    .wrap_err("failed to apply replay block-start transitions")?;
+                let (stored_transactions, transaction_infos) =
+                    execute_historical_replay(&mut executor, transactions, inspector_tx_config)?;
+                let state_changes = executor.take_state_changes();
+                let (evm, block_result) =
+                    executor.finish().wrap_err("failed to finish replay block execution")?;
+                drop(evm);
+                Ok(ExecutedHistoricalReplay {
+                    block_result,
+                    transactions: stored_transactions,
+                    transaction_infos,
+                    state_changes,
+                })
+            }};
+        }
+
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
+            let op_env = EvmEnv::new(
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
+                evm_env.block_env.clone(),
+            );
+            let mut evm =
+                OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
+            return run!(evm);
+        }
+
+        if self.is_tempo() {
+            let tempo_env = self.build_tempo_evm_env(evm_env);
+            let mut evm =
+                TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
+            run!(evm)
+        } else {
+            let mut evm =
+                EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
+            run!(evm)
+        }
     }
 
     /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
