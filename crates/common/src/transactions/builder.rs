@@ -185,6 +185,9 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     }
 
     /// Clone this request and prepare it for browser-wallet gas estimation.
+    ///
+    /// Complete signer hints are preserved. Missing or incomplete hints default to a conservative
+    /// WebAuthn signature size.
     fn browser_wallet_gas_estimation_request(&self) -> Self
     where
         Self: Clone,
@@ -450,8 +453,11 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         let mut request = self.clone();
         if request.key_type.is_none() {
             request.key_type = Some(SignatureType::WebAuthn);
-        }
-        if matches!(request.key_type, Some(SignatureType::WebAuthn)) && request.key_data.is_none() {
+            request.key_data =
+                Some(Bytes::copy_from_slice(&TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes()));
+        } else if matches!(request.key_type, Some(SignatureType::WebAuthn))
+            && request.key_data.is_none()
+        {
             request.key_data =
                 Some(Bytes::copy_from_slice(&TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes()));
         }
