@@ -114,6 +114,12 @@ pub(super) fn decode(
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
 ) -> Option<DecodedCallTrace> {
+    // The tracer determined the call did not execute as a precompile, e.g. code etched at the
+    // address of a precompile that is not active on the current hardfork.
+    if trace.maybe_precompile == Some(false) {
+        return None;
+    }
+
     if !is_known_precompile(trace.address, chain_id, tempo_hardfork) {
         return None;
     }
@@ -579,6 +585,13 @@ mod tests {
             None,
             None
         ));
+    }
+
+    #[test]
+    fn skips_calls_not_executed_as_precompile() {
+        let trace =
+            CallTrace { address: P256_VERIFY, maybe_precompile: Some(false), ..Default::default() };
+        assert!(decode(&trace, None, None).is_none());
     }
 
     #[test]
