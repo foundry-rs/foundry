@@ -170,7 +170,7 @@ impl Create2Args {
         self.run().map(drop)
     }
 
-    pub fn run(self) -> Result<Create2Output> {
+    fn run(self) -> Result<Create2Output> {
         let Self {
             command: _,
             starts_with,
@@ -313,6 +313,12 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, b256};
     use std::str::FromStr;
+
+    #[test]
+    fn create2_subcommand_uses_execute() {
+        let args = Create2Args::parse_from(["foundry-cli", "init-code-hash", "MissingContract"]);
+        assert!(args.execute().is_err());
+    }
 
     #[test]
     fn basic_create2() {
