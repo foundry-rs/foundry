@@ -416,17 +416,25 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
 
-    /// Registers a callback invoked after every SLOAD in the target's storage context.
+    /// Registers a callback invoked after each SLOAD against `target`'s effective storage account,
+    /// including when its code runs by delegatecall.
     ///
     /// The callback must have the signature `function(address,bytes32,bytes32) external`.
-    /// Registering another callback for the same target replaces the previous callback.
+    /// Registering another callback for the same target and access kind replaces it. Registration
+    /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
+    /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
+    /// the callback and its entire call subtree.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSloadHook(address target, bytes4 callback) external;
 
-    /// Registers a callback invoked after every SSTORE in the target's storage context.
+    /// Registers a callback invoked after each SSTORE against `target`'s effective storage account,
+    /// including when its code runs by delegatecall.
     ///
     /// The callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.
-    /// Registering another callback for the same target replaces the previous callback.
+    /// Registering another callback for the same target and access kind replaces it. Registration
+    /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
+    /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
+    /// the callback and its entire call subtree.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSstoreHook(address target, bytes4 callback) external;
 

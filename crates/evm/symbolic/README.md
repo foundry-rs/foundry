@@ -244,14 +244,15 @@ function onStore(
 
 Concrete and symbolic execution use the same callback contract. Re-registering
 an access kind replaces its callback for that target. Callback reverts propagate
-through the instrumented access, and successful callback updates roll back if
-the enclosing target call later reverts. Hooks use the active storage address,
-so a `delegatecall` is attributed to the caller's storage context. The slot is
-the computed effective slot; mapping roots and decoded keys are not included.
-Callbacks are ordinary external functions, so authenticate `msg.sender` as
-`address(vm)` before updating ghost state. Registered callback selectors are
-excluded from default invariant targets, but explicit selector configuration
-can still target them.
+through the post-operation callback. Registration survives EVM reverts, while
+callback state follows the enclosing EVM context and rolls back with it. Hooks
+use the effective storage account, so a `delegatecall` is attributed to the
+caller's storage context. Hooks are suppressed throughout the callback's call
+subtree. The slot is the computed effective slot; mapping roots and decoded keys
+are not included. Callbacks are ordinary external functions, so authenticate
+`msg.sender` as `address(vm)` before updating ghost state. Registered callback
+selectors are excluded from default invariant targets, but explicit selector
+configuration can still target them.
 
 Aggregate ghosts such as `ghost = ghost - oldValue + newValue` require an
 initialization model consistent with the ghost's starting value. Use

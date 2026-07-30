@@ -4348,6 +4348,19 @@ contract ConstructorStorageHook {
         require(msg.sender == address(hookVm), "only storage hook");
         ghostValue = uint256(newValue);
     }
+
+    function registerThenRevert(address target) external {
+        hookVm.registerSstoreHook(target, ConstructorStorageHook.onStore.selector);
+        revert("after registration");
+    }
+}
+
+contract ConstructorStoreTarget {
+    uint256 public value;
+
+    constructor(uint256 newValue) {
+        value = newValue;
+    }
 }
 
 contract StorageHooksTest is Test {
@@ -4478,6 +4491,61 @@ contract StorageHooksTest is Test {
         vm.expectRevert("replacement hook");
         target.store(1);
         assertEq(target.value(), 0);
+    }
+
+    function testConcreteFinalOpcodeSstoreCallbacks() public {
+        (bool ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(6)));
+        assertTrue(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+
+        (ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(7)));
+        assertFalse(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+    }
+
+    function testConcreteConstructorSstoreCallbacks() public {
+        uint256 nonce = vm.getNonce(address(this));
+        address constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.onStore.selector);
+
+        ConstructorStoreTarget deployed = new ConstructorStoreTarget(23);
+        assertEq(address(deployed), constructorTarget);
+        assertEq(deployed.value(), 23);
+        assertEq(ghostValue, 23);
+
+        nonce = vm.getNonce(address(this));
+        constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.revertingStoreHook.selector);
+        try new ConstructorStoreTarget(24) {
+            fail();
+        } catch Error(string memory reason) {
+            assertEq(reason, "replacement hook");
+        }
+        assertEq(constructorTarget.code.length, 0);
+        assertEq(ghostValue, 23);
+    }
+
+    function testConcreteRegistrationSurvivesRevert() public {
+        ConstructorStorageHook hook = new ConstructorStorageHook(address(unregisteredTarget));
+        (bool ok,) = address(hook).call(
+            abi.encodeCall(ConstructorStorageHook.registerThenRevert, (address(unregisteredTarget)))
+        );
+        assertFalse(ok);
+
+        unregisteredTarget.store(31);
+        assertEq(hook.ghostValue(), 31);
+    }
+
+    function testIsolateEnclosingRevertRollsBackTargetAndGhost() public {
+        (bool ok,) = address(this).call(abi.encodeCall(this.storeAndRevert, (37)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function storeAndRevert(uint256 newValue) external {
+        target.store(newValue);
+        revert("enclosing revert");
     }
 
     function testConcreteCallbackBypassesCallMocks() public {
@@ -4714,7 +4782,7 @@ contract StorageHooksTest is Test {
             "--match-contract",
             "StorageHooksTest",
             "--match-test",
-            "testConcreteFullStackSloadPreservesResult",
+            "testIsolateEnclosingRevertRollsBackTargetAndGhost",
         ])
         .assert_success();
 
