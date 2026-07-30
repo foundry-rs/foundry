@@ -1050,6 +1050,36 @@ impl<N: Network> Backend<N> {
         evm_env
     }
 
+    /// Creates the database and environment for replaying a locally mined block.
+    ///
+    /// An empty block execution applies protocol-level pre-execution changes, such as the
+    /// EIP-2935 parent hash system call, through the same network-specific executor used while
+    /// mining.
+    fn prepare_block_replay<'a>(
+        &self,
+        block: &Block,
+        parent_state: &'a StateDb,
+    ) -> Result<(CacheDB<&'a StateDb>, EvmEnv), BlockchainError> {
+        let mut cache_db = AnvilCacheDB::new(parent_state);
+        let evm_env = self.tx_replay_evm_env(&block.header);
+        let spec_id = *evm_env.spec_id();
+        let inspector_tx_config = self.inspector_tx_config();
+        let gas_config = self.pool_tx_gas_config(&evm_env);
+
+        self.execute_with_block_executor(
+            &mut cache_db,
+            &evm_env,
+            block.header.parent_hash,
+            spec_id,
+            &[],
+            &gas_config,
+            &inspector_tx_config,
+            &|_, _| Ok(()),
+        )?;
+
+        Ok((cache_db.0, evm_env))
+    }
+
     /// Builds [`Inspector`] with the configured options.
     fn build_inspector(&self) -> AnvilInspector {
         let mut inspector = AnvilInspector::default();
@@ -1767,7 +1797,10 @@ impl<N: Network> Backend<N> {
             &PoolTransaction<FoundryTxEnvelope>,
             &AccountInfo,
         ) -> Result<(), InvalidTransactionError>,
-    ) -> (ExecutedPoolTransactions<FoundryTxEnvelope>, BlockExecutionResult<FoundryReceiptEnvelope>)
+    ) -> Result<
+        (ExecutedPoolTransactions<FoundryTxEnvelope>, BlockExecutionResult<FoundryReceiptEnvelope>),
+        BlockchainError,
+    >
     where
         DB: StateDB<Error = DatabaseError>,
     {
@@ -1778,7 +1811,9 @@ impl<N: Network> Backend<N> {
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
-                executor.apply_pre_execution_changes().expect("pre-execution changes failed");
+                executor
+                    .apply_pre_execution_changes()
+                    .map_err(|err| BlockchainError::Internal(err.to_string()))?;
                 let pool_result = execute_pool_transactions(
                     &mut executor,
                     pool_transactions,
@@ -1787,9 +1822,10 @@ impl<N: Network> Backend<N> {
                     self.cheats(),
                     validator,
                 );
-                let (evm, block_result) = executor.finish().expect("executor finish failed");
+                let (evm, block_result) =
+                    executor.finish().map_err(|err| BlockchainError::Internal(err.to_string()))?;
                 drop(evm);
-                (pool_result, block_result)
+                Ok((pool_result, block_result))
             }};
         }
 
@@ -2506,7 +2542,7 @@ impl<N: Network> Backend<N> {
 
         // Try mined blocks first
         if let Some(results) =
-            self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)
+            self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
         {
             return Ok(results);
         }
@@ -2535,7 +2571,7 @@ impl<N: Network> Backend<N> {
         // a local data problem as an upstream transaction lookup.
         if let Some(block_number) = block_number {
             let results = self
-                .mined_parity_trace_replay_block_transactions(block_number, &trace_types)
+                .mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
                 .ok_or(BlockchainError::BlockNotFound)?;
 
             return results
@@ -2648,8 +2684,8 @@ impl<N: Network> Backend<N> {
         &self,
         block_number: u64,
         trace_types: &HashSet<TraceType>,
-    ) -> Option<Vec<TraceResultsWithTransactionHash>> {
-        let block = self.get_block(block_number)?;
+    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
+        let Some(block) = self.get_block(block_number) else { return Ok(None) };
 
         // Execute this in the context of the parent state
         let parent_hash = block.header.parent_hash;
@@ -2658,10 +2694,14 @@ impl<N: Network> Backend<N> {
         let read_guard = self.states.upgradable_read();
         if let Some(state) = read_guard.get_state(&parent_hash) {
             self.replay_block_transactions_with_inspector(&block, state, trace_config, trace_types)
+                .map(Some)
         } else {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            let state = write_guard.get_on_disk_state(&parent_hash)?;
+            let Some(state) = write_guard.get_on_disk_state(&parent_hash) else {
+                return Ok(None);
+            };
             self.replay_block_transactions_with_inspector(&block, state, trace_config, trace_types)
+                .map(Some)
         }
     }
 
@@ -2672,11 +2712,9 @@ impl<N: Network> Backend<N> {
         parent_state: &StateDb,
         trace_config: TracingInspectorConfig,
         trace_types: &HashSet<TraceType>,
-    ) -> Option<Vec<TraceResultsWithTransactionHash>> {
-        let mut cache_db = CacheDB::new(Box::new(parent_state));
+    ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
+        let (mut cache_db, evm_env) = self.prepare_block_replay(block, parent_state)?;
         let mut results = Vec::new();
-
-        let evm_env = self.tx_replay_evm_env(&block.header);
 
         // Execute each transaction in the block with tracing
         for tx_envelope in &block.body.transactions {
@@ -2686,23 +2724,20 @@ impl<N: Network> Backend<N> {
             let mut inspector = TracingInspector::new(trace_config);
 
             // Prepare transaction environment and execute
-            let pending_tx =
-                PendingTransaction::from_maybe_impersonated(tx_envelope.clone()).ok()?;
-            let (result, _) = self
-                .transact_envelope_with_inspector_ref(
-                    &cache_db,
-                    &evm_env,
-                    &mut inspector,
-                    pending_tx.transaction.as_ref(),
-                    *pending_tx.sender(),
-                )
-                .ok()?;
+            let pending_tx = PendingTransaction::from_maybe_impersonated(tx_envelope.clone())?;
+            let (result, _) = self.transact_envelope_with_inspector_ref(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                pending_tx.transaction.as_ref(),
+                *pending_tx.sender(),
+            )?;
 
             // Build TraceResults from the inspector and execution result
             let full_trace = inspector
                 .into_parity_builder()
                 .into_trace_results_with_state(&result, trace_types, &cache_db)
-                .ok()?;
+                .map_err(BlockchainError::from)?;
 
             results.push(TraceResultsWithTransactionHash { transaction_hash: tx_hash, full_trace });
 
@@ -2710,7 +2745,7 @@ impl<N: Network> Backend<N> {
             cache_db.commit(result.state);
         }
 
-        Some(results)
+        Ok(results)
     }
 
     // Returns the traces matching a given filter
@@ -3815,24 +3850,26 @@ where
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
-                let (pool_result, block_result) = self.execute_with_block_executor(
-                    &mut **db,
-                    &mining_evm_env,
-                    best_hash,
-                    spec_id,
-                    &pool_transactions,
-                    &gas_config,
-                    &inspector_tx_config,
-                    &|pool_tx, account| {
-                        let validation_env =
-                            if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
-                        self.validate_pool_transaction_for(
-                            &pool_tx.pending_transaction,
-                            account,
-                            validation_env,
-                        )
-                    },
-                );
+                let (pool_result, block_result) = self
+                    .execute_with_block_executor(
+                        &mut **db,
+                        &mining_evm_env,
+                        best_hash,
+                        spec_id,
+                        &pool_transactions,
+                        &gas_config,
+                        &inspector_tx_config,
+                        &|pool_tx, account| {
+                            let validation_env =
+                                if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
+                            self.validate_pool_transaction_for(
+                                &pool_tx.pending_transaction,
+                                account,
+                                validation_env,
+                            )
+                        },
+                    )
+                    .expect("block execution failed");
 
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
@@ -4019,18 +4056,24 @@ where
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
-        let (pool_result, block_result) = self.execute_with_block_executor(
-            &mut cache_db,
-            &evm_env,
-            parent_hash,
-            spec_id,
-            &pool_transactions,
-            &gas_config,
-            &inspector_tx_config,
-            &|pool_tx, account| {
-                self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, &evm_env)
-            },
-        );
+        let (pool_result, block_result) = self
+            .execute_with_block_executor(
+                &mut cache_db,
+                &evm_env,
+                parent_hash,
+                spec_id,
+                &pool_transactions,
+                &gas_config,
+                &inspector_tx_config,
+                &|pool_tx, account| {
+                    self.validate_pool_transaction_for(
+                        &pool_tx.pending_transaction,
+                        account,
+                        &evm_env,
+                    )
+                },
+            )
+            .expect("pending block execution failed");
 
         // Extract inner CacheDB (which implements MaybeFullDatabase)
         let cache_db = cache_db.0;
@@ -4273,7 +4316,7 @@ where
                         &evm_env,
                     )
                 },
-            );
+            )?;
 
             let cache_db = cache_db.0;
             self.trace_call_with_state(
@@ -4675,7 +4718,7 @@ where
                         &evm_env,
                     )
                 },
-            );
+            )?;
 
             // Extract inner CacheDB to match the expected types for the target tx execution
             let cache_db = cache_db.0;
@@ -4844,7 +4887,8 @@ where
         block: &Block,
         block_hash: B256,
     ) -> Result<BlockOpcodeGas, BlockchainError> {
-        if block.body.transactions.is_empty() {
+        // Genesis has no parent state or protocol pre-execution to replay.
+        if block.header.number() == self.genesis_number() {
             return Ok(BlockOpcodeGas {
                 block_hash,
                 block_number: block.header.number(),
@@ -4855,10 +4899,8 @@ where
         let parent_hash = block.header.parent_hash;
 
         let trace = |parent_state: &StateDb| -> Result<Vec<TransactionOpcodeGas>, BlockchainError> {
-            let mut cache_db = CacheDB::new(Box::new(parent_state));
+            let (mut cache_db, evm_env) = self.prepare_block_replay(block, parent_state)?;
             let mut transactions = Vec::with_capacity(block.body.transactions.len());
-
-            let evm_env = self.tx_replay_evm_env(&block.header);
 
             for tx_envelope in &block.body.transactions {
                 let mut inspector = OpcodeGasInspector::default();
@@ -4977,7 +5019,7 @@ where
                         &evm_env,
                     )
                 },
-            );
+            )?;
 
             let cache_db = cache_db.0;
             let account = revm::DatabaseRef::basic_ref(&cache_db, address)?.unwrap_or_default();
