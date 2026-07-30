@@ -224,6 +224,37 @@ impl SymExpr {
         Some(StorageMappingKey { key, key_bytes: preserve_key_bytes, slot })
     }
 
+    pub(crate) fn storage_mapping_provenance_observed_with(
+        &self,
+        cx: &mut SymCx,
+        mut observed_preimage: impl FnMut(&SymExpr) -> Option<Arc<[SymExpr]>>,
+    ) -> Option<SymbolicMappingProvenance> {
+        let mut current = self.clone();
+        let mut keys = Vec::new();
+        let mut visited = Vec::new();
+        loop {
+            if visited.contains(&current) {
+                return None;
+            }
+            visited.push(current.clone());
+            let bytes = observed_preimage(&current)?;
+            if bytes.len() != 64 {
+                return None;
+            }
+            let key = Self::from_bytes(cx, bytes[..32].iter().cloned());
+            keys.push(key);
+            current = Self::from_bytes(cx, bytes[32..64].iter().cloned());
+            match current.kind() {
+                SymExprKind::Const(root_slot) if observed_preimage(&current).is_none() => {
+                    keys.reverse();
+                    return Some(SymbolicMappingProvenance { root_slot: *root_slot, keys });
+                }
+                SymExprKind::Const(_) | SymExprKind::Keccak { .. } => {}
+                _ => return None,
+            }
+        }
+    }
+
     fn storage_mapping_root_slot(&self, cx: &mut SymCx) -> Option<U256> {
         let bytes = self.storage_mapping_key_bytes(cx)?;
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
@@ -279,6 +310,12 @@ struct StorageMappingKey {
     key: SymExpr,
     key_bytes: Option<Vec<SymExpr>>,
     slot: SymExpr,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SymbolicMappingProvenance {
+    pub(crate) root_slot: U256,
+    pub(crate) keys: Vec<SymExpr>,
 }
 
 fn storage_mapping_key_eq(

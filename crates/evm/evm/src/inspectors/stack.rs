@@ -1070,6 +1070,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Invoked at the beginning of a new top-level (0 depth) frame.
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.locally_created_accounts.clear();
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.clear_storage_hook_mapping_slots();
+        }
 
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of

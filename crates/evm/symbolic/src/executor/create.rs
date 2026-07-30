@@ -126,6 +126,8 @@ impl SymbolicExecutor {
             parent.inherit_branch_target_progress(&outcome.state);
             parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
             parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
+            parent.inherit_mapping_hook_provenance(&outcome.state);
             parent.return_data = SymReturnData::empty(&mut self.cx);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()

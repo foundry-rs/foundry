@@ -448,6 +448,22 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSstoreHook(address target, bytes4 callback) external;
 
+    /// Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.
+    ///
+    /// The callback signature is `function(address account, bytes32 computedSlot, bytes32 rootSlot,
+    /// bytes32[] keys, bytes32 oldValue, bytes32 newValue) external`; keys are raw words in
+    /// root-to-leaf order. Only complete 64-byte Keccak chains observed after the latest mapping
+    /// hook registration for `target` in the current top-level execution match; provenance is
+    /// cleared between top-level executions. Resolution follows the complete chain to its terminal
+    /// root and ignores registered intermediate hashes. Offsets, incomplete or unknown chains,
+    /// earlier precomputation, and source layouts do not match. Registration persists across
+    /// reverts and replaces the same target/root callback; callback state rolls back with its
+    /// enclosing context, callback reverts propagate, and hooks are suppressed throughout callback
+    /// subtrees. Raw and mapping SSTORE hooks conflict per target, while multiple mapping roots may
+    /// be registered.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;
+
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
     /// along with the context of the calls
     #[cheatcode(group = Evm, safety = Safe)]
@@ -473,13 +489,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
 
-    // -------- Recording Map Writes --------
+    // -------- Recording Mapping Accesses --------
 
-    /// Starts recording all map SSTOREs for later retrieval.
+    /// Starts recording mapping SSTOREs for later retrieval.
     #[cheatcode(group = Evm, safety = Safe)]
     function startMappingRecording() external;
 
-    /// Stops recording all map SSTOREs for later retrieval and clears the recorded data.
+    /// Stops recording mapping SSTOREs and clears the recorded data.
     #[cheatcode(group = Evm, safety = Safe)]
     function stopMappingRecording() external;
 

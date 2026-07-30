@@ -12,6 +12,26 @@ impl SymbolicExecutor {
         SymCalldata::from_bytes(&mut self.cx, bytes)
     }
 
+    fn mapping_storage_hook_calldata(
+        &mut self,
+        selector: [u8; 4],
+        account: SymExpr,
+        computed_slot: SymExpr,
+        root_slot: SymExpr,
+        keys: Vec<SymExpr>,
+        old_value: SymExpr,
+        new_value: SymExpr,
+    ) -> SymCalldata {
+        let selector = SymBytes::concrete(&mut self.cx, selector.to_vec());
+        let keys_offset = SymExpr::constant(&mut self.cx, U256::from(6 * 32));
+        let mut words = vec![account, computed_slot, root_slot, keys_offset, old_value, new_value];
+        words.push(SymExpr::constant(&mut self.cx, U256::from(keys.len())));
+        words.extend(keys);
+        let words = words.into_iter().map(|word| word.into_bytes(&mut self.cx)).collect::<Vec<_>>();
+        let bytes = SymBytes::concat(&mut self.cx, std::iter::once(selector).chain(words));
+        SymCalldata::from_bytes(&mut self.cx, bytes)
+    }
+
     fn invoke_storage_hook<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -50,6 +70,8 @@ impl SymbolicExecutor {
             parent.next_symbol = outcome.state.next_symbol;
             parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
             parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
+            parent.inherit_mapping_hook_provenance(&outcome.state);
             parent.storage_hook_active = false;
 
             match outcome.status {
@@ -265,7 +287,18 @@ impl SymbolicExecutor {
                 match state.constrained_usize_checked(&mut self.cx, &size) {
                     Some(Ok(size)) => {
                         let bytes = state.memory.read_byte_exprs_offset(&mut self.cx, offset, size);
-                        state.stack.push(keccak_word(&mut self.cx, bytes))?;
+                        let hash = keccak_word(&mut self.cx, bytes.clone());
+                        let has_mapping_hook = state
+                            .mapping_storage_store_hooks
+                            .keys()
+                            .any(|(address, _)| *address == state.storage_address);
+                        if has_mapping_hook && !state.storage_hook_active && size == 64 {
+                            state
+                                .mapping_hook_keccak_preimages
+                                .entry((state.storage_address, hash.clone()))
+                                .or_insert_with(|| bytes.into());
+                        }
+                        state.stack.push(hash)?;
                     }
                     Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
@@ -584,7 +617,24 @@ impl SymbolicExecutor {
                 let hook = (!state.storage_hook_active)
                     .then(|| state.storage_store_hooks.get(&state.storage_address).copied())
                     .flatten();
-                let old_value = if hook.is_some() {
+                let mapping = (!state.storage_hook_active)
+                    .then(|| {
+                        key.storage_mapping_provenance_observed_with(&mut self.cx, |hash| {
+                            state
+                                .mapping_hook_keccak_preimages
+                                .get(&(state.storage_address, hash.clone()))
+                                .cloned()
+                        })
+                    })
+                    .flatten()
+                    .and_then(|p| {
+                        state
+                            .mapping_storage_store_hooks
+                            .get(&(state.storage_address, p.root_slot))
+                            .copied()
+                            .map(|hook| (hook, p))
+                    });
+                let old_value = if hook.is_some() || mapping.is_some() {
                     let concrete_key = state.constrained_word(&mut self.cx, &key);
                     Some(state.world.sload(
                         &mut self.cx,
@@ -608,6 +658,27 @@ impl SymbolicExecutor {
                             old_value.expect("old value loaded for storage hook"),
                             value,
                         ],
+                    );
+                    return self.invoke_storage_hook(
+                        executor,
+                        state,
+                        worklist,
+                        completed_paths,
+                        hook,
+                        calldata,
+                    );
+                } else if let Some((hook, provenance)) = mapping {
+                    let account =
+                        SymExpr::constant(&mut self.cx, address_word(state.storage_address));
+                    let root = SymExpr::constant(&mut self.cx, provenance.root_slot);
+                    let calldata = self.mapping_storage_hook_calldata(
+                        hook.callback_selector,
+                        account,
+                        key,
+                        root,
+                        provenance.keys,
+                        old_value.expect("old value loaded for mapping storage hook"),
+                        value,
                     );
                     return self.invoke_storage_hook(
                         executor,

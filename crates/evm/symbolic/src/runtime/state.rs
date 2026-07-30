@@ -34,6 +34,8 @@ pub(crate) struct PathState {
     pub(crate) labels: HashMap<Address, String>,
     pub(crate) storage_load_hooks: HashMap<Address, SymbolicStorageHook>,
     pub(crate) storage_store_hooks: HashMap<Address, SymbolicStorageHook>,
+    pub(crate) mapping_storage_store_hooks: HashMap<(Address, U256), SymbolicStorageHook>,
+    pub(crate) mapping_hook_keccak_preimages: HashMap<(Address, SymExpr), Arc<[SymExpr]>>,
     pub(crate) storage_hook_active: bool,
     pub(crate) pending_storage_hook_revert: bool,
 }
@@ -88,6 +90,8 @@ impl PathState {
             labels: HashMap::default(),
             storage_load_hooks: HashMap::default(),
             storage_store_hooks: HashMap::default(),
+            mapping_storage_store_hooks: HashMap::default(),
+            mapping_hook_keccak_preimages: HashMap::default(),
             storage_hook_active: false,
             pending_storage_hook_revert: false,
         }
@@ -140,6 +144,8 @@ impl PathState {
             labels: HashMap::default(),
             storage_load_hooks: HashMap::default(),
             storage_store_hooks: HashMap::default(),
+            mapping_storage_store_hooks: HashMap::default(),
+            mapping_hook_keccak_preimages: HashMap::default(),
             storage_hook_active: false,
             pending_storage_hook_revert: false,
         }
@@ -183,6 +189,17 @@ impl PathState {
                     },
                 )
             }));
+            self.mapping_storage_store_hooks.extend(cheats.mapping_storage_store_hooks().map(
+                |(target, root, hook)| {
+                    (
+                        (target, root.into()),
+                        SymbolicStorageHook {
+                            callback_target: hook.callback_target,
+                            callback_selector: hook.callback_selector,
+                        },
+                    )
+                },
+            ));
         }
     }
 
@@ -222,6 +239,8 @@ impl PathState {
             labels: self.labels.clone(),
             storage_load_hooks: self.storage_load_hooks.clone(),
             storage_store_hooks: self.storage_store_hooks.clone(),
+            mapping_storage_store_hooks: self.mapping_storage_store_hooks.clone(),
+            mapping_hook_keccak_preimages: self.mapping_hook_keccak_preimages.clone(),
             storage_hook_active: self.storage_hook_active,
             pending_storage_hook_revert: self.pending_storage_hook_revert,
         }
@@ -406,6 +425,10 @@ impl PathState {
         self.storage_store_hooks = check.storage_store_hooks.clone();
     }
 
+    pub(crate) fn inherit_mapping_hook_provenance(&mut self, child: &Self) {
+        self.mapping_hook_keccak_preimages = child.mapping_hook_keccak_preimages.clone();
+    }
+
     pub(crate) fn merge_reverted_top_level_effects(&mut self, reverted: &Self) {
         self.merge_noncommitting_check_constraints(reverted);
         self.block = reverted.block.clone();
@@ -420,6 +443,7 @@ impl PathState {
         self.function_mocks = reverted.function_mocks.clone();
         self.storage_load_hooks = reverted.storage_load_hooks.clone();
         self.storage_store_hooks = reverted.storage_store_hooks.clone();
+        self.mapping_storage_store_hooks = reverted.mapping_storage_store_hooks.clone();
     }
 
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
@@ -2353,11 +2377,29 @@ mod tests {
         };
         reverted.storage_load_hooks.insert(target, hook);
         reverted.storage_store_hooks.insert(target, hook);
+        reverted.mapping_storage_store_hooks.insert((target, U256::from(2)), hook);
 
         state.merge_reverted_top_level_effects(&reverted);
 
         assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
         assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+        assert_eq!(state.mapping_storage_store_hooks.get(&(target, U256::from(2))), Some(&hook));
+    }
+
+    #[test]
+    fn mapping_hook_provenance_is_account_and_path_local() {
+        let mut cx = SymCx::new();
+        let state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let account = Address::repeat_byte(0x11);
+        let other = Address::repeat_byte(0x22);
+        let hash = SymExpr::constant(&mut cx, U256::from(7));
+        let preimage = vec![SymExpr::zero(&mut cx); 64].into();
+        let mut branch = state.clone();
+        branch.mapping_hook_keccak_preimages.insert((account, hash.clone()), preimage);
+
+        assert!(branch.mapping_hook_keccak_preimages.contains_key(&(account, hash.clone())));
+        assert!(!branch.mapping_hook_keccak_preimages.contains_key(&(other, hash.clone())));
+        assert!(!state.mapping_hook_keccak_preimages.contains_key(&(account, hash)));
     }
 
     #[test]

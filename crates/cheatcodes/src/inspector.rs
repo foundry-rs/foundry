@@ -347,8 +347,18 @@ pub struct StorageHook {
 
 #[derive(Clone, Debug)]
 enum PendingStorageHook {
-    Load { account: Address, slot: U256, hook: StorageHook },
-    Store { account: Address, slot: U256, old_value: U256, hook: StorageHook },
+    Load {
+        account: Address,
+        slot: U256,
+        hook: StorageHook,
+    },
+    Store {
+        account: Address,
+        slot: U256,
+        old_value: U256,
+        mapping: Option<(B256, Vec<B256>)>,
+        hook: StorageHook,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -788,7 +798,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     storage_load_hooks: AddressHashMap<StorageHook>,
     /// SSTORE callbacks keyed by effective storage address.
     storage_store_hooks: AddressHashMap<StorageHook>,
-    /// Whether either storage hook map contains a callback.
+    /// Mapping SSTORE callbacks keyed by effective storage address and root slot.
+    mapping_storage_store_hooks: AddressHashMap<HashMap<B256, StorageHook>>,
+    /// Execution-local provenance used only by mapping storage hooks.
+    storage_hook_mapping_slots: AddressHashMap<MappingSlots>,
+    /// Whether any storage hook map contains a callback.
     storage_hooks_registered: bool,
     /// Matching storage access captured before the opcode executes.
     pending_storage_hook: Option<PendingStorageHook>,
@@ -902,6 +916,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             arbitrary_storage: Default::default(),
             storage_load_hooks: Default::default(),
             storage_store_hooks: Default::default(),
+            mapping_storage_store_hooks: Default::default(),
+            storage_hook_mapping_slots: Default::default(),
             storage_hooks_registered: Default::default(),
             pending_storage_hook: Default::default(),
             active_storage_hook: Default::default(),
@@ -1805,6 +1821,40 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.storage_hooks_registered = true;
     }
 
+    /// Registers a mapping SSTORE callback. Returns false when a raw hook conflicts.
+    pub fn register_mapping_storage_store_hook(
+        &mut self,
+        target: Address,
+        root_slot: B256,
+        callback_target: Address,
+        callback_selector: [u8; 4],
+    ) -> bool {
+        if self.storage_store_hooks.contains_key(&target) {
+            return false;
+        }
+        self.storage_hook_mapping_slots.remove(&target);
+        self.mapping_storage_store_hooks
+            .entry(target)
+            .or_default()
+            .insert(root_slot, StorageHook { callback_target, callback_selector });
+        self.storage_hooks_registered = true;
+        true
+    }
+
+    /// Returns registered mapping SSTORE callbacks.
+    pub fn mapping_storage_store_hooks(
+        &self,
+    ) -> impl Iterator<Item = (Address, B256, StorageHook)> + '_ {
+        self.mapping_storage_store_hooks
+            .iter()
+            .flat_map(|(target, hooks)| hooks.iter().map(|(root, hook)| (*target, *root, *hook)))
+    }
+
+    /// Returns whether mapping hooks conflict with a raw store hook.
+    pub fn has_mapping_storage_store_hooks(&self, target: Address) -> bool {
+        self.mapping_storage_store_hooks.get(&target).is_some_and(|hooks| !hooks.is_empty())
+    }
+
     /// Returns registered SLOAD callbacks.
     pub fn storage_load_hooks(&self) -> impl Iterator<Item = (Address, StorageHook)> + '_ {
         self.storage_load_hooks.iter().map(|(target, hook)| (*target, *hook))
@@ -1819,6 +1869,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[inline]
     pub const fn has_storage_hooks(&self) -> bool {
         self.storage_hooks_registered
+    }
+
+    /// Clears execution-local mapping provenance while preserving hook registrations.
+    pub fn clear_storage_hook_mapping_slots(&mut self) {
+        self.storage_hook_mapping_slots.clear();
     }
 
     /// Returns whether a synthetic storage-hook callback or one of its child calls is executing.
@@ -1986,6 +2041,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // `startMappingRecording`: record SSTORE and KECCAK256.
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping_step(mapping_slots, interpreter);
+        }
+
+        let account = interpreter.input.target_address;
+        if self.mapping_storage_store_hooks.get(&account).is_some_and(|hooks| !hooks.is_empty())
+            && self.active_storage_hook.is_none()
+        {
+            mapping_step(&mut self.storage_hook_mapping_slots, interpreter);
         }
 
         // `snapshotGas*`: take a snapshot of the current gas.
@@ -3217,19 +3279,38 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let account = interpreter.input.target_address;
         match interpreter.bytecode.opcode() {
             op::SLOAD => {
-                let Some(hook) = self.storage_load_hooks.get(&account).copied() else { return };
                 let slot = try_or_return!(interpreter.stack.peek(0));
+                let Some(hook) = self.storage_load_hooks.get(&account).copied() else { return };
                 self.pending_storage_hook = Some(PendingStorageHook::Load { account, slot, hook });
             }
             op::SSTORE => {
-                let Some(hook) = self.storage_store_hooks.get(&account).copied() else { return };
                 let slot = try_or_return!(interpreter.stack.peek(0));
+                let (hook, mapping) = if let Some(hook) = self.storage_store_hooks.get(&account) {
+                    (*hook, None)
+                } else {
+                    let Some(provenance) = self
+                        .storage_hook_mapping_slots
+                        .get(&account)
+                        .and_then(|slots| slots.resolve(slot.into()))
+                    else {
+                        return;
+                    };
+                    let Some(hook) = self
+                        .mapping_storage_store_hooks
+                        .get(&account)
+                        .and_then(|hooks| hooks.get(&provenance.root_slot))
+                        .copied()
+                    else {
+                        return;
+                    };
+                    (hook, Some((provenance.root_slot, provenance.keys)))
+                };
                 let checkpoint = ecx.journal_mut().checkpoint();
                 let old_value =
                     ecx.sload(account, slot).map(|value| value.data).unwrap_or_default();
                 ecx.journal_mut().checkpoint_revert(checkpoint);
                 self.pending_storage_hook =
-                    Some(PendingStorageHook::Store { account, slot, old_value, hook });
+                    Some(PendingStorageHook::Store { account, slot, old_value, mapping, hook });
             }
             _ => {}
         }
@@ -3261,15 +3342,26 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 input.extend_from_slice(&value.to_be_bytes::<32>());
                 (hook, Bytes::from(input), Some(value))
             }
-            PendingStorageHook::Store { account, slot, old_value, hook } => {
+            PendingStorageHook::Store { account, slot, old_value, mapping, hook } => {
                 let new_value =
                     ecx.sload(account, slot).map(|value| value.data).unwrap_or_default();
                 let mut input = Vec::with_capacity(4 + 32 * 4);
                 input.extend_from_slice(&hook.callback_selector);
                 input.extend_from_slice(account.into_word().as_slice());
                 input.extend_from_slice(&slot.to_be_bytes::<32>());
-                input.extend_from_slice(&old_value.to_be_bytes::<32>());
-                input.extend_from_slice(&new_value.to_be_bytes::<32>());
+                if let Some((root, keys)) = mapping {
+                    input.extend_from_slice(root.as_slice());
+                    input.extend_from_slice(&U256::from(32 * 6).to_be_bytes::<32>());
+                    input.extend_from_slice(&old_value.to_be_bytes::<32>());
+                    input.extend_from_slice(&new_value.to_be_bytes::<32>());
+                    input.extend_from_slice(&U256::from(keys.len()).to_be_bytes::<32>());
+                    for key in keys {
+                        input.extend_from_slice(key.as_slice());
+                    }
+                } else {
+                    input.extend_from_slice(&old_value.to_be_bytes::<32>());
+                    input.extend_from_slice(&new_value.to_be_bytes::<32>());
+                }
                 (hook, Bytes::from(input), None)
             }
         };
