@@ -5816,6 +5816,7 @@ mod tests {
         let block_path = chain_dir.path().join("2");
         fs::create_dir(&block_path)?;
         let target_file = tempfile::NamedTempFile::new()?;
+        fs::write(target_file.path(), [0; 10])?;
         std::os::unix::fs::symlink(target_file.path(), block_path.join("storage.json"))?;
 
         assert!(Config::get_cached_blocks(chain_dir.path())?.is_empty());
