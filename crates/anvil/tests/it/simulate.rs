@@ -865,15 +865,26 @@ async fn test_simulate_empty_state_override_preserves_root_rpc() {
     let with_empty_override = rpc_request(
         &endpoint,
         "eth_simulateV1",
-        json!([{"blockStateCalls": [{"stateOverrides": {(account): {}}}]}]),
+        json!([{"blockStateCalls": [{"stateOverrides": {(account.clone()): {}}}]}]),
+    )
+    .await;
+    let with_empty_state_diff = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{"stateOverrides": {(account): {"stateDiff": {}}}}]}]),
     )
     .await;
 
     assert!(without_override.get("error").is_none(), "{without_override}");
     assert!(with_empty_override.get("error").is_none(), "{with_empty_override}");
+    assert!(with_empty_state_diff.get("error").is_none(), "{with_empty_state_diff}");
     assert_eq!(
         without_override["result"][0]["stateRoot"],
         with_empty_override["result"][0]["stateRoot"]
+    );
+    assert_eq!(
+        without_override["result"][0]["stateRoot"],
+        with_empty_state_diff["result"][0]["stateRoot"]
     );
 }
 
