@@ -3,6 +3,7 @@ use alloy_primitives::{Address, B256, U256, hex, keccak256};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
+    json::print_scalar,
     opts::BuildOpts,
     utils::{LoadConfig, find_contract_artifacts, parse_constructor_args},
 };
@@ -30,7 +31,7 @@ struct InitCodeHashArgs {
     contract: ContractInfo,
 
     /// The constructor arguments.
-    #[arg(value_name = "ARGS", allow_hyphen_values = true)]
+    #[arg(value_name = "ARGS", allow_negative_numbers = true)]
     constructor_args: Vec<String>,
 
     #[command(flatten)]
@@ -60,6 +61,9 @@ impl InitCodeHashArgs {
         let Some(bytecode) = bin.object.into_bytes() else {
             eyre::bail!("contract contains unlinked libraries");
         };
+        if bytecode.is_empty() {
+            eyre::bail!("no bytecode found in bin object for {}", self.contract.name);
+        }
 
         let mut init_code = bytecode.to_vec();
         if let Some(constructor) = &abi.constructor {
@@ -69,7 +73,7 @@ impl InitCodeHashArgs {
             eyre::bail!("contract does not have a constructor");
         }
 
-        sh_println!("{}", keccak256(init_code))?;
+        print_scalar(keccak256(init_code))?;
         Ok(())
     }
 }
