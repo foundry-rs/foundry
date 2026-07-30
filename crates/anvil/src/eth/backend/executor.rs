@@ -36,7 +36,7 @@ use revm::{
     context_interface::result::{ExecutionResult, Output, ResultAndState},
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,
-    state::AccountInfo,
+    state::{AccountInfo, EvmState},
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
@@ -156,6 +156,8 @@ pub struct AnvilBlockExecutor<E> {
     gas_used: u64,
     /// Blob gas used by the block.
     blob_gas_used: u64,
+    /// State changes captured for deferred publication.
+    state_changes: Option<Vec<EvmState>>,
 }
 
 impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
@@ -182,7 +184,19 @@ impl<E> AnvilBlockExecutor<E> {
             receipts: Vec::new(),
             gas_used: 0,
             blob_gas_used: 0,
+            state_changes: None,
         }
+    }
+
+    /// Captures every committed changeset so callers can publish them after block execution.
+    pub(crate) fn with_state_changes(mut self) -> Self {
+        self.state_changes = Some(Vec::new());
+        self
+    }
+
+    /// Takes the captured changesets.
+    pub(crate) fn take_state_changes(&mut self) -> Vec<EvmState> {
+        self.state_changes.take().unwrap_or_default()
     }
 }
 
@@ -210,6 +224,9 @@ where
                 )
                 .map_err(BlockExecutionError::other)?;
 
+            if let Some(state_changes) = &mut self.state_changes {
+                state_changes.push(result.state.clone());
+            }
             self.evm.db_mut().commit(result.state);
         }
         Ok(())
@@ -296,6 +313,9 @@ where
             cumulative_gas_used: self.gas_used,
         });
 
+        if let Some(state_changes) = &mut self.state_changes {
+            state_changes.push(state.clone());
+        }
         self.receipts.push(receipt);
         self.evm.db_mut().commit(state);
 
