@@ -61,7 +61,8 @@ pub(crate) fn is_known_precompile(
     tempo_hardfork: Option<TempoHardfork>,
 ) -> bool {
     // Standard EVM precompiles (all chains).
-    let is_standard = address[..19].iter().all(|&x| x == 0)
+    // An 18-byte zero prefix, as `P256_VERIFY` (0x..0100) occupies the two lowest bytes.
+    let is_standard = address[..18].iter().all(|&x| x == 0)
         && matches!(
             address,
             EC_RECOVER
@@ -563,7 +564,22 @@ fn take_at_most(data: &[u8], n: usize) -> (&[u8], &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::{address, hex};
+
+    #[test]
+    fn known_precompile_boundaries() {
+        assert!(is_known_precompile(P256_VERIFY, None, None));
+        assert!(!is_known_precompile(
+            address!("0x0000000000000000000000000000000000000101"),
+            None,
+            None
+        ));
+        assert!(!is_known_precompile(
+            address!("0x0000000000000000000000000000000000000012"),
+            None,
+            None
+        ));
+    }
 
     #[test]
     fn ecpairing() {
