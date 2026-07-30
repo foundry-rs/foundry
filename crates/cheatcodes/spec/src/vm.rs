@@ -420,14 +420,14 @@ interface Vm {
     ///
     /// The callback must have the signature `function(address,bytes32,bytes32) external`.
     /// Registering another callback for the same target replaces the previous callback.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSloadHook(address target, bytes4 callback) external;
 
     /// Registers a callback invoked after every SSTORE in the target's storage context.
     ///
     /// The callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.
     /// Registering another callback for the same target replaces the previous callback.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSstoreHook(address target, bytes4 callback) external;
 
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,

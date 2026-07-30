@@ -2841,6 +2841,7 @@ forgetest_init!(invariant_call_override_skips_storage_hook_callbacks, |prj, cmd|
         config.invariant.runs = 16;
         config.invariant.depth = 8;
         config.invariant.call_override = true;
+        config.invariant.fail_on_revert = true;
     });
 
     prj.add_test(
@@ -2860,15 +2861,26 @@ contract StorageHookTarget {
     }
 }
 
+contract StorageHookHelper {
+    function copy(uint256 value) external pure returns (uint256) {
+        if (value == 7) {
+            return 7;
+        }
+        return value;
+    }
+}
+
 contract StorageHookHandler {
     StorageHookVm constant hookVm =
         StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     StorageHookTarget public immutable target;
+    StorageHookHelper public immutable helper;
     uint256 public ghostValue;
 
     constructor(StorageHookTarget target_) {
         target = target_;
+        helper = new StorageHookHelper();
         hookVm.registerSstoreHook(address(target_), StorageHookHandler.onStore.selector);
     }
 
@@ -2877,7 +2889,8 @@ contract StorageHookHandler {
     }
 
     function onStore(address, bytes32, bytes32, bytes32 newValue) external {
-        ghostValue = uint256(newValue);
+        require(msg.sender == address(hookVm), "only storage hook");
+        ghostValue = helper.copy(uint256(newValue));
     }
 }
 
@@ -2888,10 +2901,6 @@ contract InvariantStorageHooks is Test {
     function setUp() public {
         target = new StorageHookTarget();
         handler = new StorageHookHandler(target);
-
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = handler.mutate.selector;
-        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
     function invariant_hook_tracks_target() public view {

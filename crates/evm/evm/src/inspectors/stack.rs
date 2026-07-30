@@ -811,11 +811,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
-        let storage_hook_callback = self
-            .cheatcodes
-            .as_deref()
-            .is_some_and(|cheatcodes| cheatcodes.is_storage_hook_callback(ecx, inputs));
-        if !storage_hook_callback && let Some(fuzzer) = &mut self.fuzzer {
+        let storage_hook_active =
+            self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
+        if !storage_hook_active && let Some(fuzzer) = &mut self.fuzzer {
             fuzzer.call_end(ecx, inputs, outcome);
         }
 
@@ -1115,12 +1113,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
-        if let Some(cheats) = self.cheatcodes.as_mut() {
+        let storage_hook_active = if let Some(cheats) = self.cheatcodes.as_mut() {
             if cheats.has_storage_hooks() && cheats.finish_storage_hook_callback(interpreter, ecx) {
                 return;
             }
             cheats.pc = interpreter.bytecode.pc();
-        }
+            cheats.is_storage_hook_active()
+        } else {
+            false
+        };
 
         #[cfg(test)]
         if interpreter.bytecode.opcode() == op::JUMPDEST
@@ -1150,24 +1151,37 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         match self.static_step_dispatch {
             OpcodeStepDispatch::None => {}
             OpcodeStepDispatch::FuzzerOnly => {
-                if let Some(inspector) = &mut self.fuzzer {
+                if !storage_hook_active && let Some(inspector) = &mut self.fuzzer {
                     inspector.step(interpreter, ecx);
                 }
             }
             OpcodeStepDispatch::General => {
-                call_inspectors!(
-                    [
-                        // These are sorted in definition order.
-                        &mut self.edge_coverage,
-                        &mut self.fuzzer,
-                        &mut self.line_coverage,
-                        &mut self.printer,
-                        &mut self.revert_diag,
-                        &mut self.script_execution_inspector,
-                        &mut self.tracer,
-                    ],
-                    |inspector| (**inspector).step(interpreter, ecx),
-                );
+                if storage_hook_active {
+                    call_inspectors!(
+                        [
+                            // These are sorted in definition order.
+                            &mut self.printer,
+                            &mut self.revert_diag,
+                            &mut self.script_execution_inspector,
+                            &mut self.tracer,
+                        ],
+                        |inspector| (**inspector).step(interpreter, ecx),
+                    );
+                } else {
+                    call_inspectors!(
+                        [
+                            // These are sorted in definition order.
+                            &mut self.edge_coverage,
+                            &mut self.fuzzer,
+                            &mut self.line_coverage,
+                            &mut self.printer,
+                            &mut self.revert_diag,
+                            &mut self.script_execution_inspector,
+                            &mut self.tracer,
+                        ],
+                        |inspector| (**inspector).step(interpreter, ecx),
+                    );
+                }
             }
         }
 
@@ -1420,8 +1434,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             .cheatcodes
             .as_deref()
             .is_some_and(|cheatcodes| cheatcodes.is_storage_hook_callback(ecx, call));
+        let storage_hook_active =
+            self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
 
-        if !storage_hook_callback {
+        if !storage_hook_active {
             call_inspectors!(
                 #[ret]
                 [&mut self.fuzzer],

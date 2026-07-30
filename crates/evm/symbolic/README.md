@@ -227,6 +227,7 @@ function setUp() public {
 }
 
 function onLoad(address account, bytes32 slot, bytes32 value) external {
+    require(msg.sender == address(vm), "only storage hook");
     // Update ghost state from the observed load.
 }
 
@@ -236,6 +237,7 @@ function onStore(
     bytes32 oldValue,
     bytes32 newValue
 ) external {
+    require(msg.sender == address(vm), "only storage hook");
     // Update ghost state from the observed write.
 }
 ```
@@ -246,6 +248,19 @@ through the instrumented access, and successful callback updates roll back if
 the enclosing target call later reverts. Hooks use the active storage address,
 so a `delegatecall` is attributed to the caller's storage context. The slot is
 the computed effective slot; mapping roots and decoded keys are not included.
+Callbacks are ordinary external functions, so authenticate `msg.sender` as
+`address(vm)` before updating ghost state. Registered callback selectors are
+excluded from default invariant targets, but explicit selector configuration
+can still target them.
+
+Aggregate ghosts such as `ghost = ghost - oldValue + newValue` require an
+initialization model consistent with the ghost's starting value. Use
+`symbolic.storage_layout = "zero_init"` when the ghost starts from zero and
+unwritten symbolic mapping entries should be zero. With the default `solidity`
+layout, a previously unwritten symbolic key has an unknown base value, so the
+ghost must already account for that value. Known nonzero setup state must
+likewise be included in the initial ghost. These raw hooks cannot distinguish
+one mapping family from another without mapping-root provenance.
 
 ```solidity
 contract RiddleTest is Test {

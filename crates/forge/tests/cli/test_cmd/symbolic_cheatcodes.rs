@@ -4345,6 +4345,7 @@ contract ConstructorStorageHook {
     }
 
     function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
         ghostValue = uint256(newValue);
     }
 }
@@ -4358,8 +4359,11 @@ contract StorageHooksTest is Test {
     address constant FINAL_OPCODE_TARGET = address(0xBEEF);
     address constant TRACE_SUCCESS_TARGET = address(0xA11CE);
     address constant TRACE_REVERT_TARGET = address(0xB0B);
+    address constant EXISTING_ACCOUNT = address(0xCAFE);
 
     StorageHookTarget target;
+    StorageHookTarget mappingTarget;
+    StorageHookTarget baseStateTarget;
     StorageHookTarget unregisteredTarget;
     StorageHookCaller caller;
     StorageHookProxy proxy;
@@ -4371,15 +4375,27 @@ contract StorageHooksTest is Test {
     address lastAccount;
     uint256 loadCount;
     uint256 recursiveHookCalls;
+    uint256 mappingGhost;
+    uint256 baseStateGhost;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
 
     function setUp() public {
         target = new StorageHookTarget();
+        mappingTarget = new StorageHookTarget();
+        baseStateTarget = new StorageHookTarget();
         unregisteredTarget = new StorageHookTarget();
         caller = new StorageHookCaller();
         proxy = new StorageHookProxy(address(new StorageHookImplementation()));
         returner = new StorageHookReturner();
         hookVm.registerSloadHook(address(target), this.onLoad.selector);
         hookVm.registerSstoreHook(address(target), this.onStore.selector);
+        hookVm.registerSstoreHook(address(mappingTarget), this.onMappingStore.selector);
+        hookVm.registerSstoreHook(address(baseStateTarget), this.onBaseStateStore.selector);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, 5);
         hookVm.registerSstoreHook(address(proxy), this.onStore.selector);
         vm.etch(FINAL_OPCODE_TARGET, hex"600035600055");
         hookVm.registerSstoreHook(FINAL_OPCODE_TARGET, this.branchingStoreHook.selector);
@@ -4389,21 +4405,42 @@ contract StorageHooksTest is Test {
         hookVm.registerSstoreHook(TRACE_REVERT_TARGET, this.revertingStoreHook.selector);
     }
 
-    function onLoad(address account, bytes32 slot, bytes32 value) external {
+    function onLoad(address account, bytes32 slot, bytes32 value) external onlyStorageHook {
         lastAccount = account;
         lastSlot = slot;
         ghostValue = uint256(value);
         loadCount++;
     }
 
-    function onLoadReadingColdSlot(address, bytes32, bytes32) external view {
+    function onLoadReadingColdSlot(address, bytes32, bytes32) external view onlyStorageHook {
         coldReadTarget.value();
     }
 
-    function onStore(address account, bytes32 slot, bytes32 oldValue, bytes32 newValue) external {
+    function onStore(address account, bytes32 slot, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
         lastAccount = account;
         lastSlot = slot;
-        ghostValue = ghostValue - uint256(oldValue) + uint256(newValue);
+        ghostValue = uint256(newValue);
+    }
+
+    function onMappingStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            mappingGhost = mappingGhost - uint256(oldValue) + uint256(newValue);
+        }
+    }
+
+    function onBaseStateStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            baseStateGhost = baseStateGhost - uint256(oldValue) + uint256(newValue);
+        }
     }
 
     function testConcreteArgumentsAndRollback() public {
@@ -4482,6 +4519,31 @@ contract StorageHooksTest is Test {
         assertEq(probe.readCost(coldReadTarget), probe.readCost(baselineReadTarget));
     }
 
+    function testConcreteCallbackCannotBeSpoofed() public {
+        vm.expectRevert("only storage hook");
+        this.onStore(address(target), bytes32(0), bytes32(0), bytes32(uint256(99)));
+        assertEq(ghostValue, 0);
+    }
+
+    function testConcreteFullStackSloadPreservesResult() public {
+        address fullStackTarget = address(0xF011);
+        bytes memory code = new bytes(1028);
+        for (uint256 i; i < 1024; i++) {
+            code[i] = bytes1(uint8(0x5f));
+        }
+        code[1024] = bytes1(uint8(0x54));
+        code[1025] = bytes1(uint8(0x56));
+        code[1026] = bytes1(uint8(0x5b));
+        code[1027] = bytes1(uint8(0x00));
+        vm.etch(fullStackTarget, code);
+        vm.store(fullStackTarget, bytes32(0), bytes32(uint256(1026)));
+        hookVm.registerSloadHook(fullStackTarget, this.noopLoadHook.selector);
+
+        (bool ok,) = fullStackTarget.call("");
+
+        assertTrue(ok);
+    }
+
     function testConcreteTraceSuccess() public {
         (bool ok,) = TRACE_SUCCESS_TARGET.call("");
         assertTrue(ok);
@@ -4492,21 +4554,35 @@ contract StorageHooksTest is Test {
         assertFalse(ok);
     }
 
-    function noopStoreHook(address, bytes32, bytes32, bytes32) external pure {}
+    function noopLoadHook(address, bytes32, bytes32) external view onlyStorageHook {}
 
-    function revertingStoreHook(address, bytes32, bytes32, bytes32) external pure {
+    function noopStoreHook(address, bytes32, bytes32, bytes32) external view onlyStorageHook {}
+
+    function revertingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
         revert("replacement hook");
     }
 
-    function panickingStoreHook(address, bytes32, bytes32, bytes32) external pure {
+    function panickingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
         assert(false);
     }
 
-    function recursiveStoreHook(address, bytes32, bytes32, bytes32) external {
+    function recursiveStoreHook(address, bytes32, bytes32, bytes32) external onlyStorageHook {
         recursiveHookCalls++;
     }
 
-    function branchingStoreHook(address, bytes32, bytes32, bytes32 newValue) external pure {
+    function branchingStoreHook(address, bytes32, bytes32, bytes32 newValue)
+        external
+        view
+        onlyStorageHook
+    {
         if (uint256(newValue) == 7) {
             revert("seven");
         }
@@ -4518,6 +4594,27 @@ contract StorageHooksTest is Test {
         assertEq(lastAccount, address(target));
         assertEq(lastSlot, expectedSlot);
         assertEq(ghostValue, newValue);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkSymbolicAliasedMappingWrites(
+        address first,
+        address second,
+        uint256 firstValue,
+        uint256 secondValue
+    ) public {
+        vm.assume(first == second);
+        mappingTarget.setBalance(first, firstValue);
+        mappingTarget.setBalance(second, secondValue);
+
+        assertEq(mappingGhost, mappingTarget.balances(first));
+    }
+
+    function checkSymbolicPreexistingMappingWrites(uint256 firstValue, uint256 secondValue) public {
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, firstValue);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, secondValue);
+
+        assertEq(baseStateGhost, secondValue);
     }
 
     function checkSymbolicLoad(uint256 newValue) public {
@@ -4610,6 +4707,17 @@ contract StorageHooksTest is Test {
         .args(["test", "--match-contract", "StorageHooksTest", "--match-test", "testConcrete"])
         .assert_success();
 
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--isolate",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcreteFullStackSloadPreservesResult",
+        ])
+        .assert_success();
+
     let output = cmd
         .forge_fuse()
         .args([
@@ -4698,6 +4806,8 @@ contract StorageHooksTest is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkSymbolicMapping(address,uint256)
+[PASS] checkSymbolicAliasedMappingWrites(address,address,uint256,uint256)
+[PASS] checkSymbolicPreexistingMappingWrites(uint256,uint256)
 [PASS] checkSymbolicLoad(uint256)
 [PASS] checkSymbolicMultipleWritesAndNestedCall(uint256,uint256)
 [PASS] checkSymbolicDelegatecall(uint256)
@@ -4711,4 +4821,170 @@ contract StorageHooksTest is Test {
 [PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256)
 "#]],
     );
+});
+
+forgetest_init!(storage_hook_callbacks_do_not_leak_fuzz_guidance, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "StorageHookFuzzGuidance.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookFuzzTarget {
+    uint256 public value;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract StorageHookFuzzHelper {
+    function observe(uint256 value) external pure returns (uint256) {
+        if (value == 7) {
+            return 7;
+        }
+        return value;
+    }
+}
+
+contract StorageHookFuzzCallback {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HELPER = address(0x3000);
+
+    uint256 public hits;
+
+    function register(address target) external {
+        hookVm.registerSstoreHook(target, this.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        hits++;
+        assertEq(StorageHookFuzzHelper(HELPER).observe(uint256(newValue)), uint256(newValue));
+    }
+
+    function assertEq(uint256 left, uint256 right) internal pure {
+        require(left == right);
+    }
+}
+
+contract StorageHookFuzzGuidanceTest is Test {
+    address constant TARGET = address(0x1000);
+    address constant CALLBACK = address(0x2000);
+    address constant HELPER = address(0x3000);
+
+    function setUp() public {
+        StorageHookFuzzTarget target = new StorageHookFuzzTarget();
+        StorageHookFuzzCallback callback = new StorageHookFuzzCallback();
+        StorageHookFuzzHelper helper = new StorageHookFuzzHelper();
+        vm.etch(TARGET, address(target).code);
+        vm.etch(CALLBACK, address(callback).code);
+        vm.etch(HELPER, address(helper).code);
+        StorageHookFuzzCallback(CALLBACK).register(TARGET);
+    }
+
+    function testFuzz_hookGuidance(uint256 value) public {
+        StorageHookFuzzTarget(TARGET).store(value);
+        assertEq(uint256(vm.load(CALLBACK, bytes32(0))), 1);
+        if (value == 42) {
+            assertEq(StorageHookFuzzTarget(TARGET).value(), 42);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("fuzz_frontiers")
+        .join("StorageHookFuzzGuidanceTest")
+        .join("testFuzz_hookGuidance")
+        .join("branch-frontiers.json");
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(frontier_path).unwrap()).unwrap();
+    let frontiers = artifact["frontiers"].as_array().unwrap();
+    assert!(!frontiers.is_empty(), "missing user-code frontiers in {artifact:#}");
+    let instrumentation_addresses = [
+        "0x0000000000000000000000000000000000002000",
+        "0x0000000000000000000000000000000000003000",
+    ];
+    assert!(
+        frontiers.iter().all(|frontier| {
+            let address = frontier["site"]["address"].as_str().unwrap();
+            !instrumentation_addresses
+                .iter()
+                .any(|candidate| address.eq_ignore_ascii_case(candidate))
+        }),
+        "{artifact:#}"
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--showmap-out",
+            "showmap",
+            "--showmap-corpus-dir",
+            "fuzz_corpus",
+            "--showmap-trial",
+            "hook",
+        ])
+        .assert_success();
+
+    let runtime_hash_prefix = |artifact: &str| {
+        let artifact: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(prj.root().join(artifact)).unwrap()).unwrap();
+        let bytecode = artifact["deployedBytecode"]["object"].as_str().unwrap();
+        let bytecode = alloy_primitives::hex::decode(bytecode.trim_start_matches("0x")).unwrap();
+        alloy_primitives::hex::encode(&alloy_primitives::keccak256(bytecode)[..8])
+    };
+    let callback_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzCallback.json");
+    let helper_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzHelper.json");
+    let target_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzTarget.json");
+    let mut pending = vec![prj.root().join("showmap")];
+    let mut showmap_files = 0;
+    let mut saw_target_coverage = false;
+    while let Some(path) = pending.pop() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).unwrap();
+            assert!(!body.is_empty(), "empty showmap file: {}", path.display());
+            showmap_files += 1;
+            saw_target_coverage |= body.contains(&format!("evm_{target_hash}_"));
+            assert!(!body.contains(&format!("evm_{callback_hash}_")), "{body}");
+            assert!(!body.contains(&format!("evm_{helper_hash}_")), "{body}");
+        }
+    }
+    assert!(showmap_files > 0, "no showmap files were produced");
+    assert!(saw_target_coverage, "showmap did not contain target coverage");
 });
