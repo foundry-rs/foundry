@@ -1,9 +1,10 @@
-//! Type-aware filtering for binary operator mutations.
+//! Type-aware filtering for operator mutations.
 //!
-//! This module records replacements that have the same result as the original comparison for
-//! every value in an operand's type range. It deliberately does not filter replacements merely
-//! because they are tautological. For example, `uint256 x == 0` and `x <= 0` are equivalent, but
-//! `x < 0` is retained because changing the original condition to `false` can expose missing tests.
+//! This module records replacements that are invalid or have the same result as the original
+//! comparison for every value in an operand's type range. It deliberately does not filter
+//! replacements merely because they are tautological. For example, `uint256 x == 0` and `x <= 0`
+//! are equivalent, but `x < 0` is retained because changing the original condition to `false` can
+//! expose missing tests.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -27,25 +28,35 @@ use solar::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EquivalentMutation {
-    lo: u32,
-    hi: u32,
-    new_op: BinOpKind,
+enum ReplacementOperator {
+    Binary(BinOpKind),
+    Unary(UnOpKind),
 }
 
-impl EquivalentMutation {
-    pub fn new(span: solar::ast::Span, new_op: BinOpKind) -> Self {
-        Self { lo: span.lo().0, hi: span.hi().0, new_op }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MutationExclusion {
+    lo: u32,
+    hi: u32,
+    new_op: ReplacementOperator,
+}
+
+impl MutationExclusion {
+    pub fn binary(span: solar::ast::Span, new_op: BinOpKind) -> Self {
+        Self { lo: span.lo().0, hi: span.hi().0, new_op: ReplacementOperator::Binary(new_op) }
+    }
+
+    pub fn unary(span: solar::ast::Span, new_op: UnOpKind) -> Self {
+        Self { lo: span.lo().0, hi: span.hi().0, new_op: ReplacementOperator::Unary(new_op) }
     }
 }
 
-pub type EquivalentMutationSet = HashSet<EquivalentMutation>;
-pub type EquivalentMutationsByPath = HashMap<PathBuf, EquivalentMutationSet>;
+pub type MutationExclusionSet = HashSet<MutationExclusion>;
+pub type MutationExclusionsByPath = HashMap<PathBuf, MutationExclusionSet>;
 
-pub fn collect_equivalent_mutations(
+pub fn collect_mutation_exclusions(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
-) -> Result<EquivalentMutationsByPath> {
+) -> Result<MutationExclusionsByPath> {
     let mut compiler = Compiler::new(Session::builder().with_silent_emitter(None).build());
     compiler.enter_mut(|compiler| {
         let mut pcx = compiler.parse();
@@ -53,24 +64,24 @@ pub fn collect_equivalent_mutations(
         pcx.parse();
 
         let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
-            return Ok(EquivalentMutationsByPath::new());
+            return Ok(MutationExclusionsByPath::new());
         };
         let _ = compiler.analysis();
         Ok(collect_from_gcx(compiler.gcx()))
     })
 }
 
-fn collect_from_gcx<'gcx>(gcx: Gcx<'gcx>) -> EquivalentMutationsByPath {
-    let mut by_path = EquivalentMutationsByPath::new();
+fn collect_from_gcx<'gcx>(gcx: Gcx<'gcx>) -> MutationExclusionsByPath {
+    let mut by_path = MutationExclusionsByPath::new();
     for source_id in gcx.hir.source_ids() {
         let source = gcx.hir.source(source_id);
         let FileName::Real(path) = &source.file.name else { continue };
-        let mut collector = EquivalentMutationCollector {
+        let mut collector = MutationExclusionCollector {
             gcx,
             // HIR uses offsets in the compiler-wide source map, while the mutation visitor parses
             // each target independently and uses offsets relative to that file.
             source_start: source.file.start_pos.0,
-            mutations: EquivalentMutationSet::new(),
+            mutations: MutationExclusionSet::new(),
         };
         let _ = collector.visit_nested_source(source_id);
         if !collector.mutations.is_empty() {
@@ -84,13 +95,13 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-struct EquivalentMutationCollector<'hir> {
+struct MutationExclusionCollector<'hir> {
     gcx: Gcx<'hir>,
     source_start: u32,
-    mutations: EquivalentMutationSet,
+    mutations: MutationExclusionSet,
 }
 
-impl<'hir> Visit<'hir> for EquivalentMutationCollector<'hir> {
+impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
     type BreakValue = ();
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
@@ -103,11 +114,17 @@ impl<'hir> Visit<'hir> for EquivalentMutationCollector<'hir> {
         {
             self.collect_comparison(expr, left, op.kind, right);
         }
+        if let ExprKind::Unary(_, operand) = &expr.kind
+            && is_unsigned(self.gcx, operand)
+            && let Some(span) = self.local_span(expr.span)
+        {
+            self.mutations.insert(MutationExclusion::unary(span, UnOpKind::Neg));
+        }
         self.walk_expr(expr)
     }
 }
 
-impl EquivalentMutationCollector<'_> {
+impl MutationExclusionCollector<'_> {
     fn collect_comparison(
         &mut self,
         expr: &hir::Expr<'_>,
@@ -142,16 +159,18 @@ impl EquivalentMutationCollector<'_> {
                 continue;
             }
             let normalized_candidate = if operands_reversed { flip(candidate) } else { candidate };
-            if equivalent_at_boundary(range, value, normalized_original, normalized_candidate) {
-                let Some(lo) = expr.span.lo().0.checked_sub(self.source_start) else { continue };
-                let Some(hi) = expr.span.hi().0.checked_sub(self.source_start) else { continue };
-                let span = solar::ast::Span::new(
-                    solar::interface::BytePos(lo),
-                    solar::interface::BytePos(hi),
-                );
-                self.mutations.insert(EquivalentMutation::new(span, candidate));
+            if equivalent_at_boundary(range, value, normalized_original, normalized_candidate)
+                && let Some(span) = self.local_span(expr.span)
+            {
+                self.mutations.insert(MutationExclusion::binary(span, candidate));
             }
         }
+    }
+
+    fn local_span(&self, span: solar::ast::Span) -> Option<solar::ast::Span> {
+        let lo = span.lo().0.checked_sub(self.source_start)?;
+        let hi = span.hi().0.checked_sub(self.source_start)?;
+        Some(solar::ast::Span::new(solar::interface::BytePos(lo), solar::interface::BytePos(hi)))
     }
 }
 
@@ -207,6 +226,12 @@ fn integer_range(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<IntegerRange> {
         _ => return None,
     };
     integer_range_for_type(ty)
+}
+
+fn is_unsigned(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
+    gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
+        matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::UInt(_)))
+    })
 }
 
 fn integer_range_for_type(ty: ElementaryType) -> Option<IntegerRange> {
@@ -322,7 +347,7 @@ mod tests {
     use super::*;
     use solar::interface::BytePos;
 
-    fn collect(source: &str) -> EquivalentMutationSet {
+    fn collect(source: &str) -> MutationExclusionSet {
         let path = PathBuf::from("Test.sol");
         let mut compiler = Compiler::new(Session::builder().with_silent_emitter(None).build());
         compiler.enter_mut(|compiler| {
@@ -337,9 +362,17 @@ mod tests {
         })
     }
 
-    fn mutation(source: &str, expression: &str, new_op: BinOpKind) -> EquivalentMutation {
+    fn mutation(source: &str, expression: &str, new_op: BinOpKind) -> MutationExclusion {
         let lo = source.find(expression).expect("expression") as u32;
-        EquivalentMutation::new(
+        MutationExclusion::binary(
+            solar::ast::Span::new(BytePos(lo), BytePos(lo + expression.len() as u32)),
+            new_op,
+        )
+    }
+
+    fn unary_mutation(source: &str, expression: &str, new_op: UnOpKind) -> MutationExclusion {
+        let lo = source.find(expression).expect("expression") as u32;
+        MutationExclusion::unary(
             solar::ast::Span::new(BytePos(lo), BytePos(lo + expression.len() as u32)),
             new_op,
         )
@@ -392,6 +425,64 @@ contract Test {
         let mutations = collect(source);
 
         assert!(!mutations.contains(&mutation(source, "x == 0", BinOpKind::Le)));
+    }
+
+    #[test]
+    fn excludes_negation_only_for_unsigned_unary_operands() {
+        let source = r#"
+contract Test {
+    function check(uint256 unsigned, int256 signed) external pure {
+        unsigned++;
+        ++unsigned;
+        signed++;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        assert!(mutations.contains(&unary_mutation(source, "unsigned++", UnOpKind::Neg)));
+        assert!(mutations.contains(&unary_mutation(source, "++unsigned", UnOpKind::Neg)));
+        assert!(!mutations.contains(&unary_mutation(source, "signed++", UnOpKind::Neg)));
+    }
+
+    #[test]
+    fn preserves_overloaded_negation_for_unsigned_udvt() {
+        let source = r#"
+type Amount is uint256;
+
+function negate(Amount amount) pure returns (Amount) {
+    return Amount.wrap(type(uint256).max - Amount.unwrap(amount));
+}
+
+function complement(Amount amount) pure returns (Amount) {
+    return Amount.wrap(~Amount.unwrap(amount));
+}
+
+using {negate as -, complement as ~} for Amount global;
+
+contract Test {
+    function check(Amount amount) external pure returns (Amount) {
+        return ~amount;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        assert!(!mutations.contains(&unary_mutation(source, "~amount", UnOpKind::Neg)));
+    }
+
+    #[test]
+    fn preserves_negation_for_unresolved_operand() {
+        let source = r#"
+contract Test {
+    function check() external pure {
+        unresolved++;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        assert!(!mutations.contains(&unary_mutation(source, "unresolved++", UnOpKind::Neg)));
     }
 
     #[test]

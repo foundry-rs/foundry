@@ -8,7 +8,7 @@ use crate::mutation::mutators::Mutator;
 use crate::mutation::{
     mutant::{Mutant, OwnedLiteral},
     mutators::{MutationContext, mutator_registry::MutatorRegistry},
-    type_analysis::{EquivalentMutation, EquivalentMutationSet},
+    type_analysis::{MutationExclusion, MutationExclusionSet},
 };
 use foundry_config::MutatorType;
 
@@ -34,7 +34,7 @@ pub struct MutantVisitor<'src> {
     /// matched the filter. Top-level items (outside any contract) are always
     /// considered "allowed".
     in_allowed_contract: bool,
-    equivalent_mutations: EquivalentMutationSet,
+    mutation_exclusions: MutationExclusionSet,
 }
 
 impl<'src> MutantVisitor<'src> {
@@ -48,7 +48,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
-            equivalent_mutations: EquivalentMutationSet::new(),
+            mutation_exclusions: MutationExclusionSet::new(),
         }
     }
 
@@ -63,7 +63,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
-            equivalent_mutations: EquivalentMutationSet::new(),
+            mutation_exclusions: MutationExclusionSet::new(),
         }
     }
 
@@ -78,7 +78,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
-            equivalent_mutations: EquivalentMutationSet::new(),
+            mutation_exclusions: MutationExclusionSet::new(),
         }
     }
 
@@ -98,9 +98,9 @@ impl<'src> MutantVisitor<'src> {
         self
     }
 
-    /// Exclude binary operator replacements proven equivalent by type analysis.
-    pub fn with_equivalent_mutations(mut self, mutations: EquivalentMutationSet) -> Self {
-        self.equivalent_mutations = mutations;
+    /// Exclude operator replacements rejected by type analysis.
+    pub fn with_mutation_exclusions(mut self, mutations: MutationExclusionSet) -> Self {
+        self.mutation_exclusions = mutations;
         self
     }
 
@@ -111,12 +111,16 @@ impl<'src> MutantVisitor<'src> {
     fn collect_mutations(&mut self, context: &MutationContext<'_>) {
         let result = self.mutator_registry.generate_mutations(context);
         self.mutation_to_conduct.extend(result.mutations.into_iter().filter(|mutant| {
-            let crate::mutation::mutant::MutationType::BinaryOpExpr { new_op, .. } =
-                mutant.mutation
-            else {
-                return true;
+            let exclusion = match &mutant.mutation {
+                crate::mutation::mutant::MutationType::BinaryOpExpr { new_op, .. } => {
+                    MutationExclusion::binary(mutant.span, *new_op)
+                }
+                crate::mutation::mutant::MutationType::UnaryOperator(unary) => {
+                    MutationExclusion::unary(mutant.span, unary.resulting_op_kind)
+                }
+                _ => return true,
             };
-            !self.equivalent_mutations.contains(&EquivalentMutation::new(mutant.span, new_op))
+            !self.mutation_exclusions.contains(&exclusion)
         }));
 
         for err in result.errors {
@@ -323,8 +327,8 @@ contract Test {
             solar::interface::BytePos(lo),
             solar::interface::BytePos(lo + "x == 0".len() as u32),
         );
-        let equivalent_mutations =
-            [EquivalentMutation::new(span, solar::ast::BinOpKind::Le)].into_iter().collect();
+        let mutation_exclusions =
+            [MutationExclusion::binary(span, solar::ast::BinOpKind::Le)].into_iter().collect();
         let sess = Session::builder().with_silent_emitter(None).build();
 
         sess.enter(|| {
@@ -338,7 +342,7 @@ contract Test {
             drop(parser);
             let mut visitor = MutantVisitor::default(path)
                 .with_source(source)
-                .with_equivalent_mutations(equivalent_mutations);
+                .with_mutation_exclusions(mutation_exclusions);
 
             let _ = visitor.visit_source_unit(&ast);
             let comparison_mutations = visitor.mutation_to_conduct.iter().filter_map(|mutant| {
@@ -351,6 +355,63 @@ contract Test {
 
             assert!(!comparison_mutations.contains(&solar::ast::BinOpKind::Le));
             assert!(comparison_mutations.contains(&solar::ast::BinOpKind::Lt));
+        });
+    }
+
+    #[test]
+    fn visitor_excludes_unsigned_negation_but_retains_unary_swaps() {
+        let source = "\
+pragma solidity ^0.8.0;
+contract Test {
+    function increment(uint256 x) public pure {
+        x++;
+    }
+}
+";
+        let path = PathBuf::from("test.sol");
+        let lo = source.find("x++").unwrap() as u32;
+        let span = solar::ast::Span::new(
+            solar::interface::BytePos(lo),
+            solar::interface::BytePos(lo + "x++".len() as u32),
+        );
+        let mutation_exclusions =
+            [MutationExclusion::unary(span, solar::ast::UnOpKind::Neg)].into_iter().collect();
+        let sess = Session::builder().with_silent_emitter(None).build();
+
+        sess.enter(|| {
+            let arena = Arena::new();
+            let mut parser =
+                Parser::from_lazy_source_code(&sess, &arena, FileName::Real(path.clone()), || {
+                    Ok(source.to_string())
+                })
+                .unwrap();
+            let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+            drop(parser);
+            let mut visitor = MutantVisitor::new_with_mutators(
+                path,
+                vec![Box::new(crate::mutation::mutators::unary_op_mutator::UnaryOpMutator)],
+            )
+            .with_source(source)
+            .with_mutation_exclusions(mutation_exclusions);
+
+            let _ = visitor.visit_source_unit(&ast);
+            let unary_mutations = visitor
+                .mutation_to_conduct
+                .iter()
+                .filter_map(|mutant| {
+                    let MutationType::UnaryOperator(unary) = &mutant.mutation else {
+                        return None;
+                    };
+                    (mutant.span == span).then_some(unary.resulting_op_kind)
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(unary_mutations.len(), 4);
+            assert!(!unary_mutations.contains(&solar::ast::UnOpKind::Neg));
+            assert!(unary_mutations.contains(&solar::ast::UnOpKind::PreInc));
+            assert!(unary_mutations.contains(&solar::ast::UnOpKind::PreDec));
+            assert!(unary_mutations.contains(&solar::ast::UnOpKind::BitNot));
+            assert!(unary_mutations.contains(&solar::ast::UnOpKind::PostDec));
         });
     }
 }
