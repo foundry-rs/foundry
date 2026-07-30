@@ -1233,6 +1233,7 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
+ "alloy-hardforks",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",

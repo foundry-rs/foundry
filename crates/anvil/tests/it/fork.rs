@@ -221,6 +221,72 @@ async fn test_fork_transaction_hash_replays_before_startup() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let genesis =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
+    let source_timestamp = genesis.header.timestamp + 100;
+    origin_api.evm_set_next_block_timestamp(source_timestamp).unwrap();
+
+    let first = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let second = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(1),
+        ))
+        .await
+        .unwrap();
+    origin_api.mine_one().await;
+    let source =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(source.header.timestamp, source_timestamp);
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(*second.tx_hash()))
+            .with_no_mining(true),
+    )
+    .await;
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        [*first.tx_hash(), *second.tx_hash()]
+    );
+    assert_eq!(replayed.header.timestamp, source.header.timestamp);
+    assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
+
+    fork_api.mine_one().await;
+    let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert!(next.header.timestamp > source.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_transaction_hash_replay_error_fails_startup() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_provider = origin_handle.http_provider();

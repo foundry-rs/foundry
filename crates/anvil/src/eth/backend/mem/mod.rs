@@ -9,8 +9,10 @@ use crate::{
             cheats::{CheatEcrecover, CheatsManager},
             db::{AnvilCacheDB, Db, MaybeFullDatabase, SerializableState, StateDb},
             executor::{
-                AnvilBlockExecutor, ExecutedPoolTransactions, FoundryReceiptBuilder,
-                PoolTxGasConfig, execute_pool_transactions,
+                AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
+                ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTxGasConfig,
+                apply_ethereum_post_execution_changes, apply_ethereum_pre_execution_changes,
+                execute_pool_transactions,
             },
             fork::ClientFork,
             genesis::GenesisConfig,
@@ -20,7 +22,8 @@ use crate::{
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
             replay::{
-                ExecutedHistoricalReplay, HistoricalReplayTransaction, execute_historical_replay,
+                ExecutedHistoricalReplay, HistoricalReplayTransaction,
+                PreparedForkTransactionReplay, execute_historical_replay,
                 prepare_fork_transaction_replay,
             },
             tempo::AnvilStorageProvider,
@@ -47,8 +50,10 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{
-    BlockNumHash, Encodable2718, eip2935,
+    BlockNumHash, Encodable2718, eip2935, eip4788,
     eip4844::{DATA_GAS_PER_BLOB, kzg_to_versioned_hash},
+    eip6110::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+    eip7002, eip7251,
     eip7685::EMPTY_REQUESTS_HASH,
     eip7840::BlobParams,
     eip7910::SystemContract,
@@ -67,7 +72,7 @@ use alloy_network::{
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256, hex, keccak256,
+    Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256, address, hex, keccak256,
     map::{AddressMap, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
@@ -158,6 +163,11 @@ struct OpCallDepositInfo;
 
 /// Maximum cumulative gas available to one `eth_simulateV1` request.
 const SIMULATE_GAS_CAP: u64 = 50_000_000;
+const SEPOLIA_DEPOSIT_CONTRACT_ADDRESS: Address =
+    address!("7f02c3e3c98b133055b8b348b2ac625669ed295d");
+const HOLESKY_DEPOSIT_CONTRACT_ADDRESS: Address =
+    address!("4242424242424242424242424242424242424242");
+
 /// Fixed transaction context for direct Tempo RPC simulations.
 const TEMPO_RPC_SIMULATION_CONTEXT: B256 = B256::new(*b"TEMPO_RPC_SIMULATION_MPP_CONTEXT");
 
@@ -859,6 +869,43 @@ impl<N: Network> Backend<N> {
         self.hardfork
     }
 
+    /// Returns canonical Ethereum transition configuration only for an Ethereum network.
+    fn ethereum_block_transitions(
+        &self,
+        parent_beacon_block_root: Option<B256>,
+        execution_kind: BlockExecutionKind,
+    ) -> Option<EthereumBlockTransitions> {
+        if self.is_optimism() || self.is_tempo() {
+            return None;
+        }
+        let FoundryHardfork::Ethereum(hardfork) = self.hardfork() else { return None };
+        Some(EthereumBlockTransitions {
+            hardfork,
+            deposit_contract_address: self.ethereum_deposit_contract_address(),
+            parent_beacon_block_root,
+            execution_kind,
+        })
+    }
+
+    /// Returns the configured deposit contract, then the canonical address for known chains.
+    fn ethereum_deposit_contract_address(&self) -> Address {
+        if let Some(address) = self
+            .genesis
+            .genesis_init
+            .as_ref()
+            .and_then(|genesis| genesis.config.deposit_contract_address)
+        {
+            return address;
+        }
+
+        match NamedChain::try_from(self.evm_env.read().cfg_env.chain_id) {
+            Ok(NamedChain::Sepolia) => SEPOLIA_DEPOSIT_CONTRACT_ADDRESS,
+            Ok(NamedChain::Holesky) => HOLESKY_DEPOSIT_CONTRACT_ADDRESS,
+            // Hoodi shares the mainnet address; other chains use Alloy's mainnet fallback.
+            _ => MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+        }
+    }
+
     /// Returns the active Tempo hardfork.
     pub fn tempo_hardfork(&self) -> TempoHardfork {
         TempoHardfork::from(self.hardfork())
@@ -1140,6 +1187,8 @@ impl<N: Network> Backend<N> {
             &evm_env,
             block.header.parent_hash,
             spec_id,
+            block.header.parent_beacon_block_root,
+            BlockExecutionKind::TransactionPrefix,
             &[],
             &gas_config,
             &inspector_tx_config,
@@ -1897,6 +1946,8 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         parent_hash: B256,
         spec_id: SpecId,
+        parent_beacon_block_root: Option<B256>,
+        execution_kind: BlockExecutionKind,
         pool_transactions: &[Arc<PoolTransaction<FoundryTxEnvelope>>],
         gas_config: &PoolTxGasConfig,
         inspector_tx_config: &InspectorTxConfig,
@@ -1912,12 +1963,15 @@ impl<N: Network> Backend<N> {
         DB: StateDB<Error = DatabaseError>,
     {
         let inspector = self.build_mining_inspector();
+        let ethereum_transitions =
+            self.ethereum_block_transitions(parent_beacon_block_root, execution_kind);
 
         macro_rules! run {
             ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
-                let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
+                let mut executor =
+                    AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
                 executor
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
@@ -1957,6 +2011,46 @@ impl<N: Network> Backend<N> {
                 EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
             run!(evm)
         }
+    }
+
+    /// Applies Ethereum block-start transitions to a disposable simulation candidate.
+    fn apply_simulation_pre_execution_changes<DB>(
+        &self,
+        db: DB,
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        transitions: EthereumBlockTransitions,
+    ) -> Result<(), BlockchainError>
+    where
+        DB: StateDB<Error = DatabaseError>,
+    {
+        let inspector = self.build_mining_inspector();
+        let mut evm =
+            EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        apply_ethereum_pre_execution_changes(&mut evm, parent_hash, transitions)
+            .map_err(|err| BlockchainError::Internal(err.to_string()))
+    }
+
+    /// Applies Ethereum post-block transitions to a disposable simulation candidate.
+    fn apply_simulation_post_execution_changes<DB>(
+        &self,
+        db: DB,
+        evm_env: &EvmEnv,
+        transitions: EthereumBlockTransitions,
+        receipts: &[FoundryReceiptEnvelope],
+    ) -> Result<alloy_eips::eip7685::Requests, BlockchainError>
+    where
+        DB: StateDB<Error = DatabaseError>,
+    {
+        let inspector = self.build_mining_inspector();
+        let mut evm =
+            EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        apply_ethereum_post_execution_changes(&mut evm, transitions, receipts)
+            .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
 
     /// ## EVM settings
@@ -3117,12 +3211,26 @@ impl<N: Network> Backend<N> {
             // the evm
             db.insert_block_hash(U256::from(self.best_number()), self.best_hash());
 
-            // Deploy EIP-2935 blockhash history storage contract if Prague is active.
-            if self.spec_id() >= SpecId::PRAGUE {
-                db.set_code(
-                    eip2935::HISTORY_STORAGE_ADDRESS,
-                    eip2935::HISTORY_STORAGE_CODE.clone(),
-                )?;
+            if let Some(transitions) =
+                self.ethereum_block_transitions(None, BlockExecutionKind::Complete)
+            {
+                if transitions.hardfork >= EthereumHardfork::Cancun {
+                    db.set_code(eip4788::BEACON_ROOTS_ADDRESS, eip4788::BEACON_ROOTS_CODE.clone())?;
+                }
+                if transitions.hardfork >= EthereumHardfork::Prague {
+                    db.set_code(
+                        eip2935::HISTORY_STORAGE_ADDRESS,
+                        eip2935::HISTORY_STORAGE_CODE.clone(),
+                    )?;
+                    db.set_code(
+                        eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+                        eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_CODE.clone(),
+                    )?;
+                    db.set_code(
+                        eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+                        eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_CODE.clone(),
+                    )?;
+                }
             }
         }
 
@@ -3648,8 +3756,12 @@ where
         &self,
         replay: ForkTransactionReplay,
     ) -> Result<()> {
-        let transactions = prepare_fork_transaction_replay(replay)?;
+        let PreparedForkTransactionReplay { transactions, timestamp, parent_beacon_block_root } =
+            prepare_fork_transaction_replay(replay)?;
         eyre::ensure!(!transactions.is_empty(), "fork transaction replay prefix is empty");
+        let next_timestamp = timestamp.checked_add(1).ok_or_else(|| {
+            eyre::eyre!("fork transaction replay timestamp cannot be incremented")
+        })?;
 
         let _mining_guard = self.mining.lock().await;
         let current_base_fee = self.base_fee();
@@ -3667,7 +3779,7 @@ where
         }
         evm_env.block_env.basefee = current_base_fee;
         evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
-        evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
+        evm_env.block_env.timestamp = U256::from(timestamp);
 
         let best_hash = self.blockchain.storage.read().best_hash;
         let mut prevrandao_input = [0u8; 40];
@@ -3679,7 +3791,6 @@ where
 
         let mut replay_env = evm_env.clone();
         apply_chain_specific_tx_replay_env_changes(&mut replay_env);
-        let spec_id = *replay_env.spec_id();
         let inspector_tx_config = self.inspector_tx_config();
 
         let (block_info, state_changes, block_hash) = {
@@ -3694,7 +3805,7 @@ where
                 &mut overlay,
                 &replay_env,
                 best_hash,
-                spec_id,
+                parent_beacon_block_root,
                 &transactions,
                 &inspector_tx_config,
             )?;
@@ -3707,6 +3818,7 @@ where
                 block_result,
                 transactions,
                 transaction_infos,
+                parent_beacon_block_root,
             );
             let block_hash = block_info.block.header.hash_slow();
             (block_info, state_changes, block_hash)
@@ -3753,6 +3865,8 @@ where
 
         evm_env.block_env.difficulty = U256::ZERO;
         *self.evm_env.write() = evm_env;
+        self.time.reset(timestamp);
+        self.time.set_next_block_timestamp(next_timestamp)?;
 
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
             header.gas_used,
@@ -3778,7 +3892,7 @@ where
         db: DB,
         evm_env: &EvmEnv,
         parent_hash: B256,
-        spec_id: SpecId,
+        parent_beacon_block_root: Option<B256>,
         transactions: &[HistoricalReplayTransaction],
         inspector_tx_config: &InspectorTxConfig,
     ) -> Result<ExecutedHistoricalReplay>
@@ -3786,13 +3900,22 @@ where
         DB: StateDB<Error = DatabaseError>,
     {
         let inspector = self.build_mining_inspector();
+        let ethereum_transitions = self.ethereum_block_transitions(
+            parent_beacon_block_root,
+            BlockExecutionKind::TransactionPrefix,
+        );
 
         macro_rules! run {
             ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
-                let mut executor =
-                    AnvilBlockExecutor::new($evm, parent_hash, spec_id).with_state_changes();
+                let mut executor = AnvilBlockExecutor::new(
+                    $evm,
+                    parent_hash,
+                    *evm_env.spec_id(),
+                    ethereum_transitions,
+                )
+                .with_state_changes();
                 executor
                     .apply_pre_execution_changes()
                     .wrap_err("failed to apply replay block-start transitions")?;
@@ -3845,6 +3968,7 @@ where
         block_result: BlockExecutionResult<FoundryReceiptEnvelope>,
         transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
         transaction_infos: Vec<TransactionInfo>,
+        parent_beacon_block_root: Option<B256>,
     ) -> BlockInfo<N> {
         let spec_id = *evm_env.spec_id();
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
@@ -3875,11 +3999,12 @@ where
             mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
             nonce: Default::default(),
             base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee),
-            parent_beacon_block_root: is_cancun.then_some(Default::default()),
+            parent_beacon_block_root: is_cancun
+                .then(|| parent_beacon_block_root.unwrap_or_default()),
             blob_gas_used: cumulative_blob_gas_used,
             excess_blob_gas: if is_cancun { evm_env.block_env.blob_excess_gas() } else { None },
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
-            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+            requests_hash: is_prague.then(|| block_result.requests.requests_hash()),
             block_access_list_hash: None,
             slot_number: None,
         };
@@ -3963,6 +4088,8 @@ where
                         &mining_evm_env,
                         best_hash,
                         spec_id,
+                        Some(B256::ZERO),
+                        BlockExecutionKind::Complete,
                         &pool_transactions,
                         &gas_config,
                         &inspector_tx_config,
@@ -3991,9 +4118,10 @@ where
                     block_result,
                     pool_result.txs,
                     pool_result.tx_info,
+                    Some(B256::ZERO),
                 );
 
-                // update the new blockhash in the db itself
+                // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
 
@@ -4169,6 +4297,8 @@ where
                 &evm_env,
                 parent_hash,
                 spec_id,
+                Some(B256::ZERO),
+                BlockExecutionKind::Complete,
                 &pool_transactions,
                 &gas_config,
                 &inspector_tx_config,
@@ -4195,6 +4325,7 @@ where
             block_result,
             pool_result.txs,
             pool_result.tx_info,
+            Some(B256::ZERO),
         );
 
         f(Box::new(cache_db), block_info)
@@ -4413,6 +4544,8 @@ where
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
+                block.header.parent_beacon_block_root,
+                BlockExecutionKind::TransactionPrefix,
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
@@ -4815,6 +4948,8 @@ where
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
+                block.header.parent_beacon_block_root,
+                BlockExecutionKind::TransactionPrefix,
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
@@ -5116,6 +5251,8 @@ where
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
+                block.header.parent_beacon_block_root,
+                BlockExecutionKind::TransactionPrefix,
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
@@ -6110,6 +6247,8 @@ impl Backend<FoundryNetwork> {
             for block in block_state_calls {
                 let SimBlock { block_overrides, state_overrides, calls } = block;
                 let mut block_env = inherited_block_env.clone();
+                let overridden_beacon_root =
+                    block_overrides.as_ref().and_then(|overrides| overrides.beacon_root);
                 let block_timestamp = block_overrides
                     .as_ref()
                     .and_then(|overrides| overrides.time)
@@ -6158,6 +6297,14 @@ impl Backend<FoundryNetwork> {
                 }
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
+                let ethereum_transitions = self
+                    .ethereum_block_transitions(None, BlockExecutionKind::Complete)
+                    .map(|mut transitions| {
+                        transitions.parent_beacon_block_root = (transitions.hardfork
+                            >= EthereumHardfork::Cancun)
+                            .then_some(overridden_beacon_root.unwrap_or_default());
+                        transitions
+                    });
                 let precompile_overrides = self.simulation_precompile_overrides(
                     state_overrides.as_ref(),
                     &simulation_evm_env,
@@ -6182,6 +6329,15 @@ impl Backend<FoundryNetwork> {
                     );
                     apply_state_overrides(state_overrides, &mut cache_db)?;
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
+                }
+
+                if let Some(transitions) = ethereum_transitions {
+                    self.apply_simulation_pre_execution_changes(
+                        &mut cache_db,
+                        &simulation_evm_env,
+                        parent_hash,
+                        transitions,
+                    )?;
                 }
 
                 // execute all calls in that block
@@ -6519,6 +6675,16 @@ impl Backend<FoundryNetwork> {
                 } else {
                     cumulative_gas_used
                 };
+                let requests = if let Some(transitions) = ethereum_transitions {
+                    self.apply_simulation_post_execution_changes(
+                        &mut cache_db,
+                        &simulation_evm_env,
+                        transitions,
+                        &receipts,
+                    )?
+                } else {
+                    Default::default()
+                };
 
                 let state_root = cache_db
                     .maybe_full_db()
@@ -6546,8 +6712,14 @@ impl Backend<FoundryNetwork> {
                     withdrawals_root: None,
                     blob_gas_used: is_cancun.then_some(block_blob_gas_used),
                     excess_blob_gas: if is_cancun { block_env.blob_excess_gas() } else { None },
-                    parent_beacon_block_root: None,
-                    requests_hash: None,
+                    parent_beacon_block_root: ethereum_transitions.and_then(|transitions| {
+                        (transitions.hardfork >= EthereumHardfork::Cancun)
+                            .then_some(transitions.parent_beacon_block_root.unwrap_or_default())
+                    }),
+                    requests_hash: ethereum_transitions.and_then(|transitions| {
+                        (transitions.hardfork >= EthereumHardfork::Prague)
+                            .then(|| requests.requests_hash())
+                    }),
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();

@@ -1,11 +1,16 @@
 use crate::utils::http_provider;
-use alloy_eips::{BlockId, BlockNumberOrTag, eip2935::HISTORY_STORAGE_ADDRESS};
+use alloy_eips::{
+    BlockId, BlockNumberOrTag, eip2935::HISTORY_STORAGE_ADDRESS, eip4788::BEACON_ROOTS_ADDRESS,
+    eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+};
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     TransactionRequest,
+    simulate::{SimBlock, SimulatePayload},
     trace::{
         opcode::BlockOpcodeGas,
         parity::{TraceResults, TraceResultsWithTransactionHash, TraceType},
@@ -13,11 +18,15 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, PrecompileFactory, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+use foundry_evm::hardfork::{EthereumHardfork, TempoHardfork};
+#[cfg(feature = "optimism")]
+use foundry_evm_networks::NetworkConfigs;
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 const REPLAY_PRE_EXECUTION_ERROR: &str = "replay pre-execution sentinel";
@@ -43,6 +52,186 @@ impl PrecompileFactory for FailingHistoryPrecompile {
         });
         vec![(HISTORY_STORAGE_ADDRESS, precompile)]
     }
+}
+
+#[derive(Debug)]
+struct OrderedBlockStartPrecompiles(Arc<AtomicUsize>);
+
+impl PrecompileFactory for OrderedBlockStartPrecompiles {
+    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+        let history_order = Arc::clone(&self.0);
+        let history = DynPrecompile::from(move |input: PrecompileInput<'_>| {
+            if history_order.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+                return Err(PrecompileError::Fatal("EIP-2935 did not execute first".to_string()));
+            }
+            Ok(PrecompileOutput {
+                status: PrecompileStatus::Success,
+                bytes: Bytes::new(),
+                gas_used: 0,
+                gas_refunded: 0,
+                state_gas_used: 0,
+                reservoir: input.reservoir,
+            })
+        });
+
+        let beacon_order = Arc::clone(&self.0);
+        let beacon = DynPrecompile::from(move |input: PrecompileInput<'_>| {
+            if beacon_order.compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+                return Err(PrecompileError::Fatal(
+                    "EIP-4788 did not execute after EIP-2935".to_string(),
+                ));
+            }
+            Ok(PrecompileOutput {
+                status: PrecompileStatus::Success,
+                bytes: Bytes::new(),
+                gas_used: 0,
+                gas_refunded: 0,
+                state_gas_used: 0,
+                reservoir: input.reservoir,
+            })
+        });
+
+        vec![(HISTORY_STORAGE_ADDRESS, history), (BEACON_ROOTS_ADDRESS, beacon)]
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ethereum_block_start_transitions_use_consensus_order() {
+    let order = Arc::new(AtomicUsize::new(0));
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_precompile_factory(OrderedBlockStartPrecompiles(Arc::clone(&order)));
+    let (api, _) = spawn(node_config).await;
+
+    api.mine_one().await;
+
+    assert_eq!(order.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_spec_id_does_not_enable_ethereum_block_transitions() {
+    let order = Arc::new(AtomicUsize::new(0));
+    let node_config = NodeConfig::test_tempo()
+        .with_hardfork(Some(TempoHardfork::Genesis.into()))
+        .with_precompile_factory(OrderedBlockStartPrecompiles(Arc::clone(&order)));
+    let (api, handle) = spawn(node_config).await;
+
+    handle.http_provider().get_block_by_number(BlockNumberOrTag::Pending).await.unwrap();
+    api.simulate_v1(
+        SimulatePayload { block_state_calls: vec![SimBlock::default()], ..Default::default() },
+        None,
+    )
+    .await
+    .unwrap();
+
+    api.mine_one().await;
+
+    assert_eq!(order.load(Ordering::SeqCst), 0);
+}
+
+#[cfg(feature = "optimism")]
+#[tokio::test(flavor = "multi_thread")]
+async fn optimism_spec_id_does_not_enable_ethereum_block_transitions() {
+    let order = Arc::new(AtomicUsize::new(0));
+    let node_config = NodeConfig::test()
+        .with_networks(NetworkConfigs::with_optimism())
+        .with_hardfork(Some(OpHardfork::Isthmus.into()))
+        .with_precompile_factory(OrderedBlockStartPrecompiles(Arc::clone(&order)));
+    let (api, handle) = spawn(node_config).await;
+
+    handle.http_provider().get_block_by_number(BlockNumberOrTag::Pending).await.unwrap();
+    api.simulate_v1(
+        SimulatePayload { block_state_calls: vec![SimBlock::default()], ..Default::default() },
+        None,
+    )
+    .await
+    .unwrap();
+
+    api.mine_one().await;
+
+    assert_eq!(order.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Debug)]
+struct CountingPostBlockPrecompiles(Arc<AtomicUsize>);
+
+impl PrecompileFactory for CountingPostBlockPrecompiles {
+    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+        [WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS]
+            .into_iter()
+            .map(|address| {
+                let calls = Arc::clone(&self.0);
+                let precompile = DynPrecompile::from(move |input: PrecompileInput<'_>| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(PrecompileOutput {
+                        status: PrecompileStatus::Success,
+                        bytes: Bytes::new(),
+                        gas_used: 0,
+                        gas_refunded: 0,
+                        state_gas_used: 0,
+                        reservoir: input.reservoir,
+                    })
+                });
+                (address, precompile)
+            })
+            .collect()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_block_paths_run_post_transitions_once() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_precompile_factory(CountingPostBlockPrecompiles(Arc::clone(&calls)));
+    let (api, handle) = spawn(node_config).await;
+
+    handle.http_provider().get_block_by_number(BlockNumberOrTag::Pending).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    api.simulate_v1(
+        SimulatePayload { block_state_calls: vec![SimBlock::default()], ..Default::default() },
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+
+    api.mine_one().await;
+    assert_eq!(calls.load(Ordering::SeqCst), 6);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn transaction_prefix_replay_does_not_drain_post_block_queues() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_precompile_factory(CountingPostBlockPrecompiles(Arc::clone(&calls)));
+    let (api, handle) = spawn(node_config).await;
+    let provider = handle.http_provider();
+    let mut wallets = handle.dev_wallets();
+    let from = wallets.next().unwrap().address();
+    let to = wallets.next().unwrap().address();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(to).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    calls.store(0, Ordering::SeqCst);
+
+    api.trace_replay_transaction(
+        receipt.transaction_hash,
+        [TraceType::Trace].into_iter().collect(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
