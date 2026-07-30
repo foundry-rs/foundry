@@ -65,48 +65,28 @@ jobs:
             const metadata = new RegExp(
               `${marker}\\nPrepares Foundry (\\d+\\.\\d+\\.\\d+) from pending changelog entries\\.\\n\\n` +
               '- Base branch: `master`\\n' +
+              '- Source master SHA: `([0-9a-f]{40})`\\n' +
               '- Expected version: `([^`]+)`\\n' +
               '- Expected tag: `([^`]+)`\\n' +
+              '- Changelog fragments: (\\d+)\\n' +
               '- Verified workspace packages: (\\d+)\\n',
             ).exec(pr.body || '');
             if (!metadata) throw new Error('Stable version pull request metadata is malformed');
-            if (metadata[1] !== metadata[2]) {
+            if (metadata[1] !== metadata[3]) {
               throw new Error('Stable version pull request versions do not match');
             }
-            if (metadata[3] !== `v${metadata[1]}`) {
+            if (metadata[4] !== `v${metadata[1]}`) {
               throw new Error('Stable version pull request tag does not match its version');
             }
-            if (pr.title !== `chore: prepare ${metadata[3]}`) {
+            if (pr.title !== `chore: prepare ${metadata[4]}`) {
               throw new Error('Stable version pull request title does not match its tag');
             }
 
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              per_page: 100,
-            });
-            if (files.length !== pr.changed_files) {
-              throw new Error('Could not inspect the complete stable version pull request diff');
-            }
-            const isChangelog = file =>
-              file.filename === 'CHANGELOG.md' && file.status === 'modified' && !file.previous_filename;
-            const isRemovedFragment = file =>
-              file.status === 'removed' &&
-              !file.previous_filename &&
-              /^\.changelog\/[^/]+\.md$/.test(file.filename) &&
-              file.filename !== '.changelog/README.md';
-            const unexpected = files.filter(file => !isChangelog(file) && !isRemovedFragment(file));
-            if (unexpected.length) {
-              throw new Error(`Stable version pull request changed unexpected paths: ${unexpected.map(file => file.filename).join(', ')}`);
-            }
-            if (!files.some(isChangelog) || !files.some(isRemovedFragment)) {
-              throw new Error('Stable version pull request is missing expected release changes');
-            }
-
             core.setOutput('version', metadata[1]);
-            core.setOutput('tag', metadata[3]);
-            core.setOutput('package_count', metadata[4]);
+            core.setOutput('source_sha', metadata[2]);
+            core.setOutput('tag', metadata[4]);
+            core.setOutput('fragment_count', metadata[5]);
+            core.setOutput('package_count', metadata[6]);
             core.setOutput('merge_sha', pr.merge_commit_sha);
 
       - name: Checkout merged release
@@ -114,6 +94,7 @@ jobs:
         with:
           ref: ${{ steps.release.outputs.merge_sha }}
           path: release
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Revalidate merged release
@@ -122,13 +103,17 @@ jobs:
             --validate-merged \
             --root release \
             --expected-sha "$MERGE_SHA" \
+            --expected-source-sha "$SOURCE_SHA" \
             --expected-version "$EXPECTED_VERSION" \
             --expected-tag "$EXPECTED_TAG" \
+            --expected-fragment-count "$EXPECTED_FRAGMENT_COUNT" \
             --expected-package-count "$EXPECTED_PACKAGE_COUNT"
         env:
           MERGE_SHA: ${{ steps.release.outputs.merge_sha }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           EXPECTED_VERSION: ${{ steps.release.outputs.version }}
           EXPECTED_TAG: ${{ steps.release.outputs.tag }}
+          EXPECTED_FRAGMENT_COUNT: ${{ steps.release.outputs.fragment_count }}
           EXPECTED_PACKAGE_COUNT: ${{ steps.release.outputs.package_count }}
 
       - name: Create repository-scoped App token
