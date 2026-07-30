@@ -58,7 +58,7 @@ impl InitCodeHashArgs {
         let output = compile::compile_target(&target_path, &project, true)?;
         let (abi, bin, _) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
         let Some(bytecode) = bin.object.into_bytes() else {
-            eyre::bail!("contract contains unlinked libraries")
+            eyre::bail!("contract contains unlinked libraries");
         };
 
         let mut init_code = bytecode.to_vec();
@@ -66,7 +66,7 @@ impl InitCodeHashArgs {
             let params = parse_constructor_args(constructor, &self.constructor_args)?;
             init_code.extend(constructor.abi_encode_input(&params)?);
         } else if !self.constructor_args.is_empty() {
-            eyre::bail!("contract does not have a constructor")
+            eyre::bail!("contract does not have a constructor");
         }
 
         sh_println!("{}", keccak256(init_code))?;
