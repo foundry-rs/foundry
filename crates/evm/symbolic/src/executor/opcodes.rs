@@ -15,12 +15,8 @@ impl SymbolicExecutor {
     fn mapping_storage_hook_calldata(
         &mut self,
         selector: [u8; 4],
-        account: SymExpr,
-        computed_slot: SymExpr,
-        root_slot: SymExpr,
+        [account, computed_slot, root_slot, old_value, new_value]: [SymExpr; 5],
         keys: Vec<SymExpr>,
-        old_value: SymExpr,
-        new_value: SymExpr,
     ) -> SymCalldata {
         let selector = SymBytes::concrete(&mut self.cx, selector.to_vec());
         let keys_offset = SymExpr::constant(&mut self.cx, U256::from(6 * 32));
@@ -673,12 +669,14 @@ impl SymbolicExecutor {
                     let root = SymExpr::constant(&mut self.cx, provenance.root_slot);
                     let calldata = self.mapping_storage_hook_calldata(
                         hook.callback_selector,
-                        account,
-                        key,
-                        root,
+                        [
+                            account,
+                            key,
+                            root,
+                            old_value.expect("old value loaded for mapping storage hook"),
+                            value,
+                        ],
                         provenance.keys,
-                        old_value.expect("old value loaded for mapping storage hook"),
-                        value,
                     );
                     return self.invoke_storage_hook(
                         executor,

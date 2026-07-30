@@ -227,7 +227,7 @@ impl SymExpr {
     pub(crate) fn storage_mapping_provenance_observed_with(
         &self,
         cx: &mut SymCx,
-        mut observed_preimage: impl FnMut(&SymExpr) -> Option<Arc<[SymExpr]>>,
+        mut observed_preimage: impl FnMut(&Self) -> Option<Arc<[Self]>>,
     ) -> Option<SymbolicMappingProvenance> {
         let mut current = self.clone();
         let mut keys = Vec::new();

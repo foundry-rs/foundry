@@ -276,19 +276,6 @@ pub(crate) const fn abi_static_input_size(words: usize) -> usize {
     4 + words * 32
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mapping_hook_registrations_require_three_words() {
-        assert_eq!(
-            foundry_cheatcode_min_input_size(registerMappingSstoreHookCall::SELECTOR),
-            Some(abi_static_input_size(3))
-        );
-    }
-}
-
 pub(crate) fn abi_bytes_return(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymReturnData {
     let len = SymExpr::constant(cx, U256::from(bytes.len()));
     abi_bytes_return_with_len(cx, len, bytes)
@@ -1089,4 +1076,17 @@ pub(crate) fn artifact_code(path: &str, deployed: bool) -> Result<Vec<u8>, Symbo
         .and_then(serde_json::Value::as_str)
         .ok_or(SymbolicError::Unsupported("symbolic vm.getCode artifact"))?;
     hex::decode(object).map_err(|_| SymbolicError::Unsupported("symbolic vm.getCode artifact"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mapping_hook_registrations_require_three_words() {
+        assert_eq!(
+            foundry_cheatcode_min_input_size(registerMappingSstoreHookCall::SELECTOR),
+            Some(abi_static_input_size(3))
+        );
+    }
 }
