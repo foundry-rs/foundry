@@ -80,6 +80,10 @@ def set_workspace_version(manifest: Path, version: str) -> None:
 
 
 def release_plan(output: str) -> dict[str, str]:
+    warnings = re.findall(r"^\s*!\s+(.+?)\s*$", output, re.MULTILINE)
+    if warnings:
+        raise ReleaseError(f"changelogs release plan reported warnings: {'; '.join(warnings)}")
+
     releases = {}
     for package, version in re.findall(
         r"^\s*✓\s+(\S+)\s+\S+\s+→\s+(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\s*$",
@@ -396,7 +400,15 @@ def main() -> int:
             if args.changelogs is None:
                 parser.error("--changelogs is required unless --validate-merged is used")
             prepare(root, args.changelogs.resolve())
-    except (OSError, KeyError, subprocess.CalledProcessError, tomllib.TOMLDecodeError, ReleaseError) as error:
+    except subprocess.CalledProcessError as error:
+        output = error.stdout
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        if output:
+            print(output, file=sys.stderr, end="" if output.endswith("\n") else "\n")
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except (OSError, KeyError, tomllib.TOMLDecodeError, ReleaseError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     return 0
