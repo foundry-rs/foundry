@@ -5641,91 +5641,139 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage atomically so concurrent readers
-        // never observe blocks without their transactions
-        {
-            let mut storage = self.blockchain.storage.write();
-            storage.load_blocks(state.blocks.clone());
-            storage.load_transactions(state.transactions.clone());
-        }
-        // reset the block env
-        if let Some(block) = state.block.clone() {
-            {
-                let mut env = self.evm_env.write();
-                env.block_env = block.clone();
-                if self.is_tempo() && self.is_fork() && env.block_env.beneficiary.is_zero() {
-                    env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
-                }
+        let mut block_env = state.block.clone();
+        let mut selected_head = None;
+        let mut selected_header = None;
+        let mut checkpoint = None;
+        if let Some(block) = &mut block_env {
+            if self.is_tempo() && self.is_fork() && block.beneficiary.is_zero() {
+                block.beneficiary = TIP_FEE_MANAGER_ADDRESS;
             }
-
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
             let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
-            let selected_best_number = if let Some((number, hash)) = fork_num_and_hash {
+            let (selected_best_number, selected_best_hash) = if let Some((number, hash)) =
+                fork_num_and_hash
+            {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
                 if best_number > number {
-                    self.blockchain.storage.write().best_number = best_number;
-                    let best_hash = self
-                        .blockchain
-                        .storage
-                        .read()
-                        .hash(best_number.into(), self.slots_in_an_epoch)
-                        .ok_or_else(|| {
-                            BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                                "Best hash not found for best number {best_number}",
-                            )))
-                        })?;
-                    self.blockchain.storage.write().best_hash = best_hash;
-                    best_number
+                    (best_number, None)
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
-                    self.blockchain.storage.write().best_number = number;
-                    self.blockchain.storage.write().best_hash = hash;
-                    number
+                    (number, Some(hash))
                 }
             } else {
-                self.blockchain.storage.write().best_number = best_number;
-
-                // Set the current best block hash;
-                let best_hash = self
-                    .blockchain
-                    .storage
-                    .read()
-                    .hash(best_number.into(), self.slots_in_an_epoch)
-                    .ok_or_else(|| {
-                        BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                            "Best hash not found for best number {best_number}",
-                        )))
-                    })?;
-
-                self.blockchain.storage.write().best_hash = best_hash;
-                best_number
+                (best_number, None)
             };
 
-            // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
-            // can intentionally keep BlockEnv.number distinct from the best L2 block number.
-            if !is_arbitrum(self.chain_id().to()) {
-                self.set_block_number(selected_best_number);
+            let best_hash = if let Some(hash) = selected_best_hash {
+                selected_header = state
+                    .blocks
+                    .iter()
+                    .rev()
+                    .find(|block| block.header.hash_slow() == hash)
+                    .map(|block| block.header.clone());
+                hash
+            } else if state.blocks.is_empty() {
+                let spec_id = self.spec_id();
+                let is_cancun = spec_id >= SpecId::CANCUN;
+                let parent_hash = selected_best_number
+                    .checked_sub(1)
+                    .and_then(|number| self.blockchain.storage.read().hashes.get(&number).copied())
+                    .unwrap_or_default();
+                let header = Header {
+                    parent_hash,
+                    beneficiary: block.beneficiary,
+                    difficulty: block.difficulty,
+                    number: selected_best_number,
+                    gas_limit: block.gas_limit,
+                    timestamp: block.timestamp.saturating_to(),
+                    mix_hash: block.prevrandao.unwrap_or_default(),
+                    base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block.basefee),
+                    parent_beacon_block_root: is_cancun.then_some(Default::default()),
+                    blob_gas_used: is_cancun.then_some(0),
+                    excess_blob_gas: if is_cancun { block.blob_excess_gas() } else { None },
+                    withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
+                    requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+                    ..Default::default()
+                };
+                let header = FoundryHeader::new(header, self.is_tempo());
+                let best_hash = header.hash_slow();
+                selected_header = Some(header.clone());
+                checkpoint = Some(create_block(
+                    header,
+                    Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+                ));
+                warn!(
+                    target: "backend",
+                    block_number = selected_best_number,
+                    "state dump has no block history; created a synthetic checkpoint block"
+                );
+                best_hash
+            } else if let Some(header) = state
+                .blocks
+                .iter()
+                .rev()
+                .find(|block| block.header.number() == selected_best_number)
+                .map(|block| block.header.clone())
+            {
+                let best_hash = header.hash_slow();
+                selected_header = Some(header);
+                best_hash
+            } else {
+                return Err(BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                    "Best hash not found for best number {selected_best_number}",
+                ))));
+            };
+
+            selected_head = Some((selected_best_number, best_hash));
+        }
+
+        // Apply the prepared chain data atomically so concurrent readers never observe blocks
+        // without their transactions or a partially updated head.
+        {
+            let mut storage = self.blockchain.storage.write();
+            storage.load_blocks(state.blocks.clone());
+            storage.load_transactions(state.transactions.clone());
+            if let Some(checkpoint) = checkpoint {
+                storage.insert_block(checkpoint);
+            }
+            if let Some((number, hash)) = selected_head {
+                storage.hashes.insert(number, hash);
+                storage.best_number = number;
+                storage.best_hash = hash;
             }
         }
 
-        if let Some(latest) = state.blocks.iter().max_by_key(|b| b.header.number()) {
-            let header = &latest.header;
+        if let Some(mut block) = block_env {
+            // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
+            // can intentionally keep BlockEnv.number distinct from the best L2 block number.
+            if !is_arbitrum(self.chain_id().to())
+                && let Some((number, _)) = selected_head
+            {
+                block.number = U256::from(number);
+            }
+            self.evm_env.write().block_env = block;
+        }
+
+        if let Some(header) = selected_header.as_ref() {
             let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                 header.gas_used(),
                 header.gas_limit(),
                 header.base_fee_per_gas().unwrap_or_default(),
             );
-            let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-                header.excess_blob_gas().unwrap_or_default(),
-                header.blob_gas_used().unwrap_or_default(),
-            );
+            let next_block_excess_blob_gas =
+                self.fees.blob_params().next_block_excess_blob_gas_osaka(
+                    header.excess_blob_gas().unwrap_or_default(),
+                    header.blob_gas_used().unwrap_or_default(),
+                    header.base_fee_per_gas().unwrap_or_default(),
+                );
 
             // update next base fee
             self.fees.set_base_fee(next_block_base_fee);
