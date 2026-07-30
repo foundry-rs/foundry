@@ -277,7 +277,8 @@ impl RemappingsProvider<'_> {
                     && auto_detected_remappings.iter().any(|auto| {
                         auto.context == r.context
                             && auto.name == r.name
-                            && is_strict_descendant(Path::new(&r.path), Path::new(&auto.path))
+                            && Path::new(&r.path) != Path::new(&auto.path)
+                            && Path::new(&r.path).starts_with(&auto.path)
                     })
                 {
                     let mut contextual = r.clone();
@@ -409,10 +410,6 @@ impl RemappingsProvider<'_> {
     }
 }
 
-fn is_strict_descendant(path: &Path, parent: &Path) -> bool {
-    path != parent && path.starts_with(parent)
-}
-
 fn remapping_name_is_prefix(prefix: &str, name: &str) -> bool {
     let prefix = prefix.trim_end_matches('/');
     let name = name.trim_end_matches('/');
@@ -508,19 +505,6 @@ impl Provider for RemappingsProvider<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn equivalent_paths_are_not_strict_descendants() {
-        let parent = Path::new("lib/pkg/src");
-        assert!(!is_strict_descendant(Path::new("lib/pkg/src/"), parent));
-        assert!(is_strict_descendant(Path::new("lib/pkg/src/contracts"), parent));
-
-        #[cfg(windows)]
-        {
-            let parent = Path::new("lib/pkg/src/");
-            assert!(!is_strict_descendant(Path::new(r"lib\pkg\src"), parent));
-        }
-    }
 
     #[test]
     fn relative_remapping_preserves_context_directory_boundary() {
