@@ -227,6 +227,15 @@ impl PathState {
         }
     }
 
+    pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
+        let mut child = self.child(frame);
+        child.storage_hook_active = true;
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
+        child.set_branch_target(None);
+        child
+    }
+
     pub(crate) fn copy_call_output_offset(
         &mut self,
         cx: &mut SymCx,
@@ -2340,6 +2349,24 @@ mod tests {
 
         assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
         assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+    }
+
+    #[test]
+    fn storage_hook_child_does_not_inherit_branch_guidance() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        state.set_branch_target(Some(SymbolicBranchTarget::new(
+            Address::ZERO,
+            0,
+            opcode::EQ,
+            false,
+        )));
+        let frame = state.frame.clone();
+
+        let child = state.storage_hook_child(frame);
+
+        assert!(child.storage_hook_active);
+        assert!(child.branch_target().is_none());
     }
 
     #[test]

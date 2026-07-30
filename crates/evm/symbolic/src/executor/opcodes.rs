@@ -37,10 +37,7 @@ impl SymbolicExecutor {
             false,
             calldata,
         );
-        let mut child = state.child(frame);
-        child.storage_hook_active = true;
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
+        let child = state.storage_hook_child(frame);
         let outcomes = self.execute_external_call(executor, child, &code, completed_paths)?;
         if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
@@ -51,7 +48,6 @@ impl SymbolicExecutor {
             let mut parent = state.clone();
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
-            parent.inherit_branch_target_progress(&outcome.state);
             parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
             parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
             parent.storage_hook_active = false;
