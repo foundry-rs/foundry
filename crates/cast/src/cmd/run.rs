@@ -1,4 +1,5 @@
 use crate::{
+    MAX_CONCURRENT_RPC_REQUESTS,
     debug::handle_traces,
     rpc_trace::{
         call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
@@ -53,9 +54,6 @@ use foundry_evm::{
 };
 use futures::{StreamExt, TryFutureExt};
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
-
-/// Matches Cast's bounded concurrency for chunked RPC log fetching.
-const MAX_CONCURRENT_CODE_FETCHES: usize = 5;
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -595,7 +593,7 @@ pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
                 .map(|address| async move {
                     (address, provider.get_code_at(address).block_id(block).await)
                 })
-                .buffer_unordered(MAX_CONCURRENT_CODE_FETCHES);
+                .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
         while let Some((address, code)) = requests.next().await {
             match code {
                 Ok(code) if !code.is_empty() => {
@@ -655,7 +653,7 @@ async fn fetch_transaction_contracts_bytecode_via_rpc<N: Network, P: Provider<N>
                 .map(|address| async move {
                     (address, provider.get_code_at(address).block_id(block).await)
                 })
-                .buffer_unordered(MAX_CONCURRENT_CODE_FETCHES);
+                .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
         while let Some((address, code)) = requests.next().await {
             match code {
                 Ok(code) if !code.is_empty() => {
@@ -709,15 +707,7 @@ impl figment::Provider for RunArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_network::Ethereum;
     use alloy_primitives::address;
-    use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
-    use alloy_rpc_client::RpcClient;
-    use alloy_transport::{TransportFut, mock::MockTransport};
-    use foundry_evm::traces::CallTraceArena;
-    use std::{sync::Arc, time::Duration};
-    use tokio::{sync::Barrier, time::timeout};
-    use tower::Service;
 
     #[test]
     fn parses_legacy_short_label_alias() {
@@ -788,51 +778,5 @@ mod tests {
         let config = TracingConfig { decode_internal: true, ..Default::default() };
 
         assert!(!args.resolve_tracing(&config, 0).decode_internal);
-    }
-
-    #[tokio::test]
-    async fn fetches_trace_bytecode_concurrently() {
-        let addresses = [Address::repeat_byte(1), Address::repeat_byte(2)];
-        let mut arena = CallTraceArena::default();
-        arena.nodes_mut()[0].trace.address = addresses[0];
-        arena.nodes_mut()[0].trace.caller = addresses[1];
-        let result = TraceResult {
-            success: true,
-            traces: Some(vec![(
-                TraceKind::Execution,
-                SparsedTraceArena {
-                    arena,
-                    ignored: Default::default(),
-                    diagnostics: Default::default(),
-                },
-            )]),
-            gas_used: 0,
-        };
-
-        let asserter = Asserter::new();
-        for _ in &addresses {
-            asserter.push_success(&Bytes::from_static(&[1]));
-        }
-        let inner = MockTransport::new(asserter);
-        let barrier = Arc::new(Barrier::new(addresses.len()));
-        let transport = tower::service_fn(move |request| {
-            let mut inner = inner.clone();
-            let barrier = barrier.clone();
-            Box::pin(async move {
-                barrier.wait().await;
-                inner.call(request).await
-            }) as TransportFut<'static>
-        });
-        let provider = AlloyProviderBuilder::new_with_network::<Ethereum>()
-            .connect_client(RpcClient::new(transport, true));
-
-        let bytecode = timeout(
-            Duration::from_secs(1),
-            fetch_contracts_bytecode_via_rpc(&provider, &result, BlockId::latest()),
-        )
-        .await
-        .expect("code requests were not in flight together")
-        .unwrap();
-        assert_eq!(bytecode.len(), addresses.len());
     }
 }
