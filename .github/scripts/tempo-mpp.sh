@@ -16,8 +16,14 @@
 
 set -euo pipefail
 
-if [ -n "${MPP_API_KEY:-}" ]; then
-  echo "ERROR: MPP_API_KEY bypasses payment challenges and must be unset for the paid MPP e2e" >&2
+# Moderato requires gateway authentication before returning its paid challenge. Keep the opt-in
+# explicit; the channel assertions below still verify that payment was not bypassed.
+if [ -n "${MPP_API_KEY:-}" ] && [ "${MPP_ALLOW_API_KEY:-0}" != "1" ]; then
+  echo "ERROR: MPP_API_KEY requires MPP_ALLOW_API_KEY=1 for the paid MPP e2e" >&2
+  exit 1
+fi
+if [ "${MPP_ALLOW_API_KEY:-0}" = "1" ] && [ -z "${MPP_API_KEY:-}" ]; then
+  echo "ERROR: MPP_ALLOW_API_KEY=1 requires MPP_API_KEY for gateway authentication" >&2
   exit 1
 fi
 
