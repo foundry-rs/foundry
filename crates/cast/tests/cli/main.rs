@@ -2280,6 +2280,46 @@ casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(create2_init_code_hash, |prj, cmd| {
+    prj.add_source(
+        "InitCodeHash",
+        r#"
+contract InitCodeHash {
+    uint256 public immutable value;
+    address public immutable owner;
+
+    constructor(uint256 value_, address owner_) {
+        value = value_;
+        owner = owner_;
+    }
+}
+"#,
+    );
+
+    let owner = address!("0x0000000000000000000000000000000000000001");
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "InitCodeHash", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let mut expected_init_code = hex::decode(bytecode.trim()).unwrap();
+    expected_init_code.extend((U256::from(42), owner).abi_encode());
+    let expected = keccak256(expected_init_code);
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "42",
+            &owner.to_string(),
+        ])
+        .assert_success()
+        .stdout_eq(format!("{expected}\n"));
+});
+
 casttest!(mktx, |_prj, cmd| {
     cmd.args([
         "mktx",
