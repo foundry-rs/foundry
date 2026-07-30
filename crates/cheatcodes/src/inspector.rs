@@ -408,12 +408,15 @@ pub struct ArbitraryStorage {
     copies: HashMap<Address, Address>,
     /// Address with storage slots that should be overwritten even if previously set.
     overwrites: HashSet<Address>,
+    /// Storage slots explicitly written with `vm.store`, grouped by address.
+    explicit_slots: HashMap<Address, HashSet<U256>>,
 }
 
 impl ArbitraryStorage {
     /// Marks an address with arbitrary storage.
     pub fn mark_arbitrary(&mut self, address: &Address, overwrite: bool) {
         self.values.insert(*address, HashMap::default());
+        self.explicit_slots.remove(address);
         if overwrite {
             self.overwrites.insert(*address);
         } else {
@@ -425,7 +428,24 @@ impl ArbitraryStorage {
     pub fn mark_copy(&mut self, from: &Address, to: &Address) {
         if self.values.contains_key(from) {
             self.copies.insert(*to, *from);
+            if let Some(slots) = self.explicit_slots.get(from).cloned() {
+                self.explicit_slots.insert(*to, slots);
+            } else {
+                self.explicit_slots.remove(to);
+            }
         }
+    }
+
+    /// Marks a slot as explicitly written if the address has arbitrary or copied storage.
+    fn mark_explicit(&mut self, address: Address, slot: U256) {
+        if self.values.contains_key(&address) || self.copies.contains_key(&address) {
+            self.explicit_slots.entry(address).or_default().insert(slot);
+        }
+    }
+
+    /// Returns whether a slot was explicitly written for the given address.
+    fn is_explicit(&self, address: Address, slot: U256) -> bool {
+        self.explicit_slots.get(&address).is_some_and(|slots| slots.contains(&slot))
     }
 
     /// Returns addresses explicitly marked with arbitrary storage.
@@ -1649,6 +1669,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(storage) = &mut self.arbitrary_storage {
             storage.cache_value(address, slot, value);
         }
+    }
+
+    /// Marks a slot as explicitly written with `vm.store`.
+    pub fn mark_arbitrary_storage_slot_explicit(&mut self, address: Address, slot: U256) {
+        if let Some(storage) = &mut self.arbitrary_storage {
+            storage.mark_explicit(address, slot);
+        }
+    }
+
+    /// Returns whether a slot was explicitly written with `vm.store`.
+    pub fn is_arbitrary_storage_slot_explicit(&self, address: Address, slot: U256) -> bool {
+        self.arbitrary_storage.as_ref().is_some_and(|storage| storage.is_explicit(address, slot))
     }
 
     /// Returns a cached arbitrary-storage replay value for a slot.
@@ -2891,6 +2923,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         } else {
             return;
         };
+
+        if self.is_arbitrary_storage_slot_explicit(target_address, key) {
+            return;
+        }
 
         let Some(value) = ecx.sload(target_address, key) else {
             return;

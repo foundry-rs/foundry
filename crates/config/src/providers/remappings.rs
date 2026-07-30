@@ -277,7 +277,7 @@ impl RemappingsProvider<'_> {
                     && auto_detected_remappings.iter().any(|auto| {
                         auto.context == r.context
                             && auto.name == r.name
-                            && auto.path != r.path
+                            && Path::new(&r.path) != Path::new(&auto.path)
                             && Path::new(&r.path).starts_with(&auto.path)
                     })
                 {
@@ -443,10 +443,14 @@ pub fn relative_remapping_preserving_context_boundary(
     let has_boundary =
         remapping.context.as_deref().is_some_and(|context| context.ends_with(['/', '\\']));
     let mut remapping = RelativeRemapping::new(remapping, root);
+    // Slash conversion on Windows only preserves a trailing native separator.
     if has_boundary
         && let Some(context) = &mut remapping.context
-        && !context.ends_with(['/', '\\'])
+        && !context.ends_with(MAIN_SEPARATOR)
     {
+        if context.ends_with(['/', '\\']) {
+            context.pop();
+        }
         context.push(MAIN_SEPARATOR);
     }
     remapping
@@ -505,13 +509,14 @@ mod tests {
     #[test]
     fn relative_remapping_preserves_context_directory_boundary() {
         let remapping = Remapping {
-            context: Some(format!("lib{MAIN_SEPARATOR}outer{MAIN_SEPARATOR}")),
+            context: Some("lib/outer/".to_string()),
             name: "inner/".to_string(),
             path: format!("lib{MAIN_SEPARATOR}outer{MAIN_SEPARATOR}lib{MAIN_SEPARATOR}inner"),
         };
 
         let remapping = relative_remapping_preserving_context_boundary(remapping, Path::new("."));
-        assert!(remapping.context.unwrap().ends_with(MAIN_SEPARATOR));
+        assert!(remapping.context.as_ref().unwrap().ends_with(MAIN_SEPARATOR));
+        assert_eq!(remapping.to_string(), "lib/outer/:inner/=lib/outer/lib/inner/");
     }
 
     #[test]

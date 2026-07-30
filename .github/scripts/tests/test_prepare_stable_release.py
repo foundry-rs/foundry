@@ -1,4 +1,6 @@
+from contextlib import redirect_stderr
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -13,6 +15,19 @@ SPEC = importlib.util.spec_from_file_location("prepare_stable_release", SCRIPT)
 prepare_stable_release = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(prepare_stable_release)
+
+PINNED_WARNING_RELEASE_PLAN = (
+    "  ! changelog references unknown package 'removed-package'\n"
+    "\n"
+    "→ Updating versions...\n"
+    "\n"
+    "→ Release plan:\n"
+    "\n"
+    "  ✓ cast 1.7.1 → 1.7.2\n"
+    "  ✓ forge 1.7.1 → 1.7.2\n"
+    "\n"
+    "ℹ 2 package(s) would be updated (dry run — no files changed)\n"
+)
 
 
 class VersionTests(unittest.TestCase):
@@ -73,6 +88,13 @@ class VersionTests(unittest.TestCase):
         output = "✓ forge 1.7.1 → 1.7.2\n✓ forge 1.7.1 → 1.7.2\n"
         with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "duplicate package"):
             prepare_stable_release.release_plan(output)
+
+    def test_rejects_release_plan_warnings(self) -> None:
+        with self.assertRaisesRegex(
+            prepare_stable_release.ReleaseError,
+            "reported warnings.*unknown package 'removed-package'",
+        ):
+            prepare_stable_release.release_plan(PINNED_WARNING_RELEASE_PLAN)
 
     def test_rejects_incomplete_or_wrong_release_plan(self) -> None:
         with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "missing: cast"):
@@ -240,6 +262,43 @@ class WorkspaceTests(unittest.TestCase):
                 prepare_stable_release.prepare(root, root / "changelogs")
             self.assertEqual(output.read_text(), "base_branch=master\nchanged=false\n")
 
+    def test_release_plan_warning_stops_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".changelog").mkdir()
+            fragment = root / ".changelog" / "stale.md"
+            fragment.write_text("pending changelog\n")
+            manifest = root / "Cargo.toml"
+            manifest.write_text('[workspace.package]\nversion = "1.7.2"\n')
+            metadata = {
+                "workspace_members": ["forge", "cast"],
+                "packages": [
+                    {"id": "forge", "name": "forge", "version": "1.7.2"},
+                    {"id": "cast", "name": "cast", "version": "1.7.2"},
+                ],
+            }
+
+            def completed(command, root, capture_output=False):
+                output = "v1.7.1\n" if command[:2] == ["git", "tag"] else json.dumps(metadata)
+                return subprocess.CompletedProcess(command, returncode=0, stdout=output)
+
+            dry_run = subprocess.CompletedProcess(
+                [], returncode=0, stdout=PINNED_WARNING_RELEASE_PLAN
+            )
+            with patch.object(
+                prepare_stable_release, "run", side_effect=completed
+            ), patch.object(
+                prepare_stable_release, "run_preserving_lockfile", return_value=dry_run
+            ) as version, self.assertRaisesRegex(
+                prepare_stable_release.ReleaseError, "reported warnings"
+            ):
+                prepare_stable_release.prepare(root, root / "changelogs")
+
+            self.assertEqual(version.call_count, 1)
+            self.assertEqual(version.call_args.args[0][-1], "--dry-run")
+            self.assertTrue(fragment.exists())
+            self.assertEqual(prepare_stable_release.workspace_version(manifest), "1.7.2")
+
 
 class MergedReleaseTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -306,6 +365,32 @@ class MergedReleaseTests(unittest.TestCase):
             prepare_stable_release.validate_merged(
                 self.root, "merged-sha", "1.7.2", "v1.7.2", 3
             )
+
+
+class CommandTests(unittest.TestCase):
+    def test_reports_captured_command_output(self) -> None:
+        cases = [
+            ("diagnostic\n", "diagnostic\n"),
+            ("diagnostic", "diagnostic\n"),
+            (b"invalid: \xff\n", "invalid: �\n"),
+            (None, ""),
+        ]
+        for output, expected_output in cases:
+            with self.subTest(output=output):
+                error = subprocess.CalledProcessError(
+                    1, ["cargo", "metadata"], output=output
+                )
+                stderr = io.StringIO()
+                with patch.object(
+                    prepare_stable_release.sys,
+                    "argv",
+                    ["prepare-stable-release.py", "--changelogs", "changelogs"],
+                ), patch.object(
+                    prepare_stable_release, "prepare", side_effect=error
+                ), redirect_stderr(stderr):
+                    self.assertEqual(prepare_stable_release.main(), 1)
+
+                self.assertEqual(stderr.getvalue(), f"{expected_output}error: {error}\n")
 
 
 if __name__ == "__main__":
