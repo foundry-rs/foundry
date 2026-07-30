@@ -113,8 +113,7 @@ if [ "$TEMPO_ROTATE_WALLET" = "1" ]; then
   fi
   AUTHORIZATION=$("$CAST" key-authorization sign "$ACCESS_ADDRESS" \
     --chain-id "$CHAIN_ID" \
-    --private-key "$ROOT_PRIVATE_KEY" \
-    --bind-account "$WALLET")
+    --private-key "$ROOT_PRIVATE_KEY")
   "$CAST" tempo import-access-key \
     --account "$WALLET" \
     --access-key "$ACCESS_PRIVATE_KEY" \
