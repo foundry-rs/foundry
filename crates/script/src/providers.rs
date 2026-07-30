@@ -25,13 +25,14 @@ impl<N: Network> ProvidersManager<N> {
     pub async fn get_or_init_provider(
         &mut self,
         rpc: &str,
+        chain: Option<u64>,
         is_legacy: bool,
         fee_estimate: Eip1559FeeEstimatePreset,
     ) -> Result<&ProviderInfo<N>> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let info = ProviderInfo::new(rpc, is_legacy, fee_estimate).await?;
+                let info = ProviderInfo::new(rpc, chain, is_legacy, fee_estimate).await?;
                 entry.insert(info)
             }
         })
@@ -64,11 +65,15 @@ pub enum GasPrice {
 impl<N: Network> ProviderInfo<N> {
     pub async fn new(
         rpc: &str,
+        chain: Option<u64>,
         mut is_legacy: bool,
         fee_estimate: Eip1559FeeEstimatePreset,
     ) -> Result<Self> {
         let provider = Arc::new(ProviderBuilder::new(rpc).build()?);
-        let chain = provider.get_chain_id().await?;
+        let chain = match chain {
+            Some(chain) => chain,
+            None => provider.get_chain_id().await?,
+        };
 
         if let Some(chain) = Chain::from(chain).named() {
             is_legacy |= chain.is_legacy();

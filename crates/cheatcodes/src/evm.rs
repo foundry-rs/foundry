@@ -299,7 +299,10 @@ impl Cheatcode for loadCall {
             .sload(target, slot.into())
             .map_err(|e| fmt_err!("failed to load storage slot: {:?}", e))?;
 
-        if val.is_cold && val.data.is_zero() {
+        if val.is_cold
+            && val.data.is_zero()
+            && !ccx.state.is_arbitrary_storage_slot_explicit(target, slot.into())
+        {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
@@ -814,6 +817,7 @@ impl Cheatcode for storeCall {
             .journal_mut()
             .sstore(target, slot.into(), value.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {:?}", e))?;
+        ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
         Ok(Default::default())
     }
 }
@@ -1874,9 +1878,6 @@ fn restore_eip2935_cold_state<
 // crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
 // fixture, where `logoUri` has slot "5".
 const TIP20_LOGO_URI_SLOT_INDEX: u64 = 5;
-fn tip20_logo_uri_slot() -> U256 {
-    U256::from(TIP20_LOGO_URI_SLOT_INDEX)
-}
 
 fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
@@ -1889,7 +1890,12 @@ fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     })?;
     ccx.ensure_not_precompile(token)?;
     ensure_loaded_account(ccx.ecx, *token)?;
-    store_solidity_string(ccx.ecx, *token, tip20_logo_uri_slot(), new_logo_uri.as_bytes())
+    store_solidity_string(
+        ccx.ecx,
+        *token,
+        U256::from(TIP20_LOGO_URI_SLOT_INDEX),
+        new_logo_uri.as_bytes(),
+    )
 }
 
 fn store_solidity_string<CTX>(

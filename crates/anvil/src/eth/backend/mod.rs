@@ -13,5 +13,6 @@ pub mod fork;
 pub mod genesis;
 pub mod info;
 pub mod notifications;
+pub(crate) mod replay;
 pub mod tempo;
 pub mod validate;

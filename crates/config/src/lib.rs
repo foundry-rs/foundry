@@ -1114,8 +1114,11 @@ impl Config {
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
 
-        self.remappings =
-            self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
+        self.remappings = self
+            .remappings
+            .into_iter()
+            .map(|r| relative_remapping_preserving_context_boundary(r.into(), &root))
+            .collect();
 
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 

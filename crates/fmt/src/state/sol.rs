@@ -1077,10 +1077,6 @@ impl<'ast> State<'_, 'ast> {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
     }
 
-    fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
-        self.print_lit_inner(lit, false);
-    }
-
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
         if self.handle_span(ty.span, false) {
             return;
@@ -1394,7 +1390,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Ident(ident) => self.print_ident(ident),
             ast::ExprKind::Index(expr, kind) => self.print_index_expr(span, expr, kind),
             ast::ExprKind::Lit(lit, unit) => {
-                self.print_lit(lit);
+                self.print_lit_inner(lit, false);
                 if let Some(unit) = unit {
                     self.nbsp();
                     self.word(unit.to_str());

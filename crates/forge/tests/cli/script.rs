@@ -8,6 +8,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use anvil::{NodeConfig, spawn};
+use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
@@ -20,6 +21,7 @@ use serde_json::Value;
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
@@ -1164,6 +1166,47 @@ forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 25)])
         .await;
+});
+
+forgetest_async!(fork_script_reuses_chain_ids, |prj, cmd| {
+    static CHAIN_ID_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+    CHAIN_ID_REQUESTS.store(0, Ordering::Relaxed);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let client = client.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            if request.get("method").and_then(Value::as_str) == Some("eth_chainId") {
+                CHAIN_ID_REQUESTS.fetch_add(1, Ordering::Relaxed);
+            }
+            client
+                .post(upstream)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    ScriptTester::new_broadcast(cmd, &endpoint, prj.root())
+        .add_deployer(0)
+        .add_sig("ScriptAdditionalContracts", "run()")
+        .args(&["--chain", "1"])
+        .simulate(ScriptOutcome::OkSimulation);
+
+    assert_eq!(CHAIN_ID_REQUESTS.load(Ordering::Relaxed), 2);
+    assert_eq!(latest_dry_run_sequence(prj.root()).chain, 31337);
 });
 
 forgetest_async!(can_deploy_and_simulate_mixed_broadcast_modes, |prj, cmd| {
