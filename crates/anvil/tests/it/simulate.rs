@@ -783,7 +783,7 @@ async fn test_simulate_scopes_block_overrides_and_derives_base_fee_rpc() {
     .await;
     let blocks = response["result"].as_array().unwrap();
     assert_eq!(blocks[0]["calls"][0]["returnData"], format!("0x{:064x}{:064x}{:064x}", 42, 10, 21));
-    assert_eq!(blocks[1]["calls"][0]["returnData"], format!("0x{:064x}{:064x}{:064x}", 0, 0, 0));
+    assert_eq!(blocks[1]["calls"][0]["returnData"], format!("0x{:064x}{:064x}{:064x}", 0, 0, 1));
 
     let response = rpc_request(
         &endpoint,

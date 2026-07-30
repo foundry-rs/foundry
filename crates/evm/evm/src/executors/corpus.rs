@@ -42,25 +42,24 @@ use crate::{
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
-use eyre::{Result, eyre};
+use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
-use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
+use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
+#[cfg(test)]
+use foundry_evm_fuzz::strategies::EvmFuzzState;
+#[cfg(test)]
+use foundry_evm_fuzz::strategies::TxGenerator;
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
     invariant::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, TargetedContracts,
     },
-    strategies::{
-        EvmFuzzState, FuzzStateReader, InvariantFuzzState, generate_msg_value, mutate_param_value,
-    },
+    sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
-use proptest::{
-    prelude::{Rng, Strategy},
-    strategy::{BoxedStrategy, ValueTree},
-    test_runner::TestRunner,
-};
-use rand::distr::{Distribution, weighted::WeightedIndex};
+#[cfg(test)]
+use proptest::prelude::Strategy;
+use proptest::test_runner::TestRunner;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -85,61 +84,6 @@ const FAVORABILITY_THRESHOLD: f64 = 0.3;
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
 
-fn weighted_arg_mutation(
-    rng: &mut impl Rng,
-    distribution: Option<&WeightedIndex<u32>>,
-) -> Option<bool> {
-    distribution.map(|distribution| distribution.sample(rng) == 1)
-}
-
-fn weighted_mutation_type(rng: &mut impl Rng, distribution: &WeightedIndex<u32>) -> MutationType {
-    match distribution.sample(rng) {
-        0 => MutationType::Splice,
-        1 => MutationType::Repeat,
-        2 => MutationType::Interleave,
-        3 => MutationType::Prefix,
-        4 => MutationType::Suffix,
-        5 => MutationType::Abi,
-        6 => MutationType::Cmp,
-        _ => unreachable!("mutation distribution only has seven entries"),
-    }
-}
-
-fn validate_supported_mutation_weight_total(
-    mutation_weights: FuzzCorpusMutationWeights,
-) -> Result<()> {
-    let total = mutation_weights.total();
-    if total > u64::from(u32::MAX) {
-        return Err(eyre!(
-            "effective mutation weights sum to {total}, which exceeds the maximum supported \
-             total {}",
-            u32::MAX
-        ));
-    }
-
-    Ok(())
-}
-
-/// Possible mutation strategies to apply on a call sequence.
-#[derive(Debug, Clone)]
-enum MutationType {
-    /// Splice original call sequence.
-    Splice,
-    /// Repeat selected call several times.
-    Repeat,
-    /// Interleave calls from two random call sequences.
-    Interleave,
-    /// Replace prefix of the original call sequence with new calls.
-    Prefix,
-    /// Replace suffix of the original call sequence with new calls.
-    Suffix,
-    /// ABI mutate random args of selected call in sequence.
-    Abi,
-    /// Replace input bytes using comparison operands observed for a corpus entry
-    /// (input-to-state, LibAFL-style).
-    Cmp,
-}
-
 /// Persisted optimization state: the best value found and the sequence that produced it.
 #[derive(Clone, Serialize, Deserialize)]
 struct OptimizationState {
@@ -162,7 +106,7 @@ struct CorpusEntry {
     // Per-call EVM comparison operands observed while executing this corpus entry.
     // Parallel to `tx_seq`. Empty inner vec means "no cmp data for this call".
     #[serde(skip_serializing)]
-    cmp_seq: Vec<Vec<CmpOperands>>,
+    cmp_seq: Vec<Vec<ComparisonHint>>,
     // Whether this corpus is favored, i.e. producing new finds more often than
     // `FAVORABILITY_THRESHOLD`.
     is_favored: bool,
@@ -180,7 +124,7 @@ impl CorpusEntry {
     /// Creates a corpus entry with the given UUID and per-call cmp operand log.
     pub fn new_with_cmp(
         tx_seq: Vec<BasicTxDetails>,
-        cmp_seq: Vec<Vec<CmpOperands>>,
+        cmp_seq: Vec<Vec<ComparisonHint>>,
         uuid: Uuid,
     ) -> Self {
         Self {
@@ -285,7 +229,7 @@ struct ReplayOutcome {
     new_coverage: bool,
     /// Whether replay hit a first-time edge (advances the per-worker "time since new edge" timer).
     new_edge: bool,
-    cmp_seq: Vec<Vec<CmpOperands>>,
+    cmp_seq: Vec<Vec<ComparisonHint>>,
     failed_replays: usize,
 }
 
@@ -625,14 +569,8 @@ pub struct WorkerCorpus {
     pub(crate) failed_replays: usize,
     /// Worker Metrics
     pub(crate) metrics: CorpusMetrics,
-    /// Fuzzed calls generator.
-    tx_generator: BoxedStrategy<BasicTxDetails>,
-    /// Call sequence mutation weights used by stateful fuzzing.
-    mutation_weights: FuzzCorpusMutationWeights,
-    /// Weighted stateful sequence mutation distribution.
-    mutation_distribution: WeightedIndex<u32>,
-    /// Weighted ABI/CMP argument mutation distribution used by stateless fuzzing.
-    arg_mutation_distribution: Option<WeightedIndex<u32>>,
+    /// Shared transaction-sequence generator.
+    sequence_generator: SequenceGenerator,
     /// Identifier of current mutated entry for this worker.
     current_mutated_index: Option<usize>,
     /// Config
@@ -755,7 +693,15 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     for tx in tx_seq {
         if WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
             let mut call_result = execute_tx(executor, tx)?;
-            cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
+            cmp_seq.push(
+                call_result
+                    .evm_cmp_values
+                    .take()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 })
+                    .collect(),
+            );
             let (new_coverage, is_edge) = call_result.merge_all_coverage(
                 coverage.history_map,
                 coverage.edge_indices,
@@ -817,10 +763,32 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
 }
 
 impl WorkerCorpus {
+    /// Produces the next sequence for either execution mode.
+    pub fn new_sequence(&mut self, test_runner: &mut TestRunner) -> Result<SequencePlan> {
+        if self.config.is_coverage_guided() && !self.in_memory_corpus.is_empty() {
+            self.evict_oldest_corpus()?;
+        }
+        let corpus_len = self.in_memory_corpus.len();
+        let plan = self.sequence_generator.start(
+            test_runner,
+            corpus_len,
+            |index| {
+                let entry = self
+                    .in_memory_corpus
+                    .get(index)
+                    .ok_or_else(|| eyre::eyre!("corpus index {index} is out of bounds"))?;
+                CorpusEntryView::new(&entry.tx_seq, &entry.cmp_seq)
+            },
+            self.config.is_coverage_guided(),
+        )?;
+        self.current_mutated_index = plan.source();
+        Ok(plan)
+    }
+
     pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
         config: FuzzCorpusConfig,
-        tx_generator: BoxedStrategy<BasicTxDetails>,
+        sequence_generator: SequenceGenerator,
         // Only required by master worker (id = 0) to replay existing corpus.
         executor: Option<&Executor<FEN>>,
         target: ReplayTarget<'_>,
@@ -830,41 +798,15 @@ impl WorkerCorpus {
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
-        Self::from_seed(id, config, tx_generator, seed)
+        Self::from_seed(id, config, sequence_generator, seed)
     }
 
     pub(crate) fn from_seed(
         id: usize,
         config: FuzzCorpusConfig,
-        tx_generator: BoxedStrategy<BasicTxDetails>,
+        sequence_generator: SequenceGenerator,
         seed: WorkerCorpusSeed,
     ) -> Result<Self> {
-        let mutation_weights = config.mutation_weights.effective();
-        validate_supported_mutation_weight_total(mutation_weights)?;
-        let mutation_distribution = WeightedIndex::new([
-            mutation_weights.mutation_weight_splice,
-            mutation_weights.mutation_weight_repeat,
-            mutation_weights.mutation_weight_interleave,
-            mutation_weights.mutation_weight_prefix,
-            mutation_weights.mutation_weight_suffix,
-            mutation_weights.mutation_weight_abi,
-            mutation_weights.mutation_weight_cmp,
-        ])
-        .map_err(|err| eyre!("invalid corpus mutation weights: {err}"))?;
-        let arg_mutation_distribution = if mutation_weights.mutation_weight_abi == 0
-            && mutation_weights.mutation_weight_cmp == 0
-        {
-            None
-        } else {
-            Some(
-                WeightedIndex::new([
-                    mutation_weights.mutation_weight_abi,
-                    mutation_weights.mutation_weight_cmp,
-                ])
-                .map_err(|err| eyre!("invalid argument mutation weights: {err}"))?,
-            )
-        };
-
         let worker_dir = config.corpus_dir.as_ref().map(|corpus_dir| {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
             let worker_corpus = worker_dir.join(CORPUS_DIR);
@@ -885,10 +827,7 @@ impl WorkerCorpus {
             sancov_history_map: seed.sancov_history_map,
             failed_replays: seed.failed_replays,
             metrics: seed.metrics,
-            tx_generator,
-            mutation_weights,
-            mutation_distribution,
-            arg_mutation_distribution,
+            sequence_generator,
             current_mutated_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
@@ -994,8 +933,13 @@ impl WorkerCorpus {
         if corpus_inputs.is_empty() {
             return None;
         }
-        let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
-            cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
+        let corpus_cmp_seq = cmp_seq
+            .iter()
+            .take(corpus_inputs.len())
+            .map(|values| {
+                values.iter().map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }).collect()
+            })
+            .collect();
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
         self.insert_corpus_entry(
@@ -1103,279 +1047,6 @@ impl WorkerCorpus {
     pub(crate) fn time_since_new_edge(&self) -> Option<Duration> {
         self.last_new_edge_at.map(|at| at.elapsed())
     }
-
-    /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
-    /// configured max mutations value. Used by invariant test campaigns.
-    #[instrument(skip_all)]
-    pub fn new_inputs(
-        &mut self,
-        test_runner: &mut TestRunner,
-        fuzz_state: &InvariantFuzzState,
-        targeted_contracts: &FuzzRunIdentifiedContracts,
-    ) -> Result<Vec<BasicTxDetails>> {
-        let mut new_seq = vec![];
-
-        // Early return with first_input only if corpus dir / coverage guided fuzzing not
-        // configured.
-        if !self.config.is_coverage_guided() {
-            new_seq.push(self.new_tx(test_runner)?);
-            return Ok(new_seq);
-        };
-
-        if !self.in_memory_corpus.is_empty() {
-            self.evict_oldest_corpus()?;
-
-            let mutation_type =
-                weighted_mutation_type(test_runner.rng(), &self.mutation_distribution);
-
-            let rng = test_runner.rng();
-            let corpus_len = self.in_memory_corpus.len();
-            let primary_index = rng.random_range(0..corpus_len);
-            let secondary_index = rng.random_range(0..corpus_len);
-            let primary = &self.in_memory_corpus[primary_index];
-            let secondary = &self.in_memory_corpus[secondary_index];
-
-            match mutation_type {
-                MutationType::Splice => {
-                    trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
-
-                    self.current_mutated_index = Some(primary_index);
-
-                    let start1 = rng.random_range(0..primary.tx_seq.len());
-                    let end1 = rng.random_range(start1..primary.tx_seq.len());
-
-                    let start2 = rng.random_range(0..secondary.tx_seq.len());
-                    let end2 = rng.random_range(start2..secondary.tx_seq.len());
-
-                    new_seq.reserve((end1 - start1) + (end2 - start2));
-                    new_seq.extend_from_slice(&primary.tx_seq[start1..end1]);
-                    new_seq.extend_from_slice(&secondary.tx_seq[start2..end2]);
-                }
-                MutationType::Repeat => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
-                    trace!(target: "corpus", "repeat {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
-
-                    let start = rng.random_range(0..corpus.tx_seq.len());
-                    let end = rng.random_range(start..corpus.tx_seq.len());
-                    let item_idx = rng.random_range(0..corpus.tx_seq.len());
-                    let repeated = corpus.tx_seq[item_idx].clone();
-
-                    new_seq.reserve(corpus.tx_seq.len());
-                    new_seq.extend_from_slice(&corpus.tx_seq[..start]);
-                    for _ in start..end {
-                        new_seq.push(repeated.clone());
-                    }
-                    new_seq.extend_from_slice(&corpus.tx_seq[end..]);
-                }
-                MutationType::Interleave => {
-                    trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
-
-                    self.current_mutated_index = Some(primary_index);
-
-                    new_seq.reserve(primary.tx_seq.len().min(secondary.tx_seq.len()));
-                    for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
-                        // TODO: chunks?
-                        let tx = if rng.random::<bool>() { tx1.clone() } else { tx2.clone() };
-                        new_seq.push(tx);
-                    }
-                }
-                MutationType::Prefix => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
-                    trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
-
-                    let prefix_len = rng.random_range(0..=corpus.tx_seq.len());
-                    new_seq.reserve(corpus.tx_seq.len());
-                    for _ in 0..prefix_len {
-                        new_seq.push(self.new_tx(test_runner)?);
-                    }
-                    new_seq.extend_from_slice(&corpus.tx_seq[prefix_len..]);
-                }
-                MutationType::Suffix => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
-                    trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
-
-                    let suffix_len = rng.random_range(0..corpus.tx_seq.len());
-                    let retained_len = corpus.tx_seq.len() - suffix_len;
-                    new_seq.reserve(corpus.tx_seq.len());
-                    new_seq.extend_from_slice(&corpus.tx_seq[..retained_len]);
-                    for _ in retained_len..corpus.tx_seq.len() {
-                        new_seq.push(self.new_tx(test_runner)?);
-                    }
-                }
-                MutationType::Abi => {
-                    let targets = targeted_contracts.targets();
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
-                    trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
-
-                    new_seq = corpus.tx_seq.clone();
-
-                    let idx = rng.random_range(0..new_seq.len());
-                    let tx = new_seq.get_mut(idx).unwrap();
-                    if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        // TODO: add call_value to call details and mutate it as well as sender some
-                        // of the time.
-                        if !function.inputs.is_empty() {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                        }
-                    }
-                }
-                MutationType::Cmp => {
-                    let targets = targeted_contracts.targets();
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
-                    trace!(target: "corpus", "cmp mutate args of {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
-
-                    new_seq = corpus.tx_seq.clone();
-                    let mut mutated = false;
-                    let fallback_idx = rng.random_range(0..new_seq.len());
-                    let candidates = || {
-                        corpus
-                            .cmp_seq
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, cmp_values)| !cmp_values.is_empty())
-                    };
-                    let candidate_count = candidates().count();
-                    if candidate_count != 0 {
-                        let start = rng.random_range(0..candidate_count);
-                        for (idx, cmp_values) in
-                            candidates().cycle().skip(start).take(candidate_count)
-                        {
-                            let tx = new_seq.get_mut(idx).unwrap();
-                            if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                                mutated = Self::cmp_mutate(
-                                    tx,
-                                    function,
-                                    cmp_values.as_slice(),
-                                    test_runner,
-                                )?;
-                                if mutated {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if !mutated && self.mutation_weights.mutation_weight_abi > 0 {
-                        let tx = new_seq.get_mut(fallback_idx).unwrap();
-                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
-                            && !function.inputs.is_empty()
-                        {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Make sure the new sequence contains at least one tx to start fuzzing from.
-        if new_seq.is_empty() {
-            new_seq.push(self.new_tx(test_runner)?);
-        }
-        trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
-
-        Ok(new_seq)
-    }
-
-    /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
-    /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
-    #[instrument(skip_all)]
-    pub fn new_input(
-        &mut self,
-        test_runner: &mut TestRunner,
-        fuzz_state: &EvmFuzzState,
-        function: &Function,
-    ) -> Result<BasicTxDetails> {
-        // Early return if not running with coverage guided fuzzing.
-        if !self.config.is_coverage_guided() {
-            return self.new_tx(test_runner);
-        }
-
-        self.evict_oldest_corpus()?;
-
-        let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
-        let generate_fresh = self.in_memory_corpus.is_empty()
-            || (fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100));
-
-        let tx = if generate_fresh {
-            self.current_mutated_index = None;
-            self.new_tx(test_runner)?
-        } else {
-            let corpus_index = test_runner.rng().random_range(0..self.in_memory_corpus.len());
-            let corpus = &self.in_memory_corpus[corpus_index];
-            self.current_mutated_index = Some(corpus_index);
-            let mut tx = corpus.tx_seq.first().unwrap().clone();
-            let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
-            match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
-            {
-                Some(true)
-                    if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
-                        && self.mutation_weights.mutation_weight_abi > 0
-                        && !function.inputs.is_empty() =>
-                {
-                    self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
-                }
-                Some(true) => {}
-                Some(false)
-                    if self.mutation_weights.mutation_weight_abi > 0
-                        && !function.inputs.is_empty() =>
-                {
-                    self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
-                }
-                Some(false) if self.mutation_weights.mutation_weight_cmp > 0 => {
-                    let _ = Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?;
-                }
-                None => {
-                    // Stateless fuzz inputs cannot apply sequence-level mutation strategies.
-                    self.current_mutated_index = None;
-                    return self.new_tx(test_runner);
-                }
-                _ => {}
-            }
-            tx
-        };
-
-        Ok(tx)
-    }
-
-    /// Generates single call from corpus strategy.
-    pub fn new_tx(&self, test_runner: &mut TestRunner) -> Result<BasicTxDetails> {
-        Ok(self
-            .tx_generator
-            .new_tree(test_runner)
-            .map_err(|_| eyre!("Could not generate case"))?
-            .current())
-    }
-
     /// Converts replayable observed sub-calls into one normal multi-transaction corpus entry.
     ///
     /// This captures calls shaped by a handler or another target call and lets the existing corpus
@@ -1487,38 +1158,6 @@ impl WorkerCorpus {
 
         self.insert_corpus_entry(corpus, insertion_mode, false)
     }
-
-    /// Returns the next call to be used in call sequence.
-    /// If coverage guided fuzzing is not configured or if previous input was discarded then this is
-    /// a new tx from strategy.
-    /// If running with coverage guided fuzzing it returns a new call only when sequence
-    /// does not have enough entries, or randomly. Otherwise, returns the next call from initial
-    /// sequence.
-    pub fn generate_next_input(
-        &mut self,
-        test_runner: &mut TestRunner,
-        sequence: &[BasicTxDetails],
-        discarded: bool,
-        depth: usize,
-    ) -> Result<BasicTxDetails> {
-        // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
-        // call was discarded.
-        if self.config.corpus_dir.is_none() || discarded {
-            return self.new_tx(test_runner);
-        }
-
-        // When running with coverage guided fuzzing enabled then generate new sequence if initial
-        // sequence's length is less than depth or randomly, to occasionally intermix new txs.
-        let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
-        let generate_fresh = fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100);
-        if depth >= sequence.len() || generate_fresh {
-            return self.new_tx(test_runner);
-        }
-
-        // Continue with the next call initial sequence.
-        Ok(sequence[depth].clone())
-    }
-
     /// Flush the oldest corpus mutated more than configured max mutations unless they are
     /// favored.
     fn evict_oldest_corpus(&mut self) -> Result<()> {
@@ -1546,149 +1185,6 @@ impl WorkerCorpus {
         }
         Ok(())
     }
-
-    /// Mutates calldata of provided tx by abi decoding current values and randomly selecting the
-    /// inputs to change.
-    fn abi_mutate(
-        &self,
-        tx: &mut BasicTxDetails,
-        function: &Function,
-        test_runner: &mut TestRunner,
-        fuzz_state: &impl FuzzStateReader,
-    ) -> Result<()> {
-        // Mutate value with configured probability for payable functions.
-        if function.state_mutability == alloy_json_abi::StateMutability::Payable
-            && test_runner.rng().random_ratio(self.config.payable_value_weight.min(100), 100)
-        {
-            tx.call_details.value = Some(generate_msg_value(test_runner));
-        }
-
-        // Mutate calldata.
-        let mut arg_mutation_rounds =
-            test_runner.rng().random_range(0..=function.inputs.len()).max(1);
-        let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
-            vec![0]
-        } else {
-            (0..arg_mutation_rounds)
-                .map(|_| test_runner.rng().random_range(0..function.inputs.len()))
-                .collect()
-        };
-        let mut prev_inputs = function
-            .abi_decode_input(&tx.call_details.calldata[4..])
-            .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
-
-        while arg_mutation_rounds > 0 {
-            let idx = round_arg_idx[arg_mutation_rounds - 1];
-            prev_inputs[idx] = mutate_param_value(
-                &function
-                    .inputs
-                    .get(idx)
-                    .expect("Could not get input to mutate")
-                    .selector_type()
-                    .parse()?,
-                prev_inputs[idx].clone(),
-                test_runner,
-                fuzz_state,
-            );
-            arg_mutation_rounds -= 1;
-        }
-
-        tx.call_details.calldata =
-            function.abi_encode_input(&prev_inputs).map_err(|e| eyre!(e.to_string()))?.into();
-        Ok(())
-    }
-
-    /// Mutates calldata by replacing bytes matching one side of an observed EVM comparison with
-    /// the other side, following LibAFL's input-to-state replacement strategy.
-    fn cmp_mutate(
-        tx: &mut BasicTxDetails,
-        function: &Function,
-        cmp_values: &[CmpOperands],
-        test_runner: &mut TestRunner,
-    ) -> Result<bool> {
-        if cmp_values.is_empty() || tx.call_details.calldata.len() <= 4 {
-            return Ok(false);
-        }
-
-        let start = test_runner.rng().random_range(0..cmp_values.len());
-        for offset in 0..cmp_values.len() {
-            let cmp = &cmp_values[(start + offset) % cmp_values.len()];
-            if let Some(mutated) =
-                Self::cmp_mutated_calldata(tx.call_details.calldata.as_ref(), cmp, test_runner)
-                && function.abi_decode_input(&mutated[4..]).is_ok()
-            {
-                tx.call_details.calldata = mutated.into();
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
-    }
-
-    fn cmp_mutated_calldata(
-        calldata: &[u8],
-        cmp: &CmpOperands,
-        test_runner: &mut TestRunner,
-    ) -> Option<Vec<u8>> {
-        const WIDTHS: [usize; 6] = [32, 16, 8, 4, 2, 1];
-
-        let lhs_full = cmp.op1.to_be_bytes::<32>();
-        let rhs_full = cmp.op2.to_be_bytes::<32>();
-        let width_start = test_runner.rng().random_range(0..WIDTHS.len());
-        for offset in 0..WIDTHS.len() {
-            let width = WIDTHS[(width_start + offset) % WIDTHS.len()];
-            let lhs = &lhs_full[32 - width..];
-            let rhs = &rhs_full[32 - width..];
-            if lhs == rhs {
-                continue;
-            }
-
-            let lhs_first = test_runner.rng().random::<bool>();
-            let first = if lhs_first { (lhs, rhs) } else { (rhs, lhs) };
-            let second = if lhs_first { (rhs, lhs) } else { (lhs, rhs) };
-
-            if let Some(mutated) =
-                Self::replace_cmp_operand(calldata, first.0, first.1, test_runner).or_else(|| {
-                    Self::replace_cmp_operand(calldata, second.0, second.1, test_runner)
-                })
-            {
-                return Some(mutated);
-            }
-        }
-
-        None
-    }
-
-    fn replace_cmp_operand(
-        calldata: &[u8],
-        pattern: &[u8],
-        replacement: &[u8],
-        test_runner: &mut TestRunner,
-    ) -> Option<Vec<u8>> {
-        const SELECTOR_LEN: usize = 4;
-
-        if pattern.is_empty()
-            || pattern.len() != replacement.len()
-            || calldata.len() < SELECTOR_LEN + pattern.len()
-            || (pattern.len() < 32 && pattern.iter().all(|&b| b == 0))
-        {
-            return None;
-        }
-
-        let search_len = calldata.len() - SELECTOR_LEN - pattern.len() + 1;
-        let start = test_runner.rng().random_range(0..search_len);
-        for offset in 0..search_len {
-            let idx = SELECTOR_LEN + ((start + offset) % search_len);
-            if &calldata[idx..idx + pattern.len()] == pattern {
-                let mut mutated = calldata.to_vec();
-                mutated[idx..idx + replacement.len()].copy_from_slice(replacement);
-                return Some(mutated);
-            }
-        }
-
-        None
-    }
-
     // Sync Methods.
 
     /// Imports the new corpus entries from the `sync` directory.
@@ -2160,18 +1656,21 @@ mod tests {
         }
     }
 
-    fn worker_corpus(id: usize, corpus_root: PathBuf, seed: WorkerCorpusSeed) -> WorkerCorpus {
-        WorkerCorpus::from_seed(id, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed)
-            .unwrap()
+    fn test_sequence(config: &FuzzCorpusConfig, tx: TxGenerator) -> SequenceGenerator {
+        SequenceGenerator::stateless(
+            tx,
+            empty_fuzz_state().stateless_worker(),
+            Function::parse("test(uint256)").unwrap(),
+            config,
+        )
+        .unwrap()
     }
 
-    fn worker_corpus_with_config(
-        id: usize,
-        config: FuzzCorpusConfig,
-        generated: BasicTxDetails,
-        seed: WorkerCorpusSeed,
-    ) -> WorkerCorpus {
-        WorkerCorpus::from_seed(id, config, Just(generated).boxed(), seed).unwrap()
+    fn worker_corpus(id: usize, corpus_root: PathBuf, seed: WorkerCorpusSeed) -> WorkerCorpus {
+        let config = corpus_config(corpus_root);
+        let generator =
+            test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
+        WorkerCorpus::from_seed(id, config, generator, seed).unwrap()
     }
 
     fn empty_worker_corpus(id: usize, corpus_root: PathBuf) -> WorkerCorpus {
@@ -2189,166 +1688,6 @@ mod tests {
             WorkerCorpusSeed { in_memory_corpus: entries, ..Default::default() },
         )
     }
-
-    #[test]
-    fn cmp_mutate_replaces_matching_calldata_operand() {
-        let function = Function::parse("testCmp(uint256)").unwrap();
-        let original = U256::from(7u64);
-        let replacement = U256::from(42u64);
-        let calldata: Bytes =
-            function.abi_encode_input(&[DynSolValue::Uint(original, 256)]).unwrap().into();
-        let mut tx = BasicTxDetails {
-            warp: None,
-            roll: None,
-            sender: Address::ZERO,
-            call_details: foundry_evm_fuzz::CallDetails {
-                target: Address::ZERO,
-                calldata,
-                value: None,
-            },
-        };
-        let cmp = CmpOperands {
-            op1: original,
-            op2: replacement,
-            pc: 0,
-            address: Address::ZERO,
-            opcode: 0,
-        };
-        let config =
-            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
-        let mut runner = TestRunner::new(config);
-
-        let mutated = WorkerCorpus::cmp_mutate(&mut tx, &function, &[cmp], &mut runner).unwrap();
-
-        assert!(mutated);
-        let decoded = function.abi_decode_input(&tx.call_details.calldata[4..]).unwrap();
-        assert_eq!(decoded[0].as_uint().unwrap().0, replacement);
-    }
-
-    #[test]
-    fn stateless_new_input_honors_fresh_sequence_weight() {
-        let mut config = corpus_config(temp_corpus_dir());
-        config.corpus_random_sequence_weight = 100;
-        let mut generated = basic_tx_with_calldata(vec![0x22]);
-        generated.call_details.value = Some(U256::from(7));
-        let generated_value = generated.call_details.value;
-        let seed = WorkerCorpusSeed {
-            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0x11])])],
-            ..Default::default()
-        };
-        let mut manager = worker_corpus_with_config(0, config, generated, seed);
-        let mut runner = TestRunner::default();
-        let function = Function::parse("foo()").unwrap();
-
-        let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
-
-        assert_eq!(input.call_details.calldata, Bytes::from(vec![0x22]));
-        assert_eq!(input.call_details.value, generated_value);
-        assert!(manager.current_mutated_index.is_none());
-    }
-
-    #[test]
-    fn stateless_new_input_does_not_fallback_to_disabled_arg_mutators() {
-        let mut config = corpus_config(temp_corpus_dir());
-        config.corpus_random_sequence_weight = 0;
-        config.mutation_weights = FuzzCorpusMutationWeights {
-            mutation_weight_splice: 1,
-            mutation_weight_repeat: 1,
-            mutation_weight_interleave: 1,
-            mutation_weight_prefix: 1,
-            mutation_weight_suffix: 1,
-            mutation_weight_abi: 0,
-            mutation_weight_cmp: 0,
-        };
-        let generated = basic_tx_with_calldata(vec![0x44]);
-        let seed = WorkerCorpusSeed {
-            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0x33])])],
-            ..Default::default()
-        };
-        let mut manager = worker_corpus_with_config(0, config, generated, seed);
-        let mut runner = TestRunner::default();
-        let function = Function::parse("foo(uint256)").unwrap();
-
-        let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
-
-        assert_eq!(input.call_details.calldata, Bytes::from(vec![0x44]));
-        assert_eq!(input.call_details.value, None);
-        assert!(manager.current_mutated_index.is_none());
-    }
-
-    #[test]
-    fn generate_next_input_handles_empty_sequence_with_fresh_weight_disabled() {
-        let mut config = corpus_config(temp_corpus_dir());
-        config.corpus_random_sequence_weight = 0;
-        let generated = basic_tx_with_calldata(vec![0x55]);
-        let mut manager =
-            worker_corpus_with_config(0, config, generated.clone(), WorkerCorpusSeed::default());
-        let mut runner = TestRunner::default();
-
-        let input = manager.generate_next_input(&mut runner, &[], false, 0).unwrap();
-
-        assert_eq!(input.call_details.calldata, generated.call_details.calldata);
-    }
-
-    #[test]
-    fn mutation_weights_reject_overflowing_total() {
-        let mut config = corpus_config(temp_corpus_dir());
-        config.mutation_weights = FuzzCorpusMutationWeights {
-            mutation_weight_splice: u32::MAX,
-            mutation_weight_repeat: 1,
-            mutation_weight_interleave: 0,
-            mutation_weight_prefix: 0,
-            mutation_weight_suffix: 0,
-            mutation_weight_abi: 0,
-            mutation_weight_cmp: 0,
-        };
-
-        let err = WorkerCorpus::from_seed(
-            0,
-            config,
-            Just(basic_tx()).boxed(),
-            WorkerCorpusSeed::default(),
-        )
-        .err()
-        .unwrap();
-
-        assert!(err.to_string().contains("effective mutation weights sum"));
-    }
-
-    #[test]
-    fn invariant_cmp_mutation_does_not_fallback_to_disabled_abi_mutation() {
-        let target = Address::from([0x42; 20]);
-        let function = Function::parse("foo(uint256)").unwrap();
-        let original = tx_for_function(target, &function, &[DynSolValue::Uint(U256::from(7), 256)]);
-        let seed = WorkerCorpusSeed {
-            in_memory_corpus: vec![CorpusEntry::new(vec![original.clone()])],
-            ..Default::default()
-        };
-        let mut config = corpus_config(temp_corpus_dir());
-        config.mutation_weights = FuzzCorpusMutationWeights {
-            mutation_weight_splice: 0,
-            mutation_weight_repeat: 0,
-            mutation_weight_interleave: 0,
-            mutation_weight_prefix: 0,
-            mutation_weight_suffix: 0,
-            mutation_weight_abi: 0,
-            mutation_weight_cmp: 1,
-        };
-        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
-        let mut runner = TestRunner::default();
-        let fuzz_state = empty_fuzz_state().into_invariant();
-        let targeted_contracts = targeted_contracts_with_selective_functions(
-            target,
-            vec![function.clone()],
-            [function.selector()],
-        );
-
-        let sequence = manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts).unwrap();
-
-        assert_eq!(sequence.len(), 1);
-        assert_eq!(sequence[0].call_details.calldata, original.call_details.calldata);
-    }
-
     fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {
         let corpus = CorpusEntry::new(vec![basic_tx()]);
         let seed_uuid = corpus.uuid;
@@ -2593,10 +1932,13 @@ mod tests {
             &persisted_state,
         )
         .unwrap();
+        let config = corpus_config(corpus_root);
+        let generator =
+            test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
         let mut manager = WorkerCorpus::new::<foundry_evm_core::evm::EthEvmNetwork>(
             1,
-            corpus_config(corpus_root),
-            Just(basic_tx()).boxed(),
+            config,
+            generator,
             None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )
@@ -2642,9 +1984,10 @@ mod tests {
             last_new_edge_at: None,
         };
 
-        let manager =
-            WorkerCorpus::from_seed(1, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed)
-                .unwrap();
+        let config = corpus_config(corpus_root);
+        let generator =
+            test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
+        let manager = WorkerCorpus::from_seed(1, config, generator, seed).unwrap();
 
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.history_map, vec![1, 2, 3]);
@@ -2738,7 +2081,13 @@ mod tests {
             opcode: 0,
         };
         let entries = (0..2)
-            .map(|_| CorpusEntry::new_with_cmp(vec![basic_tx()], vec![vec![cmp]], Uuid::new_v4()))
+            .map(|_| {
+                CorpusEntry::new_with_cmp(
+                    vec![basic_tx()],
+                    vec![vec![ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }]],
+                    Uuid::new_v4(),
+                )
+            })
             .collect::<Vec<_>>();
         let seed = WorkerCorpusSeed { in_memory_corpus: entries, ..Default::default() };
 
@@ -2939,13 +2288,11 @@ mod tests {
 
         let mut no_corpus_config = corpus_config(temp_corpus_dir());
         no_corpus_config.corpus_dir = None;
-        let mut manager = WorkerCorpus::from_seed(
-            0,
-            no_corpus_config,
-            Just(basic_tx()).boxed(),
-            WorkerCorpusSeed::default(),
-        )
-        .unwrap();
+        let generator =
+            test_sequence(&no_corpus_config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
+        let mut manager =
+            WorkerCorpus::from_seed(0, no_corpus_config, generator, WorkerCorpusSeed::default())
+                .unwrap();
         assert!(
             manager
                 .hoist_observed_calls(
