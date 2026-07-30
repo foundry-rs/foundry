@@ -171,10 +171,93 @@ exclude_operators = [
         .assert_success();
     let summary = mutation_summary(&output.get_output().stdout_lossy());
 
-    assert_eq!(summary["total"], 6);
+    assert_eq!(summary["total"], 4);
     assert_eq!(summary["killed"], 4);
     assert_eq!(summary["survived"], 0);
-    assert_eq!(summary["invalid"], 2);
+    assert_eq!(summary["invalid"], 0);
+    assert_eq!(summary["mutation_score"], 100.0);
+});
+
+forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
+    prj.add_source(
+        "Comparisons.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Comparisons {
+    function numericEq(uint256 left, uint256 right) public pure returns (bool) {
+        return left == right;
+    }
+
+    function booleanEq(bool left, bool right) public pure returns (bool) {
+        return left == right;
+    }
+
+    function conjunction(bool left, bool right) public pure returns (bool) {
+        return left && right;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Comparisons.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Comparisons.sol";
+
+contract ComparisonsTest {
+    Comparisons private comparisons = new Comparisons();
+
+    function testNumericEq() public view {
+        assert(comparisons.numericEq(1, 1));
+        assert(!comparisons.numericEq(1, 2));
+        assert(!comparisons.numericEq(2, 1));
+    }
+
+    function testBooleanEq() public view {
+        assert(comparisons.booleanEq(false, false));
+        assert(!comparisons.booleanEq(false, true));
+        assert(!comparisons.booleanEq(true, false));
+        assert(comparisons.booleanEq(true, true));
+    }
+
+    function testConjunction() public view {
+        assert(!comparisons.conjunction(false, false));
+        assert(!comparisons.conjunction(false, true));
+        assert(!comparisons.conjunction(true, false));
+        assert(comparisons.conjunction(true, true));
+    }
+}
+"#,
+    );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[mutation]
+exclude_operators = [
+    "assembly",
+    "assignment",
+    "delete-expression",
+    "elim-delegate",
+    "require",
+    "unary-op",
+]
+"#,
+    )
+    .unwrap();
+
+    let output = cmd
+        .args(["test", "--mutate", "src/Comparisons.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success();
+    let summary = mutation_summary(&output.get_output().stdout_lossy());
+
+    assert_eq!(summary["total"], 11);
+    assert_eq!(summary["killed"], 11);
+    assert_eq!(summary["survived"], 0);
+    assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["mutation_score"], 100.0);
 });
 
@@ -1651,16 +1734,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 3.4%       │
+│ Survived ┆ 2         ┆ 3.8%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 48        ┆ 81.4%      │
+│ Killed   ┆ 49        ┆ 92.5%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 7         ┆ 11.9%      │
+│ Invalid  ┆ 1         ┆ 1.9%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 2         ┆ 3.4%       │
+│ Skipped  ┆ 1         ┆ 1.9%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 96.0% (48/50 mutants killed); [ELAPSED]
+Mutation Score: 96.1% (49/51 mutants killed); [ELAPSED]
 ...
 "#]]);
 });
