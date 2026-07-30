@@ -1,7 +1,7 @@
 //! Type-aware filtering for operator mutations.
 //!
-//! This module records replacements that are invalid or have the same result as the original
-//! comparison for every value in an operand's type range. It deliberately does not filter
+//! This module records replacements that are either type-invalid or have the same result as the
+//! original comparison for every value in an operand's type range. It deliberately does not filter
 //! replacements merely because they are tautological. For example, `uint256 x == 0` and `x <= 0`
 //! are equivalent, but `x < 0` is retained because changing the original condition to `false` can
 //! expose missing tests.
@@ -110,7 +110,7 @@ impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         if let ExprKind::Binary(left, op, right) = &expr.kind
-            && op.kind.is_cmp()
+            && (op.kind.is_cmp() || matches!(op.kind, BinOpKind::And | BinOpKind::Or))
         {
             self.collect_comparison(expr, left, op.kind, right);
         }
@@ -132,6 +132,29 @@ impl MutationExclusionCollector<'_> {
         original: BinOpKind,
         right: &hir::Expr<'_>,
     ) {
+        let Some(span) = self.local_span(expr.span) else { return };
+
+        for candidate in [
+            BinOpKind::Lt,
+            BinOpKind::Le,
+            BinOpKind::Gt,
+            BinOpKind::Ge,
+            BinOpKind::Eq,
+            BinOpKind::Ne,
+            BinOpKind::Or,
+            BinOpKind::And,
+        ] {
+            if candidate != original
+                && is_type_invalid_replacement(self.gcx, left, original, right, candidate)
+            {
+                self.mutations.insert(MutationExclusion::binary(span, candidate));
+            }
+        }
+
+        if !original.is_cmp() {
+            return;
+        }
+
         let comparison = if let (Some(range), Some(value)) =
             (integer_range(self.gcx, left), constant_value(right))
         {
@@ -159,9 +182,7 @@ impl MutationExclusionCollector<'_> {
                 continue;
             }
             let normalized_candidate = if operands_reversed { flip(candidate) } else { candidate };
-            if equivalent_at_boundary(range, value, normalized_original, normalized_candidate)
-                && let Some(span) = self.local_span(expr.span)
-            {
+            if equivalent_at_boundary(range, value, normalized_original, normalized_candidate) {
                 self.mutations.insert(MutationExclusion::binary(span, candidate));
             }
         }
@@ -171,6 +192,53 @@ impl MutationExclusionCollector<'_> {
         let lo = span.lo().0.checked_sub(self.source_start)?;
         let hi = span.hi().0.checked_sub(self.source_start)?;
         Some(solar::ast::Span::new(solar::interface::BytePos(lo), solar::interface::BytePos(hi)))
+    }
+}
+
+fn is_type_invalid_replacement(
+    gcx: Gcx<'_>,
+    left: &hir::Expr<'_>,
+    original: BinOpKind,
+    right: &hir::Expr<'_>,
+    candidate: BinOpKind,
+) -> bool {
+    match candidate {
+        BinOpKind::And | BinOpKind::Or => matches!(
+            comparison_operand_kind(gcx, left, right),
+            Some(ComparisonOperandKind::Function | ComparisonOperandKind::Other)
+        ),
+        BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge => {
+            matches!(original, BinOpKind::And | BinOpKind::Or)
+                || matches!(
+                    comparison_operand_kind(gcx, left, right),
+                    Some(ComparisonOperandKind::Bool | ComparisonOperandKind::Function)
+                )
+        }
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComparisonOperandKind {
+    Bool,
+    Function,
+    Other,
+}
+
+fn comparison_operand_kind(
+    gcx: Gcx<'_>,
+    left: &hir::Expr<'_>,
+    right: &hir::Expr<'_>,
+) -> Option<ComparisonOperandKind> {
+    let left = gcx.type_of_expr(left.id)?;
+    let right = gcx.type_of_expr(right.id)?;
+    match (left.peel_refs().kind, right.peel_refs().kind) {
+        (TyKind::Elementary(ElementaryType::Bool), TyKind::Elementary(ElementaryType::Bool)) => {
+            Some(ComparisonOperandKind::Bool)
+        }
+        (TyKind::Fn(_), TyKind::Fn(_)) => Some(ComparisonOperandKind::Function),
+        (TyKind::Err(_), _) | (_, TyKind::Err(_)) => None,
+        _ => Some(ComparisonOperandKind::Other),
     }
 }
 
@@ -483,6 +551,88 @@ contract Test {
         let mutations = collect(source);
 
         assert!(!mutations.contains(&unary_mutation(source, "unresolved++", UnOpKind::Neg)));
+    }
+
+    #[test]
+    fn excludes_logical_replacements_for_numeric_comparisons() {
+        let source = r#"
+contract Test {
+    function check(uint256 left, uint256 right) external pure returns (bool) {
+        return left == right;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        assert!(mutations.contains(&mutation(source, "left == right", BinOpKind::And)));
+        assert!(mutations.contains(&mutation(source, "left == right", BinOpKind::Or)));
+        assert!(!mutations.contains(&mutation(source, "left == right", BinOpKind::Lt)));
+        assert!(!mutations.contains(&mutation(source, "left == right", BinOpKind::Ne)));
+    }
+
+    #[test]
+    fn excludes_ordered_replacements_for_boolean_equality() {
+        let source = r#"
+contract Test {
+    function check(bool left, bool right) external pure returns (bool) {
+        return left == right;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for candidate in [BinOpKind::Lt, BinOpKind::Le, BinOpKind::Gt, BinOpKind::Ge] {
+            assert!(mutations.contains(&mutation(source, "left == right", candidate)));
+        }
+        for candidate in [BinOpKind::Ne, BinOpKind::And, BinOpKind::Or] {
+            assert!(!mutations.contains(&mutation(source, "left == right", candidate)));
+        }
+    }
+
+    #[test]
+    fn excludes_ordered_replacements_for_logical_operations() {
+        let source = r#"
+contract Test {
+    function check(bool left, bool right) external pure returns (bool) {
+        return left && right;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for candidate in [BinOpKind::Lt, BinOpKind::Le, BinOpKind::Gt, BinOpKind::Ge] {
+            assert!(mutations.contains(&mutation(source, "left && right", candidate)));
+        }
+        for candidate in [BinOpKind::Eq, BinOpKind::Ne, BinOpKind::Or] {
+            assert!(!mutations.contains(&mutation(source, "left && right", candidate)));
+        }
+    }
+
+    #[test]
+    fn excludes_non_equality_replacements_for_function_comparisons() {
+        let source = r#"
+contract Test {
+    function check(
+        function() external left,
+        function() external right
+    ) external pure returns (bool) {
+        return left == right;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for candidate in [
+            BinOpKind::Lt,
+            BinOpKind::Le,
+            BinOpKind::Gt,
+            BinOpKind::Ge,
+            BinOpKind::And,
+            BinOpKind::Or,
+        ] {
+            assert!(mutations.contains(&mutation(source, "left == right", candidate)));
+        }
+        assert!(!mutations.contains(&mutation(source, "left == right", BinOpKind::Ne)));
     }
 
     #[test]

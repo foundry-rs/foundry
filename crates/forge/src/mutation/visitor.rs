@@ -312,7 +312,7 @@ contract Test {
     }
 
     #[test]
-    fn visitor_excludes_proven_equivalent_binary_mutations() {
+    fn visitor_excludes_binary_mutations_rejected_by_type_analysis() {
         let source = "\
 pragma solidity ^0.8.0;
 contract Test {
