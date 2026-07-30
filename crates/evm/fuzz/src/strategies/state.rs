@@ -307,13 +307,9 @@ impl FuzzDictionary {
             misses: Default::default(),
             hits: Default::default(),
         };
-        dictionary.prefill();
+        // Zero is a useful default seed even before state or literals populate the dictionary.
+        dictionary.insert_value(B256::ZERO);
         dictionary
-    }
-
-    /// Insert common values into the dictionary at initialization.
-    fn prefill(&mut self) {
-        self.insert_value(B256::ZERO);
     }
 
     /// Seeds `sample_values` with all words from the [`LiteralsDictionary`].
@@ -622,8 +618,24 @@ impl FuzzDictionary {
         if self.persistent_values.len() >= MAX_PERSISTENT_VALUES {
             return;
         }
-        if self.persistent_values.insert(value) && self.state_values.insert(value) {
-            self.db_state_values += 1;
+        if !self.persistent_values.insert(value) {
+            return;
+        }
+        // `revert()` truncates `state_values` down to the first `db_state_values` entries, so the
+        // value must be placed inside that prefix; a plain `insert` appends past it and would be
+        // truncated at the end of the run.
+        match self.state_values.get_index_of(&value) {
+            // Already inside the persisted prefix.
+            Some(index) if index < self.db_state_values => {}
+            // Collected as an ephemeral value earlier in this run: move it into the prefix.
+            Some(index) => {
+                self.state_values.move_index(index, self.db_state_values);
+                self.db_state_values += 1;
+            }
+            None => {
+                self.state_values.shift_insert(self.db_state_values, value);
+                self.db_state_values += 1;
+            }
         }
     }
 
@@ -928,6 +940,48 @@ mod tests {
         dictionary.insert_push_bytes_values(&Address::repeat_byte(0x22), &account);
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
         assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
+    }
+
+    #[test]
+    fn persistent_value_survives_revert() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.db_state_values = dictionary.state_values.len();
+
+        let ephemeral = B256::from(U256::from(0xbeef_u64));
+        let persistent = B256::from(U256::from(0xcafe_u64));
+        dictionary.insert_value(ephemeral);
+        dictionary.insert_persistent_value(persistent);
+
+        dictionary.revert();
+
+        assert!(dictionary.state_values.contains(&persistent));
+        assert!(!dictionary.state_values.contains(&ephemeral));
+        assert!(dictionary.db_state_values <= dictionary.state_values.len());
+
+        // Values already inside the persisted prefix are left untouched.
+        let watermark = dictionary.db_state_values;
+        let len = dictionary.state_values.len();
+        dictionary.insert_persistent_value(B256::ZERO);
+        assert_eq!(dictionary.db_state_values, watermark);
+        assert_eq!(dictionary.state_values.len(), len);
+    }
+
+    #[test]
+    fn persistent_value_promotes_existing_ephemeral() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.db_state_values = dictionary.state_values.len();
+
+        let ephemeral = B256::from(U256::from(0xbeef_u64));
+        let value = B256::from(U256::from(0xdead_u64));
+        dictionary.insert_value(ephemeral);
+        dictionary.insert_value(value);
+        dictionary.insert_persistent_value(value);
+
+        dictionary.revert();
+
+        assert!(dictionary.state_values.contains(&value));
+        assert!(!dictionary.state_values.contains(&ephemeral));
+        assert!(dictionary.db_state_values <= dictionary.state_values.len());
     }
 
     #[test]

@@ -21,7 +21,7 @@ pub async fn fetch_etherscan_source_flattened(
     let address = Address::from_str(address)?;
     let metadata = client.contract_source_code(address).await?;
     let Some(metadata) = metadata.items.first() else {
-        eyre::bail!("Empty contract source code for {address}")
+        eyre::bail!("Empty contract source code for {address}");
     };
 
     let tmp = tempfile::tempdir()?;

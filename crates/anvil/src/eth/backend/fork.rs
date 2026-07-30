@@ -1,6 +1,6 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
+use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{
@@ -36,7 +36,7 @@ use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::hardfork::FoundryHardfork;
-use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
+use foundry_primitives::FoundryTxReceipt;
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -397,9 +397,12 @@ impl<N: Network> ClientFork<N> {
         number: u64,
         trace_types: HashSet<TraceType>,
     ) -> Result<Vec<TraceResultsWithTransactionHash>, TransportError> {
-        // Forward to upstream provider for historical blocks
-        let params = (number, trace_types.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>());
-        self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
+        // Forward to upstream provider for historical blocks. Use the typed trace API so the block
+        // and trace types are serialized in the format upstream providers expect.
+        self.provider()
+            .trace_replay_block_transactions(BlockId::number(number))
+            .trace_types(trace_types)
+            .await
     }
 
     pub async fn trace_replay_transaction(
@@ -492,6 +495,17 @@ impl<N: Network> ClientFork<N> {
         Ok(res)
     }
 
+    /// Sends `eth_call` with a network-specific request.
+    pub async fn call_raw(
+        &self,
+        request: &WithOtherFields<TransactionRequest>,
+        block: Option<BlockNumber>,
+    ) -> Result<Bytes, TransportError> {
+        self.provider()
+            .raw_request("eth_call".into(), (request, block.unwrap_or(BlockNumber::Latest)))
+            .await
+    }
+
     /// Sends `eth_callMany`
     pub async fn call_many(
         &self,
@@ -515,17 +529,10 @@ impl<N: Network> ClientFork<N> {
     /// Sends `eth_simulateV1`
     pub async fn simulate_v1(
         &self,
-        request: &SimulatePayload,
-        block: Option<BlockNumber>,
+        request: &SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
-        let mut simulate_call = self.provider().simulate(request);
-        if let Some(n) = block {
-            simulate_call = simulate_call.number(n.as_number().unwrap());
-        }
-
-        let res = simulate_call.await?;
-
-        Ok(res)
+        self.provider().raw_request("eth_simulateV1".into(), (request, block)).await
     }
 
     /// Sends `eth_estimateGas`
@@ -540,6 +547,19 @@ impl<N: Network> ClientFork<N> {
         Ok(res as u128)
     }
 
+    /// Sends `eth_estimateGas` with a network-specific request.
+    pub async fn estimate_gas_raw(
+        &self,
+        request: &WithOtherFields<TransactionRequest>,
+        block: Option<BlockNumber>,
+    ) -> Result<u128, TransportError> {
+        let gas: U256 = self
+            .provider()
+            .raw_request("eth_estimateGas".into(), (request, block.unwrap_or_default()))
+            .await?;
+        Ok(gas.saturating_to())
+    }
+
     /// Sends `eth_createAccessList`
     pub async fn create_access_list(
         &self,
@@ -547,6 +567,17 @@ impl<N: Network> ClientFork<N> {
         block: Option<BlockNumber>,
     ) -> Result<AccessListResult, TransportError> {
         self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
+    }
+
+    /// Sends `eth_createAccessList` with a network-specific request.
+    pub async fn create_access_list_raw(
+        &self,
+        request: &WithOtherFields<TransactionRequest>,
+        block: Option<BlockNumber>,
+    ) -> Result<AccessListResult, TransportError> {
+        self.provider()
+            .raw_request("eth_createAccessList".into(), (request, block.unwrap_or_default()))
+            .await
     }
 
     pub async fn transaction_by_block_number_and_index(
@@ -671,6 +702,14 @@ impl<N: Network> ClientFork<N> {
         }
 
         self.fetch_full_block(block_number).await
+    }
+
+    /// Fetches a block selected by its original identifier directly from the fork provider.
+    pub async fn fetch_block(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        self.fetch_full_block(block_id).await
     }
 
     async fn fetch_full_block(
@@ -848,8 +887,6 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub headers: Vec<String>,
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
-    /// Transactions to force include in the forked chain
-    pub force_transactions: Option<Vec<PoolTransaction<FoundryTxEnvelope>>>,
 }
 
 impl<N: Network> ClientForkConfig<N> {

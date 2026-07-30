@@ -336,6 +336,21 @@ Markdown output is suppressed by `--json-output`. The report includes:
 - System information (OS, CPU cores)
 - Detailed hyperfine benchmark results in JSON format
 
+## ClickHouse Ingestion
+
+Successful `master` versus branch runs from the Foundry Benchmarks workflow are ingested by
+`.github/workflows/benchmarks-clickhouse.yml`. The ClickHouse schema and migrations are managed by
+the benchmark infrastructure. Configure the `bench` GitHub environment with `CLICKHOUSE_HOST`,
+`CLICKHOUSE_USER`, and `CLICKHOUSE_PASSWORD` secrets. The optional `CLICKHOUSE_DATABASE` and
+`CLICKHOUSE_TABLE` variables default to `default` and `benchmark_results`. `CLICKHOUSE_HOST` may be
+a bare host (using HTTPS on port 8443) or a full HTTPS endpoint. The ClickHouse user only needs
+`INSERT` access to the destination table.
+
+The ingester sends one `JSONEachRow` record per workflow attempt, comparison side, benchmark case,
+and immutable workload commit. The versioned record includes raw timings, extensible counters,
+source and workload provenance, runner metadata, and a deterministic `result_id`; infrastructure
+owners use that contract to provision storage and release/trend views.
+
 ## Troubleshooting
 
 1. **Foundry version not found**: Use `--force-install` flag or manually install with `foundryup --install <version>`

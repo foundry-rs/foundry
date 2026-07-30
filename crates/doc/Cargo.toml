@@ -22,6 +22,7 @@ foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 eyre.workspace = true
+markdown.workspace = true
 path-slash.workspace = true
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }

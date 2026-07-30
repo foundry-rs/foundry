@@ -217,6 +217,30 @@ impl BaseCounterExample {
         }
     }
 
+    /// Creates counter example for a fuzz test failure from the concrete executed transaction.
+    pub fn from_fuzz_tx(
+        tx: &BasicTxDetails,
+        args: Vec<DynSolValue>,
+        traces: Option<SparsedTraceArena>,
+    ) -> Self {
+        Self {
+            warp: tx.warp,
+            roll: tx.roll,
+            sender: Some(tx.sender),
+            addr: Some(tx.call_details.target),
+            calldata: tx.call_details.calldata.clone(),
+            value: tx.call_details.value,
+            contract_name: None,
+            func_name: None,
+            signature: None,
+            args: Some(foundry_common::fmt::format_tokens(&args).format(", ").to_string()),
+            raw_args: Some(foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string()),
+            traces,
+            show_solidity: false,
+            fuzz: FuzzRunMetadata::default(),
+        }
+    }
+
     /// Sets fuzz metadata for reproducing this counterexample.
     pub const fn with_fuzz_metadata(mut self, fuzz: FuzzRunMetadata) -> Self {
         self.fuzz = fuzz;
@@ -265,16 +289,22 @@ impl fmt::Display for BaseCounterExample {
         }
 
         // Regular counterexample display.
-        if let Some(sender) = self.sender {
-            write!(f, "\t\tsender={sender} addr=")?
-        }
+        // Stateless fuzz targets and senders are fixed by the test configuration, so preserve the
+        // compact historical display unless value makes the transaction context relevant.
+        let show_tx_context =
+            self.fuzz.worker.is_none() || self.value.as_ref().is_some_and(|value| !value.is_zero());
+        if show_tx_context {
+            if let Some(sender) = self.sender {
+                write!(f, "\t\tsender={sender} addr=")?
+            }
 
-        if let Some(name) = &self.contract_name {
-            write!(f, "[{name}]")?
-        }
+            if let Some(name) = &self.contract_name {
+                write!(f, "[{name}]")?
+            }
 
-        if let Some(addr) = &self.addr {
-            write!(f, "{addr} ")?
+            if let Some(addr) = &self.addr {
+                write!(f, "{addr} ")?
+            }
         }
 
         if let Some(warp) = &self.warp {

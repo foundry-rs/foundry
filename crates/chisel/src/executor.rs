@@ -185,7 +185,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             memory.get(offset..offset + len)
         })();
         let Some(data) = data else {
-            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory")
+            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
         };
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if cont { ControlFlow::Continue(()) } else { ControlFlow::Break(()) };
@@ -844,8 +844,7 @@ mod tests {
         *s = new_source.clone();
 
         let src = new_source.to_repl_source();
-        let mut opts = solar::interface::config::CompileOpts::default();
-        opts.unstable.typeck = true;
+        let opts = solar::interface::config::CompileOpts::default();
         let sess = solar::interface::Session::builder()
             .opts(opts)
             .with_buffer_emitter(Default::default())

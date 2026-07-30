@@ -11,17 +11,22 @@ use alloy_eips::{
     eip7910::{EthConfig, SystemContract},
 };
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, uint};
-use alloy_provider::Provider;
+use alloy_primitives::{
+    Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex, uint,
+};
+use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     AccountInfo, BlockId, BlockNumberOrTag, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
+    trace::parity::{Action, TraceResultsWithTransactionHash, TraceType},
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn};
+use anvil::{
+    EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn, try_spawn,
+};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
@@ -32,7 +37,6 @@ use revm::precompile::PrecompileStatus;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    thread::sleep,
     time::Duration,
 };
 
@@ -71,6 +75,176 @@ pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replays_before_startup() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+
+    let first = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let second = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(1),
+        ))
+        .await
+        .unwrap();
+    let reverted = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .with_input(hex!("60006000fd").to_vec())
+                .gas_limit(100_000)
+                .nonce(2),
+        ))
+        .await
+        .unwrap();
+    let expected_hashes = [*first.tx_hash(), *second.tx_hash(), *reverted.tx_hash()];
+    origin_api.mine_one().await;
+    assert!(
+        !origin_provider
+            .get_transaction_receipt(expected_hashes[2])
+            .await
+            .unwrap()
+            .unwrap()
+            .status()
+    );
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[2]))
+            .with_no_mining(true),
+    )
+    .await;
+    let fork_provider = fork_handle.http_provider();
+
+    assert_eq!(fork_api.block_number().unwrap(), U256::from(1));
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    let replayed_hashes = replayed
+        .transactions
+        .as_transactions()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.tx_hash())
+        .collect::<Vec<_>>();
+    assert_eq!(replayed_hashes, expected_hashes);
+    assert_eq!(fork_provider.txpool_status().await.unwrap().pending, 0);
+    assert_eq!(fork_provider.txpool_status().await.unwrap().queued, 0);
+    let content = fork_provider.txpool_content().await.unwrap();
+    assert!(content.pending.is_empty());
+    assert!(content.queued.is_empty());
+    assert_eq!(fork_provider.get_transaction_count(sender).await.unwrap(), 3);
+    assert!(
+        !fork_provider.get_transaction_receipt(expected_hashes[2]).await.unwrap().unwrap().status()
+    );
+
+    let (prefix_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[1]))
+            .with_no_mining(true),
+    )
+    .await;
+    let prefix =
+        prefix_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        prefix
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        expected_hashes[..2]
+    );
+    assert!(prefix_api.backend.mined_transaction_by_hash(expected_hashes[2]).is_none());
+
+    let (pruned_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[0]))
+            .with_transaction_block_keeper(Some(0usize))
+            .with_no_mining(true),
+    )
+    .await;
+    assert!(pruned_api.backend.mined_transaction_by_hash(expected_hashes[0]).is_none());
+
+    let _pending = fork_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(3))
+                .nonce(3),
+        ))
+        .await
+        .unwrap();
+    let pool = fork_provider.txpool_status().await.unwrap();
+    assert_eq!(pool.pending, 1);
+    assert_eq!(pool.queued, 0);
+
+    let (auto_mining_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[2])),
+    )
+    .await;
+    let replayed =
+        auto_mining_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        expected_hashes
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_error_fails_startup() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let pending = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    let transaction_hash = *pending.tx_hash();
+    pending.get_receipt().await.unwrap();
+
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(transaction_hash))
+            .with_gas_limit(Some(20_000)),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected fork transaction replay to fail") };
+    let message = error.to_string();
+    assert!(message.contains("failed to replay fork transaction prefix"));
+    assert!(format!("{error:?}").contains(&transaction_hash.to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -138,6 +312,39 @@ async fn test_fork_debug_get_raw_receipts() {
     }
 }
 
+// `debug_getRawTransactions` must serve pre-fork blocks from the upstream provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_transactions() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // A pre-fork block known to contain transactions.
+    let block_number = BLOCK_NUMBER - 1;
+    let block = provider.get_block(BlockId::number(block_number)).full().await.unwrap().unwrap();
+    assert!(!block.transactions.is_empty());
+
+    let raw_by_number: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), block.transactions.len());
+
+    // Each entry matches the single-transaction raw encoding path for the same hash.
+    for (raw, hash) in raw_by_number.iter().zip(block.transactions.hashes()) {
+        let single: Bytes =
+            provider.client().request("debug_getRawTransaction", (hash,)).await.unwrap();
+        assert_eq!(*raw, single);
+    }
+}
+
 // `debug_accountInfoAt` must delegate pre-fork blocks to the upstream and resolve block tags
 // against the fork's frozen head, not the upstream's advancing head.
 #[tokio::test(flavor = "multi_thread")]
@@ -193,6 +400,57 @@ async fn test_fork_debug_account_info_at() {
         .await
         .unwrap();
     assert_eq!(by_tag_after.unwrap().balance, amount);
+}
+
+// Pre-fork `trace_replayBlockTransactions` must be forwarded to the upstream with the trace types
+// serialized as their camelCase JSON names (`trace`, `stateDiff`), not their Rust `Debug`
+// representation, otherwise the upstream rejects the request.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_trace_replay_block_transactions_forwards_trace_types() {
+    // Use a local anvil node as the upstream so the request path is fully exercised in-process.
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+
+    let account = origin_handle.dev_wallets().next().unwrap().address();
+    let to = Address::random();
+    let amount = U256::from(1_000u64);
+
+    // Mine two blocks on the upstream; the first strictly predates the fork head.
+    let mut first_block = None;
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().from(account).to(to).value(amount);
+        let tx = WithOtherFields::new(tx);
+        let receipt =
+            origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        first_block.get_or_insert(receipt.block_number.unwrap());
+    }
+    let pre_fork_block = first_block.unwrap();
+
+    // Fork from the upstream head so `pre_fork_block` is delegated upstream.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork_provider = fork_handle.http_provider();
+
+    let results: Vec<TraceResultsWithTransactionHash> = fork_provider
+        .client()
+        .request(
+            "trace_replayBlockTransactions",
+            (pre_fork_block, vec![TraceType::Trace, TraceType::StateDiff]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    let full_trace = &results[0].full_trace;
+    match &full_trace.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, account);
+            assert_eq!(call.to, to);
+        }
+        other => panic!("expected Call action, got {other:?}"),
+    }
+    // `StateDiff` was also requested, so it must be honored, not just `Trace`.
+    assert!(full_trace.state_diff.is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -346,16 +604,26 @@ async fn test_fork_optimism_with_transaction_hash() {
     let fork_tx_hash =
         TxHash::from_str("fcb864b5a50f0f0b111dbbf9e9167b2cb6179dfd6270e1ad53aac6049c0ec038")
             .unwrap();
-    let (api, _handle) = spawn(
+    let (api, handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(rpc::next_rpc_endpoint(NamedChain::Optimism)))
             .with_fork_transaction_hash(Some(fork_tx_hash)),
     )
     .await;
 
-    // Make sure the fork starts from previous block
+    // The prefix is replayed synchronously as the next local block.
     let block_number = api.block_number().unwrap().to::<u64>();
-    assert_eq!(block_number, 125777954 - 1);
+    assert_eq!(block_number, 125777954);
+    assert!(api.backend.mined_transaction_by_hash(fork_tx_hash).is_some());
+    assert!(
+        handle
+            .http_provider()
+            .get_transaction_receipt(fork_tx_hash)
+            .await
+            .unwrap()
+            .unwrap()
+            .status()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1478,6 +1746,11 @@ async fn test_base_fork_gas_limit() {
     )
     .await;
 
+    // The public Base RPC occasionally returns block zero when it is unhealthy.
+    if api.block_number().unwrap().is_zero() {
+        return;
+    }
+
     let provider = handle.http_provider();
     let block =
         provider.get_block(BlockId::Number(BlockNumberOrTag::Latest)).await.unwrap().unwrap();
@@ -1530,15 +1803,9 @@ async fn test_immutable_fork_transaction_hash() {
 
     let fork_block_number = 21824325;
 
-    // Make sure the fork starts from previous block
-    let mut block_number = api.block_number().unwrap().to::<u64>();
-    assert_eq!(block_number, fork_block_number - 1);
-
-    // Wait for fork to pass the target block
-    while block_number < fork_block_number {
-        sleep(Duration::from_millis(250));
-        block_number = api.block_number().unwrap().to::<u64>();
-    }
+    // The prefix is installed before startup returns.
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, fork_block_number);
 
     let block = api
         .block_by_number(BlockNumberOrTag::Number(fork_block_number - 1))
@@ -1810,6 +2077,60 @@ async fn test_fork_reset_reuses_cached_remote_state() {
         assert!(db.maybe_inner().unwrap().accounts().read().contains_key(&address));
     }
 
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_block_zero_does_not_reuse_cache_for_new_rpc_url() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(second_origin_handle.http_endpoint()),
+            block_number: Some(0u64),
+        }))
+        .await
+        .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        let second_fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(second_origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64));
+        let (_second_fork_api, second_fork_handle) = spawn(second_fork_config).await;
+        assert_eq!(
+            second_fork_handle.http_provider().get_balance(address).await.unwrap(),
+            second_balance
+        );
+    }
+    .await;
     let _ = std::fs::remove_dir_all(cache_dir);
 }
 

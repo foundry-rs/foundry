@@ -171,6 +171,13 @@ impl DependencyInstallOpts {
 
         let installer = Installer { git, commit };
         for dep in dependencies {
+            if dep
+                .name()
+                .split(['/', '\\'])
+                .any(|component| component.is_empty() || matches!(component, "." | ".."))
+            {
+                eyre::bail!("invalid dependency name: {}", dep.name());
+            }
             let path = libs.join(dep.name());
             let rel_path = path
                 .strip_prefix(git.root)
@@ -204,6 +211,8 @@ impl DependencyInstallOpts {
                     {
                         // always work with relative paths when directly modifying submodules
                         git.set_submodule_branch(rel_path, tag_or_branch)?;
+                        let root = Git::root_of(git.root)?;
+                        git.root(&root).add_literal(Path::new(".gitmodules"))?;
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
@@ -326,6 +335,64 @@ struct Installer<'a> {
     commit: bool,
 }
 
+struct NewSubmoduleGuard {
+    root: PathBuf,
+    relative_path: PathBuf,
+    path: PathBuf,
+    module_dir: PathBuf,
+    gitmodules_contents: Option<Vec<u8>>,
+    armed: bool,
+}
+
+impl NewSubmoduleGuard {
+    const fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn rollback(&self) {
+        let git = Git::new(&self.root);
+        if let Err(err) = git.remove_index_path(&self.relative_path) {
+            warn!(%err, "failed to remove submodule after installation failure");
+        }
+        if self.path.exists()
+            && let Err(err) = fs::remove_dir_all(&self.path)
+        {
+            warn!(%err, "failed to remove dependency after installation failure");
+        }
+        if self.module_dir.exists()
+            && let Err(err) = fs::remove_dir_all(&self.module_dir)
+        {
+            warn!(%err, "failed to remove submodule Git directory after installation failure");
+        }
+        if let Err(err) = git.remove_submodule_config(&self.relative_path) {
+            warn!(%err, "failed to remove submodule config after installation failure");
+        }
+        restore_file(&self.root.join(".gitmodules"), self.gitmodules_contents.as_deref());
+        if let Err(err) = git.add_literal(Path::new(".gitmodules")) {
+            warn!(%err, "failed to restore staged .gitmodules after installation failure");
+        }
+    }
+}
+
+impl Drop for NewSubmoduleGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.rollback();
+        }
+    }
+}
+
+fn restore_file(path: &Path, contents: Option<&[u8]>) {
+    let result = match contents {
+        Some(contents) => fs::write(path, contents),
+        None if path.exists() => fs::remove_file(path),
+        None => Ok(()),
+    };
+    if let Err(err) = result {
+        warn!(%err, path = %path.display(), "failed to restore file after installation failure");
+    }
+}
+
 impl Installer<'_> {
     /// Installs the dependency as an ordinary folder instead of a submodule
     fn install_as_folder(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
@@ -402,6 +469,52 @@ impl Installer<'_> {
     /// This will add the git submodule to the given dir, initialize it and checkout the tag if
     /// provided or try to find the latest semver, release tag.
     fn install_as_submodule(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
+        let root = Git::root_of(self.git.root)?;
+        let relative_path = path.strip_prefix(&root)?;
+        let git = self.git.root(&root);
+        let gitmodules = root.join(".gitmodules");
+        let gitmodules_contents = gitmodules.exists().then(|| fs::read(&gitmodules)).transpose()?;
+        let has_mapping = git.has_submodule_mapping(relative_path)?;
+        let is_gitlink = git.is_gitlink(relative_path)?;
+        if has_mapping != is_gitlink {
+            eyre::bail!(
+                "cannot safely install dependency at {} because .gitmodules already contains a matching submodule",
+                relative_path.display()
+            );
+        }
+        let mut guard = if is_gitlink {
+            None
+        } else {
+            let module_dir = git.absolute_git_dir()?.join("modules").join(relative_path);
+            let gitmodules_safe = !gitmodules.is_symlink()
+                && if gitmodules.exists() {
+                    git.is_normal_tracked_file(Path::new(".gitmodules"))?
+                } else {
+                    !git.has_index_entries(Path::new(".gitmodules"))?
+                };
+            let can_rollback = !path.is_symlink()
+                && !path.exists()
+                && !module_dir.exists()
+                && !git.has_index_entries(relative_path)?
+                && !git.has_submodule_config(relative_path)?
+                && git.is_path_clean(relative_path)?
+                && gitmodules_safe;
+            if !can_rollback {
+                eyre::bail!(
+                    "cannot safely install dependency at {} because the target or .gitmodules has existing changes",
+                    relative_path.display()
+                );
+            }
+            Some(NewSubmoduleGuard {
+                root,
+                relative_path: relative_path.to_path_buf(),
+                path: path.to_path_buf(),
+                module_dir,
+                gitmodules_contents,
+                armed: true,
+            })
+        };
+
         // install the dep
         self.git_submodule(dep, path)?;
 
@@ -426,8 +539,11 @@ impl Installer<'_> {
         // sync submodules config with changes in .gitmodules, see <https://github.com/foundry-rs/foundry/issues/9611>
         self.git.root(path).submodule_sync()?;
 
+        if let Some(guard) = &mut guard {
+            guard.disarm();
+        }
         if self.commit {
-            self.git.add(Some(path))?;
+            self.git.add_literal(path)?;
         }
 
         Ok(dep.tag)

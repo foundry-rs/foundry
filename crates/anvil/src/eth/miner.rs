@@ -10,6 +10,7 @@ use futures::{
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use std::{
     fmt,
+    marker::PhantomData,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -28,27 +29,19 @@ pub struct Miner<T> {
     ///
     /// This will register the task so we can manually wake it up if the mining mode was changed
     inner: Arc<MinerInner>,
-    /// Transactions included into the pool before any others are.
-    /// Done once on startup.
-    force_transactions: Option<Vec<Arc<PoolTransaction<T>>>>,
+    /// Transaction type handled by the associated pool.
+    transaction: PhantomData<fn() -> T>,
 }
 
 impl<T> Clone for Miner<T> {
     fn clone(&self) -> Self {
-        Self {
-            mode: self.mode.clone(),
-            inner: self.inner.clone(),
-            force_transactions: self.force_transactions.clone(),
-        }
+        Self { mode: self.mode.clone(), inner: self.inner.clone(), transaction: PhantomData }
     }
 }
 
 impl<T> fmt::Debug for Miner<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Miner")
-            .field("mode", &self.mode)
-            .field("force_transactions", &self.force_transactions.as_ref().map(|txs| txs.len()))
-            .finish_non_exhaustive()
+        f.debug_struct("Miner").field("mode", &self.mode).finish_non_exhaustive()
     }
 }
 
@@ -58,21 +51,8 @@ impl<T> Miner<T> {
         Self {
             mode: Arc::new(RwLock::new(mode)),
             inner: Default::default(),
-            force_transactions: None,
+            transaction: PhantomData,
         }
-    }
-
-    /// Provide transactions that will cause a block to be mined with transactions
-    /// as soon as the miner is polled.
-    /// Providing an empty list of transactions will cause the miner to mine an empty block assuming
-    /// there are not other transactions in the pool.
-    pub fn with_forced_transactions(
-        mut self,
-        force_transactions: Option<Vec<PoolTransaction<T>>>,
-    ) -> Self {
-        self.force_transactions =
-            force_transactions.map(|tx| tx.into_iter().map(Arc::new).collect());
-        self
     }
 
     /// Returns the write lock of the mining mode
@@ -94,6 +74,17 @@ impl<T> Miner<T> {
         None
     }
 
+    /// Returns the configured block interval for fixed or mixed mining.
+    pub(crate) fn block_interval(&self) -> Option<Duration> {
+        let mode = self.mode.read();
+        match &*mode {
+            MiningMode::FixedBlockTime(miner) | MiningMode::Mixed(_, miner) => {
+                Some(miner.interval.period())
+            }
+            MiningMode::None | MiningMode::Auto(_) => None,
+        }
+    }
+
     /// Sets the mining mode to operate in
     pub fn set_mining_mode(&self, mode: MiningMode) {
         let new_mode = format!("{mode:?}");
@@ -112,12 +103,6 @@ impl<T> Miner<T> {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         self.inner.register(cx);
-        if let Some(mut transactions) = self.force_transactions.take() {
-            if let Poll::Ready(next) = self.mode.write().poll(pool, cx) {
-                transactions.extend(next);
-            }
-            return Poll::Ready(transactions);
-        }
         self.mode.write().poll(pool, cx)
     }
 }
@@ -329,46 +314,5 @@ impl fmt::Debug for ReadyTransactionMiner {
         f.debug_struct("ReadyTransactionMiner")
             .field("max_transactions", &self.max_transactions)
             .finish_non_exhaustive()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_primitives::{Address, hex};
-    use alloy_rlp::Decodable;
-    use anvil_core::eth::transaction::PendingTransaction;
-    use foundry_primitives::FoundryTxEnvelope;
-    use futures::task::noop_waker;
-
-    fn forced_tx() -> PoolTransaction<FoundryTxEnvelope> {
-        let raw = hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap();
-        let tx = FoundryTxEnvelope::decode(&mut &raw[..]).unwrap();
-        let sender: Address = "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse().unwrap();
-        let pending = PendingTransaction::with_impersonated(tx, sender);
-        PoolTransaction::new(pending)
-    }
-
-    #[test]
-    fn poll_consumes_forced_transactions_before_mode_is_ready() {
-        let forced = forced_tx();
-        let forced_hash = forced.hash();
-
-        let pool = Arc::new(Pool::default());
-        let mut miner = Miner::new(MiningMode::None).with_forced_transactions(Some(vec![forced]));
-
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
-
-        let polled = miner.poll(&pool, &mut cx);
-        let txs = match polled {
-            Poll::Ready(txs) => txs,
-            Poll::Pending => panic!("expected forced transactions to be returned immediately"),
-        };
-        assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].hash(), forced_hash);
-
-        // Forced transactions are consumed exactly once.
-        assert!(miner.poll(&pool, &mut cx).is_pending());
     }
 }

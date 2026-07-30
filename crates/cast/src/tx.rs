@@ -23,7 +23,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -35,7 +35,8 @@ pub struct SendTxOpts {
     pub cast_async: bool,
 
     /// Wait for transaction receipt synchronously instead of polling.
-    /// Note: uses `eth_sendTransactionSync` which may not be supported by all clients.
+    /// Note: uses `eth_sendTransactionSync` or `eth_sendRawTransactionSync`, which may not be
+    /// supported by all clients.
     #[arg(long, conflicts_with = "async")]
     pub sync: bool,
 
@@ -137,10 +138,14 @@ impl SenderKind<'_> {
     /// If from is specified, returns it
     /// If from is not specified, but there is a signer configured, returns the signer's address
     /// If from is not specified and there is no signer configured, returns zero address
-    pub async fn from_wallet_opts(opts: WalletOpts) -> Result<Self> {
-        if let (Some(signer), _) = opts.maybe_signer().await? {
+    pub async fn from_wallet_opts(mut opts: WalletOpts) -> Result<Self> {
+        let from = opts.from.take();
+        let (signer, tempo_wallet) = opts.maybe_signer().await?;
+        if let Some(signer) = signer {
             Ok(Self::OwnedSigner(Box::new(signer)))
-        } else if let Some(from) = opts.from {
+        } else if let Some(tempo_wallet) = tempo_wallet {
+            Ok(tempo_wallet.account().into())
+        } else if let Some(from) = from {
             Ok(from.into())
         } else {
             Ok(Address::ZERO.into())
@@ -189,7 +194,7 @@ The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
-            )
+            );
     }
     Ok(())
 }
@@ -289,6 +294,19 @@ where
         Ok(res)
     }
 
+    /// Sends a raw RLP-encoded transaction and waits for its receipt synchronously.
+    pub async fn send_raw_sync(&self, raw_tx: &[u8]) -> Result<(B256, String)> {
+        let mut receipt = TransactionReceiptWithRevertReason::<N> {
+            receipt: self.provider.send_raw_transaction_sync(raw_tx).await?,
+            revert_reason: None,
+        };
+        let tx_hash = receipt.receipt.transaction_hash();
+        // Allow this to fail silently.
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, None).map(|formatted| (tx_hash, formatted))
+    }
+
     /// Prints the transaction hash (if async) or waits for the receipt and prints it.
     ///
     /// This is the shared "output" path used by both the normal send flow and the browser wallet
@@ -343,7 +361,7 @@ where
                     // if the async flag is provided, immediately exit if no tx is found, otherwise
                     // try to poll for it
                     if cast_async {
-                        eyre::bail!("tx not found: {:?}", tx_hash)
+                        eyre::bail!("tx not found: {:?}", tx_hash);
                     }
                     PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
                         .with_required_confirmations(confs)
@@ -563,21 +581,21 @@ where
     /// The access-key id is set before gas estimation. If the access key needs on-chain
     /// provisioning, its authorization is embedded before access-list/gas estimation and before
     /// any sponsor digest can be computed.
-    pub async fn build_with_access_key(
-        mut self,
-        sender: impl Into<SenderKind<'_>>,
-        access_key: &TempoAccessKeyConfig,
-    ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        self.tx.set_key_id(access_key.key_address);
+    pub async fn build_with_tempo_wallet(
+        self,
+        wallet: &TempoAccountsWallet,
+    ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccountsWallet)> {
         let fill = self.fill;
-        self._build(sender, fill, Some(access_key)).await
+        let mut prepared = wallet.clone();
+        let (tx, func) = self._build(wallet.account(), fill, Some(&mut prepared)).await?;
+        Ok((tx, func, prepared))
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
-        access_key: Option<&TempoAccessKeyConfig>,
+        tempo_wallet: Option<&mut TempoAccountsWallet>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         // prepare
         let sender = sender.into();
@@ -591,22 +609,46 @@ where
         // resolve
         // Read-only calls do not need a nonce unless it is required to sign an authorization.
         // Avoid an otherwise unused `eth_getTransactionCount` request for raw transactions.
-        if fill || !self.auth.is_empty() {
-            let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
+        let resolve_in_parallel =
+            fill && self.auth.is_empty() && tempo_wallet.is_none() && !self.chain.is_tempo();
+        let tx_nonce = if resolve_in_parallel {
+            let nonce = self.tx.nonce();
+            let (tx_nonce, ()) = tokio::try_join!(
+                Self::resolve_nonce(&self.provider, sender.address(), nonce),
+                Self::fill_fees(
+                    &self.provider,
+                    &mut self.tx,
+                    self.blob,
+                    self.legacy,
+                    self.browser,
+                    self.eip1559_fee_estimate,
+                ),
+            )?;
+            Some(tx_nonce)
+        } else if fill || !self.auth.is_empty() {
+            Some(Self::resolve_nonce(&self.provider, sender.address(), self.tx.nonce()).await?)
+        } else {
+            None
+        };
+        if let Some(tx_nonce) = tx_nonce {
+            if fill {
+                self.tx.set_nonce(tx_nonce);
+            }
             self.resolve_auth(&sender, tx_nonce).await?;
         }
-        if let Some(access_key) = access_key {
-            self.tx
-                .prepare_access_key_authorization(
-                    &self.provider,
-                    access_key.wallet_address,
-                    access_key.key_address,
-                    access_key.key_authorization.as_ref(),
-                )
-                .await?;
+        if let Some(wallet) = tempo_wallet {
+            *wallet = self.tx.prepare_with_tempo_wallet(&self.provider, wallet).await?;
         }
-        if fill {
-            self.fill_fees().await?;
+        if fill && !resolve_in_parallel {
+            Self::fill_fees(
+                &self.provider,
+                &mut self.tx,
+                self.blob,
+                self.legacy,
+                self.browser,
+                self.eip1559_fee_estimate,
+            )
+            .await?;
         }
         self.resolve_access_list().await?;
         if fill {
@@ -630,17 +672,12 @@ where
         self.tx.set_chain_id(self.chain.id());
     }
 
-    /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the
-    /// provider. Only sets it on the transaction when `fill` is true.
-    async fn resolve_nonce(&mut self, from: Address, fill: bool) -> Result<u64> {
-        if let Some(nonce) = self.tx.nonce() {
+    /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the provider.
+    async fn resolve_nonce(provider: &P, from: Address, nonce: Option<u64>) -> Result<u64> {
+        if let Some(nonce) = nonce {
             Ok(nonce)
         } else {
-            let nonce = self.provider.get_transaction_count(from).await?;
-            if fill {
-                self.tx.set_nonce(nonce);
-            }
-            Ok(nonce)
+            Ok(provider.get_transaction_count(from).await?)
         }
     }
 
@@ -713,19 +750,19 @@ where
     /// Fills gas price, EIP-1559 fees, and blob fees from the provider.
     ///
     /// Only fills values that haven't been explicitly set by the user.
-    async fn fill_fees(&mut self) -> Result<()> {
-        if self.blob && self.tx.max_fee_per_blob_gas().is_none() {
-            self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
+    async fn fill_fees(
+        provider: &P,
+        tx: &mut N::TransactionRequest,
+        blob: bool,
+        legacy: bool,
+        browser: bool,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset,
+    ) -> Result<()> {
+        if blob && tx.max_fee_per_blob_gas().is_none() {
+            tx.set_max_fee_per_blob_gas(provider.get_blob_base_fee().await?)
         }
 
-        fill_transaction_gas_fees(
-            &self.provider,
-            &mut self.tx,
-            self.legacy,
-            self.browser,
-            self.eip1559_fee_estimate,
-        )
-        .await
+        fill_transaction_gas_fees(provider, tx, legacy, browser, eip1559_fee_estimate).await
     }
 
     /// Fills gas limit from the provider.
@@ -752,10 +789,10 @@ where
                         && let Some(data) = &payload.data
                         && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
                     {
-                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
+                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error);
                     }
                 }
-                eyre::bail!("Failed to estimate gas: {}", err)
+                eyre::bail!("Failed to estimate gas: {}", err);
             }
         }
     }
@@ -859,9 +896,99 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::Ethereum;
     use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_rpc_client::RpcClient;
+    use alloy_transport::{TransportFut, mock::MockTransport};
     use clap::Parser;
+    use std::{
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+    };
+    use tokio::{sync::Barrier, time::timeout};
+    use tower::Service;
+
+    #[derive(Clone)]
+    struct BarrierTransport {
+        inner: MockTransport,
+        barrier: Arc<Barrier>,
+        fill_methods: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Service<RequestPacket> for BarrierTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let fill_method = match &req {
+                RequestPacket::Single(req)
+                    if matches!(req.method(), "eth_getTransactionCount" | "eth_gasPrice") =>
+                {
+                    Some(req.method().to_string())
+                }
+                _ => None,
+            };
+            let Some(fill_method) = fill_method else {
+                return self.inner.call(req);
+            };
+            self.fill_methods.lock().unwrap().push(fill_method);
+
+            let barrier = self.barrier.clone();
+            let mut inner = self.inner.clone();
+            Box::pin(async move {
+                barrier.wait().await;
+                inner.call(req).await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn filled_build_fetches_nonce_and_fees_concurrently() {
+        let asserter = Asserter::new();
+        for _ in 0..3 {
+            asserter.push_success(&U64::from(1));
+        }
+        let fill_methods = Arc::new(Mutex::new(Vec::new()));
+        let transport = BarrierTransport {
+            inner: MockTransport::new(asserter),
+            barrier: Arc::new(Barrier::new(2)),
+            fill_methods: fill_methods.clone(),
+        };
+        let provider = ProviderBuilder::new_with_network::<Ethereum>()
+            .connect_client(RpcClient::new(transport, true));
+        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
+
+        let builder = CastTxBuilder::new(
+            &provider,
+            TransactionOpts::parse_from(["test", "--legacy"]),
+            &config,
+        )
+        .await
+        .unwrap()
+        .with_to(Some(Address::repeat_byte(0x11).into()))
+        .await
+        .unwrap()
+        .with_code_sig_and_args(None, None, Vec::new())
+        .await
+        .unwrap();
+        let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
+            .await
+            .expect("nonce and fee requests were not in flight together")
+            .unwrap();
+
+        assert_eq!(tx.nonce, Some(1));
+        assert_eq!(tx.gas_price, Some(1));
+        assert_eq!(tx.gas, Some(1));
+        let mut fill_methods = fill_methods.lock().unwrap().clone();
+        fill_methods.sort();
+        assert_eq!(fill_methods, ["eth_gasPrice", "eth_getTransactionCount"]);
+    }
 
     #[tokio::test]
     async fn raw_build_skips_nonce_request() {

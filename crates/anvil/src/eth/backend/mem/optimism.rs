@@ -17,7 +17,7 @@ use revm::{
 };
 
 impl<N: Network> Backend<N> {
-    /// Optimism path of [`Backend::transact_with_inspector_ref`].
+    /// Optimism path of [`Backend::transact_call_with_inspector_ref`].
     ///
     /// Creates an OP EVM, injects precompiles, transacts, and maps the
     /// OP-specific halt reason back to the shared [`HaltReason`].
@@ -42,7 +42,7 @@ impl<N: Network> Backend<N> {
             op_env,
             inspector,
         );
-        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
         let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
             EVMError::Database(db) => EVMError::Database(db),
             EVMError::Header(h) => EVMError::Header(h),

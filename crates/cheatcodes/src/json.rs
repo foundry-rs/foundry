@@ -111,6 +111,13 @@ impl Cheatcode for parseJsonStringArrayCall {
     }
 }
 
+impl Cheatcode for parseJsonArrayLengthCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { json, key } = self;
+        parse_json_array_length(json, key)
+    }
+}
+
 impl Cheatcode for parseJsonBytesCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { json, key } = self;
@@ -467,6 +474,18 @@ pub(super) fn parse_json_keys(json: &str, key: &str) -> Result {
     };
     let keys = object.keys().collect::<Vec<_>>();
     Ok(keys.abi_encode())
+}
+
+pub(super) fn parse_json_array_length(json: &str, key: &str) -> Result {
+    let json = parse_json_str(json)?;
+    let values = select(&json, key)?;
+    let [value] = values[..] else {
+        bail!("key {key:?} must return exactly one JSON array");
+    };
+    let Value::Array(array) = value else {
+        bail!("JSON value at {key:?} is not an array");
+    };
+    Ok(U256::from(array.len()).abi_encode())
 }
 
 fn parse_json_str(json: &str) -> Result<Value> {
