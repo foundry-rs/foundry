@@ -7,6 +7,16 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      network:
+        description: "Tempo network to check"
+        required: true
+        type: choice
+        default: "moderato"
+        options:
+          - moderato
+          - mainnet
+          - all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -44,9 +54,12 @@ jobs:
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Restore bounded NanoUSD wallet
+        if: |
+          github.event_name == 'workflow_dispatch' &&
+          (inputs.network == 'mainnet' || inputs.network == 'all')
         env:
           TEMPO_ACCOUNTS_STORE_JSON_B64: ${{ secrets.TEMPO_ACCOUNTS_STORE_JSON_B64 }}
-          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp
+          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp-mainnet
         run: |
           if [ -z "$TEMPO_ACCOUNTS_STORE_JSON_B64" ]; then
             echo "TEMPO_ACCOUNTS_STORE_JSON_B64 is not configured"
@@ -56,9 +69,26 @@ jobs:
           printf '%s' "$TEMPO_ACCOUNTS_STORE_JSON_B64" | base64 --decode > "$TEMPO_HOME/wallet/store.json"
           chmod 600 "$TEMPO_HOME/wallet/store.json"
 
-      - name: Run MPP e2e test
+      - name: Run Moderato MPP e2e test
+        if: |
+          github.event_name != 'workflow_dispatch' ||
+          inputs.network == 'moderato' ||
+          inputs.network == 'all'
         env:
-          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp
+          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp-moderato
+          TEMPO_AUTO_FUND: "1"
+          TEMPO_ROTATE_WALLET: "1"
+          MPP_RPC_URL: https://rpc.mpp.moderato.tempo.xyz
+          TEMPO_RPC_URL: https://rpc.moderato.tempo.xyz
+          MPP_TOKEN: "0x20c0000000000000000000000000000000000000"
+        run: ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"
+
+      - name: Run mainnet MPP e2e test
+        if: |
+          github.event_name == 'workflow_dispatch' &&
+          (inputs.network == 'mainnet' || inputs.network == 'all')
+        env:
+          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp-mainnet
           MPP_RPC_URL: https://rpc.mpp.tempo.xyz
           TEMPO_RPC_URL: https://rpc.tempo.xyz
           MPP_TOKEN: "0x20c0000000000000000000008b4c619d2eedec7a"
