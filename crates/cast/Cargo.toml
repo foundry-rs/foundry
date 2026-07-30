@@ -53,6 +53,7 @@ alloy-rlp.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-rpc-types-beacon.workspace = true
+alloy-serde.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
@@ -62,8 +63,6 @@ alloy-eips.workspace = true
 tempo-alloy.workspace = true
 tempo-contracts.workspace = true
 tempo-primitives.workspace = true
-alloy-evm.workspace = true
-
 op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-flz = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
@@ -109,7 +108,6 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
-alloy-serde.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
