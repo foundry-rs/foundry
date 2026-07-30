@@ -3,6 +3,8 @@ pragma solidity ^0.8.18;
 
 import "utils/Test.sol";
 
+contract ExecuteTransactionDeployment {}
+
 contract ExecuteTransactionTest is Test {
     function test_revert_not_a_tx() public {
         vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: unexpected string");
@@ -60,6 +62,34 @@ contract ExecuteTransactionTest is Test {
         // Gas price is set to 0 in isolated execution, so no gas cost deducted.
         assertEq(from.balance, balance - amountSent);
         assertEq(to.balance, amountSent);
+    }
+
+    function test_execute_create_preserves_dump_state_order() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_execute_transaction_deployment_order.json");
+        address sender = 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
+        address transactionDeployment = vm.computeCreateAddress(sender, 0);
+
+        vm.chainId(1);
+        vm.deal(sender, 1 ether);
+
+        // Legacy signed contract-creation transaction from `sender` at nonce 0. The initcode
+        // deploys a contract with a single STOP opcode as its runtime code.
+        vm.executeTransaction(
+            hex"f8598001830186a080808d6001600c60003960016000f30026a057de88a4ac083e50d0c51c31cb45549ef390e5a0892fbd86583f4597a2307b66a06390a6a450e856491037610ec440d234503d19379b20c202c74be55de9ff3518"
+        );
+        ExecuteTransactionDeployment later = new ExecuteTransactionDeployment();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 transactionIndex =
+            vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(transactionDeployment)), '"'));
+        uint256 laterIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(later))), '"'));
+        assertTrue(transactionIndex != type(uint256).max);
+        assertTrue(laterIndex != type(uint256).max);
+        assertLt(transactionIndex, laterIndex);
+
+        vm.removeFile(path);
     }
 
     function test_execute_erc20_transfer() public {

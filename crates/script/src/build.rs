@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, B256, Bytes, map::AddressHashSet};
+use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
@@ -33,7 +33,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 /// Returns whether every scoped signer needed for resume is already available.
 ///
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
-/// session signer lives in the session registry instead, so resume needs to treat the session
+/// session signer lives in the Accounts store instead, so resume needs to treat the session
 /// root account as available only on the chain covered by the session.
 fn has_available_script_signers(
     tempo: &TempoOpts,
@@ -51,13 +51,13 @@ fn has_available_script_signers(
 
     let session_scope = tempo
         .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.wallet_address));
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
 
     Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
 }
 
 /// Container for the compiled contracts.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BuildData {
     /// Root of the project.
     pub project_root: PathBuf,
@@ -79,26 +79,21 @@ impl BuildData {
         script_config: &ScriptConfig<FEN>,
     ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
-        let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
-            let provider = ProviderBuilder::<AnyNetwork>::new(fork_url).build()?;
-            let deployer_code = provider.get_code_at(create2_deployer).await?;
-
-            !deployer_code.is_empty()
-        } else {
-            // If --fork-url is not provided, we are just simulating the script.
-            true
-        };
+        let can_use_create2 = script_config
+            .evm_opts
+            .can_use_create2_deployer(script_config.evm_opts.fork_block_number)
+            .await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
 
         let maybe_create2_link_output = can_use_create2
             .then(|| {
                 self.get_linker()
-                    .link_with_create2(
+                    .link_with_create2_detailed(
                         known_libraries.clone(),
                         create2_deployer,
                         script_config.config.create2_library_salt,
-                        &self.target,
+                        [&self.target],
                     )
                     .ok()
             })
@@ -106,21 +101,28 @@ impl BuildData {
 
         let (libraries, predeploy_libs) = if let Some(output) = maybe_create2_link_output {
             (
-                output.libraries,
-                ScriptPredeployLibraries::Create2(
-                    output.libs_to_deploy,
-                    script_config.config.create2_library_salt,
-                ),
+                output.output.libraries,
+                ScriptPredeployLibraries::Create2 {
+                    onchain: output.linked_libraries,
+                    salt: script_config.config.create2_library_salt,
+                    local: Vec::new(),
+                },
             )
         } else {
-            let output = self.get_linker().link_with_nonce_or_address(
+            let output = self.get_linker().link_with_nonce_or_address_detailed(
                 known_libraries,
                 script_config.evm_opts.sender,
                 script_config.sender_nonce,
                 [&self.target],
             )?;
 
-            (output.libraries, ScriptPredeployLibraries::Default(output.libs_to_deploy))
+            (
+                output.output.libraries,
+                ScriptPredeployLibraries::Default {
+                    onchain: output.linked_libraries,
+                    local: Vec::new(),
+                },
+            )
         };
 
         LinkedBuildData::new(libraries, predeploy_libs, self)
@@ -129,27 +131,38 @@ impl BuildData {
     /// Links the build data with the given libraries. Expects supplied libraries set being enough
     /// to fully link target contract.
     pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
-        LinkedBuildData::new(libraries, ScriptPredeployLibraries::Default(Vec::new()), self)
+        LinkedBuildData::new(
+            libraries,
+            ScriptPredeployLibraries::Default { onchain: Vec::new(), local: Vec::new() },
+            self,
+        )
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ScriptPredeployLibraries {
-    Default(Vec<Bytes>),
-    Create2(Vec<Bytes>, B256),
+    Default {
+        onchain: Vec<foundry_linking::LinkedLibrary>,
+        local: Vec<foundry_linking::LinkedLibrary>,
+    },
+    Create2 {
+        onchain: Vec<foundry_linking::LinkedLibrary>,
+        salt: B256,
+        local: Vec<foundry_linking::LinkedLibrary>,
+    },
 }
 
 impl ScriptPredeployLibraries {
     pub const fn libraries_count(&self) -> usize {
         match self {
-            Self::Default(libs) => libs.len(),
-            Self::Create2(libs, _) => libs.len(),
+            Self::Default { onchain, .. } => onchain.len(),
+            Self::Create2 { onchain, .. } => onchain.len(),
         }
     }
 }
 
 /// Container for the linked contracts and their dependencies
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LinkedBuildData {
     /// Original build data, might be used to relink this object with different libraries.
     pub build_data: BuildData,
@@ -260,7 +273,7 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
                 if target_name != id_name {
                     eyre::bail!(
                         "Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`"
-                    )
+                    );
                 }
             }
             target_id = Some(id);

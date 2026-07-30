@@ -174,6 +174,20 @@ impl FeeManager {
         if self.base_fee() == 0 {
             return 0;
         }
+        self.calculate_next_block_base_fee_per_gas(gas_used, gas_limit, last_fee_per_gas)
+    }
+
+    /// Calculates the next block base fee from the parent block without applying the configured
+    /// zero-fee sentinel.
+    pub(crate) fn calculate_next_block_base_fee_per_gas(
+        &self,
+        gas_used: u64,
+        gas_limit: u64,
+        last_fee_per_gas: u64,
+    ) -> u64 {
+        if !self.is_eip1559() {
+            return 0;
+        }
         // Tempo replaces EIP-1559 with its own hardfork-specific base fee rules.
         if let Some(hardfork) = self.tempo_hardfork() {
             return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
@@ -498,5 +512,38 @@ impl fmt::Debug for FeeDetails {
         write!(fmt, "max_priority_fee_per_gas: {:?}, ", self.max_priority_fee_per_gas)?;
         write!(fmt, "}}")?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fee_manager(spec_id: SpecId) -> FeeManager {
+        FeeManager::new(
+            spec_id,
+            INITIAL_BASE_FEE,
+            true,
+            INITIAL_GAS_PRICE,
+            BlobExcessGasAndPrice::new_with_spec(0, SpecId::CANCUN),
+            BlobParams::cancun(),
+            BaseFeeParams::ethereum(),
+            None,
+        )
+    }
+
+    #[test]
+    fn raw_next_base_fee_respects_london_activation() {
+        let berlin = fee_manager(SpecId::BERLIN);
+        assert_eq!(
+            berlin.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
+            0
+        );
+
+        let london = fee_manager(SpecId::LONDON);
+        assert_ne!(
+            london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
+            0
+        );
     }
 }

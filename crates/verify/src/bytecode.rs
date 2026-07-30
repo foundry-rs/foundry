@@ -42,6 +42,7 @@ use foundry_evm::{
         evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::EvmError,
+    utils::apply_chain_specific_tx_replay_env_changes,
 };
 use foundry_evm_networks::NetworkVariant;
 use revm::{context::Block as _, state::AccountInfo};
@@ -104,6 +105,10 @@ pub struct VerifyBytecodeArgs {
     #[command(flatten)]
     pub verifier: VerifierArgs,
 
+    /// Set pre-linked libraries.
+    #[arg(long, help_heading = "Linker options")]
+    pub libraries: Vec<String>,
+
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
@@ -151,8 +156,10 @@ impl VerifyBytecodeArgs {
 
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         let mut config = self.load_config()?;
+        config.libraries.append(&mut self.libraries);
+
         let network = if let Some(network) = Self::configured_network(self.network, &config) {
             if self.network.is_some() {
                 config.networks = network.into();
@@ -161,10 +168,10 @@ impl VerifyBytecodeArgs {
         } else {
             let network = {
                 let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
-                provider.get_chain_id().await?.into()
+                NetworkVariant::from(provider.get_chain_id().await?)
             };
 
-            if !matches!(network, NetworkVariant::Ethereum) {
+            if !network.is_ethereum() {
                 config.networks = network.into();
             }
 
@@ -385,7 +392,9 @@ impl VerifyBytecodeArgs {
             } else {
                 match self.block {
                     Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
-                    Some(_) => eyre::bail!("Invalid block number"),
+                    Some(_) => {
+                        eyre::bail!("Invalid block number");
+                    }
                     None => provider.get_block_number().await?,
                 }
             };
@@ -483,7 +492,9 @@ impl VerifyBytecodeArgs {
         let transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+            .or_else(|e| {
+                eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e);
+            })?
             .ok_or_else(|| {
                 eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
             })?;
@@ -491,7 +502,9 @@ impl VerifyBytecodeArgs {
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
+            .or_else(|e| {
+                eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e);
+            })?;
         let receipt = if let Some(receipt) = receipt {
             receipt
         } else {
@@ -619,7 +632,7 @@ impl VerifyBytecodeArgs {
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
-                Some(_) => eyre::bail!("Invalid block number"),
+                Some(_) => { eyre::bail!("Invalid block number"); },
                 None => {
                     creation_block.ok_or_else(|| {
                         eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
@@ -648,6 +661,7 @@ impl VerifyBytecodeArgs {
             let prev_block_nonce =
                 provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
 
+            apply_chain_specific_tx_replay_env_changes(&mut evm_env);
             if let Some(ref block) = block {
                 configure_env_block::<FEN>(&mut evm_env, block, config.networks);
 

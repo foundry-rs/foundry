@@ -1,6 +1,7 @@
 //! Storage access helpers for debugger TUI views and commands.
 
-use alloy_primitives::U256;
+use crate::DebugNode;
+use alloy_primitives::{U256, map::IndexMap};
 use revm::{bytecode::opcode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{CallTraceStep, StorageChangeReason};
 
@@ -14,6 +15,29 @@ enum StorageAccessKind {
 pub(super) enum StorageSpace {
     Persistent,
     Transient,
+}
+
+impl StorageSpace {
+    pub(super) const fn noun(self) -> &'static str {
+        match self {
+            Self::Persistent => "storage",
+            Self::Transient => "transient storage",
+        }
+    }
+
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Persistent => "Storage",
+            Self::Transient => "Transient storage",
+        }
+    }
+
+    pub(super) const fn command(self) -> &'static str {
+        match self {
+            Self::Persistent => "storage",
+            Self::Transient => "transient",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,17 +68,22 @@ impl StorageAccess {
         self.space
     }
 
-    pub(super) fn describe(self) -> String {
-        let op = match (self.space, self.kind) {
+    pub(super) const fn value(self) -> U256 {
+        self.value
+    }
+
+    pub(super) const fn op(self) -> &'static str {
+        match (self.space, self.kind) {
             (StorageSpace::Persistent, StorageAccessKind::Load) => "SLOAD",
             (StorageSpace::Persistent, StorageAccessKind::Store) => "SSTORE",
             (StorageSpace::Transient, StorageAccessKind::Load) => "TLOAD",
             (StorageSpace::Transient, StorageAccessKind::Store) => "TSTORE",
-        };
-        let space = match self.space {
-            StorageSpace::Persistent => "storage",
-            StorageSpace::Transient => "transient storage",
-        };
+        }
+    }
+
+    pub(super) fn describe(self) -> String {
+        let op = self.op();
+        let space = self.space.noun();
 
         match (self.kind, self.previous) {
             (StorageAccessKind::Store, Some(previous)) => format!(
@@ -66,6 +95,32 @@ impl StorageAccess {
             _ => format!("{space} {op} slot {} = {}", hex_u256(self.slot), hex_u256(self.value)),
         }
     }
+}
+
+pub(super) fn storage_accesses_until(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step_index: usize,
+    space: StorageSpace,
+) -> IndexMap<U256, StorageAccess> {
+    let current_node = &arena[current_node_index];
+    let current_absolute_step = current_node.step_offset.saturating_add(current_step_index);
+    let mut accesses = IndexMap::default();
+
+    for node in arena.iter().filter(|node| node.trace_node_idx == current_node.trace_node_idx) {
+        for (step_index, _) in node.steps.iter().enumerate() {
+            if node.step_offset.saturating_add(step_index) > current_absolute_step {
+                break;
+            }
+            if let Some(access) = storage_access_at(&node.steps, step_index)
+                && access.space() == space
+            {
+                accesses.insert(access.slot(), access);
+            }
+        }
+    }
+
+    accesses
 }
 
 pub(super) fn storage_access_at(

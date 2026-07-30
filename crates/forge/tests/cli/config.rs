@@ -9,7 +9,7 @@ use foundry_compilers::{
 use foundry_config::{
     CompilationRestrictions, Config, Eip1559FeeEstimatePreset, FsPermissions, FuzzConfig,
     FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq, SymbolicConfig,
-    SymbolicExplorationOrder, SymbolicStorageLayout,
+    SymbolicExplorationOrder, SymbolicStorageLayout, TracingConfig,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -287,7 +287,12 @@ skip_files = []
 include_operators = []
 exclude_operators = []
 
-[labels]
+[tracing]
+verbosity = 0
+disable_labels = false
+compact_labels = false
+decode_internal = false
+external_identification_timeout = 5
 
 [vyper]
 
@@ -404,6 +409,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         coverage: Default::default(),
         mutation: Default::default(),
+        tracing: TracingConfig { verbosity: 2, compact_labels: true, ..Default::default() },
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,
@@ -503,6 +509,27 @@ forgetest!(can_show_config, |prj, cmd| {
         Config::load_with_root(prj.root()).unwrap().to_string_pretty().unwrap().trim().to_string();
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
+});
+
+forgetest!(can_select_profile_with_cli, |prj, cmd| {
+    prj.create_file(
+        Config::FILE_NAME,
+        r#"
+[profile.default]
+optimizer = false
+optimizer_runs = 200
+
+[profile.ci]
+optimizer = true
+optimizer_runs = 1
+"#,
+    );
+    cmd.env("foundry_profile", "default");
+
+    let config = cmd.args(["--profile", "ci"]).config();
+
+    assert_eq!(config.optimizer, Some(true));
+    assert_eq!(config.optimizer_runs, Some(1));
 });
 
 // checks that config works
@@ -1073,6 +1100,234 @@ Global:
 "#]]);
 });
 
+forgetest!(narrow_project_remapping_preserves_broad_dependency_fallback, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("pkg/sub/=src/local/").unwrap().into()];
+    });
+    prj.add_source(
+        "Root.sol",
+        r#"
+import {Dep} from "pkg/Dep.sol";
+import {Local} from "pkg/sub/Local.sol";
+
+contract Root is Dep, Local {}
+"#,
+    );
+    prj.add_source(
+        "local/Local.sol",
+        r#"
+contract Local {
+    function localValue() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    let dependency = prj.root().join("lib/pkg/src");
+    pretty_err(&dependency, fs::create_dir_all(&dependency));
+    pretty_err(
+        dependency.join("Dep.sol"),
+        fs::write(
+            dependency.join("Dep.sol"),
+            r#"
+contract Dep {
+    function dependencyValue() public pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+        ),
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+pkg/sub/=src/local/
+pkg/=lib/pkg/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build"]).assert_success();
+    // Forge lint resolves imports through Solar independently of the solc build.
+    cmd.forge_fuse().args(["lint"]).assert_success();
+});
+
+forgetest!(nested_config_remapping_refines_auto_detected_package_root, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    let outer_other = prj.paths().libraries[0].join("outer-other");
+    let inner = outer.join("lib/inner");
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("test/:inner/=src/unrelated/").unwrap().into()];
+    });
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&outer_other, fs::create_dir_all(outer_other.join("src")));
+    pretty_err(&inner, fs::create_dir_all(inner.join("contracts")));
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&outer, fs::write(outer.join("remappings.txt"), "inner/=lib/inner/contracts/\n"));
+    pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "interface I {}\n"));
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/Outer.sol"),
+            "import {I} from \"inner/I.sol\"; contract Outer is I {}\n",
+        ),
+    );
+    pretty_err(
+        &outer_other,
+        fs::write(
+            outer_other.join("src/Other.sol"),
+            "import {Marker} from \"inner/Marker.sol\"; contract Other is Marker {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; import {Other} from \"outer-other/Other.sol\"; import {Marker} from \"inner/Marker.sol\"; contract UsesOuter is Outer, Other {}\n",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+test/:inner/=src/unrelated/
+lib/outer/:inner/=lib/outer/lib/inner/contracts/
+inner/=lib/outer/lib/inner/
+outer-other/=lib/outer-other/src/
+outer/=lib/outer/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
+    let dependency = prj.paths().libraries[0].join("dep");
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("src")));
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("pkg/contracts")));
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings =
+            ["dep/=lib/dep/src/", "lib/dep/:pkg/=lib/dep/pkg/contracts/", "pkg/=lib/dep/pkg/"]
+                .map(|remapping| Remapping::from_str(remapping).unwrap().into())
+                .into();
+    });
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/Dep.sol"),
+            "import {Other} from \"pkg/Other.sol\"; contract Dep is Other {}\n",
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(dependency.join("pkg/contracts/Other.sol"), "contract Other {}\n"),
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        "import {Dep} from \"dep/Dep.sol\"; contract UsesDep is Dep {}\n",
+    );
+
+    cmd.args(["build", "--remappings", "pkg/sub/=src/local/"]).assert_success();
+
+    // A generated candidate that normalizes to the explicit contextual mapping must not cause the
+    // explicit mapping to be tagged as generated and removed by the CLI merge.
+    pretty_err(&dependency, fs::write(dependency.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&dependency, fs::write(dependency.join("remappings.txt"), "pkg/=pkg/contracts/\n"));
+    prj.update_config(|config| config.auto_detect_remappings = true);
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "pkg/sub/=src/local/"])
+        .assert_success();
+});
+
+forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    let inner = outer.join("lib/inner");
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&inner, fs::create_dir_all(inner.join("contracts/sub")));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/local")));
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("inner/sub/=src/local/").unwrap().into()];
+    });
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&outer, fs::write(outer.join("remappings.txt"), "inner/=lib/inner/contracts/\n"));
+    pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "contract I {}\n"));
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/local/Selected.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(
+        &inner,
+        fs::write(inner.join("contracts/sub/Selected.sol"), "contract Shadowed {}\n"),
+    );
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/Outer.sol"),
+            "import {I} from \"inner/I.sol\"; import {Selected} from \"inner/sub/Selected.sol\"; contract Outer is I, Selected {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; import {Marker} from \"inner/Marker.sol\"; contract UsesOuter is Outer, Marker {}\n",
+    );
+
+    cmd.arg("build").assert_success();
+
+    // CLI remappings are merged after dependency refinements are generated and must still retain
+    // root precedence.
+    prj.update_config(|config| config.remappings.clear());
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "inner/sub/=src/local/"])
+        .assert_success();
+});
+
+forgetest!(broad_project_remapping_suppresses_narrow_dependency_override, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("pkg/=src/local/").unwrap().into()];
+    });
+    prj.add_source(
+        "Root.sol",
+        r#"
+import {Selected} from "pkg/sub/Selected.sol";
+
+contract Root is Selected {}
+"#,
+    );
+    prj.add_source(
+        "local/sub/Selected.sol",
+        r#"
+contract Selected {
+    function selectedValue() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    let dependency = prj.root().join("lib/dep1");
+    pretty_err(dependency.join("src/decoy"), fs::create_dir_all(dependency.join("src/decoy")));
+    let mut dependency_config = Config::load_with_root(&dependency).unwrap();
+    dependency_config.remappings = vec![Remapping::from_str("pkg/sub/=src/decoy/").unwrap().into()];
+    pretty_err(
+        dependency.join("foundry.toml"),
+        fs::write(dependency.join("foundry.toml"), dependency_config.to_string_pretty().unwrap()),
+    );
+    pretty_err(
+        dependency.join("src/decoy/Selected.sol"),
+        fs::write(
+            dependency.join("src/decoy/Selected.sol"),
+            r#"
+contract DependencyDecoy {}
+"#,
+        ),
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+pkg/=src/local/
+dep1/=lib/dep1/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build"]).assert_success();
+    // Solar prefers the longest matching prefix, so this fails if the dependency override leaks.
+    cmd.forge_fuse().args(["lint"]).assert_success();
+});
+
 // Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
 // identical stdout, even when remappings have contexts. The context prefix is part of the
 // machine-readable value and must survive `--pretty` mode.
@@ -1597,6 +1852,13 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "optimizer_runs": null,
     "via_ir": null
   },
+  "tracing": {
+    "verbosity": 0,
+    "disable_labels": false,
+    "compact_labels": false,
+    "decode_internal": false,
+    "external_identification_timeout": 5
+  },
   "ffi": false,
   "live_logs": false,
   "allow_internal_expect_revert": false,
@@ -1704,7 +1966,6 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "isolate": true,
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
-  "labels": {},
   "unchecked_cheatcode_artifacts": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
@@ -2285,6 +2546,23 @@ forgetest!(config_deny_warnings_is_deprecated, |prj, cmd| {
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
 Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
+
+"#]]);
+});
+
+forgetest!(config_labels_is_deprecated, |prj, cmd| {
+    cmd.git_init();
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[labels]
+0x0000000000000000000000000000000000000001 = "Alice"
+"#,
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
 });

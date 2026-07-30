@@ -37,7 +37,9 @@ pub fn brutalize_source(path: &Path, source: &str) -> eyre::Result<String> {
 
     let transforms = match result {
         Ok(t) => t,
-        Err(_) => eyre::bail!("failed to parse {}", path.display()),
+        Err(_) => {
+            eyre::bail!("failed to parse {}", path.display());
+        }
     };
 
     Ok(apply_transforms(source, transforms))

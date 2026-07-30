@@ -365,7 +365,8 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
 
-    /// Dump a genesis JSON file's `allocs` to disk.
+    /// Dumps a genesis JSON file's `allocs` to disk. Accounts created in the current transaction
+    /// are ordered by deployment, followed by the remaining accounts in ascending address order.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function dumpState(string calldata pathToStateJson) external;
 
@@ -2049,6 +2050,11 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
+    /// Gets all function selectors from a contract artifact. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    #[cheatcode(group = Filesystem)]
+    function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);
+
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
     /// <version>/<profile> parts are optional.
@@ -2571,6 +2577,9 @@ interface Vm {
     /// Parses a string of JSON data at `key` and coerces it to `string[]`.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
+    /// Returns the length of the JSON array at `key`.
+    #[cheatcode(group = Json)]
+    function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
     /// Parses a string of JSON data at `key` and coerces it to `bytes`.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);

@@ -20,7 +20,6 @@ use tempo_primitives::TempoAddressExt;
 
 mod keystore;
 mod lane;
-mod registry;
 mod session;
 mod session_policy;
 #[cfg(test)]
@@ -42,7 +41,7 @@ pub use tip20::{
 };
 
 #[cfg(test)]
-pub(crate) use test_utils::{test_env_mutex, with_tempo_home};
+pub(crate) use test_utils::test_env_mutex;
 
 #[cfg(test)]
 mod tests;
@@ -97,6 +96,13 @@ where
     let has_call_list = tx.has_tempo_call_list();
     let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
+
+    // A stored fee-token preference would classify a contract creation as Tempo AA, but AA
+    // transactions require a non-empty call list. Leave CREATE requests as Ethereum transactions;
+    // the protocol still applies the account's stored fee-token preference when charging fees.
+    if !has_call_list && calls.iter().any(|(to, _)| matches!(to, TxKind::Create)) {
+        return Ok(None);
+    }
 
     let immediate_user_token =
         infer_fee_token_from_set_user_token_call(&calls, is_aa, tx_from, fee_payer);
@@ -220,7 +226,7 @@ fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
-const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
+pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
     match fee_token {
         PATH_USD_ADDRESS => Some("PathUSD"),
         ALPHA_USD_ADDRESS => Some("AlphaUSD"),
@@ -350,7 +356,7 @@ impl TempoSponsor {
         } else if let Some(signer) = &self.signer {
             signer.sign_hash(&digest).await.context("failed to sign Tempo sponsor digest")?
         } else {
-            eyre::bail!("missing Tempo sponsor signature or signer")
+            eyre::bail!("missing Tempo sponsor signature or signer");
         };
 
         let recovered = signature
@@ -456,10 +462,12 @@ pub async fn resolve_tempo_sponsor_signer(spec: &str) -> Result<WalletSigner> {
         "browser" => {
             eyre::bail!(
                 "browser:// sponsor signing is not supported by the current browser wallet API; use --tempo.sponsor-sig or another sponsor signer"
-            )
+            );
         }
-        _ => eyre::bail!(
-            "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, or private-key://KEY"
-        ),
+        _ => {
+            eyre::bail!(
+                "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, or private-key://KEY"
+            );
+        }
     }
 }
