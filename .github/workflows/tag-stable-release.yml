@@ -1,0 +1,153 @@
+---
+name: Tag Stable Release
+
+permissions: {}
+
+'on':
+  pull_request_target: # zizmor: ignore[dangerous-triggers] metadata and merged tree are validated by trusted code
+    branches: [master]
+    types: [closed]
+
+concurrency:
+  group: tag-stable-release-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'release/stable' &&
+      contains(github.event.pull_request.body, '<!-- foundry-stable-version-pr -->')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout trusted release code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/create-tag.js
+            .github/scripts/prepare-stable-release.py
+          sparse-checkout-cone-mode: false
+
+      - name: Recognize stable version pull request
+        id: release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_APP_BOT_ID: ${{ vars.FOUNDRY_RELEASE_APP_BOT_ID }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            if (!process.env.RELEASE_APP_BOT_ID) {
+              throw new Error('FOUNDRY_RELEASE_APP_BOT_ID is not configured');
+            }
+            if (pr.user?.type !== 'Bot' || String(pr.user.id) !== process.env.RELEASE_APP_BOT_ID) {
+              throw new Error('Stable version pull request was not created by the release App');
+            }
+            if (!pr.merged || pr.base.ref !== 'master' || pr.base.repo.full_name !== repository) {
+              throw new Error('Stable version pull request was not merged into this repository master');
+            }
+            if (pr.head.ref !== 'release/stable' || pr.head.repo.full_name !== repository) {
+              throw new Error('Stable version pull request did not use the release/stable branch');
+            }
+            if (!/^[0-9a-f]{40}$/i.test(pr.merge_commit_sha || '')) {
+              throw new Error('Stable version pull request has no valid merge commit SHA');
+            }
+
+            const marker = '<!-- foundry-stable-version-pr -->';
+            const metadata = new RegExp(
+              `${marker}\\nPrepares Foundry (\\d+\\.\\d+\\.\\d+) from pending changelog entries\\.\\n\\n` +
+              '- Base branch: `master`\\n' +
+              '- Expected version: `([^`]+)`\\n' +
+              '- Expected tag: `([^`]+)`\\n' +
+              '- Verified workspace packages: (\\d+)\\n',
+            ).exec(pr.body || '');
+            if (!metadata) throw new Error('Stable version pull request metadata is malformed');
+            if (metadata[1] !== metadata[2]) {
+              throw new Error('Stable version pull request versions do not match');
+            }
+            if (metadata[3] !== `v${metadata[1]}`) {
+              throw new Error('Stable version pull request tag does not match its version');
+            }
+            if (pr.title !== `chore: prepare ${metadata[3]}`) {
+              throw new Error('Stable version pull request title does not match its tag');
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+            if (files.length !== pr.changed_files) {
+              throw new Error('Could not inspect the complete stable version pull request diff');
+            }
+            const isChangelog = file =>
+              file.filename === 'CHANGELOG.md' && file.status === 'modified' && !file.previous_filename;
+            const isRemovedFragment = file =>
+              file.status === 'removed' &&
+              !file.previous_filename &&
+              /^\.changelog\/[^/]+\.md$/.test(file.filename) &&
+              file.filename !== '.changelog/README.md';
+            const unexpected = files.filter(file => !isChangelog(file) && !isRemovedFragment(file));
+            if (unexpected.length) {
+              throw new Error(`Stable version pull request changed unexpected paths: ${unexpected.map(file => file.filename).join(', ')}`);
+            }
+            if (!files.some(isChangelog) || !files.some(isRemovedFragment)) {
+              throw new Error('Stable version pull request is missing expected release changes');
+            }
+
+            core.setOutput('version', metadata[1]);
+            core.setOutput('tag', metadata[3]);
+            core.setOutput('package_count', metadata[4]);
+            core.setOutput('merge_sha', pr.merge_commit_sha);
+
+      - name: Checkout merged release
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.release.outputs.merge_sha }}
+          path: release
+          persist-credentials: false
+
+      - name: Revalidate merged release
+        run: |
+          python3 trusted/.github/scripts/prepare-stable-release.py \
+            --validate-merged \
+            --root release \
+            --expected-sha "$MERGE_SHA" \
+            --expected-version "$EXPECTED_VERSION" \
+            --expected-tag "$EXPECTED_TAG" \
+            --expected-package-count "$EXPECTED_PACKAGE_COUNT"
+        env:
+          MERGE_SHA: ${{ steps.release.outputs.merge_sha }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_TAG: ${{ steps.release.outputs.tag }}
+          EXPECTED_PACKAGE_COUNT: ${{ steps.release.outputs.package_count }}
+
+      - name: Create repository-scoped App token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.FOUNDRY_RELEASE_APP_ID }}
+          private-key: ${{ secrets.FOUNDRY_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Create exact release tag
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TAG_NAME: ${{ steps.release.outputs.tag }}
+          MERGE_SHA: ${{ steps.release.outputs.merge_sha }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const createTag = require('./trusted/.github/scripts/create-tag.js');
+            await createTag({ github, context }, process.env.TAG_NAME, process.env.MERGE_SHA);

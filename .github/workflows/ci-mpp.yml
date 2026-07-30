@@ -58,7 +58,6 @@ jobs:
 
       - name: Run MPP e2e test
         env:
-          MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
           TEMPO_HOME: ${{ runner.temp }}/tempo-mpp
           MPP_RPC_URL: https://rpc.mpp.tempo.xyz
           TEMPO_RPC_URL: https://rpc.tempo.xyz

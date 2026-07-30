@@ -160,7 +160,8 @@ pub struct ChainOrAllValueParser {
 
 impl Default for ChainOrAllValueParser {
     fn default() -> Self {
-        Self { inner: possible_chains() }
+        let inner = Some(&"all").into_iter().chain(NamedChain::VARIANT_NAMES).into();
+        Self { inner }
     }
 }
 
@@ -180,10 +181,6 @@ impl TypedValueParser for ChainOrAllValueParser {
             )
         })
     }
-}
-
-fn possible_chains() -> PossibleValuesParser {
-    Some(&"all").into_iter().chain(NamedChain::VARIANT_NAMES).into()
 }
 
 #[cfg(test)]

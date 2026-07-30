@@ -582,7 +582,7 @@ impl TUIContext<'_> {
     fn draw_variables(&mut self, f: &mut Frame<'_>, area: Rect) {
         let variables = self.scope_variables();
         let storage_access = self.current_storage_access_line();
-        let step_notice = self.current_step_notice_line();
+        let step_notice = self.current_step_notice_text().map(step_notice_line);
         let known = variables.iter().filter(|variable| variable.value.is_some()).count();
         let title = variables_title(
             variables.len(),
@@ -615,10 +615,6 @@ impl TUIContext<'_> {
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
-    }
-
-    fn current_step_notice_line(&self) -> Option<Line<'static>> {
-        self.current_step_notice_text().map(step_notice_line)
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {

@@ -26,8 +26,9 @@ pub use session::TEMPO_SESSION_ID_ENV;
 pub struct TempoOpts {
     /// Use a live Tempo wallet session for signing.
     ///
-    /// When set, Foundry resolves the session from `$TEMPO_HOME/wallet/sessions.toml` and signs
-    /// Tempo transactions with the session's temporary access key on behalf of its root account.
+    /// When set, Foundry resolves the authorization witness from
+    /// `$TEMPO_HOME/wallet/store.json` and signs with that Accounts access key on behalf of its
+    /// root account.
     #[arg(long = "tempo.session", id = "tempo_session", value_name = "SESSION_ID")]
     pub session: Option<B256>,
 

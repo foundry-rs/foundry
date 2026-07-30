@@ -1,6 +1,6 @@
 use crate::{
     FuzzFixtures,
-    strategies::{FuzzStateReader, fuzz_param_from_state, fuzz_param_with_fixtures},
+    strategies::{DictionaryRead, fuzz_param_from_state, fuzz_param_with_fixtures},
 };
 use alloy_dyn_abi::{DynSolCall, DynSolReturns, DynSolType, DynSolValue};
 use alloy_json_abi::{Function, Param};
@@ -169,7 +169,7 @@ pub fn fuzz_calldata(
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
-pub fn fuzz_calldata_from_state<S: FuzzStateReader>(
+pub(crate) fn fuzz_calldata_from_state<S: DictionaryRead>(
     func: Function,
     state: &S,
     fuzz_fixtures: &FuzzFixtures,
