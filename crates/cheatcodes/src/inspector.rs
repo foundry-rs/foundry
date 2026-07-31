@@ -3188,6 +3188,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     journal.state.get_mut(&address).expect("warmed account exists").mark_cold();
                 }
                 JournalEntry::StorageWarmed { address, key } => {
+                    // TODO(@mablr): Preserve the EIP-2200 `original_value` when bumping the REVM
+                    // family to 42. REVM 41's `mark_cold` resets it for a slot first warmed and
+                    // modified by the callback.
                     journal
                         .state
                         .get_mut(&address)
