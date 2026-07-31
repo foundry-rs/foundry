@@ -111,31 +111,78 @@ impl<'a> Linker<'a> {
         path.to_path_buf()
     }
 
+    /// Resolves `path` against the project root and canonicalizes it for comparison only.
+    fn canonical_path(&self, path: &Path) -> Option<PathBuf> {
+        let path = if path.is_relative() { self.root.join(path) } else { path.to_path_buf() };
+        path.canonicalize().ok()
+    }
+
+    fn path_matches(
+        &self,
+        path: &Path,
+        expected: &Path,
+        canonical_expected: Option<&Path>,
+    ) -> bool {
+        let path = self.project_relative_path(path);
+        path == expected
+            || canonical_expected
+                .is_some_and(|expected| self.canonical_path(&path).as_deref() == Some(expected))
+    }
+
     fn link_bytecode(
         &self,
         bytecode: &mut CompactBytecode,
+        target: &ArtifactId,
         file: &Path,
         name: &str,
         address: Address,
-    ) {
-        let file_relative = self.project_relative_path(file);
-        let references = bytecode
-            .link_references
-            .keys()
-            .filter(|reference| {
-                let reference = Path::new(reference);
-                reference == file || self.project_relative_path(reference) == file_relative
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+    ) -> Result<(), LinkerError> {
+        self.link_bytecode_inner(bytecode, target, file, name, address, true)
+    }
 
-        if references.is_empty() {
+    fn link_bytecode_inner(
+        &self,
+        bytecode: &mut CompactBytecode,
+        target: &ArtifactId,
+        file: &Path,
+        name: &str,
+        address: Address,
+        canonical: bool,
+    ) -> Result<(), LinkerError> {
+        let file_relative = self.project_relative_path(file);
+        let canonical_file = self.canonical_path(&file_relative);
+        let mut references = Vec::new();
+        for (reference, libraries) in &bytecode.link_references {
+            if !libraries.contains_key(name) {
+                continue;
+            }
+            let reference_path = self.project_relative_path(Path::new(reference));
+            if reference_path == file_relative {
+                references.push(reference.clone());
+                continue;
+            }
+            if !canonical {
+                continue;
+            }
+            if !self.path_matches(Path::new(reference), &file_relative, canonical_file.as_deref()) {
+                continue;
+            }
+            if let Some(id) = self.find_artifact_id_by_library_path(reference, name, target)? {
+                let (artifact_file, artifact_name) = self.convert_artifact_id_to_lib_path(id);
+                if artifact_file == file_relative && artifact_name == name {
+                    references.push(reference.clone());
+                }
+            }
+        }
+
+        if references.is_empty() && canonical {
             bytecode.link(&file.to_string_lossy(), name, address);
         } else {
             for reference in references {
                 bytecode.link(&reference, name, address);
             }
         }
+        Ok(())
     }
 
     /// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
@@ -149,14 +196,21 @@ impl<'a> Linker<'a> {
         target: &ArtifactId,
     ) -> Result<Option<&'a ArtifactId>, LinkerError> {
         let library_path = self.project_relative_path(Path::new(file));
+        let canonical_library_path = self.canonical_path(&library_path);
         let candidates = self
             .contracts
             .keys()
             .filter(|id| {
+                if id.version != target.version {
+                    return false;
+                }
                 let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
-                id.version == target.version
-                    && artifact_name == *name
-                    && artifact_path == library_path
+                artifact_name == *name
+                    && self.path_matches(
+                        &artifact_path,
+                        &library_path,
+                        canonical_library_path.as_deref(),
+                    )
             })
             .collect::<Vec<_>>();
         let same_build_and_profile = candidates
@@ -181,13 +235,14 @@ impl<'a> Linker<'a> {
         &'a self,
         target: &'a ArtifactId,
         deps: &mut BTreeSet<&'a ArtifactId>,
+        references: &mut BTreeMap<&'a ArtifactId, BTreeSet<PathBuf>>,
     ) -> Result<(), LinkerError> {
         let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
-        let mut references: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut link_references: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut extend = |bytecode: &CompactBytecode| {
             for (file, libs) in &bytecode.link_references {
-                references.entry(file.clone()).or_default().extend(libs.keys().cloned());
+                link_references.entry(file.clone()).or_default().extend(libs.keys().cloned());
             }
         };
         if let Some(bytecode) = &contract.bytecode {
@@ -199,17 +254,60 @@ impl<'a> Linker<'a> {
             extend(bytecode);
         }
 
-        for (file, libs) in references {
+        for (file, libs) in link_references {
             for name in libs {
                 let id = self.find_artifact_id_by_library_path(&file, &name, target)?.ok_or_else(
                     || LinkerError::MissingLibraryArtifact { file: file.clone(), name },
                 )?;
+                references.entry(id).or_default().insert(file.clone().into());
                 if deps.insert(id) {
-                    self.collect_dependencies(id, deps)?;
+                    self.collect_dependencies(id, deps, references)?;
                 }
             }
         }
 
+        Ok(())
+    }
+
+    fn apply_configured_references(
+        &self,
+        references: &BTreeMap<&ArtifactId, BTreeSet<PathBuf>>,
+        libraries: &mut Libraries,
+    ) -> Result<(), LinkerError> {
+        for (id, references) in references {
+            let (file, name) = self.convert_artifact_id_to_lib_path(id);
+            let mut configured = references.iter().filter_map(|reference| {
+                libraries
+                    .libs
+                    .get(reference)
+                    .and_then(|libraries| libraries.get(&name))
+                    .map(|address| Address::from_str(address))
+            });
+            let Some(address) =
+                configured.next().transpose().map_err(LinkerError::InvalidAddress)?
+            else {
+                continue;
+            };
+            for other in configured {
+                if other.map_err(LinkerError::InvalidAddress)? != address {
+                    return Err(LinkerError::ConflictingLibraryArtifacts {
+                        file: file.display().to_string(),
+                        name,
+                    });
+                }
+            }
+            let canonical = libraries.libs.entry(file.clone()).or_default().entry(name.clone());
+            if let std::collections::btree_map::Entry::Occupied(existing) = &canonical
+                && Address::from_str(existing.get()).map_err(LinkerError::InvalidAddress)?
+                    != address
+            {
+                return Err(LinkerError::ConflictingLibraryArtifacts {
+                    file: file.display().to_string(),
+                    name,
+                });
+            }
+            canonical.or_insert_with(|| address.to_checksum(None));
+        }
         Ok(())
     }
 
@@ -260,7 +358,10 @@ impl<'a> Linker<'a> {
         libraries: &Libraries,
     ) -> Result<BTreeSet<Address>, LinkerError> {
         let mut dependencies = BTreeSet::new();
-        self.collect_dependencies(target, &mut dependencies)?;
+        let mut references = BTreeMap::new();
+        self.collect_dependencies(target, &mut dependencies, &mut references)?;
+        let mut libraries = libraries.clone();
+        self.apply_configured_references(&references, &mut libraries)?;
 
         dependencies
             .into_iter()
@@ -283,7 +384,7 @@ impl<'a> Linker<'a> {
         target: &'a ArtifactId,
     ) -> Result<BTreeSet<ArtifactId>, LinkerError> {
         let mut dependencies = BTreeSet::new();
-        self.collect_dependencies(target, &mut dependencies)?;
+        self.collect_dependencies(target, &mut dependencies, &mut BTreeMap::new())?;
         Ok(dependencies.into_iter().cloned().collect())
     }
 
@@ -331,9 +432,11 @@ impl<'a> Linker<'a> {
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
 
         let mut needed_libraries = BTreeSet::new();
+        let mut references = BTreeMap::new();
         for target in targets {
-            self.collect_dependencies(target, &mut needed_libraries)?;
+            self.collect_dependencies(target, &mut needed_libraries, &mut references)?;
         }
+        self.apply_configured_references(&references, &mut libraries)?;
         let library_keys = self.collect_library_keys(&needed_libraries, &libraries)?;
 
         let mut libs_to_deploy = Vec::new();
@@ -393,9 +496,11 @@ impl<'a> Linker<'a> {
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
 
         let mut needed_libraries = BTreeSet::new();
+        let mut references = BTreeMap::new();
         for target in targets {
-            self.collect_dependencies(target, &mut needed_libraries)?;
+            self.collect_dependencies(target, &mut needed_libraries, &mut references)?;
         }
+        self.apply_configured_references(&references, &mut libraries)?;
 
         let library_keys = self.collect_library_keys(&needed_libraries, &libraries)?;
 
@@ -443,9 +548,9 @@ impl<'a> Linker<'a> {
 
             let (file, name) = self.convert_artifact_id_to_lib_path(id);
 
-            needed_libraries.par_iter_mut().for_each(|(_, bytecode)| {
-                bytecode.to_mut().link(&file.to_string_lossy(), &name, address);
-            });
+            needed_libraries.par_iter_mut().try_for_each(|(target, bytecode)| {
+                self.link_bytecode(bytecode.to_mut(), target, &file, &name, address)
+            })?;
 
             libraries.libs.entry(file).or_default().insert(name, address.to_checksum(None));
         }
@@ -470,7 +575,9 @@ impl<'a> Linker<'a> {
     ) -> Result<(DetailedLinkOutput, Vec<LinkedLibrary>), LinkerError> {
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
         let mut needed = BTreeSet::new();
-        self.collect_dependencies(target, &mut needed)?;
+        let mut references = BTreeMap::new();
+        self.collect_dependencies(target, &mut needed, &mut references)?;
+        self.apply_configured_references(&references, &mut libraries)?;
         let library_keys = self.collect_library_keys(&needed, &libraries)?;
         let mut required_with_dependencies = required.clone();
         for id in required {
@@ -532,7 +639,9 @@ impl<'a> Linker<'a> {
     ) -> Result<(DetailedLinkOutput, Vec<LinkedLibrary>), LinkerError> {
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
         let mut needed = BTreeSet::new();
-        self.collect_dependencies(target, &mut needed)?;
+        let mut references = BTreeMap::new();
+        self.collect_dependencies(target, &mut needed, &mut references)?;
+        self.apply_configured_references(&references, &mut libraries)?;
         let library_keys = self.collect_library_keys(&needed, &libraries)?;
         let mut required_with_dependencies = required.clone();
         for id in required {
@@ -581,8 +690,8 @@ impl<'a> Linker<'a> {
                 .entry(file.clone())
                 .or_default()
                 .insert(name.clone(), address.to_checksum(None));
-            for (_, pending_code) in &mut pending {
-                pending_code.to_mut().link(&file.to_string_lossy(), &name, address);
+            for (target, pending_code) in &mut pending {
+                self.link_bytecode(pending_code.to_mut(), target, &file, &name, address)?;
             }
             onchain.push(LinkedLibrary { id: id.clone(), address, bytecode });
         }
@@ -617,18 +726,34 @@ impl<'a> Linker<'a> {
     ) -> Result<CompactContractBytecodeCow<'a>, LinkerError> {
         let mut contract =
             self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
-        for (file, libs) in &libraries.libs {
-            for (name, address) in libs {
-                let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
-                if let Some(bytecode) = contract.bytecode.as_mut() {
-                    self.link_bytecode(bytecode.to_mut(), file, name, address);
-                }
-                if let Some(deployed_bytecode) =
-                    contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
-                {
-                    self.link_bytecode(deployed_bytecode, file, name, address);
+        let libraries = libraries
+            .libs
+            .iter()
+            .flat_map(|(file, libraries)| {
+                libraries.iter().map(move |(name, address)| {
+                    Ok((
+                        file,
+                        name,
+                        Address::from_str(address).map_err(LinkerError::InvalidAddress)?,
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, LinkerError>>()?;
+        let link = |bytecode: &mut CompactBytecode| -> Result<(), LinkerError> {
+            for canonical in [false, true] {
+                for &(file, name, address) in &libraries {
+                    self.link_bytecode_inner(bytecode, target, file, name, address, canonical)?;
                 }
             }
+            Ok(())
+        };
+        if let Some(bytecode) = contract.bytecode.as_mut() {
+            link(bytecode.to_mut())?;
+        }
+        if let Some(deployed_bytecode) =
+            contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
+        {
+            link(deployed_bytecode)?;
         }
         Ok(contract)
     }
@@ -1318,6 +1443,53 @@ mod tests {
 
         assert_eq!(output.library_addresses.len(), 1);
         assert!(!output.library_addresses.contains(&unrelated));
+    }
+
+    #[test]
+    fn configured_library_alias_does_not_override_auto_linked_library() {
+        let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
+        let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
+        let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
+        let configured = address!("0000000000000000000000000000000000000001");
+        let alias = PathBuf::from("./default/linking/simple/Simple.t.sol");
+        let generated_key = PathBuf::from("default/linking/simple/Simple.t.sol");
+        let mut libraries = Libraries::default();
+        libraries
+            .libs
+            .entry(alias.clone())
+            .or_default()
+            .insert("Lib".to_string(), configured.to_checksum(None));
+        let exact = address!("0000000000000000000000000000000000000002");
+        let mut direct_libraries = libraries.clone();
+        direct_libraries
+            .libs
+            .entry(generated_key.clone())
+            .or_default()
+            .insert("Lib".to_string(), exact.to_checksum(None));
+        let direct = linker.link(consumer, &direct_libraries).unwrap();
+        linker.ensure_linked(&direct, consumer).unwrap();
+        let bytecode = direct.get_bytecode_bytes().unwrap();
+        assert!(bytecode.windows(Address::len_bytes()).any(|window| window == exact.as_slice()));
+        assert!(
+            !bytecode.windows(Address::len_bytes()).any(|window| window == configured.as_slice())
+        );
+
+        let output =
+            linker.link_with_nonce_or_address(libraries, Address::ZERO, 1, [consumer]).unwrap();
+        let generated = output.library_addresses[0];
+        let bytecode = linker.link(consumer, &output.libraries).unwrap().bytecode.unwrap();
+        let bytecode = bytecode.bytes().unwrap();
+
+        assert_ne!(generated, configured);
+        assert!(
+            bytecode.windows(Address::len_bytes()).any(|window| window == generated.as_slice())
+        );
+        assert!(
+            !bytecode.windows(Address::len_bytes()).any(|window| window == configured.as_slice())
+        );
+        assert_eq!(output.libraries.libs.len(), 2);
+        assert!(output.libraries.libs.contains_key(&alias));
+        assert!(output.libraries.libs.contains_key(&generated_key));
     }
 
     #[test]
