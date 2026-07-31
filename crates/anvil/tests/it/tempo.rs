@@ -36,6 +36,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
+use foundry_common::FoundryTransactionBuilder;
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
@@ -5060,6 +5061,31 @@ async fn test_gas_estimation_tempo_aa_transaction() {
     assert!(
         gas_estimate > 21000,
         "Tempo AA gas estimate should be greater than 21000, got: {gas_estimate}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_browser_webauthn_gas_estimation() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect_http(handle.http_endpoint().parse().unwrap());
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let request = tempo_alloy::rpc::TempoTransactionRequest {
+        inner: TransactionRequest::default().from(accounts[0]),
+        fee_token: Some(PATH_USD),
+        nonce_key: Some(U256::ZERO),
+        calls: vec![Call { to: TxKind::Call(accounts[1]), value: U256::ZERO, input: Bytes::new() }],
+        ..Default::default()
+    };
+
+    let secp256k1_estimate = provider.estimate_gas(request.clone()).await.unwrap();
+    let webauthn_estimate =
+        provider.estimate_gas(request.browser_wallet_gas_estimation_request()).await.unwrap();
+
+    assert!(
+        webauthn_estimate > secp256k1_estimate + 7_000,
+        "WebAuthn estimate should cover its variable signature data: \
+         secp256k1={secp256k1_estimate}, webauthn={webauthn_estimate}"
     );
 }
 
