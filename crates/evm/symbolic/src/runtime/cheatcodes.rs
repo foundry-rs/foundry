@@ -234,7 +234,9 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | assertNotEq_25Call::SELECTOR
         | assertNotEq_26Call::SELECTOR
         | assertNotEq_27Call::SELECTOR
-        | randomUint_1Call::SELECTOR => Some(abi_static_input_size(2)),
+        | randomUint_1Call::SELECTOR
+        | registerSloadHookCall::SELECTOR
+        | registerSstoreHookCall::SELECTOR => Some(abi_static_input_size(2)),
         expectRevert_10Call::SELECTOR
         | deriveKey_1Call::SELECTOR
         | deriveKey_2Call::SELECTOR

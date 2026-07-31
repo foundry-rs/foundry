@@ -2026,6 +2026,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.target_interfaces(to, &mut contracts)?;
 
         self.select_selectors(to, &mut contracts)?;
+        self.exclude_default_storage_hook_callbacks(&mut contracts)?;
 
         // There should be at least one contract identified as target for fuzz runs.
         if contracts.is_empty() {
@@ -2036,6 +2037,35 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         }
 
         Ok((sender_filters, FuzzRunIdentifiedContracts::new(contracts, selected.is_empty())))
+    }
+
+    /// Excludes registered storage-hook callbacks from implicit invariant targets.
+    ///
+    /// Explicit selector filters take precedence, so users can still target a callback
+    /// intentionally.
+    fn exclude_default_storage_hook_callbacks(
+        &self,
+        targeted_contracts: &mut TargetedContracts,
+    ) -> Result<()> {
+        let Some(cheatcodes) = self.executor.inspector().cheatcodes.as_deref() else {
+            return Ok(());
+        };
+        let callbacks = cheatcodes
+            .storage_load_hooks()
+            .chain(cheatcodes.storage_store_hooks())
+            .map(|(_, hook)| (hook.callback_target, Selector::from(hook.callback_selector)))
+            .collect::<HashSet<_>>();
+
+        for (target, selector) in callbacks {
+            let Some(contract) = targeted_contracts.get_mut(&target) else { continue };
+            if !contract.targeted_functions.is_empty()
+                || contract.function_by_selector(selector).is_none()
+            {
+                continue;
+            }
+            contract.add_selectors([selector], true)?;
+        }
+        Ok(())
     }
 
     /// Extends the contracts and selectors to fuzz with the addresses and ABIs specified in
