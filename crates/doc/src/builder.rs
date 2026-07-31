@@ -40,7 +40,7 @@ pub struct DocBuilder {
     pub libraries: Vec<PathBuf>,
     /// Whether to also document files coming from external libraries.
     pub include_libraries: bool,
-    /// Optional commit hash (HEAD) used when building Git Source links.
+    /// Optional Git commit, tag, or branch used when building Git Source links.
     pub commit: Option<String>,
     /// Optional current branch name; used as the `<branch>` segment of vocs
     /// editLink URLs (which require an actual branch, not a commit/`HEAD`).

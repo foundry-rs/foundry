@@ -1,0 +1,12 @@
+self-hosted-runner:
+  labels:
+    - depot-ubuntu-22.04-16
+    - depot-ubuntu-22.04-arm-16
+    - depot-ubuntu-24.04-32
+    - depot-ubuntu-latest-arm-16
+    - depot-ubuntu-latest
+    - depot-ubuntu-latest-16
+    - depot-macos-latest
+    - depot-windows-latest-16
+
+config-variables: null

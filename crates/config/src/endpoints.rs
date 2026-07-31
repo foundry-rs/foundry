@@ -522,14 +522,20 @@ impl DerefMut for ResolvedRpcEndpoints {
     }
 }
 
+/// Tempo mainnet's MPP-enabled RPC endpoint.
+pub const TEMPO_RPC_URL: &str = "https://rpc.mpp.tempo.xyz";
+
+/// Tempo testnet's MPP-enabled RPC endpoint.
+pub const MODERATO_RPC_URL: &str = "https://rpc.mpp.moderato.tempo.xyz";
+
 /// Returns the URL for a built-in RPC alias, if one exists.
 ///
 /// Built-in aliases act as fallbacks: they are only used when the alias has **not** been
 /// defined by the user in `[rpc_endpoints]` or resolved via MESC.
 pub fn builtin_rpc_url(alias: &str) -> Option<&'static str> {
     match alias {
-        "tempo" => Some("https://rpc.mpp.tempo.xyz"),
-        "moderato" => Some("https://rpc.mpp.moderato.tempo.xyz"),
+        "tempo" => Some(TEMPO_RPC_URL),
+        "moderato" => Some(MODERATO_RPC_URL),
         _ => None,
     }
 }
@@ -537,6 +543,14 @@ pub fn builtin_rpc_url(alias: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_tempo_aliases_use_mpp_endpoints() {
+        assert_eq!(builtin_rpc_url("tempo"), Some(TEMPO_RPC_URL));
+        assert_eq!(builtin_rpc_url("moderato"), Some(MODERATO_RPC_URL));
+        assert!(TEMPO_RPC_URL.contains(".mpp."));
+        assert!(MODERATO_RPC_URL.contains(".mpp."));
+    }
 
     #[test]
     fn serde_rpc_config() {

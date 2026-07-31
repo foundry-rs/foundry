@@ -1,12 +1,11 @@
+use alloy_primitives::map::foldhash::fast::FixedState;
 use hashbrown::{HashTable, hash_table::Entry};
 use std::{
-    collections::hash_map::DefaultHasher,
+    cmp::Ordering,
     fmt,
-    hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
     sync::{Arc, Weak},
 };
-
-type HashBuilder = BuildHasherDefault<DefaultHasher>;
 
 /// Shared handle for a hash-consed value.
 ///
@@ -22,18 +21,17 @@ struct HashConsedInner<T> {
 }
 
 impl<T> HashConsed<T> {
-    pub(in crate::runtime) fn cached_hash(&self) -> u64 {
-        self.inner.hash
+    #[inline]
+    pub(in crate::runtime::expr) fn stable_hash_cmp(&self, other: &Self) -> Ordering {
+        self.inner.hash.cmp(&other.inner.hash)
     }
 
-    pub(in crate::runtime) fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
-
+    #[inline]
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
     }
 
+    #[inline]
     pub(in crate::runtime) fn into_value(self) -> T
     where
         T: Clone,
@@ -46,22 +44,39 @@ impl<T> HashConsed<T> {
 }
 
 impl<T> Clone for HashConsed<T> {
+    #[inline]
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
     }
 }
 
 impl<T> PartialEq for HashConsed<T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.ptr_eq(other)
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
 impl<T> Eq for HashConsed<T> {}
 
 impl<T> Hash for HashConsed<T> {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.cached_hash().hash(state);
+        self.inner.hash.hash(state);
+    }
+}
+
+impl<T: PartialOrd> PartialOrd for HashConsed<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.value().partial_cmp(other.value())
+    }
+}
+
+impl<T: Ord> Ord for HashConsed<T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value().cmp(other.value())
     }
 }
 
@@ -71,6 +86,8 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     }
 }
 
+type HashConsHasher = FixedState;
+
 /// Hash-consing table for sharing structurally equal immutable values.
 ///
 /// The table stores weak references so interned values disappear when the rest of
@@ -78,7 +95,7 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 /// weak entries are ignored and left in the table until the context is dropped.
 pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
-    hash_builder: HashBuilder,
+    hash_builder: HashConsHasher,
 }
 
 struct HashConsEntry<T> {
@@ -94,7 +111,7 @@ impl<T> HashConsEntry<T> {
 
 impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
-        Self { table: HashTable::new(), hash_builder: HashBuilder::default() }
+        Self { table: HashTable::new(), hash_builder: HashConsHasher::default() }
     }
 
     fn hash<Q: Hash + ?Sized>(&self, value: &Q) -> u64 {
@@ -143,8 +160,8 @@ mod tests {
         let first = table.make("same".to_string());
         let second = table.make("same".to_string());
 
-        assert!(first.ptr_eq(&second));
-        assert_eq!(first.cached_hash(), second.cached_hash());
+        assert_eq!(first, second);
+        assert_eq!(first.inner.hash, second.inner.hash);
     }
 
     #[test]
@@ -154,7 +171,6 @@ mod tests {
         let first = table.make("first".to_string());
         let second = table.make("second".to_string());
 
-        assert!(!first.ptr_eq(&second));
         assert_ne!(first, second);
     }
 
@@ -183,6 +199,5 @@ mod tests {
 
         assert_ne!(first, second);
         assert_eq!(first.value(), second.value());
-        assert_eq!(first.cached_hash(), second.cached_hash());
     }
 }

@@ -199,7 +199,7 @@ impl SignaturesIdentifier {
 
     /// Creates a new `SignaturesIdentifier` from the global configuration.
     pub fn from_config(config: &Config) -> Result<Self> {
-        Self::new(config.offline)
+        Self::new(config.offline || config.tracing.external_identification_timeout == 0)
     }
 
     /// Creates an offline `SignaturesIdentifier` with the default cache directory and local ABIs.
@@ -392,6 +392,16 @@ impl Drop for SignaturesIdentifierInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_external_identification_timeout_disables_client() {
+        let mut config = Config::default();
+        config.tracing.external_identification_timeout = 0;
+
+        let identifier = SignaturesIdentifier::from_config(&config).unwrap();
+
+        assert!(identifier.0.client.is_none());
+    }
 
     #[test]
     fn unknown_signatures_not_persisted_to_disk() {

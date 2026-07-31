@@ -1,3 +1,4 @@
+use super::install;
 use clap::{Parser, ValueHint};
 use eyre::{Result, eyre};
 use forge_lint::{
@@ -5,12 +6,12 @@ use forge_lint::{
     sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::{
-    opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
+    opts::{BuildOpts, configure_pcx_all_sources},
     utils::{FoundryPathExt, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, shell};
-use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
-use foundry_config::{filter::expand_globs, lint::Severity};
+use foundry_common::shell;
+use foundry_compilers::{FileFilter, solc::SolcLanguage, utils::SOLC_EXTENSIONS};
+use foundry_config::{SkipBuildFilters, filter::expand_globs, lint::Severity};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
@@ -38,9 +39,17 @@ pub struct LintArgs {
 foundry_config::impl_figment_convert!(LintArgs, build);
 
 impl LintArgs {
-    pub fn run(self) -> Result<()> {
-        let config = self.load_config()?;
-        let project = config.solar_project()?;
+    pub async fn run(self) -> Result<()> {
+        let format_json = shell::is_json();
+        let mut config = self.load_config()?;
+
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            // Need to re-configure here to also catch additional remappings.
+            config = self.load_config()?;
+        }
+
+        let project = config.ephemeral_project()?;
         let path_config = config.project_paths();
 
         // Expand ignore globs and canonicalize from the get go
@@ -50,7 +59,7 @@ impl LintArgs {
             .collect::<Vec<_>>();
 
         let cwd = std::env::current_dir()?;
-        let input = match &self.paths[..] {
+        let mut input = match &self.paths[..] {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones.
                 config
@@ -75,6 +84,8 @@ impl LintArgs {
                 inputs
             }
         };
+        let skip = SkipBuildFilters::new(config.skip.clone(), config.root.clone());
+        input.retain(|path| skip.is_match(path));
 
         if input.is_empty() {
             sh_status!("nothing to lint")?;
@@ -100,36 +111,52 @@ impl LintArgs {
         }
 
         let linter = SolidityLinter::new(path_config)
-            .with_json_emitter(shell::is_json())
+            .with_json_emitter(format_json)
+            .with_json_emitter_stdout(format_json)
             .with_description(true)
             .with_lints(include)
             .without_lints(exclude)
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
             .with_lint_specific(&config.lint.lint_specific);
 
-        let output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
-        let solar_sources =
-            get_solar_sources_from_compile_output(&config, &output, Some(&input), Some(&ignored))?;
-        if solar_sources.input.sources.is_empty() {
-            return Err(eyre!("unable to lint. Solar only supports Solidity versions >=0.8.0"));
+        let mut opts = solar::interface::config::CompileOpts::default();
+        if format_json {
+            opts.error_format = solar::interface::config::ErrorFormat::RustcJson;
         }
-
-        // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
-        // compiler, we should reuse the parser from the project output.
-        let mut opts = solar::interface::config::Opts::default();
-        opts.unstable.typeck = true;
-        let mut compiler = solar::sema::Compiler::new(
-            solar::interface::Session::builder().opts(opts).with_stderr_emitter().build(),
-        );
+        let session = solar::interface::Session::builder().opts(opts);
+        let session =
+            if format_json { session.build() } else { session.with_stderr_emitter().build() };
+        if format_json {
+            let writer = Box::new(std::io::BufWriter::new(std::io::stdout()));
+            let emitter = solar::interface::diagnostics::JsonEmitter::new(
+                writer,
+                session.clone_source_map(),
+                solar::interface::ColorChoice::Never,
+            )
+            .rustc_like(true);
+            session.dcx.set_emitter(Box::new(emitter));
+        }
+        let mut compiler = solar::sema::Compiler::new(session);
 
         // Load the solar-compatible sources to the pcx before linting
-        compiler.enter_mut(|compiler| {
+        let has_sources = compiler.enter_mut(|compiler| -> Result<bool> {
             let mut pcx = compiler.parse();
             pcx.set_resolve_imports(true);
-            configure_pcx_from_solc(&mut pcx, &config.project_paths(), &solar_sources, true);
+            let has_sources =
+                configure_pcx_all_sources(&mut pcx, &config, Some(&project), Some(&input))?;
             pcx.parse();
-        });
-        linter.lint(&input, config.deny, &mut compiler)?;
+            Ok(has_sources)
+        })?;
+        if !has_sources {
+            return Err(eyre!("unable to lint. Solar only supports Solidity versions >=0.8.0"));
+        }
+        if let Err(err) = linter.lint(&input, config.deny, &mut compiler) {
+            if format_json && compiler.dcx().has_errors().is_err() {
+                // Solar already emitted the error, so bypass the top-level error printer.
+                std::process::exit(1);
+            }
+            return Err(err);
+        }
 
         Ok(())
     }

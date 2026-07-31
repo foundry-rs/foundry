@@ -6,6 +6,7 @@ use alloy_primitives::{
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Bundle, Filter, Index, StateContext,
     anvil::{Forking, MineOptions},
+    erc4337::TransactionConditional,
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     simulate::SimulatePayload,
@@ -16,6 +17,7 @@ use alloy_rpc_types::{
         parity::TraceType,
     },
 };
+use alloy_rpc_types_mev::EthCallBundle;
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
     deserialize_number, deserialize_number_opt, deserialize_number_seq, deserialize_u64_seq,
@@ -205,7 +207,7 @@ pub enum EthRequest {
     EthSendRawTransactionSync(Bytes, #[serde(default)] Option<u64>),
 
     #[serde(rename = "eth_sendRawTransactionConditional")]
-    EthSendRawTransactionConditional(Bytes, serde_json::Value),
+    EthSendRawTransactionConditional(Bytes, TransactionConditional),
 
     #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
     AnvilClassifyTransaction(Bytes),
@@ -225,8 +227,14 @@ pub enum EthRequest {
         #[serde(default)] Option<StateOverride>,
     ),
 
+    #[serde(rename = "eth_callBundle", with = "sequence")]
+    EthCallBundle(EthCallBundle),
+
     #[serde(rename = "eth_simulateV1")]
-    EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
+    EthSimulateV1(
+        SimulatePayload<WithOtherFields<TransactionRequest>>,
+        #[serde(default)] Option<BlockId>,
+    ),
 
     #[serde(rename = "eth_createAccessList")]
     EthCreateAccessList(
@@ -574,6 +582,10 @@ pub enum EthRequest {
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
+    /// Modifies the TIP-20 balance of an account.
+    #[serde(rename = "anvil_dealTIP20")]
+    DealTIP20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
     /// Sets the ERC20 allowance for a spender
     #[serde(rename = "anvil_setERC20Allowance")]
     SetERC20Allowance(
@@ -604,6 +616,10 @@ pub enum EthRequest {
     /// Sets the coinbase address
     #[serde(rename = "anvil_setCoinbase", alias = "hardhat_setCoinbase", with = "sequence")]
     SetCoinbase(Address),
+
+    /// Sets the `prevrandao` value of the next block
+    #[serde(rename = "anvil_setNextBlockPrevRandao", with = "sequence")]
+    SetNextBlockPrevRandao(B256),
 
     /// Sets the chain id
     #[serde(rename = "anvil_setChainId", deserialize_with = "deserialize_u64_seq")]
@@ -1366,6 +1382,27 @@ mod tests {
     }
 
     #[test]
+    fn test_simulate_preserves_transaction_extension_fields() {
+        let value = serde_json::json!({
+            "method": "eth_simulateV1",
+            "params": [{
+                "blockStateCalls": [{
+                    "calls": [{
+                        "to": "0x0000000000000000000000000000000000000001",
+                        "tempoExtension": "preserved"
+                    }]
+                }]
+            }]
+        });
+
+        let request = serde_json::from_value::<EthRequest>(value).unwrap();
+        let EthRequest::EthSimulateV1(payload, _) = request else { panic!() };
+        let transaction = &payload.block_state_calls[0].calls[0];
+
+        assert_eq!(transaction.other["tempoExtension"], serde_json::json!("preserved"));
+    }
+
+    #[test]
     fn test_custom_set_code() {
         let s = r#"{"method": "anvil_setCode", "params":
 ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0123456789abcdef"]}"#;
@@ -1419,6 +1456,13 @@ mod tests {
     fn test_serde_custom_coinbase() {
         let s = r#"{"method": "anvil_setCoinbase", "params":
 ["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_custom_set_next_block_prevrandao() {
+        let s = r#"{"method": "anvil_setNextBlockPrevRandao", "params": ["0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -1998,6 +2042,12 @@ true}]}"#;
     #[test]
     fn test_eth_call_many() {
         let s = r#"{"method":"eth_callMany","params":[[{"transactions":[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","data":"0xcfae3217"}]}],{"blockNumber":"latest"},{"0x0000000000000000000000000000000000000001":{"balance":"0x1"}}]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+    }
+
+    #[test]
+    fn test_eth_call_bundle() {
+        let s = r#"{"method":"eth_callBundle","params":[{"txs":["0x1234"],"blockNumber":"0x1","stateBlockNumber":"latest"}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 

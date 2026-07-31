@@ -36,6 +36,11 @@ check_eq() {
 say() { :; }
 warn() { :; }
 
+check_eq "managed binaries include solar" \
+  "forge cast anvil chisel solar" "${BINS[*]}"
+check_eq "solar is optional for legacy releases" \
+  "0" "$(is_optional_bin solar; echo $?)"
+
 # --- resolve_latest_tag_via_redirect --------------------------------------
 
 curl() { printf 'https://github.com/foundry-rs/foundry/releases/tag/v1.7.1'; }
@@ -114,6 +119,47 @@ trap 'rm -f "$api_marker" "$install_marker"; rm -rf "$sidecar_home" "$selector_t
 mkdir -p "$selector_tmp/archive"
 touch "$selector_tmp/archive/forge"
 tar -czf "$selector_tmp/foundry.tar.gz" -C "$selector_tmp/archive" forge
+
+optional_path="$selector_tmp/solar"
+check_eq "missing optional binary without hash is allowed" \
+  "0" "$(is_missing_optional_bin solar "" "$optional_path"; echo $?)"
+touch "$optional_path"
+check_eq "present optional binary without hash is rejected" \
+  "1" "$(is_missing_optional_bin solar "" "$optional_path"; echo $?)"
+
+version_tmp="$selector_tmp/version"
+mkdir -p "$version_tmp"
+touch "$version_tmp/solar" "$version_tmp/solar.exe" "$version_tmp/unrelated"
+clear_version_bins "$version_tmp"
+check_eq "version replacement clears stale optional binaries" \
+  "0" "$([ ! -e "$version_tmp/solar" ] && [ ! -e "$version_tmp/solar.exe" ]; echo $?)"
+check_eq "version replacement preserves unrelated files" \
+  "0" "$([ -e "$version_tmp/unrelated" ]; echo $?)"
+
+built_tmp="$selector_tmp/built"
+mkdir -p "$built_tmp"
+touch "$built_tmp/solar" "$built_tmp/solar.exe" "$built_tmp/unrelated"
+clear_built_bins "$built_tmp"
+check_eq "source builds clear stale optional artifacts" \
+  "0" "$([ ! -e "$built_tmp/solar" ] && [ ! -e "$built_tmp/solar.exe" ]; echo $?)"
+check_eq "source builds preserve unrelated artifacts" \
+  "0" "$([ -e "$built_tmp/unrelated" ]; echo $?)"
+
+staged_tmp="$selector_tmp/staged"
+installed_tmp="$selector_tmp/installed"
+mkdir -p "$staged_tmp" "$installed_tmp"
+for bin in forge cast anvil chisel; do
+  touch "$staged_tmp/$bin"
+  chmod +x "$staged_tmp/$bin"
+done
+touch "$installed_tmp/solar"
+validate_staged_bins "$staged_tmp"
+replace_version_bins "$staged_tmp" "$installed_tmp"
+check_eq "staged legacy release replaces required binaries" \
+  "0" "$([ -x "$installed_tmp/forge" ] && [ -x "$installed_tmp/chisel" ]; echo $?)"
+check_eq "staged legacy release clears stale solar" \
+  "0" "$([ ! -e "$installed_tmp/solar" ]; echo $?)"
+
 download() {
   case "$1" in
     *"nightly-$OLDER_SHA"*) cp "$selector_tmp/foundry.tar.gz" "$2" ;;

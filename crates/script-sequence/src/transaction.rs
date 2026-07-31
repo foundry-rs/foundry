@@ -12,6 +12,8 @@ pub struct AdditionalContract {
     pub contract_name: Option<String>,
     pub address: Address,
     pub init_code: Bytes,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub creator_code_addresses: Vec<Address>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -32,6 +34,9 @@ pub struct TransactionWithMetadata<N: Network> {
     pub contract_address: Option<Address>,
     #[serde(default = "default_string")]
     pub function: Option<String>,
+    pub function_abi: Option<String>,
+    #[serde(skip)]
+    pub display_function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
@@ -64,6 +69,8 @@ impl<N: Network> TransactionWithMetadata<N> {
             contract_name: Default::default(),
             contract_address: Default::default(),
             function: Default::default(),
+            function_abi: Default::default(),
+            display_function: Default::default(),
             arguments: Default::default(),
             is_fixed_gas_limit: Default::default(),
             additional_contracts: Default::default(),
@@ -81,5 +88,36 @@ impl<N: Network> TransactionWithMetadata<N> {
 
     pub fn is_create2(&self) -> bool {
         self.call_kind == CallKind::Create2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn additional_contract_creator_code_addresses_are_backward_compatible() {
+        let old_json = serde_json::json!({
+            "transactionType": "CREATE",
+            "contractName": null,
+            "address": Address::repeat_byte(0x11),
+            "initCode": "0x6000"
+        });
+        let contract: AdditionalContract = serde_json::from_value(old_json.clone()).unwrap();
+        assert!(contract.creator_code_addresses.is_empty());
+        assert_eq!(serde_json::to_value(contract).unwrap(), old_json);
+
+        let creator = Address::repeat_byte(0x22);
+        let contract = AdditionalContract {
+            call_kind: CallKind::Create2,
+            contract_name: None,
+            address: Address::repeat_byte(0x33),
+            init_code: Bytes::new(),
+            creator_code_addresses: vec![creator],
+        };
+        assert_eq!(
+            serde_json::to_value(contract).unwrap()["creatorCodeAddresses"],
+            serde_json::json!([creator])
+        );
     }
 }

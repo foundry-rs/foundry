@@ -16,14 +16,19 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `arbitrary-send-erc20-permit`: Flags arbitrary `transferFrom` calls preceded by a covering `permit`; on non-permit tokens with a fallback (e.g. WETH) the permit silently succeeds and previously-approved tokens can be drained.
   - `controlled-delegatecall`: Flags `delegatecall` calls whose target is not provably trusted.
   - `encode-packed-collision`: Flags `abi.encodePacked()` calls with multiple dynamic-type arguments (`string`, `bytes`, dynamic arrays) that can produce hash collisions.
+  - `enumerable-loop-removal`: Flags `remove` on an EnumerableSet inside a loop that also iterates a set with `at`; swap-and-pop removal corrupts the iteration.
+  - `function-selector-collision`: Flags colliding selectors between a proxy and the statically typed implementation API targeted by its fallback.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
+  - `reentrancy-balance`: Flags reentrant calls between saving `address(this).balance` and checking the current balance against that stale value.
   - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
+  - `protected-vars`: Flags externally callable entry points that write a state variable without its required `@custom:security write-protection` function or modifier.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
 - **Medium Severity:**
   - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
   - `boolean-cst`: Flags misuse of boolean constants.
   - `dangerous-unary-operator`: Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), e.g. `x =- 1`, which parses as `x = -1` instead of the intended compound `x -= 1`.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
+  - `ecrecover`: Flags direct `ecrecover` calls whose signature `s` value is not proven to be canonical and non-malleable.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
@@ -33,6 +38,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
+  - `unsafe-oz-erc721-mint`: Flags calls resolving to `ERC721._mint`, which does not check that the recipient can receive the token; use `_safeMint`.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `unused-return`: Return value of an external call is not used.
   - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.
@@ -42,11 +48,15 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
+  - `deprecated-oz-function`: OpenZeppelin deprecated `SafeERC20.safeApprove` (use `safeIncreaseAllowance` / `safeDecreaseAllowance`) and `AccessControl._setupRole` (use `_grantRole`).
+  - `empty-block`: Flags regular functions with an empty body; constructors, `receive`/`fallback`, `virtual` functions, functions with modifiers and value-less `payable` functions are exempt.
   - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
+  - `inconsistent-type-names`: Flags shorthand `uint`/`int` declarations when the same contract also uses `uint256`/`int256`.
   - `missing-events-access-control`: Access control changes should emit events.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
   - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
+  - `solmate-safe-transfer-lib`: solmate's released `SafeTransferLib` does not check that the token has code, so token operations against a token-less address succeed silently.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone.
@@ -67,6 +77,14 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
+  - `todo-comment`: Detects unresolved `TODO` and `FIXME` markers in comments.
+  - `unused-error`: Custom error declarations that are never referenced should be removed.
+  - `literal-instead-of-constant`: A literal value repeated inside a contract should be a named constant.
+  - `function-init-state`: State variable initializers run before the constructor; depending on a non-pure function or another state variable there observes partial state.
+  - `internal-function-used-once`: Internal functions referenced exactly once can usually be inlined into their caller.
+  - `cyclomatic-complexity`: functions with a cyclomatic complexity above 11 should be split into smaller functions.
+  - `incorrect-using-for`: `using ... for` directives naming a library with no function applicable to the type attach nothing and should be fixed or removed.
+  - `modifier-used-only-once`: Modifiers invoked by exactly one function can usually be inlined as checks in that function.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.

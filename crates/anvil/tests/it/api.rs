@@ -13,15 +13,16 @@ use alloy_network::{
     TxSignerSync,
 };
 use alloy_primitives::{
-    Address, B256, ChainId, U256, b256, bytes,
+    Address, B256, ChainId, Keccak256, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
 };
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockTransactions, request::TransactionRequest,
-    state::AccountOverride,
+    BlockId, BlockNumberOrTag, BlockTransactions, erc4337::TransactionConditional,
+    request::TransactionRequest, state::AccountOverride,
 };
 use alloy_rpc_types_eth::{Bundle, EthCallResponse};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolCall;
 use anvil::{CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn};
@@ -570,6 +571,107 @@ async fn can_call_many() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_call_bundle() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = wallets[1].address();
+    let coinbase = wallets[2].address();
+    let initial_coinbase_balance = provider.get_balance(coinbase).await.unwrap();
+    let fees = provider.estimate_eip1559_fees().await.unwrap();
+    let base_fee = api.base_fee().unwrap().unwrap().to::<u64>();
+
+    let mut raw_transactions = Vec::new();
+    let mut transaction_hashes = Vec::new();
+    let mut expected_gas_fees = U256::ZERO;
+    for (nonce, value) in [(0, 1), (1, 2)] {
+        let mut tx = TxEip1559 {
+            chain_id: CHAIN_ID,
+            nonce,
+            gas_limit: 21_000,
+            max_fee_per_gas: fees.max_fee_per_gas,
+            max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+            to: coinbase.into(),
+            value: U256::from(value),
+            ..Default::default()
+        };
+        let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+        let tx = tx.into_signed(signature);
+        let gas_price = tx.effective_tip_per_gas(base_fee).unwrap();
+        expected_gas_fees += U256::from(gas_price) * U256::from(21_000);
+        transaction_hashes.push(*tx.hash());
+
+        let mut encoded = Vec::new();
+        tx.eip2718_encode(&mut encoded);
+        raw_transactions.push(encoded.into());
+    }
+
+    let response: EthCallBundleResponse = provider
+        .client()
+        .request(
+            "eth_callBundle",
+            (EthCallBundle {
+                txs: raw_transactions.clone(),
+                block_number: 1,
+                state_block_number: BlockNumberOrTag::Latest,
+                coinbase: Some(coinbase),
+                ..Default::default()
+            },),
+        )
+        .await
+        .unwrap();
+
+    let mut expected_bundle_hash = Keccak256::new();
+    for hash in transaction_hashes {
+        expected_bundle_hash.update(hash);
+    }
+    assert_eq!(response.bundle_hash, expected_bundle_hash.finalize());
+    assert_eq!(response.state_block_number, 0);
+    assert_eq!(response.total_gas_used, 42_000);
+    assert_eq!(response.gas_fees, expected_gas_fees);
+    assert_eq!(response.eth_sent_to_coinbase, U256::from(3));
+    assert_eq!(response.coinbase_diff, expected_gas_fees + U256::from(3));
+    assert_eq!(
+        response.bundle_gas_price,
+        response.coinbase_diff / U256::from(response.total_gas_used)
+    );
+    assert_eq!(response.results.len(), 2);
+    assert_eq!(response.results[0].from_address, sender);
+    assert_eq!(response.results[0].to_address, Some(coinbase));
+    assert_eq!(response.results[0].eth_sent_to_coinbase, U256::from(1));
+    assert_eq!(response.results[1].eth_sent_to_coinbase, U256::from(2));
+    assert!(response.results.iter().all(|result| result.revert.is_none()));
+
+    assert_eq!(provider.get_balance(coinbase).await.unwrap(), initial_coinbase_balance);
+
+    let empty_bundle: Result<EthCallBundleResponse, _> = provider
+        .client()
+        .request(
+            "eth_callBundle",
+            (EthCallBundle {
+                block_number: 1,
+                state_block_number: BlockNumberOrTag::Latest,
+                ..Default::default()
+            },),
+        )
+        .await;
+    assert!(empty_bundle.unwrap_err().to_string().contains("bundle missing txs"));
+
+    let zero_block: Result<EthCallBundleResponse, _> = provider
+        .client()
+        .request(
+            "eth_callBundle",
+            (EthCallBundle {
+                txs: vec![raw_transactions[0].clone()],
+                state_block_number: BlockNumberOrTag::Latest,
+                ..Default::default()
+            },),
+        )
+        .await;
+    assert!(zero_block.unwrap_err().to_string().contains("bundle missing blockNumber"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_mine_while_mining() {
     let (api, _) = spawn(NodeConfig::test()).await;
 
@@ -683,7 +785,10 @@ async fn can_send_raw_transaction_conditional() {
     let tx_hash = provider
         .raw_request(
             "eth_sendRawTransactionConditional".into(),
-            (alloy_primitives::Bytes::from(encoded), serde_json::json!({"knownAccounts": {}})),
+            (
+                alloy_primitives::Bytes::from(encoded),
+                TransactionConditional { block_number_min: Some(u64::MAX), ..Default::default() },
+            ),
         )
         .await
         .unwrap();
@@ -701,19 +806,22 @@ async fn can_send_raw_transaction_conditional() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn rejects_raw_transaction_conditional_prestate() {
+async fn ignores_raw_transaction_conditional_prestate() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let result: std::result::Result<serde_json::Value, _> = provider
         .raw_request(
             "eth_sendRawTransactionConditional".into(),
-            (alloy_primitives::Bytes::default(), serde_json::json!({"blockNumberMin": "0x2"})),
+            (
+                alloy_primitives::Bytes::default(),
+                TransactionConditional { block_number_min: Some(u64::MAX), ..Default::default() },
+            ),
         )
         .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("transaction conditions are not supported"), "{err}");
+    assert!(err.contains("Empty transaction data"), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

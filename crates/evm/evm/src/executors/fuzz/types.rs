@@ -5,7 +5,7 @@ use alloy_primitives::{
 };
 use foundry_evm_core::{Breakpoints, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::FuzzCase;
+use foundry_evm_fuzz::{BasicTxDetails, FuzzCase};
 use foundry_evm_traces::SparsedTraceArena;
 use revm::interpreter::InstructionResult;
 
@@ -32,7 +32,7 @@ pub struct CaseOutcome {
 #[derive(Debug)]
 pub struct CounterExampleOutcome<FEN: FoundryEvmNetwork> {
     /// Minimal reproduction test case for failing test.
-    pub counterexample: (Bytes, RawCallResult<FEN>),
+    pub counterexample: (BasicTxDetails, RawCallResult<FEN>),
     /// The status of the call.
     pub exit_reason: Option<InstructionResult>,
     /// Breakpoints char pc map.

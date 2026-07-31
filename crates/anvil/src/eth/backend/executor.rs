@@ -6,7 +6,7 @@ use crate::{
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
 use alloy_consensus::{
-    Eip658Value, Transaction, TransactionEnvelope, TxReceipt,
+    Eip658Value, Receipt, ReceiptWithBloom, Transaction, TransactionEnvelope, TxReceipt,
     transaction::{Either, Recovered},
 };
 use alloy_eips::{
@@ -17,14 +17,14 @@ use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, GasOutput, OnStateHook, StateDB, TxResult,
+        ExecutableTx, GasOutput, StateDB, TxResult,
     },
     eth::{
         EthTxResult,
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
     },
 };
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, Log, U256};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -36,7 +36,7 @@ use revm::{
     context_interface::result::{ExecutionResult, Output, ResultAndState},
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,
-    state::AccountInfo,
+    state::{AccountInfo, EvmState},
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
@@ -44,6 +44,58 @@ use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct FoundryReceiptBuilder;
+
+impl FoundryReceiptBuilder {
+    fn wrap_receipt(
+        tx_type: FoundryTxType,
+        receipt: ReceiptWithBloom<Receipt>,
+    ) -> FoundryReceiptEnvelope {
+        match tx_type {
+            FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
+            FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
+            FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
+            FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
+            FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
+            #[cfg(feature = "optimism")]
+            FoundryTxType::Deposit => {
+                unreachable!("deposit receipts require fork-specific metadata")
+            }
+            #[cfg(feature = "optimism")]
+            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+            FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+        }
+    }
+
+    /// Builds a typed receipt for an RPC-simulated transaction.
+    pub(crate) fn build_simulated_receipt(
+        tx_type: FoundryTxType,
+        result: &ExecutionResult,
+        logs: Vec<Log>,
+        cumulative_gas_used: u64,
+        deposit_nonce: Option<u64>,
+        deposit_receipt_version: Option<u64>,
+    ) -> FoundryReceiptEnvelope {
+        let receipt =
+            Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
+                .with_bloom();
+        #[cfg(feature = "optimism")]
+        if tx_type == FoundryTxType::Deposit {
+            return FoundryReceiptEnvelope::Deposit(
+                op_alloy_consensus::OpDepositReceiptWithBloom {
+                    receipt: op_alloy_consensus::OpDepositReceipt {
+                        inner: receipt.receipt,
+                        deposit_nonce,
+                        deposit_receipt_version,
+                    },
+                    logs_bloom: receipt.logs_bloom,
+                },
+            );
+        }
+        #[cfg(not(feature = "optimism"))]
+        let _ = (deposit_nonce, deposit_receipt_version);
+        Self::wrap_receipt(tx_type, receipt)
+    }
+}
 
 impl ReceiptBuilder for FoundryReceiptBuilder {
     type Transaction = FoundryTxEnvelope;
@@ -53,27 +105,13 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
         &self,
         ctx: ReceiptBuilderCtx<'_, FoundryTxType, E>,
     ) -> FoundryReceiptEnvelope {
-        let receipt = alloy_consensus::Receipt {
+        let receipt = Receipt {
             status: Eip658Value::Eip658(ctx.result.is_success()),
             cumulative_gas_used: ctx.cumulative_gas_used,
             logs: ctx.result.into_logs(),
         }
         .with_bloom();
-
-        match ctx.tx_type {
-            FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
-            FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
-            FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
-            FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
-            FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => {
-                unreachable!("deposit receipts are built in commit_transaction")
-            }
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
-            FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
-        }
+        Self::wrap_receipt(ctx.tx_type, receipt)
     }
 }
 
@@ -118,8 +156,8 @@ pub struct AnvilBlockExecutor<E> {
     gas_used: u64,
     /// Blob gas used by the block.
     blob_gas_used: u64,
-    /// Optional state change hook.
-    state_hook: Option<Box<dyn OnStateHook>>,
+    /// State changes captured for deferred publication.
+    state_changes: Option<Vec<EvmState>>,
 }
 
 impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
@@ -137,7 +175,7 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
 
 impl<E> AnvilBlockExecutor<E> {
     /// Creates a new [`AnvilBlockExecutor`].
-    pub fn new(evm: E, parent_hash: B256, spec_id: SpecId) -> Self {
+    pub const fn new(evm: E, parent_hash: B256, spec_id: SpecId) -> Self {
         Self {
             evm,
             parent_hash,
@@ -146,13 +184,19 @@ impl<E> AnvilBlockExecutor<E> {
             receipts: Vec::new(),
             gas_used: 0,
             blob_gas_used: 0,
-            state_hook: None,
+            state_changes: None,
         }
     }
 
-    /// Sets a hook that receives state changes before they are committed.
-    pub fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
-        self.state_hook = hook;
+    /// Captures every committed changeset so callers can publish them after block execution.
+    pub(crate) fn with_state_changes(mut self) -> Self {
+        self.state_changes = Some(Vec::new());
+        self
+    }
+
+    /// Takes the captured changesets.
+    pub(crate) fn take_state_changes(&mut self) -> Vec<EvmState> {
+        self.state_changes.take().unwrap_or_default()
     }
 }
 
@@ -180,8 +224,8 @@ where
                 )
                 .map_err(BlockExecutionError::other)?;
 
-            if let Some(hook) = &mut self.state_hook {
-                hook.on_state(result.state.clone());
+            if let Some(state_changes) = &mut self.state_changes {
+                state_changes.push(result.state.clone());
             }
             self.evm.db_mut().commit(result.state);
         }
@@ -227,10 +271,6 @@ where
             sender,
         } = output;
 
-        if let Some(hook) = &mut self.state_hook {
-            hook.on_state(state.clone());
-        }
-
         let gas_used = result.tx_gas_used();
         self.gas_used += gas_used;
 
@@ -273,6 +313,9 @@ where
             cumulative_gas_used: self.gas_used,
         });
 
+        if let Some(state_changes) = &mut self.state_changes {
+            state_changes.push(state.clone());
+        }
         self.receipts.push(receipt);
         self.evm.db_mut().commit(state);
 
@@ -347,7 +390,7 @@ pub fn execute_pool_transactions<B>(
     inspector_config: &InspectorTxConfig,
     cheats: &CheatsManager,
     validator: &dyn Fn(
-        &PendingTransaction<B::Transaction>,
+        &PoolTransaction<B::Transaction>,
         &AccountInfo,
     ) -> Result<(), InvalidTransactionError>,
 ) -> ExecutedPoolTransactions<B::Transaction>
@@ -420,7 +463,7 @@ where
         }
 
         // Validate
-        if let Err(err) = validator(pending, &account) {
+        if let Err(err) = validator(pool_tx, &account) {
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", pool_tx.hash(), err);
             invalid.push(pool_tx.clone());
             continue;

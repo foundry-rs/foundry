@@ -7,7 +7,8 @@ Flags struct definitions whose names do not follow `PascalCase`.
 
 ## What it does
 
-Reports any `struct` whose identifier does not match the `PascalCase` convention.
+Reports `struct` identifiers longer than one character that do not match the `PascalCase`
+convention. Single-character names are not checked.
 
 ## Why is this bad?
 

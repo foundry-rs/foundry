@@ -24,9 +24,7 @@ contract TautologicalCompare {
         uint256 y,
         uint256 i,
         uint256[] calldata arr,
-        int256 s,
-        bool flag,
-        address addr
+        int256 s
     ) external view {
         require(x >= x); //~WARN: comparing an expression with itself is always true or false
         require(y == y); //~WARN: comparing an expression with itself is always true or false
@@ -39,6 +37,10 @@ contract TautologicalCompare {
         if (address(this) == address(this)) {} //~WARN: comparing an expression with itself is always true or false
         if (uint256(x) == uint256(x)) {} //~WARN: comparing an expression with itself is always true or false
         if (-s == -s) {} //~WARN: comparing an expression with itself is always true or false
+    }
+
+    // Split from `bad` to keep each function below the cyclomatic-complexity threshold.
+    function badOperators(uint256 x, uint256 y, bool flag, address addr) external pure {
         if (!flag == !flag) {} //~WARN: comparing an expression with itself is always true or false
         if (~x == ~x) {} //~WARN: comparing an expression with itself is always true or false
         if ((flag ? x : y) == (flag ? x : y)) {} //~WARN: comparing an expression with itself is always true or false

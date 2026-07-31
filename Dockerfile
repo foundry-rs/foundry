@@ -62,6 +62,7 @@ RUN ln -s /app/target/debug /app/target/dev \
     /app/target/${RUST_PROFILE}/cast \
     /app/target/${RUST_PROFILE}/anvil \
     /app/target/${RUST_PROFILE}/chisel \
+    /app/target/${RUST_PROFILE}/solar \
     /app/output/
 
 FROM ubuntu:22.04@sha256:eb29ed27b0821dca09c2e28b39135e185fc1302036427d5f4d70a41ce8fd7659 AS runtime

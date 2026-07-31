@@ -200,15 +200,18 @@ impl Fuzzer {
         // We override calls when either the caller OR target is a handler. This covers:
         // 1. EtherStore pattern: handler sends ETH out, attacker reenters handler
         // 2. Rari pattern: external protocol sends ETH to handler, handler reenters protocol
-        let caller_is_handler = call_generator.is_handler(call.caller);
-        let target_is_handler = call_generator.is_handler(call.target_address);
         if call.caller == call_generator.test_address
             || call.scheme != CallScheme::Call
             || call_generator.override_depth > 0
             || call.target_address == CHEATCODE_ADDRESS
-            || (!caller_is_handler && !target_is_handler)
         {
             return;
+        }
+        {
+            let handlers = call_generator.handler_addresses.read();
+            if !handlers.contains(&call.caller) && !handlers.contains(&call.target_address) {
+                return;
+            }
         }
 
         // There's only a ~27% chance that an override happens (90% * 30% from strategy).

@@ -1,0 +1,24 @@
+note[modifier-used-only-once]: this modifier is used only once; consider inlining its checks into the function
+   ╭▸ ROOT/testdata/ModifierUsedOnlyOnce.sol:LL:CC
+   │
+LL │     modifier onlyOnce() {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/modifier-used-only-once
+
+note[modifier-used-only-once]: this modifier is used only once; consider inlining its checks into the function
+   ╭▸ ROOT/testdata/ModifierUsedOnlyOnce.sol:LL:CC
+   │
+LL │     modifier once() {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/modifier-used-only-once
+
+note[modifier-used-only-once]: this modifier is used only once; consider inlining its checks into the function
+   ╭▸ ROOT/testdata/ModifierUsedOnlyOnce.sol:LL:CC
+   │
+LL │     modifier seeded() {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/modifier-used-only-once
+

@@ -1,9 +1,11 @@
 use crate::{
     linter::{EarlyLintPass, Lint, LintContext},
-    sol::{Severity, SolLint, info::MultiContractFile},
+    sol::{Severity, SolLint},
 };
 
+use foundry_config::lint::LintSpecificConfig;
 use solar::ast;
+use std::sync::Arc;
 
 declare_forge_lint!(
     MULTI_CONTRACT_FILE,
@@ -12,7 +14,18 @@ declare_forge_lint!(
     "prefer having only one contract, interface or library per file"
 );
 
-impl<'ast> EarlyLintPass<'ast> for MultiContractFile {
+#[derive(Debug)]
+pub(super) struct MultiContractFilePass {
+    config: Arc<LintSpecificConfig>,
+}
+
+impl MultiContractFilePass {
+    pub(super) const fn new(config: Arc<LintSpecificConfig>) -> Self {
+        Self { config }
+    }
+}
+
+impl<'ast> EarlyLintPass<'ast> for MultiContractFilePass {
     fn check_full_source_unit(
         &mut self,
         ctx: &LintContext<'ast, '_>,
@@ -28,7 +41,7 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFile {
             .iter()
             .filter_map(|item| match &item.kind {
                 ast::ItemKind::Contract(c) => {
-                    (!ctx.config.lint_specific.is_exempted(&c.kind)).then_some(c.name.span)
+                    (!self.config.is_exempted(&c.kind)).then_some(c.name.span)
                 }
                 _ => None,
             })

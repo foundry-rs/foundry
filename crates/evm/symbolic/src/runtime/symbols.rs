@@ -1,4 +1,6 @@
 use super::*;
+use inturn::InternerSymbol;
+use std::num::NonZeroU32;
 
 pub(crate) type SymbolicVars = IndexSet<Symbol>;
 
@@ -18,38 +20,33 @@ impl SymbolicModelLookup for SymbolicModel {
     }
 }
 
-#[cfg(test)]
-impl SymbolicModelLookup for BTreeMap<String, U256> {
-    fn value(&self, name: Symbol) -> Option<U256> {
-        self.get(name.as_str()).copied()
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Symbol(NonZeroU32);
+
+impl Symbol {
+    pub(crate) const fn id(&self) -> NonZeroU32 {
+        self.0
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub(crate) struct Symbol(Arc<str>);
-
-impl Symbol {
-    pub(crate) const fn new(name: Arc<str>) -> Self {
-        Self(name)
+impl InternerSymbol for Symbol {
+    fn try_from_usize(id: usize) -> Option<Self> {
+        id.checked_add(1).and_then(|id| u32::try_from(id).ok()).and_then(NonZeroU32::new).map(Self)
     }
 
-    pub(crate) fn intern(name: &str) -> Self {
-        Self(Arc::from(name))
-    }
-
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
+    fn to_usize(self) -> usize {
+        usize::try_from(self.0.get() - 1).expect("symbol id fits usize")
     }
 }
 
 impl fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.as_str(), f)
+        fmt::Display::fmt(self, f)
     }
 }
 
 impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        write!(f, "sym{}", self.id())
     }
 }

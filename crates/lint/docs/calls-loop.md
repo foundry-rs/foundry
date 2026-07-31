@@ -1,8 +1,16 @@
-# calls-loop
+# External call inside a loop
 
-## Description
+**Severity**: `Low`
+**ID**: `calls-loop`
 
-Detects external calls made from inside loops.
+Flags external calls made from inside loops, including calls reached through modifiers or internal
+helper functions.
+
+## What it does
+
+Reports high-level contract calls, low-level `call`/`delegatecall`/`staticcall`, Ether
+`send`/`transfer`, external self-calls through `this`, and contract creation inside a loop. Internal
+and private library calls and `super` dispatch are not treated as external calls.
 
 ## Why is this bad?
 
@@ -11,6 +19,8 @@ the whole loop. This is especially risky for push-payment patterns where every r
 ETH or where every external contract must respond successfully before the function can complete.
 
 ## Example
+
+### Bad
 
 ```solidity
 contract Payouts {
@@ -24,7 +34,16 @@ contract Payouts {
 }
 ```
 
-## Recommended
+### Good
 
-Favor pull-based accounting: record the amount owed to each recipient, then let each recipient claim
-their own funds in a separate transaction.
+```solidity
+contract Payouts {
+    mapping(address recipient => uint256 amount) public claimable;
+
+    function claim() external {
+        uint256 amount = claimable[msg.sender];
+        claimable[msg.sender] = 0;
+        payable(msg.sender).transfer(amount);
+    }
+}
+```

@@ -365,7 +365,8 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
 
-    /// Dump a genesis JSON file's `allocs` to disk.
+    /// Dumps a genesis JSON file's `allocs` to disk. Accounts created in the current transaction
+    /// are ordered by deployment, followed by the remaining accounts in ascending address order.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function dumpState(string calldata pathToStateJson) external;
 
@@ -687,6 +688,21 @@ interface Vm {
     /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
+
+    /// Mocks a call to an address, returning specified data.
+    /// Calldata can either be strict or a partial match, e.g. if you only
+    /// pass a Solidity selector to the expected calldata, then the entire Solidity
+    /// function will be mocked.
+    ///
+    /// Overload to control whether code is injected into `callee`. The other overloads etch a
+    /// single byte into an empty account to circumvent Solidity's `extcodesize` check, with the
+    /// side effect that unmocked calls to it no longer revert; `injectCode = false` leaves the
+    /// account codeless, so unmocked calls to it revert in the caller. Mocked calls that return
+    /// data still succeed, as Solidity checks `returndatasize()` instead of `extcodesize()` when
+    /// return data is expected, but mocked calls to functions without return values may still
+    /// revert in the caller due to the `extcodesize` check.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData, bool injectCode) external;
 
     /// Mocks multiple calls to an address, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -2034,6 +2050,11 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
+    /// Gets all function selectors from a contract artifact. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    #[cheatcode(group = Filesystem)]
+    function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);
+
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
     /// <version>/<profile> parts are optional.
@@ -2556,6 +2577,9 @@ interface Vm {
     /// Parses a string of JSON data at `key` and coerces it to `string[]`.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
+    /// Returns the length of the JSON array at `key`.
+    #[cheatcode(group = Json)]
+    function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
     /// Parses a string of JSON data at `key` and coerces it to `bytes`.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);

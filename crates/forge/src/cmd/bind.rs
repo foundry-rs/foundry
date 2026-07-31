@@ -3,7 +3,10 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
-use foundry_common::{compile::ProjectCompiler, fs::json_files};
+use foundry_common::{
+    compile::{ProjectCompiler, compile_abi_project},
+    fs::json_files,
+};
 use foundry_config::impl_figment_convert;
 use regex::Regex;
 use std::{
@@ -118,8 +121,8 @@ impl BindArgs {
         }
 
         if !self.skip_build {
-            let project = self.build.project()?;
-            let _ = ProjectCompiler::new().compile(&project)?;
+            let mut project = self.build.project()?;
+            let _ = compile_abi_project(&mut project, ProjectCompiler::new())?;
         }
 
         let config = self.load_config()?;

@@ -403,17 +403,20 @@ pub struct ArbitraryStorage {
     /// Mapping of arbitrary storage addresses to generated values (slot, arbitrary value).
     /// (SLOADs return random value if storage slot wasn't accessed).
     /// Changed values are recorded and used to copy storage to different addresses.
-    pub values: HashMap<Address, HashMap<U256, U256>>,
+    values: HashMap<Address, HashMap<U256, U256>>,
     /// Mapping of address with storage copied to arbitrary storage address source.
-    pub copies: HashMap<Address, Address>,
+    copies: HashMap<Address, Address>,
     /// Address with storage slots that should be overwritten even if previously set.
-    pub overwrites: HashSet<Address>,
+    overwrites: HashSet<Address>,
+    /// Storage slots explicitly written with `vm.store`, grouped by address.
+    explicit_slots: HashMap<Address, HashSet<U256>>,
 }
 
 impl ArbitraryStorage {
     /// Marks an address with arbitrary storage.
     pub fn mark_arbitrary(&mut self, address: &Address, overwrite: bool) {
         self.values.insert(*address, HashMap::default());
+        self.explicit_slots.remove(address);
         if overwrite {
             self.overwrites.insert(*address);
         } else {
@@ -425,7 +428,65 @@ impl ArbitraryStorage {
     pub fn mark_copy(&mut self, from: &Address, to: &Address) {
         if self.values.contains_key(from) {
             self.copies.insert(*to, *from);
+            if let Some(slots) = self.explicit_slots.get(from).cloned() {
+                self.explicit_slots.insert(*to, slots);
+            } else {
+                self.explicit_slots.remove(to);
+            }
         }
+    }
+
+    /// Marks a slot as explicitly written if the address has arbitrary or copied storage.
+    fn mark_explicit(&mut self, address: Address, slot: U256) {
+        if self.values.contains_key(&address) || self.copies.contains_key(&address) {
+            self.explicit_slots.entry(address).or_default().insert(slot);
+        }
+    }
+
+    /// Returns whether a slot was explicitly written for the given address.
+    fn is_explicit(&self, address: Address, slot: U256) -> bool {
+        self.explicit_slots.get(&address).is_some_and(|slots| slots.contains(&slot))
+    }
+
+    /// Returns addresses explicitly marked with arbitrary storage.
+    fn targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.values.keys().copied()
+    }
+
+    /// Returns addresses explicitly marked with arbitrary storage and whether nonzero slots are
+    /// overwritten.
+    fn target_overwrite_modes(&self) -> impl Iterator<Item = (Address, bool)> + '_ {
+        self.values.keys().map(|address| (*address, self.overwrites.contains(address)))
+    }
+
+    /// Returns addresses that copy storage from arbitrary-storage targets.
+    fn copied_targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.copies.keys().copied()
+    }
+
+    /// Returns copied arbitrary-storage targets and their source address.
+    fn copied_target_sources(&self) -> impl Iterator<Item = (Address, Address)> + '_ {
+        self.copies.iter().map(|(target, source)| (*target, *source))
+    }
+
+    /// Caches a concrete value for a slot on an arbitrary-storage address or copied target.
+    fn cache_value(&mut self, address: Address, slot: U256, data: U256) {
+        if let Some(values) = self.values.get_mut(&address) {
+            values.insert(slot, data);
+            return;
+        }
+
+        let Some(source) = self.copies.get(&address).copied() else {
+            return;
+        };
+        if let Some(values) = self.values.get_mut(&source) {
+            values.insert(slot, data);
+        }
+    }
+
+    /// Returns a cached arbitrary value for a slot.
+    fn cached_value(&self, address: Address, slot: U256) -> Option<U256> {
+        self.values.get(&address).and_then(|values| values.get(&slot)).copied()
     }
 
     /// Saves arbitrary storage value for a given address:
@@ -483,6 +544,34 @@ impl ArbitraryStorage {
 
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CreatedAccountsFrameKind {
+    Call,
+    Create,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CreatedAccountsFrame {
+    kind: CreatedAccountsFrameKind,
+    depth: usize,
+    checkpoint: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CreatedAccountChange {
+    fork_id: Option<LocalForkId>,
+    address: Address,
+    creation: usize,
+    previous: Option<usize>,
+    committed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CreatedAccountsSnapshot {
+    fork_id: Option<LocalForkId>,
+    bindings: AddressHashMap<usize>,
+}
 
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -553,6 +642,27 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// depth. Once that call context has ended, the last vector is removed from the matrix and
     /// merged into the previous vector.
     pub recorded_account_diffs_stack: Option<Vec<Vec<AccountAccess>>>,
+
+    /// Account accesses performed by the test runner before user code can start recording.
+    pending_account_diffs: Option<Arc<[AccountAccess]>>,
+
+    /// Completed account accesses prepended to the active user recording session.
+    recorded_account_diffs_prefix: Option<Arc<[AccountAccess]>>,
+
+    /// Successfully created accounts in execution order.
+    created_accounts: Vec<Address>,
+
+    /// The creation currently represented by each address on each fork.
+    created_account_bindings: HashMap<(Option<LocalForkId>, Address), usize>,
+
+    /// Revertible changes to creation bindings made by EVM create frames.
+    created_account_changes: Vec<CreatedAccountChange>,
+
+    /// Creation-list checkpoints for frames observed by this inspector.
+    created_accounts_frames: Vec<CreatedAccountsFrame>,
+
+    /// Creation lists captured by state snapshots.
+    created_accounts_snapshots: HashMap<U256, CreatedAccountsSnapshot>,
 
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
@@ -707,6 +817,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             accesses: Default::default(),
             recording_accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
+            pending_account_diffs: Default::default(),
+            recorded_account_diffs_prefix: Default::default(),
+            created_accounts: Default::default(),
+            created_account_bindings: Default::default(),
+            created_account_changes: Default::default(),
+            created_accounts_frames: Default::default(),
+            created_accounts_snapshots: Default::default(),
             recorded_logs: Default::default(),
             record_debug_steps_info: Default::default(),
             mocked_calls: Default::default(),
@@ -745,6 +862,219 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
     pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
         self.analysis = Some(analysis);
+    }
+
+    /// Starts an internal account diff recording session for test runner setup.
+    pub fn start_internal_state_diff_recording(&mut self) -> bool {
+        if self.recorded_account_diffs_stack.is_some()
+            || self.recorded_account_diffs_prefix.is_some()
+        {
+            return false;
+        }
+        self.recorded_account_diffs_stack = Some(Default::default());
+        true
+    }
+
+    /// Stops an internal account diff recording session without leaving recording enabled.
+    pub fn stop_internal_state_diff_recording(&mut self) -> Vec<AccountAccess> {
+        self.recorded_account_diffs_stack.take().unwrap_or_default().into_iter().flatten().collect()
+    }
+
+    /// Makes account accesses captured by the test runner available to the next recording session.
+    pub fn set_pending_account_diffs(&mut self, accesses: Vec<AccountAccess>) {
+        self.pending_account_diffs = (!accesses.is_empty()).then(|| Arc::from(accesses));
+    }
+
+    /// Starts a user account diff recording session, including pending test runner accesses.
+    pub fn start_state_diff_recording(&mut self) {
+        self.recorded_account_diffs_prefix = self.pending_account_diffs.take();
+        self.recorded_account_diffs_stack = Some(Default::default());
+    }
+
+    /// Returns completed and active account accesses in execution order.
+    pub fn recorded_account_diffs(&self) -> impl Iterator<Item = &AccountAccess> {
+        self.recorded_account_diffs_prefix
+            .iter()
+            .flat_map(|prefix| prefix.iter())
+            .chain(self.recorded_account_diffs_stack.iter().flatten().flatten())
+    }
+
+    /// Takes completed account accesses from the active user recording session.
+    pub fn take_recorded_account_diffs_prefix(&mut self) -> Vec<AccountAccess> {
+        self.recorded_account_diffs_prefix
+            .take()
+            .map(|prefix| prefix.as_ref().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Returns the current creation bound to each address on the given fork.
+    pub(crate) fn created_account_bindings(
+        &self,
+        fork_id: Option<LocalForkId>,
+    ) -> AddressHashMap<usize> {
+        self.created_account_bindings
+            .iter()
+            .filter_map(|(&(event_fork_id, address), &creation)| {
+                (event_fork_id == fork_id).then_some((address, creation))
+            })
+            .collect()
+    }
+
+    /// Returns successfully created accounts bound to the given fork in creation order.
+    pub(crate) fn created_accounts(&self, fork_id: Option<LocalForkId>) -> Vec<Address> {
+        let bindings = self.created_account_bindings(fork_id);
+        self.created_accounts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &address)| {
+                (bindings.get(&address) == Some(&index)).then_some(address)
+            })
+            .collect()
+    }
+
+    /// Records a successfully created account.
+    pub(crate) fn record_created_account(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        address: Address,
+    ) {
+        let creation = self.created_accounts.len();
+        self.created_accounts.push(address);
+        let previous = self.created_account_bindings.insert((fork_id, address), creation);
+        self.created_account_changes.push(CreatedAccountChange {
+            fork_id,
+            address,
+            creation,
+            previous,
+            committed: false,
+        });
+    }
+
+    /// Keeps creation bindings saved with an outgoing fork across later frame reverts.
+    pub(crate) fn commit_created_account_changes(&mut self, fork_id: Option<LocalForkId>) {
+        for change in &mut self.created_account_changes {
+            if change.fork_id == fork_id {
+                change.committed = true;
+            }
+        }
+    }
+
+    /// Records shared pre-fork creations on a newly selected fork without replacing local ones.
+    pub(crate) fn record_initial_created_accounts(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        accounts: impl IntoIterator<Item = (Address, usize)>,
+    ) {
+        for (address, creation) in accounts {
+            self.created_account_bindings.entry((fork_id, address)).or_insert(creation);
+        }
+    }
+
+    /// Records creations propagated to a fork with persistent account state.
+    pub(crate) fn record_propagated_accounts(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        accounts: impl IntoIterator<Item = (Address, usize)>,
+    ) {
+        self.created_account_bindings
+            .extend(accounts.into_iter().map(|(address, creation)| ((fork_id, address), creation)));
+    }
+
+    /// Captures creation ordering alongside a state snapshot.
+    pub(crate) fn snapshot_created_accounts(
+        &mut self,
+        snapshot_id: U256,
+        fork_id: Option<LocalForkId>,
+    ) {
+        let bindings = self.created_account_bindings(fork_id);
+        self.created_accounts_snapshots
+            .insert(snapshot_id, CreatedAccountsSnapshot { fork_id, bindings });
+    }
+
+    /// Restores creation ordering from a state snapshot.
+    pub(crate) fn revert_created_accounts(&mut self, snapshot_id: U256, remove: bool) {
+        let snapshot = if remove {
+            self.created_accounts_snapshots.remove(&snapshot_id)
+        } else {
+            self.created_accounts_snapshots.get(&snapshot_id).cloned()
+        };
+        if let Some(snapshot) = snapshot {
+            self.created_account_bindings.retain(|(fork_id, _), _| *fork_id != snapshot.fork_id);
+            self.created_account_bindings.extend(
+                snapshot
+                    .bindings
+                    .into_iter()
+                    .map(|(address, creation)| ((snapshot.fork_id, address), creation)),
+            );
+        }
+    }
+
+    /// Deletes one captured creation-order snapshot.
+    pub(crate) fn delete_created_accounts_snapshot(&mut self, snapshot_id: U256) {
+        self.created_accounts_snapshots.remove(&snapshot_id);
+    }
+
+    /// Deletes all captured creation-order snapshots.
+    pub(crate) fn clear_created_accounts_snapshots(&mut self) {
+        self.created_accounts_snapshots.clear();
+    }
+
+    fn start_created_accounts_frame(
+        &mut self,
+        reset: bool,
+        kind: CreatedAccountsFrameKind,
+        depth: usize,
+    ) {
+        if reset {
+            self.created_accounts.clear();
+            self.created_account_bindings.clear();
+            self.created_account_changes.clear();
+            self.created_accounts_frames.clear();
+            // Earlier snapshots contain no creations from the new root transaction.
+            for snapshot in self.created_accounts_snapshots.values_mut() {
+                snapshot.bindings.clear();
+            }
+        }
+        self.created_accounts_frames.push(CreatedAccountsFrame {
+            kind,
+            depth,
+            checkpoint: self.created_account_changes.len(),
+        });
+    }
+
+    fn finish_created_accounts_frame(
+        &mut self,
+        success: bool,
+        kind: CreatedAccountsFrameKind,
+        depth: usize,
+    ) {
+        let Some(frame) = self
+            .created_accounts_frames
+            .last()
+            .copied()
+            .filter(|frame| frame.kind == kind && frame.depth == depth)
+        else {
+            return;
+        };
+        let checkpoint = frame.checkpoint;
+        self.created_accounts_frames.pop();
+        if !success {
+            while self.created_account_changes.len() > checkpoint {
+                let change = self.created_account_changes.pop().expect("length checked");
+                if change.committed {
+                    continue;
+                }
+                let key = (change.fork_id, change.address);
+                if self.created_account_bindings.get(&key) != Some(&change.creation) {
+                    continue;
+                }
+                if let Some(previous) = change.previous {
+                    self.created_account_bindings.insert(key, previous);
+                } else {
+                    self.created_account_bindings.remove(&key);
+                }
+            }
+        }
     }
 
     /// Returns the env overrides for the given fork (`None` = no-fork / local).
@@ -899,6 +1229,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journal().depth();
+        self.start_created_accounts_frame(
+            curr_depth == 0,
+            CreatedAccountsFrameKind::Call,
+            curr_depth,
+        );
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
@@ -1298,6 +1633,61 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
     }
 
+    /// Returns addresses explicitly marked with arbitrary storage.
+    pub fn arbitrary_storage_targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::targets)
+    }
+
+    /// Returns addresses explicitly marked with arbitrary storage and whether nonzero slots are
+    /// overwritten.
+    pub fn arbitrary_storage_target_overwrite_modes(
+        &self,
+    ) -> impl Iterator<Item = (Address, bool)> + '_ {
+        self.arbitrary_storage
+            .as_ref()
+            .into_iter()
+            .flat_map(ArbitraryStorage::target_overwrite_modes)
+    }
+
+    /// Returns addresses that copy storage from arbitrary-storage targets.
+    pub fn arbitrary_storage_copied_targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::copied_targets)
+    }
+
+    /// Returns copied arbitrary-storage targets and their source address.
+    pub fn arbitrary_storage_copied_target_sources(
+        &self,
+    ) -> impl Iterator<Item = (Address, Address)> + '_ {
+        self.arbitrary_storage
+            .as_ref()
+            .into_iter()
+            .flat_map(ArbitraryStorage::copied_target_sources)
+    }
+
+    /// Caches a concrete replay value for a slot on an arbitrary-storage address or copied target.
+    pub fn cache_arbitrary_storage_value(&mut self, address: Address, slot: U256, value: U256) {
+        if let Some(storage) = &mut self.arbitrary_storage {
+            storage.cache_value(address, slot, value);
+        }
+    }
+
+    /// Marks a slot as explicitly written with `vm.store`.
+    pub fn mark_arbitrary_storage_slot_explicit(&mut self, address: Address, slot: U256) {
+        if let Some(storage) = &mut self.arbitrary_storage {
+            storage.mark_explicit(address, slot);
+        }
+    }
+
+    /// Returns whether a slot was explicitly written with `vm.store`.
+    pub fn is_arbitrary_storage_slot_explicit(&self, address: Address, slot: U256) -> bool {
+        self.arbitrary_storage.as_ref().is_some_and(|storage| storage.is_explicit(address, slot))
+    }
+
+    /// Returns a cached arbitrary-storage replay value for a slot.
+    pub fn cached_arbitrary_storage_value(&self, address: Address, slot: U256) -> Option<U256> {
+        self.arbitrary_storage.as_ref().and_then(|storage| storage.cached_value(address, slot))
+    }
+
     /// Whether the given address has arbitrary storage.
     pub fn has_arbitrary_storage(&self, address: &Address) -> bool {
         match &self.arbitrary_storage {
@@ -1588,13 +1978,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let curr_depth = ecx.journal().depth();
+
+        self.finish_created_accounts_frame(
+            outcome.result.is_ok(),
+            CreatedAccountsFrameKind::Call,
+            curr_depth,
+        );
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
-            let curr_depth = ecx.journal().depth();
             if let Some(prank) = &self.get_prank(curr_depth)
                 && curr_depth == prank.depth
             {
@@ -2041,6 +2437,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         let gas = Gas::new(input.gas_limit());
+        let curr_depth = ecx.journal().depth();
+        self.start_created_accounts_frame(
+            curr_depth == 0,
+            CreatedAccountsFrameKind::Create,
+            curr_depth,
+        );
+
         // Check if we should intercept this create
         if self.intercept_next_create_call {
             // Reset the flag
@@ -2055,8 +2458,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 address: None,
             });
         }
-
-        let curr_depth = ecx.journal().depth();
 
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth)
@@ -2137,6 +2538,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // Allow cheatcodes from the address of the new contract
         let address = input.allow_cheatcodes(self, ecx);
 
+        self.record_created_account(ecx.db().active_fork_id(), address);
+
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             recorded_account_diffs_stack.push(vec![AccountAccess {
@@ -2172,6 +2575,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) {
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
+
+        self.finish_created_accounts_frame(
+            outcome.result.is_ok(),
+            CreatedAccountsFrameKind::Create,
+            curr_depth,
+        );
 
         // Clean up pranks
         if let Some(prank) = &self.get_prank(curr_depth)
@@ -2266,58 +2675,46 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
-        // previous call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            // The root call cannot be recorded.
-            if curr_depth > 0
-                && let Some(last_depth) = &mut recorded_account_diffs_stack.pop()
-            {
-                // Update the reverted status of all deeper calls if this call reverted, in
-                // accordance with EVM behavior
-                if outcome.result.is_revert() {
-                    for element in &mut *last_depth {
-                        element.reverted = true;
-                        for storage_access in &mut element.storageAccesses {
-                            storage_access.reverted = true;
-                        }
+        // previous call depth's recorded accesses, if any.
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack
+            && let Some(mut last_depth) = recorded_account_diffs_stack.pop()
+        {
+            // Update the reverted status of all deeper calls if this call reverted, in
+            // accordance with EVM behavior.
+            if outcome.result.is_revert() {
+                for element in &mut *last_depth {
+                    element.reverted = true;
+                    for storage_access in &mut element.storageAccesses {
+                        storage_access.reverted = true;
                     }
                 }
+            }
 
-                if let Some(create_access) = last_depth.first_mut() {
-                    // Assert that we're at the correct depth before recording post-create state
-                    // changes. Depending on what depth the cheat was called at, there
-                    // may not be any pending calls to update if execution has
-                    // percolated up to a higher depth.
-                    let depth = ecx.journal().depth();
-                    if create_access.depth == depth as u64 {
-                        debug_assert_eq!(
-                            create_access.kind as u8,
-                            crate::Vm::AccountAccessKind::Create as u8
-                        );
-                        if let Some(address) = outcome.address
-                            && let Ok(created_acc) = ecx.journal_mut().load_account(address)
-                        {
-                            create_access.newBalance = created_acc.data.info.balance;
-                            create_access.newNonce = created_acc.data.info.nonce;
-                            create_access.deployedCode = created_acc
-                                .data
-                                .info
-                                .code
-                                .clone()
-                                .unwrap_or_default()
-                                .original_bytes();
-                        }
-                    }
-                    // Merge the last depth's AccountAccesses into the AccountAccesses at the
-                    // current depth, or push them back onto the pending
-                    // vector if higher depths were not recorded. This
-                    // preserves ordering of accesses.
-                    if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.append(last_depth);
-                    } else {
-                        recorded_account_diffs_stack.push(last_depth.clone());
+            if let Some(create_access) = last_depth.first_mut() {
+                // Update post-create state only if recording began before this frame.
+                if create_access.depth == curr_depth as u64 {
+                    debug_assert_eq!(
+                        create_access.kind as u8,
+                        crate::Vm::AccountAccessKind::Create as u8
+                    );
+                    if let Some(address) = outcome.address
+                        && let Ok(created_acc) = ecx.journal_mut().load_account(address)
+                    {
+                        create_access.newBalance = created_acc.data.info.balance;
+                        create_access.newNonce = created_acc.data.info.nonce;
+                        create_access.deployedCode =
+                            created_acc.data.info.code.clone().unwrap_or_default().original_bytes();
                     }
                 }
+            }
+            // Merge the last depth's AccountAccesses into the AccountAccesses at the
+            // current depth, or push them back onto the pending
+            // vector if higher depths were not recorded. This
+            // preserves ordering of accesses.
+            if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                last.append(&mut last_depth);
+            } else {
+                recorded_account_diffs_stack.push(last_depth);
             }
         }
 
@@ -2527,6 +2924,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             return;
         };
 
+        if self.is_arbitrary_storage_slot_explicit(target_address, key) {
+            return;
+        }
+
         let Some(value) = ecx.sload(target_address, key) else {
             return;
         };
@@ -2535,7 +2936,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.should_overwrite_arbitrary_storage(&target_address, key)
         {
             if self.has_arbitrary_storage(&target_address) {
-                let arbitrary_value = self.rng().random();
+                let arbitrary_value = self
+                    .cached_arbitrary_storage_value(target_address, key)
+                    .unwrap_or_else(|| self.rng().random());
                 self.arbitrary_storage.as_mut().unwrap().save(
                     ecx,
                     target_address,
@@ -3066,7 +3469,11 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
             }
         };
     }
-    let mut result = vm_calls!(dispatch);
+    let mut result = if ccx.state.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
+        Err(fmt_err!("disabled during restricted execution"))
+    } else {
+        vm_calls!(dispatch)
+    };
 
     // Format the error message to include the cheatcode name.
     if let Err(e) = &mut result
@@ -3217,5 +3624,19 @@ mod tests {
             Default::default(),
         ));
         assert!(cheats.has_log_hooks());
+    }
+
+    #[test]
+    fn arbitrary_storage_cache_value_routes_copied_targets_to_source() {
+        let mut storage = ArbitraryStorage::default();
+        let source = Address::repeat_byte(0x11);
+        let copied = Address::repeat_byte(0x22);
+        let slot = U256::from(7);
+
+        storage.mark_arbitrary(&source, false);
+        storage.mark_copy(&source, &copied);
+        storage.cache_value(copied, slot, U256::ZERO);
+
+        assert_eq!(storage.cached_value(source, slot), Some(U256::ZERO));
     }
 }

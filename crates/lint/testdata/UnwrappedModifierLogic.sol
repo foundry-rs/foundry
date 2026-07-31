@@ -112,6 +112,35 @@ contract UnwrappedModifierLogicTest {
         checkPublic(sender);
     }
 
+    // Bad because there are multiple valid function calls before the placeholder.
+    // The single call after the placeholder must be preserved in the rewrite.
+    modifier beforeWrappedAfterKept(address sender) { //~NOTE: wrap modifier logic to reduce code size
+        checkPublic(sender); // These should become _beforeWrappedAfterKept(sender)
+        checkPrivate(sender);
+        _;
+        checkInternal(sender); // This should stay in the modifier
+    }
+
+    // Bad because there are multiple valid function calls after the placeholder.
+    // The single call before the placeholder must be preserved in the rewrite.
+    modifier afterWrappedBeforeKept(address sender) { //~NOTE: wrap modifier logic to reduce code size
+        checkPublic(sender); // This should stay in the modifier
+        _;
+        checkPrivate(sender); // These should become _afterWrappedBeforeKept(sender)
+        checkInternal(sender);
+    }
+
+    // Bad because there are multiple valid function calls after the placeholder.
+    // The assembly block before the placeholder must be preserved in the rewrite.
+    modifier keepAssemblyBefore() { //~NOTE: wrap modifier logic to reduce code size
+        assembly ("memory-safe") {
+            mstore(0x00, 0)
+        }
+        _;
+        checkPublic(msg.sender); // These should become _keepAssemblyBefore()
+        checkPrivate(msg.sender);
+    }
+
     /// -----------------------------------------------------------------------
     /// Bad patterns (uses built-in control flow)
     /// -----------------------------------------------------------------------
@@ -173,5 +202,63 @@ contract UnwrappedModifierLogicTest {
     modifier onlyOwnerContract(address sender) { //~NOTE: wrap modifier logic to reduce code size
         c.onlyOwner(sender);
         _;
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Exceptions (locals declared before the placeholder and used after it)
+    /// -----------------------------------------------------------------------
+
+    function gasLeft() internal view returns (uint256) {
+        return gasleft();
+    }
+
+    function _payMeSubsidizedGasAfter(uint256 pre, uint256 amount) internal {}
+
+    // No lint: `pre` cannot be forwarded to the extracted helper.
+    modifier payMeSubsidizedGas(uint256 amount) {
+        uint256 pre = gasLeft();
+        _;
+        _payMeSubsidizedGasAfter(pre, amount);
+    }
+
+    // No lint: `pre` is shared across the placeholder, even though both sides would
+    // otherwise be wrapped.
+    modifier payMeSubsidizedGasAndLog(uint256 amount) {
+        uint256 pre = gasLeft();
+        checkPublic(msg.sender);
+        _;
+        checkPrivate(msg.sender);
+        _payMeSubsidizedGasAfter(pre, amount);
+    }
+
+    // No lint: `pre` is used after the placeholder, and the assembly block prevents
+    // wrapping the declaring side.
+    modifier trackFreeMemory() {
+        uint256 pre;
+        assembly ("memory-safe") {
+            pre := mload(0x40)
+        }
+        _;
+        checkPublic(msg.sender);
+        require(pre != 0, "no free memory");
+    }
+
+    // No lint: `m` is used inside the assembly block after the placeholder.
+    modifier restoreFreeMemory() {
+        uint256 m = gasLeft();
+        checkPublic(msg.sender);
+        _;
+        assembly ("memory-safe") {
+            mstore(0x40, m)
+        }
+    }
+
+    // No lint: `amount` is mutated before the placeholder and read after it.
+    // Extracting the pre-placeholder side into a helper would mutate only the helper's
+    // by-value parameter copy, while the post-placeholder code would see the original value.
+    modifier mutatedParamUsedAfter(uint256 amount) {
+        amount += 1;
+        _;
+        _payMeSubsidizedGasAfter(amount, amount);
     }
 }

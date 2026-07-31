@@ -1,4 +1,6 @@
+use crate::utils;
 use alloy_chains::Chain;
+use alloy_primitives::hex;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
 use foundry_test_utils::{
@@ -383,3 +385,274 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
 //         Chain::base_mainnet(),
 //     ).await;
 // });
+
+// Tests that `verify-bytecode` works without any external block explorer, relying only on the
+// local project and an RPC endpoint.
+// <https://github.com/foundry-rs/foundry/issues/13479>
+forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = alloy_primitives::hex::encode(wallet.credential().to_bytes());
+
+    // Deploy the template contract; first tx of the default dev account.
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+    let output = cmd
+        .args([
+            "create",
+            "./src/Counter.sol:Counter",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let address = output
+        .lines()
+        .find_map(|line| line.strip_prefix("Deployed to: "))
+        .expect("contract address in `forge create` output")
+        .to_string();
+
+    // The local anvil chain has no block explorer: the command must still verify the runtime
+    // bytecode and only warn about the unavailable explorer data.
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+    let assert = cmd
+        .args(["verify-bytecode", &address, "Counter", "--rpc-url", rpc.as_str()])
+        .assert_success();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+
+    assert!(stdout.contains("Runtime code matched"), "{stdout}");
+    assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+
+    // `--ignore runtime` must skip the runtime fallback as well: with no creation data either,
+    // there is nothing left to verify.
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+    let assert = cmd
+        .args([
+            "verify-bytecode",
+            &address,
+            "Counter",
+            "--rpc-url",
+            rpc.as_str(),
+            "--ignore",
+            "runtime",
+        ])
+        .assert_success();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+
+    assert!(!stdout.contains("Runtime code matched"), "{stdout}");
+    assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+
+    // An explicitly configured but broken verifier must surface an error instead of being
+    // silently treated as "no explorer".
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+    cmd.args([
+        "verify-bytecode",
+        &address,
+        "Counter",
+        "--rpc-url",
+        rpc.as_str(),
+        "--verifier-url",
+        "this-is-not-a-url",
+    ])
+    .assert_failure();
+});
+
+forgetest_async!(can_verify_bytecode_with_libraries, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| config.libraries.clear());
+    prj.add_source(
+        "Libraries",
+        r#"
+library FirstLib {
+    function compute(uint256 value) external pure returns (uint256) {
+        return value + 1;
+    }
+}
+
+library SecondLib {
+    function compute(uint256 value) external pure returns (uint256) {
+        return value * 2;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "LinkedContract",
+        r#"
+import {FirstLib, SecondLib} from "./Libraries.sol";
+
+contract LinkedContract {
+    uint256 public immutable initial;
+
+    constructor() {
+        initial = SecondLib.compute(FirstLib.compute(20));
+    }
+
+    function compute(uint256 value) external view returns (uint256) {
+        return SecondLib.compute(FirstLib.compute(value));
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    cmd.forge_fuse();
+    cmd.unset_env("DAPP_LIBRARIES");
+    cmd.unset_env("FOUNDRY_LIBRARIES");
+    cmd.unset_env("FOUNDRY_CONFIG");
+    let output = cmd
+        .args([
+            "create",
+            "src/Libraries.sol:FirstLib",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let first_lib = utils::parse_deployed_address(&output)
+        .unwrap_or_else(|| panic!("Failed to parse deployed library address: {output}"));
+
+    cmd.forge_fuse();
+    cmd.unset_env("DAPP_LIBRARIES");
+    cmd.unset_env("FOUNDRY_LIBRARIES");
+    cmd.unset_env("FOUNDRY_CONFIG");
+    let output = cmd
+        .args([
+            "create",
+            "src/Libraries.sol:SecondLib",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let second_lib = utils::parse_deployed_address(&output)
+        .unwrap_or_else(|| panic!("Failed to parse deployed library address: {output}"));
+
+    let first_lib_spec = format!("src/Libraries.sol:FirstLib:{first_lib}");
+    let second_lib_spec = format!("src/Libraries.sol:SecondLib:{second_lib}");
+
+    cmd.forge_fuse();
+    cmd.unset_env("DAPP_LIBRARIES");
+    cmd.unset_env("FOUNDRY_LIBRARIES");
+    cmd.unset_env("FOUNDRY_CONFIG");
+    let output = cmd
+        .args([
+            "create",
+            "src/LinkedContract.sol:LinkedContract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--libraries",
+            first_lib_spec.as_str(),
+            "--libraries",
+            second_lib_spec.as_str(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let contract = utils::parse_deployed_address(&output)
+        .unwrap_or_else(|| panic!("Failed to parse deployed contract address: {output}"));
+
+    // Explicit CLI values must take precedence over configured addresses for the same libraries.
+    prj.update_config(|config| {
+        config.libraries = vec![
+            "src/Libraries.sol:FirstLib:0x1111111111111111111111111111111111111111".to_string(),
+            "src/Libraries.sol:SecondLib:0x2222222222222222222222222222222222222222".to_string(),
+        ];
+    });
+
+    // Ensure verification recompiles with its own linker arguments rather than reusing the
+    // artifacts produced by `forge create`.
+    prj.clear();
+
+    cmd.forge_fuse();
+    cmd.unset_env("DAPP_LIBRARIES");
+    cmd.unset_env("FOUNDRY_LIBRARIES");
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+    let assert = cmd
+        .args([
+            "verify-bytecode",
+            contract.as_str(),
+            "src/LinkedContract.sol:LinkedContract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--libraries",
+            first_lib_spec.as_str(),
+            "--libraries",
+            second_lib_spec.as_str(),
+        ])
+        .assert_success();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+
+    assert!(stdout.contains("Runtime code matched with status full"), "{stdout}");
+    assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+
+    // Multi-library environment values continue to be parsed by the configuration provider.
+    prj.update_config(|config| config.libraries.clear());
+    prj.clear();
+
+    cmd.forge_fuse();
+    cmd.env("DAPP_LIBRARIES", format!("{first_lib_spec},{second_lib_spec}"));
+    cmd.unset_env("FOUNDRY_LIBRARIES");
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+    let assert = cmd
+        .args([
+            "verify-bytecode",
+            contract.as_str(),
+            "src/LinkedContract.sol:LinkedContract",
+            "--rpc-url",
+            rpc.as_str(),
+        ])
+        .assert_success();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+
+    assert!(stdout.contains("Runtime code matched with status full"), "{stdout}");
+    assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+});

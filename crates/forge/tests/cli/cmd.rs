@@ -36,7 +36,10 @@ Options:
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
           
-          [aliases: --jobs]
+          [alias: --jobs]
+
+      --profile <PROFILE>
+          The configuration profile to use
 
   -V, --version
           Print version
@@ -762,6 +765,27 @@ Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d735
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
+// Checks that clone follows the SparkLend USDS proxy to its AToken implementation.
+forgetest!(flaky_can_clone_proxy_implementation, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--implementation",
+        "0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359",
+    ])
+    .arg(prj.root())
+    .assert_success();
+
+    let metadata: serde_json::Value =
+        serde_json::from_str(&read_string(prj.root().join(".clone.meta"))).unwrap();
+    assert_eq!(metadata["targetContract"], "AToken");
+    assert_eq!(metadata["address"], "0x6175ddec3b9b38c88157c10a01ed4a3fa8639cc6");
+    assert!(prj.root().join(metadata["path"].as_str().unwrap()).exists());
+});
+
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone
 forgetest!(flaky_can_clone_with_no_commit, |prj, cmd| {
     prj.wipe();
@@ -992,8 +1016,8 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
     );
     assert!(
         foundry_toml.contains("[rpc_endpoints]")
-            && foundry_toml.contains("tempo = \"https://rpc.tempo.xyz/\"")
-            && foundry_toml.contains("moderato = \"https://rpc.moderato.tempo.xyz/\""),
+            && foundry_toml.contains("tempo = \"https://rpc.mpp.tempo.xyz\"")
+            && foundry_toml.contains("moderato = \"https://rpc.mpp.moderato.tempo.xyz\""),
         "foundry.toml should contain tempo rpc_endpoints, got:\n{foundry_toml}"
     );
 
@@ -1733,7 +1757,11 @@ forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
         r"
 pragma solidity *;
 contract A {
-    function testExample() public {}
+    event Example();
+
+    function testExample() public {
+        emit Example();
+    }
 }
    ",
     );
@@ -3891,6 +3919,29 @@ forgetest!(inspect_custom_counter_abi, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
+
+    let artifact_path = prj.paths().artifacts.join("Counter.sol/Counter.json");
+
+    cmd.args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    assert!(!artifact_path.exists());
+
+    cmd.forge_fuse().arg("build").assert_success();
+    let built = std::fs::read(&artifact_path).unwrap();
+    let artifact: serde_json::Value =
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
+    let bytecode = artifact["bytecode"]["object"]
+        .as_str()
+        .expect("build artifact should include creation bytecode");
+    assert!(bytecode.starts_with("0x"));
+    assert!(bytecode.len() > 2);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    let inspected = std::fs::read(&artifact_path).unwrap();
+    assert_eq!(built, inspected);
+});
+
 forgetest!(inspect_custom_counter_events, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -4167,6 +4218,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "viaSSACFG": false,
     "experimental": false,
     "libraries": {}
   }

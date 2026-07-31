@@ -51,6 +51,7 @@ alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
 alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-mev.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",
@@ -98,6 +99,7 @@ thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
+imbl.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
 ethereum_ssz.workspace = true

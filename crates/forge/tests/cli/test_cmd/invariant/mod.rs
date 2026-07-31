@@ -16,6 +16,81 @@ fn assert_invariant(cmd: &mut TestCommand) -> OutputAssert {
     ])
 }
 
+forgetest_init!(warns_for_ignored_bool_invariant_return, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+    });
+    prj.add_test(
+        "InvariantReturns.t.sol",
+        r#"
+contract Handler {
+    uint256 public value;
+
+    function increment() external {
+        value++;
+    }
+}
+
+contract BoolInvariantTest {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function invariant_returnsFalse() public pure returns (bool) {
+        return false;
+    }
+}
+
+contract NoReturnInvariantTest {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function invariant_noReturn() public pure {}
+}
+
+contract OptimizationInvariantTest {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function invariant_optimization() public view returns (int256) {
+        return int256(handler.value());
+    }
+}
+   "#,
+    );
+
+    assert_invariant(cmd.args(["test", "--mc", "BoolInvariantTest"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+[PASS] invariant_returnsFalse() ([RUNS])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Invariant function `invariant_returnsFalse()` returns `bool`, but its return value is ignored; use assertions or revert to indicate failure.
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "NoReturnInvariantTest"])
+        .assert_success()
+        .stderr_eq(str![""]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "OptimizationInvariantTest"])
+        .assert_success()
+        .stderr_eq(str![""]);
+});
+
 // Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
 forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {
     prj.update_config(|config| {
@@ -1434,6 +1509,49 @@ contract JsonInvariantReportTest is Test {
     let safe = predicates.iter().find(|predicate| predicate["name"] == "invariant_safe").unwrap();
     assert_eq!(safe["status"], "Success");
     assert!(safe.get("reason").is_none());
+});
+
+forgetest_init!(forge_test_defaults_invariant_workers_to_auto, |prj, cmd| {
+    prj.add_test(
+        "AutoInvariantWorkers.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AutoInvariantWorkersHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract AutoInvariantWorkersTest is Test {
+    AutoInvariantWorkersHandler handler;
+
+    function setUp() public {
+        handler = new AutoInvariantWorkersHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_break() public view {
+        require(handler.counter() == 0, "broken");
+    }
+}
+   "#,
+    );
+
+    prj.update_config(|config| {
+        config.invariant.workers = foundry_config::InvariantWorkers::default();
+    });
+    cmd.unset_env("FOUNDRY_INVARIANT_WORKERS");
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "20000");
+    cmd.env("FOUNDRY_INVARIANT_DEPTH", "500");
+    cmd.env("FOUNDRY_INVARIANT_SHRINK_RUN_LIMIT", "0");
+    let output = cmd.args(["test", "--json", "--threads", "2"]).assert_failure();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let suite = json.as_object().unwrap().values().next().unwrap();
+    let result = suite["test_results"].as_object().unwrap().values().next().unwrap();
+    assert_eq!(result["kind"]["Invariant"]["workers"], 2, "{json}");
 });
 
 forgetest_init!(invariant_campaign_reports_secondary_skip, |prj, cmd| {

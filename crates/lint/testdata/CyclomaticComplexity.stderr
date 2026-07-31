@@ -1,0 +1,48 @@
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │     function elevenBranches(uint256 x) internal {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │     function mixedForms(uint256 x) internal {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │     function yulSwitchNoDefault(uint256 x) internal {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │     function modifierArgTernary(uint256 x) internal complexModifier(x == 0 ? 1 : 2) {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │     constructor(uint256 x) ComplexityBase(x == 0 ? 1 : 2) {
+   │     ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │             function helper(v) -> o {
+   │                      ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+

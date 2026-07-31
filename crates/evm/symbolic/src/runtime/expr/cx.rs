@@ -1,10 +1,13 @@
 use super::{hashcons::HashCons, *};
+use alloy_primitives::map::DefaultHashBuilder;
+use inturn::unsync::Interner;
 
 pub(crate) struct SymCx {
     words: HashCons<SymExprKind>,
     bools: HashCons<SymBoolExprKind>,
     bytes: HashCons<SymBytesKind>,
-    symbols: HashMap<Arc<str>, Symbol>,
+    symbols: Interner<Symbol, DefaultHashBuilder>,
+    concrete_keccak_preimages: HashMap<U256, Arc<[SymExpr]>>,
     cache: SymCxCache,
 }
 
@@ -33,7 +36,8 @@ impl SymCx {
             words,
             bools,
             bytes,
-            symbols: HashMap::default(),
+            symbols: Interner::with_hasher(DefaultHashBuilder::default()),
+            concrete_keccak_preimages: HashMap::default(),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
         }
     }
@@ -66,13 +70,31 @@ impl SymCx {
     }
 
     pub(crate) fn intern(&mut self, name: &str) -> Symbol {
-        if let Some(symbol) = self.symbols.get(name) {
-            return symbol.clone();
-        }
-        let name = Arc::<str>::from(name);
-        let symbol = Symbol::new(name.clone());
-        self.symbols.insert(name, symbol.clone());
-        symbol
+        self.symbols.intern_mut(name)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn symbol(&self, name: &str) -> Symbol {
+        self.symbols.intern(name)
+    }
+
+    pub(crate) fn symbol_name(&self, symbol: Symbol) -> &str {
+        self.symbols.resolve(symbol)
+    }
+
+    pub(in crate::runtime::expr) fn record_concrete_keccak_preimage(
+        &mut self,
+        hash: U256,
+        bytes: Arc<[SymExpr]>,
+    ) {
+        self.concrete_keccak_preimages.entry(hash).or_insert(bytes);
+    }
+
+    pub(in crate::runtime::expr) fn concrete_keccak_preimage(
+        &self,
+        hash: U256,
+    ) -> Option<Arc<[SymExpr]>> {
+        self.concrete_keccak_preimages.get(&hash).cloned()
     }
 }
 
@@ -98,7 +120,7 @@ mod tests {
         let first = SymExpr::constant(&mut cx, U256::from(42));
         let second = SymExpr::constant(&mut cx, U256::from(42));
 
-        assert!(first.ptr_eq(&second));
+        assert_eq!(first, second);
     }
 
     #[test]
@@ -110,7 +132,25 @@ mod tests {
         let first = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
         let second = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
 
-        assert!(first.ptr_eq(&second));
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn commutative_ops_place_constants_on_rhs() {
+        let mut cx = SymCx::new();
+        let constant_value = U256::from(7);
+
+        for op in [SymBinOp::Add, SymBinOp::Mul, SymBinOp::And, SymBinOp::Or, SymBinOp::Xor] {
+            let x = SymExpr::var(&mut cx, "x");
+            let constant = SymExpr::constant(&mut cx, constant_value);
+            let expr = SymExpr::binop(&mut cx, op, constant, x.clone());
+            let SymExprKind::BinOp(actual_op, left, right) = expr.kind() else {
+                panic!("expected binary expression");
+            };
+            assert_eq!(*actual_op, op);
+            assert_eq!(left, &x);
+            assert_eq!(right.as_const(), Some(constant_value));
+        }
     }
 
     #[test]
@@ -122,7 +162,7 @@ mod tests {
         let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), upper.clone());
         let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, upper);
 
-        assert!(first.ptr_eq(&second));
+        assert_eq!(first, second);
     }
 
     #[test]

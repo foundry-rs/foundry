@@ -7,9 +7,10 @@ Flags explicit numeric typecasts that can silently truncate or alter the value.
 
 ## What it does
 
-Reports casts where the source value's type is wider than the target type
-(e.g. `uint256 → uint128`, `int256 → uint128`), unless the cast is preceded by a check that
-guarantees the value fits in the target.
+Reports casts where the source value's type can exceed the target type (for example,
+`uint256 → uint128` or `int256 → uint128`). An unsigned value masked to the target width, such
+as `uint8(value & 0xff)`, is recognized as bounded and is not flagged. The lint does not perform
+control-flow analysis of preceding range checks.
 
 ## Why is this bad?
 
@@ -31,10 +32,9 @@ function setAmount(uint256 amount) external {
 
 ```solidity
 function setAmount(uint256 amount) external {
-    require(amount <= type(uint128).max, "overflow");
-    smallAmount = uint128(amount);
+    smallAmount = SafeCast.toUint128(amount);
 }
 
-// or
-smallAmount = SafeCast.toUint128(amount);
+// A mask that bounds the value to the target width is also recognized.
+smallByte = uint8(amount & 0xff);
 ```

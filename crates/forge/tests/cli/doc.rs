@@ -4,6 +4,7 @@ use foundry_test_utils::{
     str,
     util::{RemoteProject, setup_forge_remote},
 };
+use std::fs;
 
 #[test]
 fn can_generate_solmate_docs() {
@@ -11,6 +12,142 @@ fn can_generate_solmate_docs() {
         setup_forge_remote(RemoteProject::new("transmissions11/solmate").set_build(false));
     prj.forge_command().args(["doc"]).assert_success();
 }
+
+forgetest_init!(doc_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source(
+        "DocTarget.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract DocTarget {
+    /// @notice Returns a value.
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    let artifact = prj.root().join("out/DocTarget.sol/DocTarget.json");
+    cmd.args(["doc"]).assert_success();
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.forge_fuse().args(["doc"]).assert_success();
+    let after = fs::read(&artifact).unwrap();
+    assert_eq!(after, b"sentinel");
+});
+
+forgetest_init!(doc_supports_empty_projects, |_prj, cmd| {
+    cmd.arg("doc").assert_success();
+});
+
+forgetest_init!(doc_uses_configured_commit_for_source_links, |prj, cmd| {
+    prj.add_source(
+        "Revision.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Revision {}
+"#,
+    );
+    prj.update_config(|config| {
+        config.doc.repository = Some("https://github.com/foundry-rs/foundry".to_string());
+        config.doc.commit = Some("v1.2.3".to_string());
+    });
+
+    cmd.arg("doc").assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Revision.mdx"), None),
+        str![[r#"
+...
+[Git Source](https://github.com/foundry-rs/foundry/blob/v1.2.3/src/Revision.sol)
+...
+"#]],
+    );
+});
+
+forgetest!(doc_supports_mixed_solidity_versions, |prj, cmd| {
+    prj.add_source(
+        "New.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract New {}
+"#,
+    );
+    prj.add_source(
+        "Old.sol",
+        r#"
+pragma solidity 0.7.6;
+
+contract Old {}
+"#,
+    );
+
+    cmd.arg("doc").assert_success();
+    assert!(prj.root().join("docs/src/pages/src/contract.New.mdx").exists());
+    assert!(prj.root().join("docs/src/pages/src/contract.Old.mdx").exists());
+});
+
+#[cfg(unix)]
+forgetest_init!(doc_does_not_run_solc, |prj, cmd| {
+    use std::os::unix::fs::PermissionsExt;
+
+    prj.add_source(
+        "DocTarget.sol",
+        r#"
+pragma solidity ^0.8.35;
+
+contract DocTarget {
+    /// @notice Returns a value.
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Skipped.sol",
+        r#"
+pragma solidity ^0.8.35;
+
+contract Skipped {}
+"#,
+    );
+
+    let solc = prj.root().join("fake-solc");
+    let invoked = prj.root().join("fake-solc.invoked");
+    fs::write(
+        &solc,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.35+commit.69074fbd"
+    exit 0
+fi
+touch "$0.invoked"
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc));
+        config.skip = vec!["*Skipped*".parse().unwrap()];
+    });
+
+    cmd.arg("doc").assert_success();
+    assert!(!invoked.exists(), "forge doc invoked the configured solc binary");
+    assert!(!prj.root().join("docs/src/pages/src/contract.Skipped.mdx").exists());
+});
 
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments
 // fixes <https://github.com/foundry-rs/foundry/issues/11823>
@@ -80,6 +217,76 @@ function deposit(uint256 amount) external;
 
 Withdraw tokens from the vault
 ...
+"#]],
+    );
+});
+
+// NatSpec text must never reach the MDX page as executable ESM: MDX runs a line whose first
+// token is `import`/`export` as code. The text can even be inherited from another contract
+// through `@inheritdoc`, so a dependency's doc comment could inject into the derived page.
+forgetest_init!(natspec_neutralizes_esm_statement_lines, |prj, cmd| {
+    prj.add_source(
+        "EsmBase.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IEsm {
+    /// @notice export const injected = 1
+    function act(uint256 v) external;
+}
+"#,
+    );
+    prj.add_source(
+        "EsmChild.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./EsmBase.sol";
+
+/// @notice import somesecret from the outside
+contract EsmChild is IEsm {
+    /// @inheritdoc IEsm
+    function act(uint256 v) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.EsmChild.mdx"), None),
+        str![[r#"
+---
+title: "EsmChild"
+description: "import somesecret from the outside"
+---
+
+# EsmChild
+
+**Inherits:** [IEsm](/src/interface.IEsm)
+
+&#105;&#109;port somesecret from the outside
+
+## Functions
+
+<a id="act-uint256"></a>
+
+### act
+
+&#101;xport const injected = 1
+
+```solidity
+function act(uint256 v) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| v | `uint256` |  |
+
+
 "#]],
     );
 });
@@ -629,6 +836,122 @@ Configure by account.
     );
 });
 
+// Test that @inheritdoc parameter descriptions are matched when an implementation
+// prefixes or suffixes interface parameter names with underscores.
+forgetest_init!(inheritdoc_matches_underscore_wrapped_param_names, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    /// @notice Mints tokens.
+    /// @param recipient The account receiving minted tokens.
+    /// @param amount The number of tokens to mint.
+    function mint(address recipient, uint256 amount) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function mint(address recipient_, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+### mint
+
+Mints tokens.
+
+```solidity
+function mint(address recipient_, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| recipient_ | `address` | The account receiving minted tokens. |
+| _amount | `uint256` | The number of tokens to mint. |
+...
+"#]],
+    );
+});
+
+// If two inherited params normalize to the same underscore-trimmed name, fuzzy matching must not
+// let the first inherited param steal the exact current param's docs.
+forgetest_init!(inheritdoc_does_not_fuzzy_match_ambiguous_inherited_params, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    /// @notice Updates values.
+    /// @param amount Docs for first param.
+    /// @param _amount Docs for second param.
+    function update(uint256 amount, uint256 _amount) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function update(uint256 other, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+### update
+
+Updates values.
+
+```solidity
+function update(uint256 other, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| other | `uint256` |  |
+| _amount | `uint256` | Docs for second param. |
+...
+"#]],
+    );
+});
+
 // Test that overload matching uses canonical HIR/ABI parameter types so that
 // `Base.batch(uint[])` is correctly matched by `Child.batch(uint256[])`.
 forgetest_init!(inheritdoc_overload_matches_uint_array_alias, |prj, cmd| {
@@ -1030,7 +1353,7 @@ Recover the signer address from `v`, `r`, `s` components.
 
 <i>
 
-Overload of [ECDSA.tryRecover](/src/library.ECDSA#tryrecover-bytes32-bytes) that receives the `v`,
+Overload of [ECDSA.tryRecover](#tryrecover-bytes32-bytes) that receives the `v`,
 `r` and `s` signature fields separately.
 
 Documentation for signature generation:
@@ -1125,6 +1448,419 @@ uint256 public totalSupply;
 // when another contract with the same name lives in a directory closer to the
 // consumer. Without exact-id resolution, the proximity heuristic in
 // `resolve_page` would (wrongly) link to the same-directory namesake.
+// Test that references naming a member of the current contract resolve to anchor-only
+// links on the same page ({member} and {Contract-member} self-references), and that
+// same-file inheritance links to the same-file base instead of a same-named decoy.
+// fixes <https://github.com/foundry-rs/foundry/issues/11677>
+forgetest_init!(same_contract_references_resolve_to_anchors, |prj, cmd| {
+    // Decoys: same-named library and interface in a sibling directory that sorts
+    // first; references in `external/OlympusERC20.sol` must not resolve to them.
+    prj.add_source(
+        "decoys/Decoys.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library ECDSA {
+    function tryRecover(bytes32 hash) internal pure returns (address) {}
+}
+
+interface IERC20 {
+    function balanceOf(address owner) external view returns (uint256);
+}
+"#,
+    );
+
+    prj.add_source(
+        "external/OlympusERC20.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library ECDSA {
+    /// @dev A safe way to ensure this is by receiving a hash of the original
+    /// message and then calling {toEthSignedMessageHash} on it.
+    function recover(bytes32 hash) internal pure returns (address) {}
+
+    /// @dev Overload of {ECDSA-tryRecover-bytes32-bytes32}; not {ECDSA-tryRecover-address}.
+    function tryRecover(bytes32 hash, bytes32 r) internal pure returns (address) {}
+
+    function toEthSignedMessageHash(bytes32 hash) internal pure returns (bytes32) {}
+}
+
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+}
+
+interface IOHM is IERC20 {
+    function mint(address account_) external;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    // Same-contract member references become anchor-only links.
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/external/library.ECDSA.mdx"), None),
+        str![[r#"
+---
+title: "ECDSA"
+---
+
+# ECDSA
+
+## Functions
+
+<a id="recover-bytes32"></a>
+
+### recover
+
+<i>
+
+A safe way to ensure this is by receiving a hash of the original
+message and then calling [toEthSignedMessageHash](#toethsignedmessagehash) on it.
+
+</i>
+
+```solidity
+function recover(bytes32 hash) internal pure returns (address);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `address` |  |
+
+<a id="tryrecover-bytes32-bytes32"></a>
+
+### tryRecover
+
+<i>
+
+Overload of [ECDSA.tryRecover-bytes32-bytes32](#tryrecover-bytes32-bytes32); not `ECDSA`.
+
+</i>
+
+```solidity
+function tryRecover(bytes32 hash, bytes32 r) internal pure returns (address);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` |  |
+| r | `bytes32` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `address` |  |
+
+<a id="toethsignedmessagehash-bytes32"></a>
+
+### toEthSignedMessageHash
+
+```solidity
+function toEthSignedMessageHash(bytes32 hash) internal pure returns (bytes32);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `bytes32` |  |
+
+
+"#]],
+    );
+
+    // Same-file inheritance links to the same-file interface, not the decoy.
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/external/interface.IOHM.mdx"), None),
+        str![[r#"
+---
+title: "IOHM"
+---
+
+# IOHM
+
+**Inherits:** [IERC20](/src/external/interface.IERC20)
+
+## Functions
+
+<a id="mint-address"></a>
+
+### mint
+
+```solidity
+function mint(address account_) external;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| account_ | `address` |  |
+
+
+"#]],
+    );
+});
+
+forgetest_init!(inherited_member_references_resolve_to_base_page, |prj, cmd| {
+    prj.add_source(
+        "base/A.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract A {
+    struct Payload {
+        uint256 value;
+    }
+
+    uint256 public balance$raw;
+    uint256 private secret;
+
+    error Failure();
+    event Fired();
+    enum State { Ready }
+
+    function foo() external {}
+    function overloaded(uint256 value) external {}
+    function hidden() private {}
+
+    function withAssembly() external pure {
+        assembly {
+            function helper() {}
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "consumer/A.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract A {
+    function foo() external {}
+}
+
+contract Utility {
+    function work() external {}
+}
+"#,
+    );
+    prj.add_source(
+        "consumer/B.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {A as BaseA} from "../base/A.sol";
+
+contract B is BaseA {
+    /// @notice See {foo} or {A-foo}.
+    /// Also see {Payload}, {Failure}, {Fired}, {State}, and {balance$raw}.
+    /// The Yul function {helper} has no documentation heading.
+    /// Private members {hidden} and {secret} are not inherited.
+    /// The qualified Yul function {A-helper} has no documentation heading.
+    /// Exact overload {A-overloaded-uint256}; missing overload {A-overloaded-address}.
+    /// Non-inherited qualified reference {Utility-work} still resolves globally.
+    function bar() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/consumer/contract.B.mdx"), None),
+        str![[r#"
+...
+See [foo](/src/base/contract.A#foo) or [A.foo](/src/base/contract.A#foo).
+Also see [Payload](/src/base/contract.A#payload), [Failure](/src/base/contract.A#failure), [Fired](/src/base/contract.A#fired), [State](/src/base/contract.A#state), and [balance$raw](/src/base/contract.A#balanceraw).
+The Yul function `helper` has no documentation heading.
+Private members `hidden` and `secret` are not inherited.
+The qualified Yul function `A` has no documentation heading.
+Exact overload [A.overloaded-uint256](/src/base/contract.A#overloaded-uint256); missing overload `A`.
+Non-inherited qualified reference [Utility.work](/src/consumer/contract.Utility#work) still resolves globally.
+...
+"#]],
+    );
+});
+
+forgetest_init!(unrendered_override_does_not_link_to_ancestor, |prj, cmd| {
+    prj.add_source(
+        "ancestor/A.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract A {
+    function foo() public virtual {}
+}
+"#,
+    );
+    prj.add_source(
+        "hidden/Middle.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {A} from "../ancestor/A.sol";
+
+contract Middle is A {
+    function foo() public virtual override {}
+}
+"#,
+    );
+    prj.add_source(
+        "Middle.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Middle {
+    function foo() public {}
+}
+"#,
+    );
+    prj.add_source(
+        "Child.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {Middle} from "./hidden/Middle.sol";
+
+contract Child is Middle {
+    /// @notice See {foo} and {Middle-foo}.
+    function bar() external {}
+}
+"#,
+    );
+    prj.update_config(|config| config.doc.ignore = vec!["src/hidden/Middle.sol".to_string()]);
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+        str![[r#"
+...
+See `foo` and `Middle`.
+...
+"#]],
+    );
+});
+
+forgetest_init!(ambiguous_inherited_contract_name_does_not_link, |prj, cmd| {
+    prj.add_source(
+        "left/A.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract A {
+    function left() external {}
+}
+"#,
+    );
+    prj.add_source(
+        "right/A.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract A {
+    function right() external {}
+}
+"#,
+    );
+    prj.add_source(
+        "Child.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {A as LeftA} from "./left/A.sol";
+import {A as RightA} from "./right/A.sol";
+
+contract Child is LeftA, RightA {
+    /// @notice See {A-right}.
+    function child() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+        str![[r#"
+...
+See `A`.
+...
+"#]],
+    );
+});
+
+forgetest_init!(inherited_special_function_links_use_declaring_page, |prj, cmd| {
+    prj.add_source(
+        "Special.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract A {
+    constructor() {}
+    fallback() external payable {}
+    receive() external payable {}
+}
+
+contract Middle is A {}
+
+contract Child is Middle {
+    /// @notice Bare {constructor}, {fallback}, and {receive}.
+    /// Middle {Middle-constructor}, {Middle-fallback}, and {Middle-receive}.
+    /// A {A-constructor}, {A-fallback}, and {A-receive}.
+    function child() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+        str![[r#"
+...
+Bare `constructor`, [fallback](/src/contract.A#fallback), and [receive](/src/contract.A#receive).
+Middle `Middle`, `Middle`, and `Middle`.
+A [A.constructor](/src/contract.A#constructor), [A.fallback](/src/contract.A#fallback), and [A.receive](/src/contract.A#receive).
+...
+"#]],
+    );
+});
+
 forgetest_init!(inheritance_links_use_exact_base_id, |prj, cmd| {
     // Two unrelated `Token` contracts in sibling directories.
     prj.add_source(

@@ -1,0 +1,72 @@
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         token.safeTransfer(to, amount);
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         SafeTransferLib.safeTransferFrom(token, from, to, amount);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         token.safeApprove(spender, amount);
+   │         ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         STL.safeTransfer(token, to, amount);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         token.safeTransfer(to, amount);
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         token.safeTransfer(to, 1);
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         token.safeTransfer(to, amount);
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │     SafeTransferLib.safeTransfer(token, to, amount);
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+
+warning[solmate-safe-transfer-lib]: Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently
+   ╭▸ ROOT/testdata/SolmateSafeTransferLib.sol:LL:CC
+   │
+LL │         return SafeTransferLib.safeTransfer;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/solmate-safe-transfer-lib
+

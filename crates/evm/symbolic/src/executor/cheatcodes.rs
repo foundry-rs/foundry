@@ -15,10 +15,6 @@ impl SymbolicExecutor {
             None => {}
         }
 
-        if pass.contains_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
-
         let mut fail_constraints = state.constraints.clone();
         fail_constraints.push(fail);
         if self.solver.is_sat(&mut self.cx, &fail_constraints)? {
@@ -3461,7 +3457,7 @@ impl SymbolicExecutor {
             SymbolicVmCheatcode::EnableSymbolicStorage => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                state.world.enable_arbitrary_storage(target);
+                state.world.enable_arbitrary_storage(target, false);
                 Ok(SymReturnData::empty(&mut self.cx))
             }
             SymbolicVmCheatcode::SnapshotStorage => {

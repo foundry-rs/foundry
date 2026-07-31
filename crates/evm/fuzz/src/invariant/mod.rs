@@ -20,9 +20,8 @@ pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::utils::StateChangeset;
 
-type DynamicTargetCacheKey = (Address, B256);
 type DynamicTargetArtifactMatchCache =
-    Rc<RefCell<HashMap<DynamicTargetCacheKey, Option<CachedTargetContract>>>>;
+    Rc<RefCell<HashMap<(Address, B256), Option<CachedTargetContract>>>>;
 type FuzzedFunction = (Address, Function);
 type FunctionLookup = HashMap<Selector, Function>;
 
@@ -570,27 +569,19 @@ impl InvariantSettings {
         sender_filters: &SenderFilters,
         fail_on_revert: bool,
     ) -> Self {
-        let target_contracts = targeted_contracts
-            .inner
-            .iter()
-            .map(|(addr, contract)| (*addr, contract.identifier.clone()))
-            .collect();
-
-        let target_selectors = targeted_contracts
-            .inner
-            .iter()
-            .map(|(addr, contract)| {
-                let selectors: Vec<Selector> =
-                    contract.abi_fuzzed_functions().map(|f| f.selector()).collect();
-                (*addr, selectors)
-            })
-            .collect();
+        let mut target_contracts = BTreeMap::new();
+        let mut target_selectors = BTreeMap::new();
+        for (addr, contract) in &targeted_contracts.inner {
+            target_contracts.insert(*addr, contract.identifier.clone());
+            target_selectors
+                .insert(*addr, contract.abi_fuzzed_functions().map(|f| f.selector()).collect());
+        }
 
         let mut target_senders = sender_filters.targeted.clone();
-        target_senders.sort();
+        target_senders.sort_unstable();
 
         let mut excluded_senders = sender_filters.excluded.clone();
-        excluded_senders.sort();
+        excluded_senders.sort_unstable();
 
         Self {
             target_contracts,
@@ -724,10 +715,6 @@ mod tests {
         }
     }
 
-    fn project_contracts_with_runtime_code(name: &str, code: Bytes) -> ContractsByArtifact {
-        project_contracts_with_runtime_code_and_abi(name, code, JsonAbi::new())
-    }
-
     fn project_contracts_with_runtime_code_and_abi(
         name: &str,
         code: Bytes,
@@ -840,8 +827,11 @@ mod tests {
         let setup = Address::from([0x44; 20]);
         let untouched = Address::from([0x45; 20]);
         let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
-        let project_contracts =
-            project_contracts_with_runtime_code("DynamicTarget", runtime_code.clone());
+        let project_contracts = project_contracts_with_runtime_code_and_abi(
+            "DynamicTarget",
+            runtime_code.clone(),
+            JsonAbi::new(),
+        );
         let mut targets = TargetedContracts::new();
         for address in [existing, setup, untouched] {
             targets.inner.insert(

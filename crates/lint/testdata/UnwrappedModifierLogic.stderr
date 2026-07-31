@@ -85,6 +85,86 @@ LL +     }
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
+LL │ ┏     modifier beforeWrappedAfterKept(address sender) {
+LL │ ┃         checkPublic(sender); // These should become _beforeWrappedAfterKept(sender)
+LL │ ┃         checkPrivate(sender);
+LL │ ┃         _;
+LL │ ┃         checkInternal(sender); // This should stay in the modifier
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic
+help: wrap modifier logic to reduce code size
+   ╭╴
+LL ±     modifier beforeWrappedAfterKept(address sender) {
+LL +         _beforeWrappedAfterKept(sender);
+LL +         _;
+LL +         checkInternal(sender);
+LL +     }
+LL + 
+LL +     function _beforeWrappedAfterKept(address sender) internal {
+LL +         checkPublic(sender);
+LL +         checkPrivate(sender);
+LL +     }
+   ╰╴
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   │
+LL │ ┏     modifier afterWrappedBeforeKept(address sender) {
+LL │ ┃         checkPublic(sender); // This should stay in the modifier
+LL │ ┃         _;
+LL │ ┃         checkPrivate(sender); // These should become _afterWrappedBeforeKept(sender)
+LL │ ┃         checkInternal(sender);
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic
+help: wrap modifier logic to reduce code size
+   ╭╴
+LL ±     modifier afterWrappedBeforeKept(address sender) {
+LL +         checkPublic(sender);
+LL +         _;
+LL +         _afterWrappedBeforeKept(sender);
+LL +     }
+LL + 
+LL +     function _afterWrappedBeforeKept(address sender) internal {
+LL +         checkPrivate(sender);
+LL +         checkInternal(sender);
+LL +     }
+   ╰╴
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   │
+LL │ ┏     modifier keepAssemblyBefore() {
+LL │ ┃         assembly ("memory-safe") {
+LL │ ┃             mstore(0x00, 0)
+   ‡ ┃
+LL │ ┃         checkPrivate(msg.sender);
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic
+help: wrap modifier logic to reduce code size
+   ╭╴
+LL ±     modifier keepAssemblyBefore() {
+LL +         assembly ("memory-safe") {
+LL +             mstore(0x00, 0)
+LL +         }
+LL +         _;
+LL +         _keepAssemblyBefore();
+LL +     }
+LL + 
+LL +     function _keepAssemblyBefore() internal {
+LL +         checkPublic(msg.sender);
+LL +         checkPrivate(msg.sender);
+LL +     }
+   ╰╴
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   │
 LL │ ┏     modifier onlyOwner() {
 LL │ ┃         require(isOwner[msg.sender], "Not owner"); // _onlyOwner();
 LL │ ┃         _;

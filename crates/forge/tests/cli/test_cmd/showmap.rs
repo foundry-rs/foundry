@@ -1,5 +1,7 @@
 //! Tests for AFL-`afl-showmap`-style corpus replay (`forge test --showmap-out`).
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use foundry_test_utils::str;
 
 // Locate a per-test approach dir by suffix (suite/test ids include project-dependent paths).
@@ -12,6 +14,34 @@ fn find_approach_dir(out: &std::path::Path, suffix: &str) -> std::path::PathBuf 
                 && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(suffix))
         })
         .unwrap_or_else(|| panic!("no dir ending with {suffix} in {}", out.display()))
+}
+
+fn write_stateless_corpus_entry(corpus: &std::path::Path, name: &str, calldata: &str) {
+    std::fs::write(
+        corpus.join(name),
+        format!(
+            r#"[
+{{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"{calldata}",
+  "value":"0x0"
+}}
+]"#
+        ),
+    )
+    .unwrap();
+}
+
+fn showmap_counts(path: &std::path::Path) -> BTreeMap<String, u64> {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        .lines()
+        .map(|line| {
+            let (id, count) = line.split_once(':').expect("missing colon");
+            (id.to_owned(), count.parse().expect("count parses"))
+        })
+        .collect()
 }
 
 // Generate a corpus by running an invariant + fuzz test, then replay it via
@@ -164,6 +194,132 @@ contract ShowmapCounterTest is Test {
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("txt"))
         .collect();
     assert!(!entries.is_empty(), "expected per-entry files in {}", approach_dir.display());
+});
+
+forgetest_init!(showmap_replay_merges_unsynced_stateless_worker_corpora, |prj, cmd| {
+    const WORKERS: usize = 3;
+
+    prj.add_test(
+        "ShowmapParallelWorkers.t.sol",
+        r#"
+contract ShowmapParallelWorkersTest {
+    uint256 public value;
+
+    function testFuzz_value(uint256 x) public {
+        if (x == 1) {
+            value = 1;
+        } else if (x == 2) {
+            value = 2;
+        } else {
+            value = 3;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let test_dir = prj
+        .root()
+        .join("parallel_corpus")
+        .join("ShowmapParallelWorkersTest")
+        .join("testFuzz_value");
+    // testFuzz_value(uint256)
+    let selector = "0x4c39e060";
+    for value in 1..=WORKERS {
+        let worker = test_dir.join(format!("worker{}", value - 1)).join("corpus");
+        std::fs::create_dir_all(&worker).unwrap();
+        write_stateless_corpus_entry(
+            &worker,
+            &format!("00000000-0000-0000-0000-{value:012}-1.json"),
+            &format!("{selector}{value:064x}"),
+        );
+    }
+
+    let result = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ShowmapParallelWorkersTest",
+            "--mt",
+            "testFuzz_value",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-corpus-dir",
+            "parallel_corpus",
+            "--showmap-trial",
+            "per-input",
+            "--showmap-per-input",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(result.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains(&format!(
+            "[PASS] testFuzz_value(uint256) (replay: {WORKERS} entries, {WORKERS} files)"
+        )),
+        "{stdout}"
+    );
+
+    let out = prj.root().join("showmap_out");
+    let approach_dir = find_approach_dir(&out, "ShowmapParallelWorkersTest__testFuzz_value");
+    let per_input_files: Vec<_> = std::fs::read_dir(&approach_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("txt"))
+        .collect();
+    assert_eq!(per_input_files.len(), WORKERS, "unexpected files in {}", approach_dir.display());
+    let per_input_counts: Vec<_> =
+        per_input_files.iter().map(|path| showmap_counts(path)).collect();
+    assert!(
+        per_input_counts.iter().all(|counts| !counts.is_empty()),
+        "expected non-empty per-input coverage in {}",
+        approach_dir.display()
+    );
+    let union: BTreeSet<_> =
+        per_input_counts.iter().flat_map(|counts| counts.keys().cloned()).collect();
+    assert!(
+        per_input_counts.iter().any(|counts| counts.len() < union.len()),
+        "worker inputs should contribute distinct coverage: {per_input_counts:?}"
+    );
+    let mut merged_counts = BTreeMap::new();
+    for counts in per_input_counts {
+        for (id, count) in counts {
+            *merged_counts.entry(id).or_insert(0) += count;
+        }
+    }
+
+    let result = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ShowmapParallelWorkersTest",
+            "--mt",
+            "testFuzz_value",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-corpus-dir",
+            "parallel_corpus",
+            "--showmap-trial",
+            "workers",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(result.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains(&format!(
+            "[PASS] testFuzz_value(uint256) (replay: {WORKERS} entries, 1 files)"
+        )),
+        "{stdout}"
+    );
+
+    let aggregate_file = approach_dir.join("workers.txt");
+    assert!(aggregate_file.exists(), "missing {}", aggregate_file.display());
+    let aggregate_counts = showmap_counts(&aggregate_file);
+    assert_eq!(
+        aggregate_counts, merged_counts,
+        "aggregate showmap should contain the summed worker coverage"
+    );
 });
 
 // Reruns with distinct `--showmap-trial` values must accumulate side-by-side

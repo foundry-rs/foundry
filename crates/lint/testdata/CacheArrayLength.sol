@@ -26,6 +26,26 @@ contract CacheArrayLength {
         }
     }
 
+    function compoundConditionStorageArrayLength(uint256 cap)
+        external
+        view
+        returns (uint256 sum)
+    {
+        for (uint256 i = 0; i < items.length && i < cap; ++i) { //~NOTE: array length read in loop condition
+            sum += items[i];
+        }
+    }
+
+    function reversedCompoundConditionStorageArrayLength(uint256 cap)
+        external
+        view
+        returns (uint256 sum)
+    {
+        for (uint256 i = 0; i < cap && items.length > i; ++i) { //~NOTE: array length read in loop condition
+            sum += items[i];
+        }
+    }
+
     function memoryArrayLength(uint256[] memory values) public pure returns (uint256 sum) {
         for (uint256 i = 0; i <= values.length; ++i) {
             if (i < values.length) {
@@ -134,6 +154,12 @@ contract CacheArrayLength {
         }
     }
 
+    function conditionHelperMutation(uint256 cap) external returns (uint256 sum) {
+        for (uint256 i = 0; i < items.length && mutateAndContinue(i, cap); ++i) {
+            sum += i;
+        }
+    }
+
     function loopVariantNestedArrayLength(uint256[][] memory values)
         public
         pure
@@ -166,6 +192,11 @@ contract CacheArrayLength {
 
     function mutateItems(uint256 value) internal {
         items.push(value);
+    }
+
+    function mutateAndContinue(uint256 value, uint256 cap) internal returns (bool) {
+        items.push(value);
+        return value < cap;
     }
 
     function mutatingValues() internal returns (uint256[] memory values) {

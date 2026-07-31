@@ -29,6 +29,7 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 base64.workspace = true
 hashbrown.workspace = true
+inturn.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 shlex.workspace = true

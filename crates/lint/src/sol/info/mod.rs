@@ -1,7 +1,9 @@
-use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
+use crate::sol::SolLint;
 
 mod mixed_case;
-use mixed_case::{MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE};
+use mixed_case::{
+    MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE, MixedCaseFunctionPass, MixedCaseVariablePass,
+};
 
 mod boolean_cst;
 use boolean_cst::BOOLEAN_CST;
@@ -25,7 +27,7 @@ mod unsafe_cheatcodes;
 use unsafe_cheatcodes::UNSAFE_CHEATCODE_USAGE;
 
 mod multi_contract_file;
-use multi_contract_file::MULTI_CONTRACT_FILE;
+use multi_contract_file::{MULTI_CONTRACT_FILE, MultiContractFilePass};
 
 mod interface_naming;
 use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
@@ -51,17 +53,41 @@ use missing_inheritance::MISSING_INHERITANCE;
 mod event_fields;
 use event_fields::EVENT_FIELDS;
 
+mod todo;
+use todo::TODO_COMMENT;
+
+mod unused_error;
+use unused_error::UNUSED_ERROR;
+
+mod literal_instead_of_constant;
+use literal_instead_of_constant::LITERAL_INSTEAD_OF_CONSTANT;
+
+mod function_init_state;
+use function_init_state::FUNCTION_INIT_STATE;
+
+mod internal_function_used_once;
+use internal_function_used_once::INTERNAL_FUNCTION_USED_ONCE;
+
+mod cyclomatic_complexity;
+use cyclomatic_complexity::CYCLOMATIC_COMPLEXITY;
+
+mod incorrect_using_for;
+use incorrect_using_for::INCORRECT_USING_FOR;
+
+mod modifier_used_only_once;
+use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
-    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
-    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
+    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE), MixedCaseVariablePass::new),
+    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION), MixedCaseFunctionPass::new),
     (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
     (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT)),
     (NamedStructFields, late, (NAMED_STRUCT_FIELDS)),
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
-    (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
+    (MultiContractFile, early, (MULTI_CONTRACT_FILE), MultiContractFilePass::new),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
@@ -70,4 +96,12 @@ register_lints!(
     (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
+    (TodoComment, early, (TODO_COMMENT)),
+    (UnusedError, project, (UNUSED_ERROR)),
+    (LiteralInsteadOfConstant, late, (LITERAL_INSTEAD_OF_CONSTANT)),
+    (FunctionInitState, late, (FUNCTION_INIT_STATE)),
+    (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
+    (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),
+    (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),
+    (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
 );

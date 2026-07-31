@@ -230,15 +230,13 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = match self.config.exploration_order {
-            SymbolicExplorationOrder::Bfs => worklist.pop_front(),
-            SymbolicExplorationOrder::Dfs => worklist.pop_back(),
-        } {
+        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
 
             loop {
+                self.check_timeout()?;
                 if state.depth >= depth_limit {
                     return Err(SymbolicError::Unsupported("symbolic depth limit exceeded"));
                 }
