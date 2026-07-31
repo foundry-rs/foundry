@@ -78,6 +78,8 @@ pub mod tx;
 
 use rlp_converter::Item;
 
+const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
+
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
 pub struct Cast<P, N = AnyNetwork> {
@@ -757,7 +759,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                         Self::get_logs_bisecting(&provider, &filter, start_block, end_block).await
                     }
                 })
-                .buffered(5)
+                .buffered(MAX_CONCURRENT_RPC_REQUESTS)
                 .try_collect()
                 .await?;
 

@@ -98,6 +98,20 @@ jobs:
         shell: bash
         run: ./foundryup/test.sh
 
+  github-scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test GitHub scripts
+        run: |
+          python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
+          node --test .github/scripts/tests/test-create-tag.js
+
   clippy:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
@@ -201,6 +215,7 @@ jobs:
       - doctest
       - no-default-features
       - typos
+      - github-scripts
       - clippy
       - rustfmt
       - forge-fmt

@@ -540,7 +540,12 @@ impl FuzzTminArgs {
 
         let before_txs = sequence.len();
         let decoder_args = self.test.clone();
-        let session = self.test.prepare_session(input_corpus_root(&self.input)).await?;
+        let corpus_root = self
+            .input
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let session = self.test.prepare_session(corpus_root).await?;
         let decoder = decoder_args.decoder();
         let attempts =
             minimize_entry(&session, &decoder, &self.input, &mut sequence, self.max_attempts)?;
@@ -831,10 +836,6 @@ fn temporary_cmin_out(out: &Path) -> Result<TempDir> {
     TempDirBuilder::new().prefix(&prefix).tempdir_in(parent).with_context(|| {
         format!("failed to create temporary output directory for {}", out.display())
     })
-}
-
-fn input_corpus_root(input: &Path) -> &Path {
-    input.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."))
 }
 
 fn read_single_sequence(path: &Path) -> Result<Vec<BasicTxDetails>> {
