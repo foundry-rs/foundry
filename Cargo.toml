@@ -553,9 +553,9 @@ solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e22
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 
 ## foundry-core
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fb7922c0e92cf52b5cbca73826fb05ca7e32a50f" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fb7922c0e92cf52b5cbca73826fb05ca7e32a50f" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "fb7922c0e92cf52b5cbca73826fb05ca7e32a50f" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
