@@ -56,13 +56,6 @@ impl SymbolicExecutor {
                 TopLevelCallStatus::Success => {
                     parent.world = outcome.state.world.clone();
                     parent.block = outcome.state.block.clone();
-                    parent.recorded_logs = outcome.state.recorded_logs.clone();
-                    parent.access_record = outcome.state.access_record.clone();
-                    parent.expected_emit = outcome.state.expected_emit.clone();
-                    parent.expected_calls = outcome.state.expected_calls.clone();
-                    parent.expected_creates = outcome.state.expected_creates.clone();
-                    parent.call_mocks = outcome.state.call_mocks.clone();
-                    parent.function_mocks = outcome.state.function_mocks.clone();
                 }
                 TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
                     parent.return_data = outcome.return_data.clone();

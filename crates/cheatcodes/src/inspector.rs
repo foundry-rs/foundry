@@ -360,7 +360,22 @@ struct ActiveStorageHook {
     saved_return_data: Bytes,
     saved_stack_item: Option<U256>,
     journal_start: usize,
+    inspector_state: StorageHookInspectorState,
     outcome: Option<(InstructionResult, Bytes)>,
+}
+
+#[derive(Clone, Debug)]
+struct StorageHookInspectorState {
+    accesses: RecordAccess,
+    recording_accesses: bool,
+    recorded_logs: Option<Vec<Vm::Log>>,
+    mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
+    mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
+    expected_revert: Option<ExpectedRevert>,
+    assume_no_revert: Option<AssumeNoRevert>,
+    expected_calls: ExpectedCallTracker,
+    expected_emits: ExpectedEmitTracker,
+    expected_creates: Vec<ExpectedCreate>,
 }
 
 /// Holds gas metering state.
@@ -3114,6 +3129,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         let active = self.active_storage_hook.take().expect("active storage hook exists");
         Self::restore_storage_hook_access(ecx, active.journal_start);
+        self.restore_storage_hook_inspector_state(active.inspector_state);
         let _ = interpreter.stack.pop();
         if let Some(item) = active.saved_stack_item {
             let result = interpreter.stack.push(item);
@@ -3132,6 +3148,34 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             ));
             true
         }
+    }
+
+    fn take_storage_hook_inspector_state(&mut self) -> StorageHookInspectorState {
+        StorageHookInspectorState {
+            accesses: std::mem::take(&mut self.accesses),
+            recording_accesses: std::mem::replace(&mut self.recording_accesses, false),
+            recorded_logs: self.recorded_logs.take(),
+            mocked_calls: std::mem::take(&mut self.mocked_calls),
+            mocked_functions: std::mem::take(&mut self.mocked_functions),
+            expected_revert: self.expected_revert.take(),
+            assume_no_revert: self.assume_no_revert.take(),
+            expected_calls: std::mem::take(&mut self.expected_calls),
+            expected_emits: std::mem::take(&mut self.expected_emits),
+            expected_creates: std::mem::take(&mut self.expected_creates),
+        }
+    }
+
+    fn restore_storage_hook_inspector_state(&mut self, state: StorageHookInspectorState) {
+        self.accesses = state.accesses;
+        self.recording_accesses = state.recording_accesses;
+        self.recorded_logs = state.recorded_logs;
+        self.mocked_calls = state.mocked_calls;
+        self.mocked_functions = state.mocked_functions;
+        self.expected_revert = state.expected_revert;
+        self.assume_no_revert = state.assume_no_revert;
+        self.expected_calls = state.expected_calls;
+        self.expected_emits = state.expected_emits;
+        self.expected_creates = state.expected_creates;
     }
 
     fn restore_storage_hook_access(ecx: &mut FoundryContextFor<'_, FEN>, journal_start: usize) {
@@ -3249,6 +3293,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let result = interpreter.stack.pop();
             debug_assert!(result.is_ok(), "captured SLOAD result must be on the stack");
         }
+        let inspector_state = self.take_storage_hook_inspector_state();
 
         self.active_storage_hook = Some(ActiveStorageHook {
             parent_depth,
@@ -3258,6 +3303,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             saved_return_data,
             saved_stack_item,
             journal_start,
+            inspector_state,
             outcome: None,
         });
         interpreter.bytecode.set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(

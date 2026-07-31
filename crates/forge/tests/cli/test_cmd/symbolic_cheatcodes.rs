@@ -4365,6 +4365,7 @@ contract ConstructorStoreTarget {
 
 contract StorageHooksTest is Test {
     event Stored(uint256 value);
+    event CallbackObserved(uint256 value);
 
     StorageHookVm constant hookVm =
         StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
@@ -4436,6 +4437,22 @@ contract StorageHooksTest is Test {
         lastAccount = account;
         lastSlot = slot;
         ghostValue = uint256(newValue);
+    }
+
+    function onStoreWithInstrumentation(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = returner.answer();
+    }
+
+    function onStoreWithRecording(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = 42;
     }
 
     function onMappingStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
@@ -4585,6 +4602,43 @@ contract StorageHooksTest is Test {
         target.value();
 
         assertEq(probe.readCost(coldReadTarget), probe.readCost(baselineReadTarget));
+    }
+
+    function testConcreteCallbackInspectorStateIsIsolated() public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithInstrumentation.selector);
+        bytes memory helperCall = abi.encodeCall(returner.answer, ());
+        vm.mockCall(address(returner), helperCall, abi.encode(uint256(99)));
+        vm.expectCall(address(returner), helperCall, 1);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(1);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+        assertEq(returner.answer(), 99);
+    }
+
+    function testConcreteCallbackCanWriteUnderStaticcall() public {
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), 0);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (1)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
+    function loadAndRevert() external view {
+        target.value();
+        revert("after load");
     }
 
     function testConcreteCallbackCannotBeSpoofed() public {
@@ -4754,6 +4808,35 @@ contract StorageHooksTest is Test {
         assertEq(target.storeAfterReturningCall(address(returner), newValue), 32);
     }
 
+    function checkSymbolicCallbackInspectorStateIsIsolated(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithRecording.selector);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(newValue);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+    }
+
+    function checkSymbolicCallbackCanWriteUnderStaticcall(uint256 newValue) public {
+        target.store(newValue);
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), newValue);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
     function checkSymbolicConstructorRegistration(uint256 newValue) public {
         StorageHookTarget constructorTarget = new StorageHookTarget();
         ConstructorStorageHook hook = new ConstructorStorageHook(address(constructorTarget));
@@ -4885,6 +4968,8 @@ contract StorageHooksTest is Test {
 [PASS] checkSymbolicCallbackSuppressesRecursiveHooks(uint256)
 [PASS] checkSymbolicCallbackPreservesPendingExpectations(uint256)
 [PASS] checkSymbolicCallbackPreservesReturnData(uint256)
+[PASS] checkSymbolicCallbackInspectorStateIsIsolated(uint256)
+[PASS] checkSymbolicCallbackCanWriteUnderStaticcall(uint256)
 [PASS] checkSymbolicConstructorRegistration(uint256)
 [PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256)
 "#]],

@@ -423,7 +423,10 @@ interface Vm {
     /// Registering another callback for the same target and access kind replaces it. Registration
     /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
     /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
-    /// the callback and its entire call subtree.
+    /// the callback and its entire call subtree. The callback must authenticate
+    /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
+    /// mocks, expectations, log recording, and storage-access recording. It does not inherit
+    /// staticness.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSloadHook(address target, bytes4 callback) external;
 
@@ -434,7 +437,10 @@ interface Vm {
     /// Registering another callback for the same target and access kind replaces it. Registration
     /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
     /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
-    /// the callback and its entire call subtree.
+    /// the callback and its entire call subtree. The callback must authenticate
+    /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
+    /// mocks, expectations, log recording, and storage-access recording. It does not inherit
+    /// staticness.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSstoreHook(address target, bytes4 callback) external;
 

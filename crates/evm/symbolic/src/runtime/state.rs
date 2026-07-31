@@ -230,8 +230,15 @@ impl PathState {
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
         let mut child = self.child(frame);
         child.storage_hook_active = true;
+        child.recorded_logs = None;
+        child.access_record = None;
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
+        child.expected_emit = None;
+        child.expected_calls.clear();
+        child.expected_creates.clear();
+        child.call_mocks.clear();
+        child.function_mocks.clear();
         child.set_branch_target(None);
         child
     }
@@ -395,6 +402,8 @@ impl PathState {
         self.constraints = check.constraints.clone();
         self.next_symbol = self.next_symbol.max(check.next_symbol);
         self.world.merge_replay_metadata_from(&check.world);
+        self.storage_load_hooks = check.storage_load_hooks.clone();
+        self.storage_store_hooks = check.storage_store_hooks.clone();
     }
 
     pub(crate) fn merge_reverted_top_level_effects(&mut self, reverted: &Self) {
@@ -2352,7 +2361,51 @@ mod tests {
     }
 
     #[test]
-    fn storage_hook_child_does_not_inherit_branch_guidance() {
+    fn noncommitting_checks_preserve_new_storage_hook_registrations() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let mut check = state.clone();
+        let target = Address::repeat_byte(0x11);
+        let hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x22),
+            callback_selector: [0x12, 0x34, 0x56, 0x78],
+        };
+        check.storage_load_hooks.insert(target, hook);
+        check.storage_store_hooks.insert(target, hook);
+
+        state.merge_noncommitting_check_constraints(&check);
+
+        assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
+        assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+    }
+
+    #[test]
+    fn noncommitting_checks_preserve_replaced_storage_hook_registrations() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let mut check = state.clone();
+        let target = Address::repeat_byte(0x11);
+        let old_hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x33),
+            callback_selector: [0x87, 0x65, 0x43, 0x21],
+        };
+        let hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x22),
+            callback_selector: [0x12, 0x34, 0x56, 0x78],
+        };
+        state.storage_load_hooks.insert(target, old_hook);
+        state.storage_store_hooks.insert(target, old_hook);
+        check.storage_load_hooks.insert(target, hook);
+        check.storage_store_hooks.insert(target, hook);
+
+        state.merge_noncommitting_check_constraints(&check);
+
+        assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
+        assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+    }
+
+    #[test]
+    fn storage_hook_child_does_not_inherit_instrumentation_state() {
         let mut cx = SymCx::new();
         let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
         state.set_branch_target(Some(SymbolicBranchTarget::new(
@@ -2361,12 +2414,50 @@ mod tests {
             opcode::EQ,
             false,
         )));
+        state.recorded_logs = Some(Vec::new());
+        state.access_record = Some(AccessRecord::default());
+        state.expected_revert = Some(ExpectedRevert::new(ExpectedRevertData::Any, None, 1));
+        state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
+        state.expected_emit =
+            Some(ExpectedEmit::new(ExpectedEmitChecks::default_non_anonymous(), None, 1));
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        state.expected_calls.push(ExpectedCall::new(
+            callee.clone(),
+            None,
+            None,
+            None,
+            data.clone(),
+            None,
+        ));
+        state.expected_creates.push(ExpectedCreate::new(
+            Vec::new(),
+            callee.clone(),
+            CreateKind::Create,
+        ));
+        state.call_mocks.push(CallMock::new(
+            callee.clone(),
+            None,
+            data.clone(),
+            vec![SymReturnData::empty(&mut cx)],
+            false,
+        ));
+        state.function_mocks.push(FunctionMock::new(callee, Address::ZERO, data));
         let frame = state.frame.clone();
 
         let child = state.storage_hook_child(frame);
 
         assert!(child.storage_hook_active);
         assert!(child.branch_target().is_none());
+        assert!(child.recorded_logs.is_none());
+        assert!(child.access_record.is_none());
+        assert!(child.expected_revert.is_none());
+        assert!(child.assume_no_revert_next_call.is_none());
+        assert!(child.expected_emit.is_none());
+        assert!(child.expected_calls.is_empty());
+        assert!(child.expected_creates.is_empty());
+        assert!(child.call_mocks.is_empty());
+        assert!(child.function_mocks.is_empty());
     }
 
     #[test]

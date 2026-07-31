@@ -248,11 +248,15 @@ through the post-operation callback. Registration survives EVM reverts, while
 callback state follows the enclosing EVM context and rolls back with it. Hooks
 use the effective storage account, so a `delegatecall` is attributed to the
 caller's storage context. Hooks are suppressed throughout the callback's call
-subtree. The slot is the computed effective slot; mapping roots and decoded keys
-are not included. Callbacks are ordinary external functions, so authenticate
-`msg.sender` as `address(vm)` before updating ghost state. Registered callback
-selectors are excluded from default invariant targets, but explicit selector
-configuration can still target them.
+subtree. Callback execution is hidden from mocks, expectations, recorded logs,
+and storage-access recording, while its EVM state writes and hook registrations
+are retained. Callbacks do not inherit staticness, so they can update ghost state
+for storage reads beneath `STATICCALL`; the observed target remains subject to
+normal static-call restrictions. The slot is the computed effective slot;
+mapping roots and decoded keys are not included. Callbacks are ordinary external
+functions, so they must authenticate `msg.sender` as `address(vm)` before
+updating ghost state. Registered callback selectors are excluded from default
+invariant targets, but explicit selector configuration can still target them.
 
 Aggregate ghosts such as `ghost = ghost - oldValue + newValue` require an
 initialization model consistent with the ghost's starting value. Use
