@@ -13,6 +13,8 @@ permissions: {}
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - 'CHANGELOG.md'
+      - '.github/scripts/prepare-stable-release.py'
+      - '.github/workflows/stable-version-pr.yml'
   workflow_dispatch:
 
 concurrency:
@@ -112,8 +114,10 @@ jobs:
             Prepares Foundry ${{ steps.prepare.outputs.expected_version }} from pending changelog entries.
 
             - Base branch: `${{ steps.prepare.outputs.base_branch }}`
+            - Source master SHA: `${{ steps.prepare.outputs.source_sha }}`
             - Expected version: `${{ steps.prepare.outputs.expected_version }}`
             - Expected tag: `${{ steps.prepare.outputs.expected_tag }}`
+            - Changelog fragments: ${{ steps.prepare.outputs.fragment_count }}
             - Verified workspace packages: ${{ steps.prepare.outputs.package_count }}
 
             This pull request does not create a tag, GitHub release, or registry publication.

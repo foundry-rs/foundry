@@ -11,7 +11,7 @@ impl Mutator for UnaryOpMutator {
         let operations = vec![
             UnOpKind::PreInc, // number
             UnOpKind::PreDec, // n
-            UnOpKind::Neg,    // n @todo filter this one only for int
+            UnOpKind::Neg,    // n
             UnOpKind::BitNot, // n
         ];
 
