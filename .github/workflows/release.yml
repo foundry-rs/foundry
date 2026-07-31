@@ -16,7 +16,7 @@ env:
 
   # Keep in sync with `docker-publish.yml`.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,touch-id,cli,asm-keccak,js-tracer
 
 jobs:
   prepare:
@@ -285,11 +285,11 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
 
-      - name: Apple M1 setup
-        if: matrix.target == 'aarch64-apple-darwin'
+      - name: Apple setup
+        if: contains(matrix.target, 'apple-darwin')
         run: |
           printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-          printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "$(xcrun -sdk macosx --show-sdk-platform-version)" >> "$GITHUB_ENV"
+          printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n' >> "$GITHUB_ENV"
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
