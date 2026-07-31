@@ -144,8 +144,8 @@ impl ListArgs {
             if path.is_file()
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
-                // Skip Touch ID sidecar files stored next to their keystores.
-                && !name.ends_with(".touchid")
+                // Skip Touch ID sidecars without hiding legacy keystores with that suffix.
+                && !super::is_touch_id_sidecar(&path)
             {
                 // Extract address from keystore filename format: UTC--{timestamp}--{address}
                 if let Some(address) = name.split("--").last() {

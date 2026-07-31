@@ -696,7 +696,6 @@ casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
     assert!(!keystore_file.exists());
 });
 
-#[cfg(all(target_os = "macos", feature = "touch-id"))]
 casttest!(wallet_remove_touch_id_sidecar, |prj, cmd| {
     let keystore_dir = prj.root().join("keystore");
     let account_name = "testAccount";
@@ -715,7 +714,7 @@ casttest!(wallet_remove_touch_id_sidecar, |prj, cmd| {
     ])
     .assert_success();
 
-    let sidecar = foundry_wallets::touch_id::sidecar_path(&keystore_file);
+    let sidecar = keystore_dir.join(format!("{account_name}.touchid"));
     fs::write(&sidecar, "fake sidecar").unwrap();
 
     cmd.cast_fuse()
@@ -756,6 +755,66 @@ Error: Invalid password - wallet removal cancelled
 "#]]);
     assert!(!keystore_file.exists());
     assert!(!sidecar.exists());
+});
+
+casttest!(wallet_remove_preserves_touch_id_named_keystore, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_file = keystore_dir.join("testAccount");
+    let legacy_keystore = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::copy(&keystore_file, &legacy_keystore).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            "testAccount",
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: refusing to remove existing keystore at [..]/testAccount.touchid
+
+"#]]);
+    assert!(keystore_file.exists());
+    assert!(legacy_keystore.exists());
+});
+
+casttest!(wallet_import_rejects_touch_id_suffix, |prj, cmd| {
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount.touchid",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        prj.root().to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: account names ending in `.touchid` are reserved
+
+"#]]);
 });
 
 // tests that `cast wallet sign message` outputs the expected signature
@@ -1772,6 +1831,45 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     // check that the decrypted private key matches the imported private key
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
     assert_eq!(decrypted_private_key, test_private_key);
+});
+
+#[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+casttest!(wallet_change_password_removes_touch_id_sidecar, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "old_password",
+    ])
+    .assert_success();
+    fs::write(&sidecar, "fake sidecar").unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "change-password",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+            "--unsafe-new-password",
+            "new_password",
+        ])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Removed the stale Touch ID enrollment after changing the password
+
+"#]]);
+    assert!(!sidecar.exists());
 });
 
 // tests that `cast estimate` is working correctly.
