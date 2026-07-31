@@ -4302,6 +4302,19 @@ contract StorageHookGasProbe {
     }
 }
 
+contract StorageHookDepthTarget {
+    uint256 public value;
+
+    function recurse(uint256 remaining) external returns (bool) {
+        if (remaining == 0) {
+            return value == 0;
+        }
+        (bool ok, bytes memory data) =
+            address(this).call(abi.encodeCall(this.recurse, (remaining - 1)));
+        return ok && abi.decode(data, (bool));
+    }
+}
+
 contract StorageHookCaller {
     function store(StorageHookTarget target, uint256 newValue) external {
         target.store(newValue);
@@ -4666,6 +4679,15 @@ contract StorageHooksTest is Test {
         assertTrue(ok);
     }
 
+    function testConcreteStorageHookConsumesCallDepth() public {
+        StorageHookDepthTarget baseline = new StorageHookDepthTarget();
+        StorageHookDepthTarget hooked = new StorageHookDepthTarget();
+        hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
+
+        assertTrue(baseline.recurse(1024));
+        assertFalse(hooked.recurse(1024));
+    }
+
     function testConcreteTraceSuccess() public {
         (bool ok,) = TRACE_SUCCESS_TARGET.call("");
         assertTrue(ok);
@@ -4855,7 +4877,16 @@ contract StorageHooksTest is Test {
     );
 
     cmd.forge_fuse()
-        .args(["test", "--match-contract", "StorageHooksTest", "--match-test", "testConcrete"])
+        .args([
+            "test",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcrete",
+            "--gas-limit",
+            "10000000000000",
+            "--disable-block-gas-limit",
+        ])
         .assert_success();
 
     cmd.forge_fuse()

@@ -426,7 +426,9 @@ interface Vm {
     /// the callback and its entire call subtree. The callback must authenticate
     /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
     /// mocks, expectations, log recording, and storage-access recording. It does not inherit
-    /// staticness.
+    /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
+    /// protocol call-depth slots; a load at the maximum legal call depth can have its callback
+    /// rejected as too deep, propagating as a failure of the load.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSloadHook(address target, bytes4 callback) external;
 
@@ -440,7 +442,9 @@ interface Vm {
     /// the callback and its entire call subtree. The callback must authenticate
     /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
     /// mocks, expectations, log recording, and storage-access recording. It does not inherit
-    /// staticness.
+    /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
+    /// protocol call-depth slots; a store at the maximum legal call depth can have its callback
+    /// rejected as too deep, propagating as a failure of the store.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerSstoreHook(address target, bytes4 callback) external;
 

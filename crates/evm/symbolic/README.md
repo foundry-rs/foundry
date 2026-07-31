@@ -257,6 +257,10 @@ mapping roots and decoded keys are not included. Callbacks are ordinary external
 functions, so they must authenticate `msg.sender` as `address(vm)` before
 updating ghost state. Registered callback selectors are excluded from default
 invariant targets, but explicit selector configuration can still target them.
+The callback runs as an ordinary call frame, so it consumes one of the 1024
+protocol call-depth slots; a storage access at the maximum legal call depth
+that would otherwise succeed can have its callback rejected as too deep, which
+propagates as a failure of the storage operation.
 
 Aggregate ghosts such as `ghost = ghost - oldValue + newValue` require an
 initialization model consistent with the ghost's starting value. Use
