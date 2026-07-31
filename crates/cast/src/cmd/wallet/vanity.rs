@@ -2,7 +2,7 @@ use alloy_primitives::{Address, hex};
 use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::json::print_json_success;
 use foundry_common::{sh_println, shell};
 use itertools::Either;
@@ -178,7 +178,12 @@ impl VanityArgs {
 fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
     let mut wallets = if path.exists() {
         let data = fs::read_to_string(path)?;
-        serde_json::from_str::<Wallets>(&data).unwrap_or_default()
+        if data.trim().is_empty() {
+            Wallets::default()
+        } else {
+            serde_json::from_str::<Wallets>(&data)
+                .wrap_err_with(|| format!("failed to parse wallet file {}", path.display()))?
+        }
     } else {
         Wallets::default()
     };
@@ -395,5 +400,17 @@ mod tests {
         let s = fs::read_to_string(tmp.path()).unwrap();
         let wallets: Wallets = serde_json::from_str(&s).unwrap();
         assert!(!wallets.wallets.is_empty());
+    }
+
+    #[test]
+    fn malformed_wallet_file_is_not_overwritten() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let original = "{\"wallets\":[";
+        fs::write(tmp.path(), original).unwrap();
+
+        let err = save_wallet_to_file(&PrivateKeySigner::random(), tmp.path()).unwrap_err();
+
+        assert!(err.to_string().contains("failed to parse wallet file"));
+        assert_eq!(fs::read_to_string(tmp.path()).unwrap(), original);
     }
 }
