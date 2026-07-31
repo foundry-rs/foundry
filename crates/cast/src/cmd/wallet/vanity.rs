@@ -343,6 +343,12 @@ impl VanityMatcher for RegexMatcher {
 }
 
 fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>> {
+    let pattern =
+        pattern.strip_prefix("0x").or_else(|| pattern.strip_prefix("0X")).unwrap_or(pattern);
+    if pattern.is_empty() {
+        return Err(eyre::eyre!("Vanity pattern cannot be empty"));
+    }
+
     let is_hex = pattern.bytes().all(|byte| byte.is_ascii_hexdigit());
     if is_hex && pattern.len() > 40 {
         return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
@@ -441,5 +447,34 @@ mod tests {
     fn reject_overlong_odd_length_hex_pattern() {
         let err = parse_pattern(&"1".repeat(41), true).unwrap_err();
         assert_eq!(err.to_string(), "Hex pattern must be less than 20 bytes");
+    }
+
+    #[test]
+    fn parse_prefixed_vanity_patterns() {
+        let Either::Left(lowercase) = parse_pattern("0xdead", true).unwrap() else {
+            panic!("expected an exact hex pattern");
+        };
+        assert_eq!(lowercase, hex::decode("dead").unwrap());
+        let mut matching = [0; 20];
+        matching[..2].copy_from_slice(&lowercase);
+        assert!(LeftHexMatcher { left: lowercase }.is_match(&Address::from(matching)));
+
+        let Either::Left(uppercase) = parse_pattern("0Xdead", true).unwrap() else {
+            panic!("expected an exact hex pattern");
+        };
+        assert_eq!(uppercase, hex::decode("dead").unwrap());
+
+        let Either::Right(odd_nibble) = parse_pattern("0x9", true).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        let mut matching = [0; 20];
+        matching[0] = 0x90;
+        assert!(SingleRegexMatcher { re: odd_nibble }.is_match(&Address::from(matching)));
+    }
+
+    #[test]
+    fn reject_empty_prefixed_vanity_pattern() {
+        let err = parse_pattern("0x", true).unwrap_err();
+        assert_eq!(err.to_string(), "Vanity pattern cannot be empty");
     }
 }
