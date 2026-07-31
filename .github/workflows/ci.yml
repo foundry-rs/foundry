@@ -94,7 +94,7 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
-      - run: cargo test -p cast --test cli --features touch-id --target "${{ matrix.target }}" --locked --no-run
+      - run: cargo test -p cast@1.8.0 --test cli --features touch-id --target "${{ matrix.target }}" --locked --no-run
 
   typos:
     runs-on: depot-ubuntu-latest
