@@ -872,13 +872,14 @@ impl<N: Network> Backend<N> {
     /// Returns canonical Ethereum transition configuration only for an Ethereum network.
     fn ethereum_block_transitions(
         &self,
+        hardfork: FoundryHardfork,
         parent_beacon_block_root: Option<B256>,
         execution_kind: BlockExecutionKind,
     ) -> Option<EthereumBlockTransitions> {
         if self.is_optimism() || self.is_tempo() {
             return None;
         }
-        let FoundryHardfork::Ethereum(hardfork) = self.hardfork() else { return None };
+        let FoundryHardfork::Ethereum(hardfork) = hardfork else { return None };
         Some(EthereumBlockTransitions {
             hardfork,
             deposit_contract_address: self.ethereum_deposit_contract_address(),
@@ -1963,8 +1964,11 @@ impl<N: Network> Backend<N> {
         DB: StateDB<Error = DatabaseError>,
     {
         let inspector = self.build_mining_inspector();
-        let ethereum_transitions =
-            self.ethereum_block_transitions(parent_beacon_block_root, execution_kind);
+        let ethereum_transitions = self.ethereum_block_transitions(
+            self.hardfork(),
+            parent_beacon_block_root,
+            execution_kind,
+        );
 
         macro_rules! run {
             ($evm:expr) => {{
@@ -3212,7 +3216,7 @@ impl<N: Network> Backend<N> {
             db.insert_block_hash(U256::from(self.best_number()), self.best_hash());
 
             if let Some(transitions) =
-                self.ethereum_block_transitions(None, BlockExecutionKind::Complete)
+                self.ethereum_block_transitions(self.hardfork(), None, BlockExecutionKind::Complete)
             {
                 if transitions.hardfork >= EthereumHardfork::Cancun {
                     db.set_code(eip4788::BEACON_ROOTS_ADDRESS, eip4788::BEACON_ROOTS_CODE.clone())?;
@@ -3793,6 +3797,24 @@ where
         apply_chain_specific_tx_replay_env_changes(&mut replay_env);
         let inspector_tx_config = self.inspector_tx_config();
 
+        // Resolve the hardfork from the source block itself, not the backend's configured one,
+        // since the two can diverge at a fork boundary.
+        let hardfork =
+            FoundryHardfork::from_chain_and_timestamp(evm_env.cfg_env.chain_id, timestamp)
+                .unwrap_or_else(|| self.hardfork());
+        if !self.is_optimism() && !self.is_tempo() {
+            replay_env.cfg_env.spec = SpecId::from(hardfork);
+            // Cancun requires blob excess gas even for non-blob txs.
+            if replay_env.cfg_env.spec >= SpecId::CANCUN
+                && replay_env.block_env.blob_excess_gas_and_price.is_none()
+            {
+                replay_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+                    0,
+                    get_blob_base_fee_update_fraction_by_spec_id(replay_env.cfg_env.spec),
+                ));
+            }
+        }
+
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
             let mut overlay = AnvilCacheDB::new(&**db);
@@ -3805,6 +3827,7 @@ where
                 &mut overlay,
                 &replay_env,
                 best_hash,
+                hardfork,
                 parent_beacon_block_root,
                 &transactions,
                 &inspector_tx_config,
@@ -3887,11 +3910,13 @@ where
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_with_replay_block_executor<DB>(
         &self,
         db: DB,
         evm_env: &EvmEnv,
         parent_hash: B256,
+        hardfork: FoundryHardfork,
         parent_beacon_block_root: Option<B256>,
         transactions: &[HistoricalReplayTransaction],
         inspector_tx_config: &InspectorTxConfig,
@@ -3901,6 +3926,7 @@ where
     {
         let inspector = self.build_mining_inspector();
         let ethereum_transitions = self.ethereum_block_transitions(
+            hardfork,
             parent_beacon_block_root,
             BlockExecutionKind::TransactionPrefix,
         );
@@ -6298,7 +6324,7 @@ impl Backend<FoundryNetwork> {
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
                 let ethereum_transitions = self
-                    .ethereum_block_transitions(None, BlockExecutionKind::Complete)
+                    .ethereum_block_transitions(self.hardfork(), None, BlockExecutionKind::Complete)
                     .map(|mut transitions| {
                         transitions.parent_beacon_block_root = (transitions.hardfork
                             >= EthereumHardfork::Cancun)
