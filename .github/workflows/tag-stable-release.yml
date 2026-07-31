@@ -1,10 +1,13 @@
 ---
-name: Tag Stable Release
+name: Validate and Tag Stable Release
 
 permissions: {}
 
 'on':
-  pull_request_target: # zizmor: ignore[dangerous-triggers] metadata and merged tree are validated by trusted code
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, edited]
+  pull_request_target: # zizmor: ignore[dangerous-triggers] closed merges only; trusted code validates the exact merge tree
     branches: [master]
     types: [closed]
 
@@ -13,12 +16,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tag:
+  validate:
+    name: Validate stable release
     if: >-
-      github.event.pull_request.merged == true &&
+      (github.event_name == 'pull_request' || github.event.pull_request.merged == true) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'release/stable' &&
-      contains(github.event.pull_request.body, '<!-- foundry-stable-version-pr -->')
+      github.event.pull_request.head.ref == 'release/stable'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -51,14 +54,11 @@ jobs:
             if (pr.user?.type !== 'Bot' || String(pr.user.id) !== process.env.RELEASE_APP_BOT_ID) {
               throw new Error('Stable version pull request was not created by the release App');
             }
-            if (!pr.merged || pr.base.ref !== 'master' || pr.base.repo.full_name !== repository) {
-              throw new Error('Stable version pull request was not merged into this repository master');
+            if (pr.base.ref !== 'master' || pr.base.repo.full_name !== repository) {
+              throw new Error('Stable version pull request does not target this repository master');
             }
             if (pr.head.ref !== 'release/stable' || pr.head.repo.full_name !== repository) {
               throw new Error('Stable version pull request did not use the release/stable branch');
-            }
-            if (!/^[0-9a-f]{40}$/i.test(pr.merge_commit_sha || '')) {
-              throw new Error('Stable version pull request has no valid merge commit SHA');
             }
 
             const marker = '<!-- foundry-stable-version-pr -->';
@@ -81,23 +81,46 @@ jobs:
             if (pr.title !== `chore: prepare ${metadata[4]}`) {
               throw new Error('Stable version pull request title does not match its tag');
             }
+            if (context.eventName === 'pull_request') {
+              const master = await github.rest.repos.getCommit({ ...context.repo, ref: 'master' });
+              if (metadata[2] !== pr.base.sha || metadata[2] !== master.data.sha) {
+                throw new Error('Stable version pull request was prepared from a stale master commit');
+              }
+            }
+            const sha = context.eventName === 'pull_request' ? context.sha : pr.merge_commit_sha;
+            if (!/^[0-9a-f]{40}$/i.test(sha || '')) {
+              throw new Error('Stable version pull request has no exact validation commit');
+            }
 
             core.setOutput('version', metadata[1]);
             core.setOutput('source_sha', metadata[2]);
             core.setOutput('tag', metadata[4]);
             core.setOutput('fragment_count', metadata[5]);
             core.setOutput('package_count', metadata[6]);
-            core.setOutput('merge_sha', pr.merge_commit_sha);
+            core.setOutput('sha', sha);
 
-      - name: Checkout merged release
+      - name: Checkout exact release tree
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ steps.release.outputs.merge_sha }}
+          ref: ${{ steps.release.outputs.sha }}
           path: release
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Revalidate merged release
+      - name: Verify test merge parents
+        if: github.event_name == 'pull_request'
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          parents=$(git -C release show --no-patch --format='%P' "$SHA")
+          if [[ "$parents" != "$SOURCE_SHA $HEAD_SHA" ]]; then
+            echo "test merge parents do not match the prepared master and PR head" >&2
+            exit 1
+          fi
+
+      - name: Validate exact release tree
         run: |
           python3 trusted/.github/scripts/prepare-stable-release.py \
             --validate-merged \
@@ -109,7 +132,7 @@ jobs:
             --expected-fragment-count "$EXPECTED_FRAGMENT_COUNT" \
             --expected-package-count "$EXPECTED_PACKAGE_COUNT"
         env:
-          MERGE_SHA: ${{ steps.release.outputs.merge_sha }}
+          MERGE_SHA: ${{ steps.release.outputs.sha }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           EXPECTED_VERSION: ${{ steps.release.outputs.version }}
           EXPECTED_TAG: ${{ steps.release.outputs.tag }}
@@ -118,6 +141,7 @@ jobs:
 
       - name: Create repository-scoped App token
         id: app-token
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ vars.FOUNDRY_RELEASE_APP_ID }}
@@ -127,10 +151,11 @@ jobs:
           permission-contents: write
 
       - name: Create exact release tag
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TAG_NAME: ${{ steps.release.outputs.tag }}
-          MERGE_SHA: ${{ steps.release.outputs.merge_sha }}
+          MERGE_SHA: ${{ steps.release.outputs.sha }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
