@@ -21,7 +21,7 @@ use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
 use serde_json::json;
-use std::path::Path;
+use std::{io::Write, path::Path};
 use yansi::Paint;
 
 pub mod vanity;
@@ -72,6 +72,10 @@ pub enum WalletSubcommands {
         /// Overwrite existing keystore files without prompting.
         #[arg(long)]
         force: bool,
+
+        /// Also enroll the keystore for Touch ID unlock (macOS only).
+        #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
+        touch_id: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -250,6 +254,9 @@ pub enum WalletSubcommands {
         /// This is unsafe, we recommend using the default hidden password prompt
         #[arg(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
+        /// Also enroll the keystore for Touch ID unlock (macOS only).
+        #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
+        touch_id: bool,
         #[command(flatten)]
         raw_wallet_options: RawWalletOpts,
     },
@@ -352,7 +359,16 @@ impl WalletSubcommands {
     // TODO: Full JsonEnvelope migration is deferred to a follow-up pass.
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, account_name, unsafe_password, number, password, force } => {
+            Self::New {
+                path,
+                account_name,
+                unsafe_password,
+                number,
+                password,
+                force,
+                touch_id,
+            } => {
+                ensure_touch_id_available(touch_id)?;
                 let mut rng = thread_rng();
 
                 let mut json_values = shell::is_json().then(std::vec::Vec::new);
@@ -373,7 +389,7 @@ impl WalletSubcommands {
                             );
                         }
                     }
-                } else if unsafe_password.is_some() || password {
+                } else if unsafe_password.is_some() || password || touch_id {
                     let path = Config::foundry_keystores_dir().ok_or_else(|| {
                         eyre::eyre!("Could not find the default keystore directory.")
                     })?;
@@ -408,8 +424,6 @@ impl WalletSubcommands {
                             }
 
                             if !existing_files.is_empty() {
-                                use std::io::Write;
-
                                 sh_eprintln!("The following keystore file(s) already exist:")?;
                                 for file in &existing_files {
                                     sh_eprintln!("   - {file}")?;
@@ -438,22 +452,45 @@ impl WalletSubcommands {
                             let (wallet, uuid) = PrivateKeySigner::new_keystore(
                                 &path,
                                 &mut rng,
-                                password.clone(),
+                                &password,
                                 account_name_ref.as_deref(),
                             )?;
                             let identifier = account_name_ref.as_deref().unwrap_or(&uuid);
+                            let keystore_path = path.join(identifier);
+
+                            #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                            if touch_id {
+                                foundry_wallets::touch_id::enroll(
+                                    &keystore_path,
+                                    &password,
+                                    foundry_wallets::touch_id::Policy::default(),
+                                )
+                                .map_err(|e| {
+                                    eyre::eyre!(
+                                        "keystore was created at {}, but Touch ID enrollment failed: {e}",
+                                        keystore_path.display()
+                                    )
+                                })?;
+                            }
 
                             if let Some(json) = json_values.as_mut() {
-                                json.push(json!({
+                                let mut result = json!({
                                     "address": wallet.address().to_checksum(None),
                                     "public_key": format!("0x{}", hex::encode(wallet.public_key())),
-                                    "path": format!("{}", path.join(identifier).display()),
-                                }));
+                                    "path": format!("{}", keystore_path.display()),
+                                });
+                                if touch_id {
+                                    result["touch_id"] = json!(true);
+                                }
+                                json.push(result);
                             } else {
                                 sh_status!(
                                     "Created new encrypted keystore file: {}",
-                                    path.join(identifier).display()
+                                    keystore_path.display()
                                 )?;
+                                if touch_id {
+                                    sh_status!("Touch ID unlock enabled.")?;
+                                }
                                 sh_status!("Address:    {}", wallet.address().to_checksum(None))?;
                                 if shell::verbosity() > 0 {
                                     sh_status!(
@@ -757,7 +794,14 @@ impl WalletSubcommands {
                     eyre::bail!("Validation failed. Address {address} did not sign this message.");
                 }
             }
-            Self::Import { account_name, keystore_dir, unsafe_password, raw_wallet_options } => {
+            Self::Import {
+                account_name,
+                keystore_dir,
+                unsafe_password,
+                touch_id,
+                raw_wallet_options,
+            } => {
+                ensure_touch_id_available(touch_id)?;
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
@@ -805,12 +849,29 @@ flag to set your key via:
                     dir,
                     &mut rng,
                     private_key,
-                    password,
+                    &password,
                     Some(&account_name),
                 )?;
                 let address = wallet.address();
+
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                if touch_id {
+                    foundry_wallets::touch_id::enroll(
+                        &keystore_path,
+                        &password,
+                        foundry_wallets::touch_id::Policy::default(),
+                    )
+                    .map_err(|e| {
+                        eyre::eyre!("keystore was imported, but Touch ID enrollment failed: {e}")
+                    })?;
+                }
+
                 if shell::is_json() {
-                    print_json_success(json!({"account": account_name, "address": address}))?;
+                    let mut result = json!({"account": account_name, "address": address});
+                    if touch_id {
+                        result["touch_id"] = json!(true);
+                    }
+                    print_json_success(result)?;
                 } else {
                     sh_println!(
                         "{}",
@@ -819,6 +880,9 @@ flag to set your key via:
                         )
                         .green()
                     )?;
+                    if touch_id {
+                        sh_status!("Touch ID unlock enabled.")?;
+                    }
                 }
             }
             Self::List(cmd) => {
@@ -850,6 +914,9 @@ flag to set your key via:
                 if PrivateKeySigner::decrypt_keystore(&keystore_path, password).is_err() {
                     eyre::bail!("Invalid password - wallet removal cancelled");
                 }
+
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                foundry_wallets::touch_id::remove(&keystore_path)?;
 
                 std::fs::remove_file(&keystore_path).wrap_err_with(|| {
                     format!("Failed to remove keystore file at {}", keystore_path.display())
@@ -969,6 +1036,9 @@ flag to set your key via:
                     eyre::bail!("Keystore file does not exist at {}", keypath.display());
                 }
 
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                let touch_id_enrolled = foundry_wallets::touch_id::is_enrolled(&keypath);
+
                 let current_password = if let Some(password) = unsafe_password {
                     password
                 } else {
@@ -998,9 +1068,31 @@ flag to set your key via:
                     dir,
                     &mut rng,
                     private_key,
-                    new_password,
+                    &new_password,
                     Some(&account_name),
                 )?;
+
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                if touch_id_enrolled
+                    && let Err(enrollment_error) = foundry_wallets::touch_id::enroll(
+                        &keypath,
+                        &new_password,
+                        foundry_wallets::touch_id::Policy::default(),
+                    )
+                {
+                    match foundry_wallets::touch_id::remove(&keypath) {
+                        Ok(true) => eyre::bail!(
+                            "password changed, but Touch ID re-enrollment failed: {enrollment_error}. The stale Touch ID sidecar was removed; password-prompt fallback remains available"
+                        ),
+                        Ok(false) => eyre::bail!(
+                            "password changed, but Touch ID re-enrollment failed: {enrollment_error}. No stale Touch ID sidecar remained; password-prompt fallback remains available"
+                        ),
+                        Err(cleanup_error) => eyre::bail!(
+                            "password changed, but Touch ID re-enrollment failed: {enrollment_error}. The stale sidecar could not be removed: {cleanup_error}. Remove {} manually before password-prompt fallback is possible",
+                            foundry_wallets::touch_id::sidecar_path(&keypath).display()
+                        ),
+                    }
+                }
 
                 let address = wallet.address();
                 if shell::is_json() {
@@ -1055,6 +1147,23 @@ flag to set your key via:
     }
 }
 
+fn ensure_touch_id_available(touch_id: bool) -> Result<()> {
+    if !touch_id {
+        return Ok(());
+    }
+
+    #[cfg(all(target_os = "macos", feature = "touch-id"))]
+    {
+        if !foundry_wallets::touch_id::is_available() {
+            eyre::bail!("Touch ID is unavailable on this Mac")
+        }
+        Ok(())
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+    eyre::bail!("`--touch-id` requires macOS and a cast build with the `touch-id` feature")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{session::SessionSubcommands, *};
@@ -1071,6 +1180,31 @@ mod tests {
                 assert!(!from_file);
             }
             _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_new_touch_id() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "new", "--touch-id"]);
+        match args {
+            WalletSubcommands::New { touch_id, .. } => assert!(touch_id),
+            _ => panic!("expected WalletSubcommands::New"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_import_touch_id() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "import",
+            "my_account",
+            "--touch-id",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ]);
+        match args {
+            WalletSubcommands::Import { touch_id, .. } => assert!(touch_id),
+            _ => panic!("expected WalletSubcommands::Import"),
         }
     }
 
