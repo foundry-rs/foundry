@@ -64,11 +64,15 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(lockfile.read_bytes(), b"reviewed lockfile\n")
 
     def test_accepts_stable_version(self) -> None:
-        self.assertEqual(prepare_stable_release.parse_version("1.7.2"), (1, 7, 2))
+        self.assertEqual(prepare_stable_release.parse_version("1.7.2"), (1, 7, 2, None))
 
-    def test_rejects_prerelease_version(self) -> None:
-        with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "stable X.Y.Z"):
-            prepare_stable_release.parse_version("1.7.2-rc1")
+    def test_accepts_only_strict_rc_versions(self) -> None:
+        self.assertEqual(prepare_stable_release.parse_version("1.7.2-rc1"), (1, 7, 2, 1))
+        for version in ["1.7.2-rc", "1.7.2-rc0", "1.7.2-rc01", "1.7.2-rc.1"]:
+            with self.subTest(version=version), self.assertRaisesRegex(
+                prepare_stable_release.ReleaseError, "strict|canonical"
+            ):
+                prepare_stable_release.parse_version(version)
 
     def test_rejects_noncanonical_stable_version(self) -> None:
         with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "canonical"):
@@ -80,6 +84,53 @@ class VersionTests(unittest.TestCase):
         )
         self.assertEqual(tag, "v1.7.1")
         self.assertEqual(version, (1, 7, 1))
+
+    def test_all_release_transitions(self) -> None:
+        stable = (1, 7, 1)
+        self.assertEqual(
+            prepare_stable_release.transition("stable", "1.7.2", stable, {}, None, None),
+            ("v1.7.1", "1.7.2"),
+        )
+        self.assertEqual(
+            prepare_stable_release.transition(
+                "start", "1.7.2", stable, {}, "v1.7.1", "v1.7.2-rc1"
+            ),
+            ("v1.7.1", "1.7.2-rc1"),
+        )
+        tags = {"v1.7.2-rc1": (1, 7, 2, 1)}
+        self.assertEqual(
+            prepare_stable_release.transition(
+                "advance", "1.7.2-rc1", stable, tags, "v1.7.2-rc1", "v1.7.2-rc2"
+            ),
+            ("v1.7.2-rc1", "1.7.2-rc2"),
+        )
+        self.assertEqual(
+            prepare_stable_release.transition(
+                "promote", "1.7.2-rc1", stable, tags, "v1.7.2-rc1", "v1.7.2"
+            ),
+            ("v1.7.2-rc1", "1.7.2"),
+        )
+
+    def test_rejects_stale_confirmation_existing_target_and_rc_gaps(self) -> None:
+        stable = (1, 7, 1)
+        tags = {"v1.7.2-rc1": (1, 7, 2, 1), "v1.7.2-rc3": (1, 7, 2, 3)}
+        with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "latest same-core"):
+            prepare_stable_release.transition(
+                "advance", "1.7.2-rc1", stable, tags, "v1.7.2-rc1", "v1.7.2-rc2"
+            )
+        with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "not contiguous"):
+            prepare_stable_release.transition(
+                "advance", "1.7.2-rc3", stable, tags, "v1.7.2-rc3", "v1.7.2-rc4"
+            )
+        with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "already exists"):
+            prepare_stable_release.transition(
+                "start",
+                "1.7.2",
+                stable,
+                {"v1.7.2-rc1": (1, 7, 2, 1)},
+                "v1.7.1",
+                "v1.7.2-rc1",
+            )
 
     def test_extracts_full_release_plan(self) -> None:
         output = "✓ forge 1.7.1 → 1.7.2\n✓ cast 1.7.1 → 1.7.2\n"
@@ -230,14 +281,37 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "omitted.*cast"):
             prepare_stable_release.verify_workspace_versions(metadata, "1.7.2")
 
-    def test_accepts_exact_stable_diff(self) -> None:
-        prepare_stable_release.verify_stable_diff(
-            {"CHANGELOG.md": "M", ".changelog/release.md": "D"}, 1
-        )
+    def test_accepts_exact_release_diff_for_every_operation(self) -> None:
+        cases = {
+            "stable": ({"CHANGELOG.md": "M", ".changelog/release.md": "D"}, 1),
+            "start": (
+                {
+                    "Cargo.toml": "M",
+                    "Cargo.lock": "M",
+                    "CHANGELOG.md": "M",
+                    ".changelog/release.md": "D",
+                },
+                1,
+            ),
+            "advance": (
+                {
+                    "Cargo.toml": "M",
+                    "Cargo.lock": "M",
+                    "CHANGELOG.md": "M",
+                    ".changelog/release.md": "D",
+                },
+                1,
+            ),
+            "promote": ({"Cargo.toml": "M", "Cargo.lock": "M"}, 0),
+        }
+        for operation, (statuses, count) in cases.items():
+            with self.subTest(operation=operation):
+                prepare_stable_release.verify_release_diff_statuses(
+                    statuses, operation, count
+                )
 
-    def test_rejects_wrong_stable_diff_status_path_and_count(self) -> None:
+    def test_rejects_wrong_release_diff_status_path_and_count(self) -> None:
         cases = [
-            ({"CHANGELOG.md": "A", ".changelog/release.md": "D"}, 1),
             ({"CHANGELOG.md": "M", ".changelog/release.md": "M"}, 1),
             ({"CHANGELOG.md": "M", "Cargo.lock": "M", ".changelog/release.md": "D"}, 1),
             ({"CHANGELOG.md": "M", ".changelog/release.md": "D"}, 2),
@@ -247,7 +321,22 @@ class WorkspaceTests(unittest.TestCase):
             with self.subTest(statuses=statuses, count=count), self.assertRaisesRegex(
                 prepare_stable_release.ReleaseError, "stable release diff"
             ):
-                prepare_stable_release.verify_stable_diff(statuses, count)
+                prepare_stable_release.verify_release_diff_statuses(statuses, "stable", count)
+
+    def test_fragment_requirements_for_manual_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".changelog").mkdir()
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion = "1.7.2"\n')
+            with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "requires pending"):
+                prepare_stable_release.prepare(
+                    root, root / "changelogs", "start", "v1.7.1", "v1.7.2-rc1"
+                )
+            (root / ".changelog" / "pending.md").write_text("pending\n")
+            with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "zero pending"):
+                prepare_stable_release.prepare(
+                    root, root / "changelogs", "promote", "v1.7.2-rc1", "v1.7.2"
+                )
 
     def test_rejects_rename_copy_and_malformed_diff_status(self) -> None:
         for output in ["R100\told\tnew\n", "C100\told\tnew\n", "malformed\n"]:
@@ -275,7 +364,44 @@ class WorkspaceTests(unittest.TestCase):
             output = root / "output"
             with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
                 prepare_stable_release.prepare(root, root / "changelogs")
-            self.assertEqual(output.read_text(), "base_branch=master\nchanged=false\n")
+            self.assertEqual(
+                output.read_text(), "base_branch=master\noperation=stable\nchanged=false\n"
+            )
+
+    def test_stable_skips_active_rc(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".changelog").mkdir()
+            (root / ".changelog" / "pending.md").write_text("pending\n")
+            (root / "Cargo.toml").write_text(
+                '[workspace.package]\nversion = "1.7.2-rc1"\n'
+            )
+            output = root / "output"
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
+                prepare_stable_release.prepare(root, root / "changelogs")
+            self.assertEqual(
+                output.read_text(), "base_branch=master\noperation=stable\nchanged=false\n"
+            )
+
+    def test_lock_change_accepts_only_workspace_versions(self) -> None:
+        before = [
+            {"name": "forge", "version": "1.7.2", "dependencies": ["cast 1.7.2"]},
+            {"name": "cast", "version": "1.7.2"},
+            {"name": "external", "version": "1.0.0", "source": "registry", "checksum": "a"},
+        ]
+        after = [
+            {"name": "forge", "version": "1.7.2-rc1", "dependencies": ["cast 1.7.2-rc1"]},
+            {"name": "cast", "version": "1.7.2-rc1"},
+            {"name": "external", "version": "1.0.0", "source": "registry", "checksum": "a"},
+        ]
+        prepare_stable_release.verify_lock_change(
+            before, after, {"forge", "cast"}, "1.7.2", "1.7.2-rc1"
+        )
+        after[2]["checksum"] = "changed"
+        with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "external"):
+            prepare_stable_release.verify_lock_change(
+                before, after, {"forge", "cast"}, "1.7.2", "1.7.2-rc1"
+            )
 
     def test_release_plan_warning_stops_before_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -285,6 +411,10 @@ class WorkspaceTests(unittest.TestCase):
             fragment.write_text("pending changelog\n")
             manifest = root / "Cargo.toml"
             manifest.write_text('[workspace.package]\nversion = "1.7.2"\n')
+            (root / "Cargo.lock").write_text(
+                'version = 4\n\n[[package]]\nname = "forge"\nversion = "1.7.2"\n'
+                '\n[[package]]\nname = "cast"\nversion = "1.7.2"\n'
+            )
             metadata = {
                 "workspace_members": ["forge", "cast"],
                 "packages": [
@@ -351,8 +481,10 @@ class MergedReleaseTests(unittest.TestCase):
     def validate(self, **overrides) -> None:
         arguments = {
             "root": self.root,
+            "operation": "stable",
             "expected_sha": "merged-sha",
             "source_sha": "source-sha",
+            "source_tag": "v1.7.1",
             "expected_version": "1.7.2",
             "expected_tag": "v1.7.2",
             "expected_fragment_count": 1,
@@ -365,6 +497,10 @@ class MergedReleaseTests(unittest.TestCase):
             prepare_stable_release, "verify_target_tag"
         ), patch.object(
             prepare_stable_release, "verify_ancestor"
+        ), patch.object(
+            prepare_stable_release,
+            "tag_state",
+            return_value=((1, 7, 1), {"v1.7.1": (1, 7, 1, None)}),
         ), patch.object(
             prepare_stable_release,
             "name_status",
@@ -386,11 +522,19 @@ class MergedReleaseTests(unittest.TestCase):
             return_value=subprocess.CompletedProcess([], returncode=0, stdout="later-sha\n"),
         ), self.assertRaisesRegex(prepare_stable_release.ReleaseError, "does not match merged"):
             prepare_stable_release.validate_merged(
-                self.root, "merged-sha", "source-sha", "1.7.2", "v1.7.2", 1, 2
+                self.root,
+                "stable",
+                "merged-sha",
+                "source-sha",
+                "v1.7.1",
+                "1.7.2",
+                "v1.7.2",
+                1,
+                2,
             )
 
     def test_rejects_metadata_mismatch(self) -> None:
-        with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "pull request metadata"):
+        with self.assertRaisesRegex(prepare_stable_release.ReleaseError, "release metadata"):
             self.validate(expected_version="1.7.3", expected_tag="v1.7.3")
 
     def test_rejects_pending_fragment(self) -> None:
@@ -406,7 +550,7 @@ class MergedReleaseTests(unittest.TestCase):
         for path, message in [("Cargo.toml", "Cargo.toml"), ("Cargo.lock", "Cargo.lock")]:
             with self.subTest(path=path):
                 original = (self.root / path).read_bytes()
-                (self.root / path).write_bytes(original + b"changed\n")
+                (self.root / path).write_bytes(original + b"# changed\n")
                 try:
                     with self.assertRaisesRegex(prepare_stable_release.ReleaseError, message):
                         self.validate()
