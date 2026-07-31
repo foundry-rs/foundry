@@ -489,7 +489,73 @@ pub(super) fn parse_json_array_length(json: &str, key: &str) -> Result {
 }
 
 fn parse_json_str(json: &str) -> Result<Value> {
-    serde_json::from_str(json).map_err(|e| fmt_err!("failed parsing JSON: {e}"))
+    let json = strip_json_comments(json)?;
+    serde_json::from_str(&json).map_err(|e| fmt_err!("failed parsing JSON: {e}"))
+}
+
+fn strip_json_comments(json: &str) -> Result<Cow<'_, str>> {
+    let bytes = json.as_bytes();
+    let mut stripped = None;
+    let mut index = 0;
+    let mut in_string = false;
+
+    while index < bytes.len() {
+        if in_string {
+            match bytes[index] {
+                b'\\' => index += 2,
+                b'"' => {
+                    in_string = false;
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+            continue;
+        }
+
+        match (bytes[index], bytes.get(index + 1)) {
+            (b'"', _) => {
+                in_string = true;
+                index += 1;
+            }
+            (b'/', Some(b'/')) => {
+                let stripped = stripped.get_or_insert_with(|| bytes.to_vec());
+                while index < bytes.len() && !matches!(bytes[index], b'\r' | b'\n') {
+                    stripped[index] = b' ';
+                    index += 1;
+                }
+            }
+            (b'/', Some(b'*')) => {
+                let stripped = stripped.get_or_insert_with(|| bytes.to_vec());
+                stripped[index] = b' ';
+                stripped[index + 1] = b' ';
+                index += 2;
+
+                let mut closed = false;
+                while index < bytes.len() {
+                    if bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                        stripped[index] = b' ';
+                        stripped[index + 1] = b' ';
+                        index += 2;
+                        closed = true;
+                        break;
+                    }
+                    if !matches!(bytes[index], b'\r' | b'\n') {
+                        stripped[index] = b' ';
+                    }
+                    index += 1;
+                }
+                ensure!(closed, "failed parsing JSON: unterminated block comment");
+            }
+            _ => index += 1,
+        }
+    }
+
+    Ok(match stripped {
+        Some(stripped) => {
+            String::from_utf8(stripped).expect("comment stripping preserves valid UTF-8").into()
+        }
+        None => json.into(),
+    })
 }
 
 fn json_to_sol(defs: Option<&StructDefinitions>, json: &[&Value]) -> Result<Vec<DynSolValue>> {
@@ -896,6 +962,25 @@ mod tests {
     use foundry_common::fmt::{TypeDefMap, serialize_value_as_json};
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
     use std::collections::HashSet;
+
+    #[test]
+    fn test_parse_json_comments() {
+        let value = parse_json_str(
+            r#"{
+                // A line comment.
+                "value": 42,
+                /* A block comment. */
+                "url": "https://example.com/path/*literal*/"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(value["value"], 42);
+        assert_eq!(value["url"], "https://example.com/path/*literal*/");
+
+        let error = parse_json_str(r#"{"value": 42} /* unterminated"#).unwrap_err();
+        assert!(error.to_string().contains("unterminated block comment"));
+    }
 
     fn valid_value(value: &DynSolValue) -> bool {
         (match value {

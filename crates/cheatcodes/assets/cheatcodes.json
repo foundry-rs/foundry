@@ -9150,6 +9150,46 @@
     },
     {
       "func": {
+        "id": "registerSloadHook",
+        "description": "Registers a callback invoked after each SLOAD against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a load at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the load.",
+        "declaration": "function registerSloadHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSloadHook(address,bytes4)",
+        "selector": "0x37c7cf5e",
+        "selectorBytes": [
+          55,
+          199,
+          207,
+          94
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSstoreHook",
+        "description": "Registers a callback invoked after each SSTORE against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a store at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the store.",
+        "declaration": "function registerSstoreHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSstoreHook(address,bytes4)",
+        "selector": "0xe0c3bdd9",
+        "selectorBytes": [
+          224,
+          195,
+          189,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "rememberKey",
         "description": "Adds a private key to the local forge wallet and returns the address.",
         "declaration": "function rememberKey(uint256 privateKey) external returns (address keyAddr);",

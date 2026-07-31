@@ -1027,6 +1027,8 @@ impl SymbolicExecutor {
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
             parent.inherit_branch_target_progress(&outcome.state);
+            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
+            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
