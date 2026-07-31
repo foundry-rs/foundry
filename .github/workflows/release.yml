@@ -289,6 +289,7 @@ jobs:
         if: contains(matrix.target, 'apple-darwin')
         run: |
           printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+          # Touch ID APIs require macOS 11 or newer.
           printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n' >> "$GITHUB_ENV"
 
       - name: cross setup

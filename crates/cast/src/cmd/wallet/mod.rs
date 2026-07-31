@@ -21,7 +21,11 @@ use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
 use serde_json::json;
-use std::{io::Write, path::Path};
+use std::{
+    ffi::OsString,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use yansi::Paint;
 
 pub mod vanity;
@@ -369,6 +373,9 @@ impl WalletSubcommands {
                 touch_id,
             } => {
                 ensure_touch_id_available(touch_id)?;
+                if let Some(name) = &account_name {
+                    ensure_account_name_available(name)?;
+                }
                 let mut rng = thread_rng();
 
                 let mut json_values = shell::is_json().then(std::vec::Vec::new);
@@ -460,6 +467,7 @@ impl WalletSubcommands {
 
                             #[cfg(all(target_os = "macos", feature = "touch-id"))]
                             if touch_id {
+                                ensure_touch_id_sidecar_available(&keystore_path)?;
                                 foundry_wallets::touch_id::enroll(
                                     &keystore_path,
                                     &password,
@@ -802,6 +810,7 @@ impl WalletSubcommands {
                 raw_wallet_options,
             } => {
                 ensure_touch_id_available(touch_id)?;
+                ensure_account_name_available(&account_name)?;
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
@@ -817,6 +826,9 @@ impl WalletSubcommands {
                 let keystore_path = Path::new(&dir).join(&account_name);
                 if keystore_path.exists() {
                     eyre::bail!("Keystore file already exists at {}", keystore_path.display());
+                }
+                if touch_id {
+                    ensure_touch_id_sidecar_available(&keystore_path)?;
                 }
 
                 // get wallet
@@ -915,8 +927,7 @@ flag to set your key via:
                     eyre::bail!("Invalid password - wallet removal cancelled");
                 }
 
-                #[cfg(all(target_os = "macos", feature = "touch-id"))]
-                foundry_wallets::touch_id::remove(&keystore_path)?;
+                remove_touch_id_sidecar(&keystore_path)?;
 
                 std::fs::remove_file(&keystore_path).wrap_err_with(|| {
                     format!("Failed to remove keystore file at {}", keystore_path.display())
@@ -1036,8 +1047,7 @@ flag to set your key via:
                     eyre::bail!("Keystore file does not exist at {}", keypath.display());
                 }
 
-                #[cfg(all(target_os = "macos", feature = "touch-id"))]
-                let touch_id_enrolled = foundry_wallets::touch_id::is_enrolled(&keypath);
+                let touch_id_enrolled = is_touch_id_sidecar(&touch_id_sidecar_path(&keypath));
 
                 let current_password = if let Some(password) = unsafe_password {
                     password
@@ -1080,7 +1090,7 @@ flag to set your key via:
                         foundry_wallets::touch_id::Policy::default(),
                     )
                 {
-                    match foundry_wallets::touch_id::remove(&keypath) {
+                    match remove_touch_id_sidecar(&keypath) {
                         Ok(true) => eyre::bail!(
                             "password changed, but Touch ID re-enrollment failed: {enrollment_error}. The stale Touch ID sidecar was removed; password-prompt fallback remains available"
                         ),
@@ -1089,9 +1099,15 @@ flag to set your key via:
                         ),
                         Err(cleanup_error) => eyre::bail!(
                             "password changed, but Touch ID re-enrollment failed: {enrollment_error}. The stale sidecar could not be removed: {cleanup_error}. Remove {} manually before password-prompt fallback is possible",
-                            foundry_wallets::touch_id::sidecar_path(&keypath).display()
+                            touch_id_sidecar_path(&keypath).display()
                         ),
                     }
+                }
+
+                #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+                if touch_id_enrolled {
+                    remove_touch_id_sidecar(&keypath)?;
+                    sh_warn!("Removed the stale Touch ID enrollment after changing the password")?;
                 }
 
                 let address = wallet.address();
@@ -1164,11 +1180,73 @@ fn ensure_touch_id_available(touch_id: bool) -> Result<()> {
     eyre::bail!("`--touch-id` requires macOS and a cast build with the `touch-id` feature")
 }
 
+const TOUCH_ID_SIDECAR_SUFFIX: &str = ".touchid";
+
+fn ensure_account_name_available(name: &str) -> Result<()> {
+    if name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
+        eyre::bail!("account names ending in `{TOUCH_ID_SIDECAR_SUFFIX}` are reserved")
+    }
+    Ok(())
+}
+
+fn touch_id_sidecar_path(keystore_path: &Path) -> PathBuf {
+    let mut path = OsString::from(keystore_path.as_os_str());
+    path.push(TOUCH_ID_SIDECAR_SUFFIX);
+    path.into()
+}
+
+fn is_keystore(path: &Path) -> bool {
+    let Ok(value) = fs::read_json_file::<serde_json::Value>(path) else { return false };
+    value.get("version").is_some()
+        && (value.get("crypto").is_some() || value.get("Crypto").is_some())
+}
+
+fn is_touch_id_sidecar(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) && !is_keystore(path))
+}
+
+fn ensure_touch_id_sidecar_available(keystore_path: &Path) -> Result<()> {
+    let sidecar = touch_id_sidecar_path(keystore_path);
+    if sidecar.exists() && is_keystore(&sidecar) {
+        eyre::bail!(
+            "refusing Touch ID enrollment because {} is an existing keystore",
+            sidecar.display()
+        )
+    }
+    Ok(())
+}
+
+fn remove_touch_id_sidecar(keystore_path: &Path) -> Result<bool> {
+    let sidecar = touch_id_sidecar_path(keystore_path);
+    if !sidecar.exists() {
+        return Ok(false);
+    }
+    if is_keystore(&sidecar) {
+        eyre::bail!("refusing to remove existing keystore at {}", sidecar.display())
+    }
+    std::fs::remove_file(&sidecar)
+        .wrap_err_with(|| format!("Failed to remove Touch ID sidecar at {}", sidecar.display()))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{session::SessionSubcommands, *};
     use alloy_primitives::{address, keccak256};
     use std::str::FromStr;
+
+    #[test]
+    fn distinguishes_touch_id_sidecars_from_legacy_keystores() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        std::fs::write(&sidecar, "opaque sidecar").unwrap();
+        assert!(is_touch_id_sidecar(&sidecar));
+
+        std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
+        assert!(!is_touch_id_sidecar(&sidecar));
+    }
 
     #[test]
     fn can_parse_wallet_sign_message() {
