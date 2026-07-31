@@ -170,7 +170,13 @@ impl Create2Args {
         self.run().map(drop)
     }
 
-    fn run(self) -> Result<Create2Output> {
+    pub fn run(self) -> Result<Create2Output> {
+        if self.command.is_some() {
+            eyre::bail!(
+                "`Create2Args::run` does not support subcommands; use `Create2Args::execute` instead"
+            );
+        }
+
         let Self {
             command: _,
             starts_with,
@@ -315,9 +321,13 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
-    fn create2_subcommand_uses_execute() {
+    fn create2_subcommand_is_rejected_by_legacy_runner() {
         let args = Create2Args::parse_from(["foundry-cli", "init-code-hash", "MissingContract"]);
-        assert!(args.execute().is_err());
+        let err = args.run().err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "`Create2Args::run` does not support subcommands; use `Create2Args::execute` instead"
+        );
     }
 
     #[test]
