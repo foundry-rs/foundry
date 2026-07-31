@@ -20,7 +20,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
-use tempo_alloy::accounts::TempoAccountsKeyAuthorization;
+use tempo_alloy::accounts::{TempoAccountsKeyAuthorization, TempoAccountsStore};
 use tempo_primitives::transaction::{SignatureType, SignedKeyAuthorization};
 use tokio::sync::Mutex;
 
@@ -212,10 +212,11 @@ pub async fn ensure_access_key(cfg: EnsureAccessKeyConfig) -> Result<AccessKeyOu
                     );
                 }
                 let chain_id = signed.authorization.chain_id;
-                super::with_tempo_accounts_store_lock(|store| {
-                    store.upsert_secp256k1_access_key(account_address, &signer, &signed)?;
-                    Ok(())
-                })?;
+                TempoAccountsStore::default_path()?.upsert_secp256k1_access_key(
+                    account_address,
+                    &signer,
+                    &signed,
+                )?;
                 return Ok(AccessKeyOutcome {
                     wallet_address: account_address,
                     key_address,
