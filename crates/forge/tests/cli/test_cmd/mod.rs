@@ -743,6 +743,19 @@ contract ConsumerTest {
         .current_dir(&airdrops)
         .args(["test", "--create2-deployer", "0x0000000000000000000000000000000000000000"])
         .assert_success();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(airdrops.join("foundry.toml")).unwrap(),
+        "libraries = [\"../library/src/libraries/Helpers.sol:Helpers:0x1111111111111111111111111111111111111111\"]"
+    )
+    .unwrap();
+    let stdout = cmd
+        .forge_fuse()
+        .current_dir(&airdrops)
+        .args(["test", "-vvvv"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("0x1111111111111111111111111111111111111111"), "{stdout}");
 });
 
 forgetest_init!(create2_factory_is_installed_after_constructor_when_no_libraries, |prj, cmd| {

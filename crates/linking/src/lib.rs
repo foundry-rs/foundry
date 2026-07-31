@@ -196,7 +196,6 @@ impl<'a> Linker<'a> {
         target: &ArtifactId,
     ) -> Result<Option<&'a ArtifactId>, LinkerError> {
         let library_path = self.project_relative_path(Path::new(file));
-        let canonical_library_path = self.canonical_path(&library_path);
         let candidates = self
             .contracts
             .keys()
@@ -205,14 +204,29 @@ impl<'a> Linker<'a> {
                     return false;
                 }
                 let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
-                artifact_name == *name
-                    && self.path_matches(
-                        &artifact_path,
-                        &library_path,
-                        canonical_library_path.as_deref(),
-                    )
+                artifact_name == *name && artifact_path == library_path
             })
             .collect::<Vec<_>>();
+        let candidates = if candidates.is_empty() {
+            let canonical_library_path = self.canonical_path(&library_path);
+            self.contracts
+                .keys()
+                .filter(|id| {
+                    if id.version != target.version {
+                        return false;
+                    }
+                    let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
+                    artifact_name == *name
+                        && self.path_matches(
+                            &artifact_path,
+                            &library_path,
+                            canonical_library_path.as_deref(),
+                        )
+                })
+                .collect()
+        } else {
+            candidates
+        };
         let same_build_and_profile = candidates
             .iter()
             .copied()
@@ -276,37 +290,42 @@ impl<'a> Linker<'a> {
     ) -> Result<(), LinkerError> {
         for (id, references) in references {
             let (file, name) = self.convert_artifact_id_to_lib_path(id);
-            let mut configured = references.iter().filter_map(|reference| {
-                libraries
-                    .libs
-                    .get(reference)
-                    .and_then(|libraries| libraries.get(&name))
-                    .map(|address| Address::from_str(address))
-            });
-            let Some(address) =
-                configured.next().transpose().map_err(LinkerError::InvalidAddress)?
-            else {
-                continue;
-            };
-            for other in configured {
-                if other.map_err(LinkerError::InvalidAddress)? != address {
-                    return Err(LinkerError::ConflictingLibraryArtifacts {
-                        file: file.display().to_string(),
-                        name,
-                    });
-                }
-            }
-            let canonical = libraries.libs.entry(file.clone()).or_default().entry(name.clone());
-            if let std::collections::btree_map::Entry::Occupied(existing) = &canonical
-                && Address::from_str(existing.get()).map_err(LinkerError::InvalidAddress)?
-                    != address
+            let mut configured = references
+                .iter()
+                .filter_map(|reference| libraries.libs.get(reference)?.get(&name))
+                .map(|address| Address::from_str(address).map_err(LinkerError::InvalidAddress))
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let exact = !configured.is_empty();
+            if configured.is_empty()
+                && let Some(canonical_file) = self.canonical_path(&file)
             {
+                configured = libraries
+                    .libs
+                    .iter()
+                    .filter_map(|(configured_file, libraries)| {
+                        if self.canonical_path(configured_file).as_deref() == Some(&canonical_file)
+                        {
+                            libraries.get(&name)
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|address| Address::from_str(address).map_err(LinkerError::InvalidAddress))
+                    .collect::<Result<BTreeSet<_>, _>>()?;
+            }
+            if configured.len() > 1 {
                 return Err(LinkerError::ConflictingLibraryArtifacts {
                     file: file.display().to_string(),
                     name,
                 });
             }
-            canonical.or_insert_with(|| address.to_checksum(None));
+            let Some(address) = configured.first().copied() else { continue };
+            let canonical = libraries.libs.entry(file.clone()).or_default();
+            if exact {
+                canonical.insert(name, address.to_checksum(None));
+            } else {
+                canonical.entry(name).or_insert_with(|| address.to_checksum(None));
+            }
         }
         Ok(())
     }
@@ -1446,9 +1465,19 @@ mod tests {
     }
 
     #[test]
-    fn configured_library_alias_does_not_override_auto_linked_library() {
+    fn exact_artifact_match_uses_configured_library_alias() {
         let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
         let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
+        let mut contracts = linker.contracts.clone();
+        let (library_id, library) = contracts
+            .iter()
+            .find(|(id, _)| id.name == "Lib")
+            .map(|(id, contract)| (id.clone(), contract.clone()))
+            .unwrap();
+        let mut alias_id = library_id.clone();
+        alias_id.source = "./default/linking/simple/Simple.t.sol".into();
+        contracts.insert(alias_id, library);
+        let linker = Linker::new(test.project.root(), contracts);
         let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
         let configured = address!("0000000000000000000000000000000000000001");
         let alias = PathBuf::from("./default/linking/simple/Simple.t.sol");
@@ -1459,37 +1488,37 @@ mod tests {
             .entry(alias.clone())
             .or_default()
             .insert("Lib".to_string(), configured.to_checksum(None));
-        let exact = address!("0000000000000000000000000000000000000002");
-        let mut direct_libraries = libraries.clone();
-        direct_libraries
-            .libs
-            .entry(generated_key.clone())
-            .or_default()
-            .insert("Lib".to_string(), exact.to_checksum(None));
-        let direct = linker.link(consumer, &direct_libraries).unwrap();
-        linker.ensure_linked(&direct, consumer).unwrap();
-        let bytecode = direct.get_bytecode_bytes().unwrap();
-        assert!(bytecode.windows(Address::len_bytes()).any(|window| window == exact.as_slice()));
-        assert!(
-            !bytecode.windows(Address::len_bytes()).any(|window| window == configured.as_slice())
-        );
 
         let output =
             linker.link_with_nonce_or_address(libraries, Address::ZERO, 1, [consumer]).unwrap();
-        let generated = output.library_addresses[0];
         let bytecode = linker.link(consumer, &output.libraries).unwrap().bytecode.unwrap();
         let bytecode = bytecode.bytes().unwrap();
 
-        assert_ne!(generated, configured);
+        assert!(output.libs_to_deploy.is_empty());
+        assert_eq!(output.library_addresses, [configured]);
         assert!(
-            bytecode.windows(Address::len_bytes()).any(|window| window == generated.as_slice())
-        );
-        assert!(
-            !bytecode.windows(Address::len_bytes()).any(|window| window == configured.as_slice())
+            bytecode.windows(Address::len_bytes()).any(|window| window == configured.as_slice())
         );
         assert_eq!(output.libraries.libs.len(), 2);
         assert!(output.libraries.libs.contains_key(&alias));
         assert!(output.libraries.libs.contains_key(&generated_key));
+
+        let exact = address!("0000000000000000000000000000000000000002");
+        let references = BTreeMap::from([(&library_id, BTreeSet::from([alias.clone()]))]);
+        let mut libraries = output.libraries;
+        libraries.libs.get_mut(&alias).unwrap().insert("Lib".into(), exact.to_checksum(None));
+        linker.apply_configured_references(&references, &mut libraries).unwrap();
+        assert_eq!(libraries.libs[&generated_key]["Lib"], exact.to_checksum(None));
+
+        libraries
+            .libs
+            .get_mut(&generated_key)
+            .unwrap()
+            .insert("Lib".into(), configured.to_checksum(None));
+        let fallback = PathBuf::from("default/linking/simple/../simple/Simple.t.sol");
+        let references = BTreeMap::from([(&library_id, BTreeSet::from([fallback]))]);
+        let err = linker.apply_configured_references(&references, &mut libraries).unwrap_err();
+        assert!(matches!(err, LinkerError::ConflictingLibraryArtifacts { .. }));
     }
 
     #[test]
