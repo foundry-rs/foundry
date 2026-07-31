@@ -453,7 +453,7 @@ crossterm = "0.29"
 dirs = "6"
 dunce = "1"
 evm-disassembler = "0.6"
-evmole = "0.8"
+evmole = "0.9"
 eyre = "0.6"
 figment = { package = "figment2", version = "0.11" }
 futures = { version = "0.3", default-features = false }

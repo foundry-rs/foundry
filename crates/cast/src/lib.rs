@@ -2443,19 +2443,22 @@ impl SimpleCast {
             .functions
             .expect("functions extraction was requested")
             .into_iter()
-            .map(|f| {
-                (
-                    f.selector.into(),
-                    f.arguments
-                        .expect("arguments extraction was requested")
-                        .into_iter()
-                        .map(|t| t.sol_type_name().to_string())
-                        .collect::<Vec<String>>()
-                        .join(","),
-                    f.state_mutability
-                        .expect("state_mutability extraction was requested")
-                        .as_json_str(),
-                )
+            .filter_map(|f| {
+                if f.dispatch == evmole::SelectorDispatch::Abi {
+                    return Some((
+                        f.selector.into(),
+                        f.arguments
+                            .expect("arguments extraction was requested")
+                            .into_iter()
+                            .map(|t| t.sol_type_name().to_string())
+                            .collect::<Vec<String>>()
+                            .join(","),
+                        f.state_mutability
+                            .expect("state_mutability extraction was requested")
+                            .as_json_str(),
+                    ));
+                }
+                None
             })
             .collect())
     }
