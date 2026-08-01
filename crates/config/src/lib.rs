@@ -3144,7 +3144,22 @@ impl BasicConfig {
 
 mod remappings_serde {
     use foundry_compilers::artifacts::remappings::RelativeRemapping;
+    #[cfg(windows)]
+    use path_slash::PathExt as _;
     use serde::{Serialize, Serializer};
+    #[cfg(windows)]
+    use std::path::Path;
+
+    #[cfg(windows)]
+    fn slash_context(context: &str) -> String {
+        let has_trailing_separator =
+            context.as_bytes().last().is_some_and(|c| *c == b'/' || *c == b'\\');
+        let mut context = Path::new(context).to_slash_lossy().into_owned();
+        if has_trailing_separator && !context.ends_with('/') {
+            context.push('/');
+        }
+        context
+    }
 
     pub fn serialize<S>(remappings: &[RelativeRemapping], serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -3157,7 +3172,7 @@ mod remappings_serde {
                 let mut remapping = remapping.clone();
                 remapping.context = None;
                 #[cfg(windows)]
-                let context = context.replace('\\', "/");
+                let context = slash_context(context);
                 #[cfg(not(windows))]
                 let context = context.as_str();
                 format!("{context}:{remapping}")
@@ -5004,6 +5019,23 @@ mod tests {
 
         let serialized = toml::Value::try_from(config.into_basic()).unwrap();
         assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_serialization_preserves_verbatim_unc_context() {
+        let remapping = r"\\?\UNC\server\share\project\:inner/=lib/inner/";
+        let expected = r"\\?\UNC\server\share/project/:inner/=lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
     }
 
     #[test]
