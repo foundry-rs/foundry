@@ -8,14 +8,27 @@ contract MappingHookTarget {
     mapping(address => uint256) public balances;
     mapping(address => mapping(address => uint256)) public allowances;
 
-    function setBalance(address owner, uint256 value) external { balances[owner] = value; }
-    function setAllowance(address owner, address spender, uint256 value) external { allowances[owner][spender] = value; }
-    function compute(bytes32 key, bytes32 root) external pure returns (bytes32) { return keccak256(abi.encode(key, root)); }
-    function directStore(bytes32 slot, uint256 value) external { assembly { sstore(slot, value) } }
+    function setBalance(address owner, uint256 value) external {
+        balances[owner] = value;
+    }
+
+    function setAllowance(address owner, address spender, uint256 value) external {
+        allowances[owner][spender] = value;
+    }
+
+    function compute(bytes32 key, bytes32 root) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, root));
+    }
+
+    function directStore(bytes32 slot, uint256 value) external {
+        assembly { sstore(slot, value) }
+    }
+
     function offsetStore(address owner, uint256 value) external {
         bytes32 slot = bytes32(uint256(keccak256(abi.encode(owner, uint256(1)))) + 1);
         assembly { sstore(slot, value) }
     }
+
     function incompleteStore(bytes32 key, uint256 value) external {
         bytes32 slot = keccak256(abi.encodePacked(key));
         assembly { sstore(slot, value) }
@@ -31,9 +44,7 @@ contract MappingHookImplementation {
 
 contract MappingHookProxy {
     function setBalance(address implementation, address owner, uint256 value) external {
-        (bool ok,) = implementation.delegatecall(
-            abi.encodeCall(MappingHookImplementation.setBalance, (owner, value))
-        );
+        (bool ok,) = implementation.delegatecall(abi.encodeCall(MappingHookImplementation.setBalance, (owner, value)));
         require(ok);
     }
 }
@@ -94,9 +105,7 @@ contract MappingStorageHooksTest is Test {
     function testResolutionUsesTerminalRoot() public {
         address owner = address(0xA11CE);
         address spender = address(0xB0B);
-        bytes32 intermediateRoot = target.compute(
-            bytes32(uint256(uint160(owner))), bytes32(uint256(2))
-        );
+        bytes32 intermediateRoot = target.compute(bytes32(uint256(uint160(owner))), bytes32(uint256(2)));
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(2)), this.onAllowance.selector);
         vm.registerMappingSstoreHook(address(target), intermediateRoot, this.onIntermediate.selector);
 
@@ -108,22 +117,29 @@ contract MappingStorageHooksTest is Test {
     }
 
     function testReplacementAndRawConflict() public {
+        bool success;
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onReplacement.selector);
         target.setBalance(address(this), 1);
         assertEq(calls, 10);
-        (bool ok,) = address(vm).call(abi.encodeCall(vm.registerSstoreHook, (address(target), this.onRaw.selector)));
-        assertFalse(ok);
+        (success,) = address(vm).call(abi.encodeCall(vm.registerSstoreHook, (address(target), this.onRaw.selector)));
+        vm.assertFalse(success);
         MappingHookTarget raw = new MappingHookTarget();
         vm.registerSstoreHook(address(raw), this.onRaw.selector);
-        (ok,) = address(vm).call(abi.encodeCall(vm.registerMappingSstoreHook, (address(raw), bytes32(uint256(1)), this.onBalance.selector)));
-        assertFalse(ok);
+        (success,) = address(vm)
+            .call(
+                abi.encodeCall(
+                    vm.registerMappingSstoreHook, (address(raw), bytes32(uint256(1)), this.onBalance.selector)
+                )
+            );
+        vm.assertFalse(success);
     }
 
     function testEnclosingRevertRollsBackCallbackState() public {
+        bool success;
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
-        (bool ok,) = address(this).call(abi.encodeCall(this.storeThenRevert, (address(0xBEEF), 9)));
-        assertFalse(ok);
+        (success,) = address(this).call(abi.encodeCall(this.storeThenRevert, (address(0xBEEF), 9)));
+        vm.assertFalse(success);
         assertEq(calls, 0);
         assertEq(target.balances(address(0xBEEF)), 0);
     }
@@ -132,9 +148,7 @@ contract MappingStorageHooksTest is Test {
         MappingHookImplementation implementation = new MappingHookImplementation();
         MappingHookProxy proxy = new MappingHookProxy();
         vm.registerMappingSstoreHook(address(proxy), bytes32(uint256(1)), this.onBalance.selector);
-        vm.registerMappingSstoreHook(
-            address(implementation), bytes32(uint256(1)), this.onImplementation.selector
-        );
+        vm.registerMappingSstoreHook(address(implementation), bytes32(uint256(1)), this.onImplementation.selector);
         target = MappingHookTarget(address(proxy));
 
         proxy.setBalance(address(implementation), address(0xA11CE), 4);
@@ -149,11 +163,11 @@ contract MappingStorageHooksTest is Test {
     }
 
     function testCallbackRevertPropagates() public {
+        bool success;
+        bytes memory data;
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onRevert.selector);
-        (bool ok, bytes memory data) = address(target).call(
-            abi.encodeCall(target.setBalance, (address(0xA11CE), 3))
-        );
-        assertFalse(ok);
+        (success, data) = address(target).call(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
+        vm.assertFalse(success);
         assertEq(data, abi.encodeWithSignature("Error(string)", "hook revert"));
         assertEq(target.balances(address(0xA11CE)), 0);
     }
@@ -163,7 +177,14 @@ contract MappingStorageHooksTest is Test {
         revert("rollback");
     }
 
-    function onBalance(address account, bytes32 slot, bytes32 root, bytes32[] calldata callbackKeys, bytes32 oldValue, bytes32 newValue) external {
+    function onBalance(
+        address account,
+        bytes32 slot,
+        bytes32 root,
+        bytes32[] calldata callbackKeys,
+        bytes32 oldValue,
+        bytes32 newValue
+    ) external {
         assertEq(account, address(target));
         assertEq(root, bytes32(uint256(1)));
         calls++;
@@ -172,25 +193,40 @@ contract MappingStorageHooksTest is Test {
         seenNew = newValue;
         _setKeys(callbackKeys);
     }
+
     function onAllowance(address, bytes32, bytes32 root, bytes32[] calldata callbackKeys, bytes32, bytes32) external {
         assertEq(root, bytes32(uint256(2)));
         calls++;
         _setKeys(callbackKeys);
     }
-    function onReplacement(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external { calls = 10; }
-    function onImplementation(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external { implementationCalls++; }
-    function onIntermediate(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external { intermediateCalls++; }
+
+    function onReplacement(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+        calls = 10;
+    }
+
+    function onImplementation(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+        implementationCalls++;
+    }
+
+    function onIntermediate(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+        intermediateCalls++;
+    }
+
     function onRecursive(address, bytes32, bytes32, bytes32[] calldata callbackKeys, bytes32, bytes32) external {
         calls++;
         bytes32 slot = target.compute(callbackKeys[0], bytes32(uint256(1)));
         target.directStore(slot, 99);
     }
+
     function onRevert(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external pure {
         revert("hook revert");
     }
     function onRaw(address, bytes32, bytes32, bytes32) external {}
+
     function _setKeys(bytes32[] calldata callbackKeys) internal {
         delete keys;
-        for (uint256 i; i < callbackKeys.length; ++i) keys.push(callbackKeys[i]);
+        for (uint256 i; i < callbackKeys.length; ++i) {
+            keys.push(callbackKeys[i]);
+        }
     }
 }
