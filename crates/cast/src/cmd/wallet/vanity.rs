@@ -343,6 +343,11 @@ impl VanityMatcher for RegexMatcher {
 }
 
 fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>> {
+    let is_hex = pattern.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if is_hex && pattern.len() > 40 {
+        return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
+    }
+
     if let Ok(decoded) = hex::decode(pattern) {
         if decoded.len() > 20 {
             return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
@@ -350,6 +355,7 @@ fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>
         Ok(Either::Left(decoded))
     } else {
         let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
+        let pattern = if is_hex { pattern.to_ascii_lowercase() } else { pattern.to_string() };
         Ok(Either::Right(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
     }
 }
@@ -412,5 +418,28 @@ mod tests {
 
         assert!(err.to_string().contains("failed to parse wallet file"));
         assert_eq!(fs::read_to_string(tmp.path()).unwrap(), original);
+    }
+
+    #[test]
+    fn parse_odd_length_hex_case_insensitively() {
+        let mut starts_with = [0; 20];
+        starts_with[0] = 0xa0;
+        let Either::Right(pattern) = parse_pattern("A", true).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        assert!(SingleRegexMatcher { re: pattern }.is_match(&Address::from(starts_with)));
+
+        let mut ends_with = [0; 20];
+        ends_with[19] = 0x0a;
+        let Either::Right(pattern) = parse_pattern("A", false).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        assert!(SingleRegexMatcher { re: pattern }.is_match(&Address::from(ends_with)));
+    }
+
+    #[test]
+    fn reject_overlong_odd_length_hex_pattern() {
+        let err = parse_pattern(&"1".repeat(41), true).unwrap_err();
+        assert_eq!(err.to_string(), "Hex pattern must be less than 20 bytes");
     }
 }

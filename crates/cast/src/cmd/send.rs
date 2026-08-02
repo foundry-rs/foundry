@@ -17,7 +17,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
@@ -354,14 +354,6 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
 
-            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
-            // costs more gas for signature verification on Tempo chains. Add a
-            // conservative buffer since we can't determine the signature type beforehand.
-            if chain.is_tempo()
-                && let Some(gas) = tx_request.gas_limit()
-            {
-                tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
-            }
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor
                     .resolve_and_set_fee_token(

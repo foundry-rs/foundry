@@ -32,7 +32,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
@@ -804,15 +804,12 @@ where
     fill_transaction_gas_fees(provider, tx, legacy, browser, eip1559_fee_estimate).await?;
 
     if tx.gas_limit().is_none() {
-        let mut estimated = provider.estimate_gas(tx.clone()).await?;
-
-        // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
-        // costs more gas for signature verification on Tempo chains. Add a
-        // conservative buffer since we can't determine the signature type beforehand.
-        if chain.is_tempo() {
-            estimated += TEMPO_BROWSER_GAS_BUFFER;
-        }
-
+        let request = if browser && chain.is_tempo() {
+            tx.browser_wallet_gas_estimation_request()
+        } else {
+            tx.clone()
+        };
+        let estimated = provider.estimate_gas(request).await?;
         tx.set_gas_limit(estimated);
     }
 
