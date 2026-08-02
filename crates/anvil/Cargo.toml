@@ -29,7 +29,6 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
-tempo-alloy = { workspace = true, features = ["revm"] }
 tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 tempo-precompiles.workspace = true
@@ -44,6 +43,7 @@ alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
+alloy-hardforks.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
@@ -123,6 +123,8 @@ rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
+
+tempo-alloy.workspace = true
 
 [features]
 default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]

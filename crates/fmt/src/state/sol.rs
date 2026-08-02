@@ -1077,10 +1077,6 @@ impl<'ast> State<'_, 'ast> {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
     }
 
-    fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
-        self.print_lit_inner(lit, false);
-    }
-
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
         if self.handle_span(ty.span, false) {
             return;
@@ -1362,9 +1358,12 @@ impl<'ast> State<'_, 'ast> {
                             };
                         s.print_call_args(
                             call_args,
-                            list_format
-                                .without_ind(s.return_bin_expr)
-                                .with_delimiters(!s.call_with_opts_and_args),
+                            list_format.without_ind(s.return_bin_expr).with_delimiters(
+                                !s.call_with_opts_and_args
+                                    || s.call_stack
+                                        .last()
+                                        .is_some_and(|call| call.is_chained() && call.has_indent),
+                            ),
                             get_callee_head_size(call_expr),
                             callee_suffix_can_break,
                         );
@@ -1391,7 +1390,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Ident(ident) => self.print_ident(ident),
             ast::ExprKind::Index(expr, kind) => self.print_index_expr(span, expr, kind),
             ast::ExprKind::Lit(lit, unit) => {
-                self.print_lit(lit);
+                self.print_lit_inner(lit, false);
                 if let Some(unit) = unit {
                     self.nbsp();
                     self.word(unit.to_str());
@@ -1405,15 +1404,19 @@ impl<'ast> State<'_, 'ast> {
                         let has_mixed_comment = s
                             .peek_comment_between(member_expr.span.hi(), ident.span.lo())
                             .is_some_and(|comment| comment.style.is_mixed());
-                        if has_mixed_comment {
+                        let break_before_suffix = if has_mixed_comment {
                             s.print_comments(
                                 ident.span.lo(),
                                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                             );
+                            true
                         } else {
-                            s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        }
-                        if has_mixed_comment || s.member_suffix_emits_break(expr, member_expr) {
+                            !s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()))
+                                && s.peek_comment_between(member_expr.span.hi(), ident.span.lo())
+                                    .is_none()
+                                && s.member_suffix_emits_break(expr, member_expr)
+                        };
+                        if break_before_suffix {
                             s.zerobreak();
                         }
                         s.word(".");
@@ -1797,7 +1800,7 @@ impl<'ast> State<'_, 'ast> {
             }
 
             if chain_has_indent {
-                self.s.ibox(self.ind);
+                self.s.cbox(self.ind);
             } else {
                 self.skip_index_break = true;
                 self.cbox(0);

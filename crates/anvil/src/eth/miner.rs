@@ -10,6 +10,7 @@ use futures::{
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use std::{
     fmt,
+    marker::PhantomData,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -31,6 +32,8 @@ pub struct Miner<T> {
     /// Transactions included into the pool before any others are.
     /// Done once on startup.
     force_transactions: Option<(u64, Vec<Arc<PoolTransaction<T>>>)>,
+    /// Transaction type handled by the associated pool.
+    transaction: PhantomData<fn() -> T>,
 }
 
 impl<T> Clone for Miner<T> {
@@ -39,6 +42,7 @@ impl<T> Clone for Miner<T> {
             mode: self.mode.clone(),
             inner: self.inner.clone(),
             force_transactions: self.force_transactions.clone(),
+            transaction: PhantomData,
         }
     }
 }
@@ -62,6 +66,7 @@ impl<T> Miner<T> {
             mode: Arc::new(RwLock::new(mode)),
             inner: Default::default(),
             force_transactions: None,
+            transaction: PhantomData,
         }
     }
 
@@ -361,7 +366,6 @@ impl fmt::Debug for ReadyTransactionMiner {
             .finish_non_exhaustive()
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

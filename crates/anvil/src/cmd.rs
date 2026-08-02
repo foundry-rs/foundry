@@ -386,16 +386,12 @@ impl NodeArgs {
         generator
     }
 
-    /// Returns the location where to dump the state to.
-    fn dump_state_path(&self) -> Option<PathBuf> {
-        self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned()
-    }
-
     /// Starts the node
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> eyre::Result<()> {
-        let dump_state = self.dump_state_path();
+        let dump_state =
+            self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned();
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
         let preserve_historical_states = self.preserve_historical_states;

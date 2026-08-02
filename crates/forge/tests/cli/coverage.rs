@@ -2909,6 +2909,72 @@ contract Broken {
     }
 });
 
+forgetest_init!(coverage_match_path_compiles_selected_tests, |prj, cmd| {
+    prj.add_test(
+        "Shared.t.sol",
+        r#"
+abstract contract SharedTest {
+    function sharedValue() internal pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Selected.t.sol",
+        r#"
+import {SharedTest} from "./Shared.t.sol";
+
+contract SelectedTest is SharedTest {
+    function testSelected() public pure {
+        require(sharedValue() == 1);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Broken.t.sol",
+        r#"
+contract BrokenTest {
+    function broken() public pure returns (uint256) {
+        return;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Unselected.t.sol",
+        r#"
+contract UnselectedTest {
+    function testUnselected() public {}
+}
+"#,
+    );
+    prj.add_script(
+        "Report.s.sol",
+        r#"
+contract ReportScript {
+    function run() public {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["coverage", "--match-path", "test/Selected.t.sol"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("testSelected()"), "selected test did not run:\n{output}");
+    assert!(
+        output.contains("script/Report.s.sol"),
+        "scripts should remain in path-filtered coverage reports:\n{output}"
+    );
+    assert!(
+        !output.contains("test/Unselected.t.sol"),
+        "unselected tests should be omitted from coverage reports:\n{output}"
+    );
+});
+
 #[test]
 fn coverage_help_renders_notes() {
     let help = CoverageArgs::command().render_long_help().to_string();

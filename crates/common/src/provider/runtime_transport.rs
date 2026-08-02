@@ -4,7 +4,7 @@
 
 use crate::{
     DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
-    provider::mpp::{transport::LazyMppHttpTransport, ws::MppWsConnect},
+    provider::mpp::transport::{LazyMppHttpTransport, lazy_mpp_ws_connect},
 };
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -24,7 +24,7 @@ use url::Url;
 
 /// Known MPP-enabled RPC host suffixes.
 ///
-/// Endpoints matching these patterns are always connected via [`MppWsConnect`],
+/// Endpoints matching these patterns always use the MPP WebSocket transport,
 /// regardless of whether local MPP keys have been discovered.
 const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz", ".mpp.moderato.tempo.xyz"];
 
@@ -191,19 +191,7 @@ impl RuntimeTransport {
         }
     }
 
-    /// Creates a new reqwest client from this transport.
-    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .danger_accept_invalid_certs(self.accept_invalid_certs);
-
-        // Disable automatic proxy detection if requested. This helps in sandboxed environments
-        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
-        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
-        if self.no_proxy || guess_local_url(self.url.as_str()) {
-            client_builder = client_builder.no_proxy();
-        }
-
+    fn reqwest_headers(&self) -> Result<reqwest::header::HeaderMap, RuntimeTransportError> {
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
@@ -252,27 +240,51 @@ impl RuntimeTransport {
             }
         }
 
+        Ok(headers)
+    }
+
+    fn reqwest_client_with_headers(
+        &self,
+        headers: reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Client, RuntimeTransportError> {
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(self.timeout)
+            .danger_accept_invalid_certs(self.accept_invalid_certs);
+
+        // Disable automatic proxy detection if requested. This helps in sandboxed environments
+        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
+        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
+        if self.no_proxy || guess_local_url(self.url.as_str()) {
+            client_builder = client_builder.no_proxy();
+        }
+
         client_builder = client_builder.default_headers(headers);
 
         Ok(client_builder.build()?)
     }
 
+    /// Creates a new reqwest client from this transport.
+    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
+        self.reqwest_client_with_headers(self.reqwest_headers()?)
+    }
+
     /// Connects to an HTTP transport with lazy MPP 402 handling.
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let client = self.reqwest_client()?;
-        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone())))
+        let headers = self.reqwest_headers()?;
+        let client = self.reqwest_client_with_headers(headers.clone())?;
+        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone(), headers)))
     }
 
     /// Connects to a WS transport.
     ///
-    /// Uses [`MppWsConnect`] (which performs the MPP challenge/credential
-    /// handshake at connect time) when the endpoint is a known MPP service.
+    /// Uses the canonical Alloy MPP WebSocket transport when the endpoint is a
+    /// known MPP service.
     /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
 
         let service = if is_known_mpp_endpoint(&self.url) {
-            let mut ws = MppWsConnect::new(self.url.to_string());
+            let mut ws = lazy_mpp_ws_connect(&self.url);
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
             }

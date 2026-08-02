@@ -1149,6 +1149,134 @@ pkg/=lib/pkg/src/
     cmd.forge_fuse().args(["lint"]).assert_success();
 });
 
+forgetest!(nested_config_remapping_refines_auto_detected_package_root, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    let outer_other = prj.paths().libraries[0].join("outer-other");
+    let inner = outer.join("lib/inner");
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("test/:inner/=src/unrelated/").unwrap().into()];
+    });
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&outer_other, fs::create_dir_all(outer_other.join("src")));
+    pretty_err(&inner, fs::create_dir_all(inner.join("contracts")));
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&outer, fs::write(outer.join("remappings.txt"), "inner/=lib/inner/contracts/\n"));
+    pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "interface I {}\n"));
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/Outer.sol"),
+            "import {I} from \"inner/I.sol\"; contract Outer is I {}\n",
+        ),
+    );
+    pretty_err(
+        &outer_other,
+        fs::write(
+            outer_other.join("src/Other.sol"),
+            "import {Marker} from \"inner/Marker.sol\"; contract Other is Marker {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; import {Other} from \"outer-other/Other.sol\"; import {Marker} from \"inner/Marker.sol\"; contract UsesOuter is Outer, Other {}\n",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+test/:inner/=src/unrelated/
+lib/outer/:inner/=lib/outer/lib/inner/contracts/
+inner/=lib/outer/lib/inner/
+outer-other/=lib/outer-other/src/
+outer/=lib/outer/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
+    let dependency = prj.paths().libraries[0].join("dep");
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("src")));
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("pkg/contracts")));
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings =
+            ["dep/=lib/dep/src/", "lib/dep/:pkg/=lib/dep/pkg/contracts/", "pkg/=lib/dep/pkg/"]
+                .map(|remapping| Remapping::from_str(remapping).unwrap().into())
+                .into();
+    });
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/Dep.sol"),
+            "import {Other} from \"pkg/Other.sol\"; contract Dep is Other {}\n",
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(dependency.join("pkg/contracts/Other.sol"), "contract Other {}\n"),
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        "import {Dep} from \"dep/Dep.sol\"; contract UsesDep is Dep {}\n",
+    );
+
+    cmd.args(["build", "--remappings", "pkg/sub/=src/local/"]).assert_success();
+
+    // A generated candidate that normalizes to the explicit contextual mapping must not cause the
+    // explicit mapping to be tagged as generated and removed by the CLI merge.
+    pretty_err(&dependency, fs::write(dependency.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&dependency, fs::write(dependency.join("remappings.txt"), "pkg/=pkg/contracts/\n"));
+    prj.update_config(|config| config.auto_detect_remappings = true);
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "pkg/sub/=src/local/"])
+        .assert_success();
+});
+
+forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    let inner = outer.join("lib/inner");
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&inner, fs::create_dir_all(inner.join("contracts/sub")));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/local")));
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("inner/sub/=src/local/").unwrap().into()];
+    });
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&outer, fs::write(outer.join("remappings.txt"), "inner/=lib/inner/contracts/\n"));
+    pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "contract I {}\n"));
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/local/Selected.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(
+        &inner,
+        fs::write(inner.join("contracts/sub/Selected.sol"), "contract Shadowed {}\n"),
+    );
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/Outer.sol"),
+            "import {I} from \"inner/I.sol\"; import {Selected} from \"inner/sub/Selected.sol\"; contract Outer is I, Selected {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; import {Marker} from \"inner/Marker.sol\"; contract UsesOuter is Outer, Marker {}\n",
+    );
+
+    cmd.arg("build").assert_success();
+
+    // CLI remappings are merged after dependency refinements are generated and must still retain
+    // root precedence.
+    prj.update_config(|config| config.remappings.clear());
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "inner/sub/=src/local/"])
+        .assert_success();
+});
+
 forgetest!(broad_project_remapping_suppresses_narrow_dependency_override, |prj, cmd| {
     prj.update_config(|config| {
         config.remappings = vec![Remapping::from_str("pkg/=src/local/").unwrap().into()];
