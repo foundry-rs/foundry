@@ -8,96 +8,116 @@ use std::os::unix::fs::symlink;
 
 forgetest!(
     #[cfg(unix)]
-    can_build_symlinked_dependency_with_nested_config,
+    can_build_physical_and_symlinked_dependency_configs,
     |prj, cmd| {
         let external = tempfile::tempdir().unwrap();
-        let dependency = external.path().join("deep/dependency/cache/actual-package");
-        let src = "very/deep/configured/custom-source";
-        fs::create_dir_all(dependency.join(src)).unwrap();
-        fs::create_dir_all(dependency.join("vendor/inner/src")).unwrap();
-        fs::write(
-            dependency.join("foundry.toml"),
-            format!(
+        let physical = prj.root().join("lib/linked");
+        let linked = external.path().join("cache/actual-package");
+        let write_dependency = |dependency: &std::path::Path| {
+            fs::create_dir_all(dependency.join("custom-source")).unwrap();
+            fs::create_dir_all(dependency.join("vendor/inner/src")).unwrap();
+            fs::create_dir_all(dependency.join("vendor/file/src")).unwrap();
+            fs::write(
+                dependency.join("foundry.toml"),
                 r#"
 [profile.default]
-src = "{src}"
+src = "custom-source"
 remappings = ["special-alias/=vendor/inner/src/"]
-"#
-            ),
-        )
-        .unwrap();
-        fs::write(
-            dependency.join(src).join("Dep.sol"),
-            r#"
+"#,
+            )
+            .unwrap();
+            fs::write(dependency.join("remappings.txt"), "file-alias/=vendor/file/src/\n").unwrap();
+            fs::write(
+                dependency.join("custom-source/Dep.sol"),
+                r#"
 pragma solidity >=0.8.0;
 
 import {Thing} from "special-alias/Thing.sol";
-import {Nested} from "nested-alias/Nested.sol";
+import {FromFile} from "file-alias/FromFile.sol";
 
-contract Dep is Thing, Nested {}
+contract Dep is Thing, FromFile {}
 "#,
-        )
-        .unwrap();
-        fs::write(
-            dependency.join(src).join("Other.sol"),
-            r#"
-pragma solidity >=0.8.0;
-
-contract Other {}
-"#,
-        )
-        .unwrap();
-        fs::write(
-            dependency.join("vendor/inner/src/Thing.sol"),
-            r#"
+            )
+            .unwrap();
+            fs::write(
+                dependency.join("vendor/inner/src/Thing.sol"),
+                r#"
 pragma solidity >=0.8.0;
 
 contract Thing {}
 "#,
-        )
-        .unwrap();
-
-        let nested = external.path().join("even/deeper/dependency/cache/nested-target");
-        fs::create_dir_all(nested.join("nested-source")).unwrap();
-        fs::write(nested.join("foundry.toml"), "[profile.default]\nsrc = \"nested-source\"\n")
+            )
             .unwrap();
-        fs::write(
-            nested.join("nested-source/Nested.sol"),
-            r#"
+            fs::write(
+                dependency.join("vendor/file/src/FromFile.sol"),
+                r#"
 pragma solidity >=0.8.0;
 
-contract Nested {}
+contract FromFile {}
 "#,
-        )
-        .unwrap();
-        fs::create_dir_all(dependency.join("lib")).unwrap();
-        symlink(&nested, dependency.join("lib/nested-alias")).unwrap();
+            )
+            .unwrap();
+        };
 
-        fs::create_dir_all(prj.root().join("lib")).unwrap();
-        symlink(&dependency, prj.root().join("lib/package-alias")).unwrap();
-        symlink(&dependency, prj.root().join("lib/second-alias")).unwrap();
+        write_dependency(&physical);
+        write_dependency(&linked);
         prj.add_raw_source(
             "Root.sol",
             r#"
 pragma solidity >=0.8.0;
 
-import {Dep} from "package-alias/Dep.sol";
-import {Other} from "second-alias/Other.sol";
+import {Dep} from "linked/Dep.sol";
 
-contract Root is Dep, Other {}
+contract Root is Dep {}
+"#,
+        );
+
+        let remappings = str![[r#"
+file-alias/=lib/linked/vendor/file/src/
+linked/=lib/linked/custom-source/
+special-alias/=lib/linked/vendor/inner/src/
+
+"#]];
+        cmd.arg("remappings").assert_success().stdout_eq(remappings.clone());
+        cmd.forge_fuse().arg("build").assert_success();
+
+        fs::remove_dir_all(&physical).unwrap();
+        symlink(&linked, &physical).unwrap();
+        cmd.forge_fuse().arg("clean").assert_success();
+        cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(remappings);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_symlinked_dependency_with_existing_standard_source,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let dependency = external.path().join("dependency");
+        fs::create_dir_all(dependency.join("src")).unwrap();
+        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"src\"\n").unwrap();
+        fs::write(dependency.join("src/Dep.sol"), "pragma solidity >=0.8.0; contract Dep {}\n")
+            .unwrap();
+        prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+        fs::create_dir_all(prj.root().join("node_modules")).unwrap();
+        symlink(&dependency, prj.root().join("node_modules/linked")).unwrap();
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep} from "linked/src/Dep.sol";
+
+contract Root is Dep {}
 "#,
         );
 
         cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
-nested-alias/=lib/package-alias/lib/nested-alias/nested-source/
-package-alias/=lib/package-alias/very/deep/configured/custom-source/
-second-alias/=lib/second-alias/very/deep/configured/custom-source/
-special-alias/=[..]/deep/dependency/cache/actual-package/vendor/inner/src/
+linked/=node_modules/linked/
 
 "#]]);
-
-        cmd.forge_fuse();
-        cmd.arg("build").assert_success();
+        cmd.forge_fuse().arg("build").assert_success();
     }
 );
 

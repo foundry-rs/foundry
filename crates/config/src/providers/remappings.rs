@@ -268,20 +268,22 @@ impl RemappingsProvider<'_> {
                 || self.find_nested_foundry_remappings(),
                 || self.auto_detect_remappings(),
             );
-            let nested_foundry_remappings = nested_foundry_remappings.collect::<Vec<_>>();
-            let configured_keys = nested_foundry_remappings
-                .iter()
-                .map(|(_, remapping)| (remapping.context.clone(), remapping.name.clone()))
-                .collect::<HashSet<_>>();
+            let nested_foundry_remappings = nested_foundry_remappings?;
             let auto_detected_remappings = auto_detected_remappings.collect::<Vec<_>>();
 
+            let configured_package_entries = nested_foundry_remappings
+                .iter()
+                .filter(|(_, _, is_package_entry)| *is_package_entry)
+                .map(|(lib, remapping, _)| (lib.clone(), remapping.clone()))
+                .collect::<Vec<_>>();
             let mut lib_remappings = BTreeMap::new();
             let mut contextual_remappings = Vec::new();
-            for (lib, r) in nested_foundry_remappings {
+            for (lib, r, is_package_entry) in nested_foundry_remappings {
                 // A dependency can intentionally refine an auto-detected package root to its
                 // source directory. Scope that refinement to the dependency so root imports keep
                 // the broader package mapping.
-                if r.context.is_none()
+                if !is_package_entry
+                    && r.context.is_none()
                     && auto_detected_remappings.iter().any(|auto| {
                         auto.context == r.context
                             && auto.name == r.name
@@ -303,7 +305,11 @@ impl RemappingsProvider<'_> {
             for r in auto_detected_remappings {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str())
-                    || configured_keys.contains(&(r.context.clone(), r.name.clone()))
+                    || configured_package_entries.iter().any(|(lib, configured)| {
+                        configured.context == r.context
+                            && configured.name == r.name
+                            && dependency_owns_path(lib, Path::new(&r.path))
+                    })
                 {
                     trace!(target: "forge", "- skipping the remapping");
                     continue;
@@ -349,80 +355,79 @@ impl RemappingsProvider<'_> {
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
-    fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = (PathBuf, Remapping)> + '_ {
+    fn find_nested_foundry_remappings(&self) -> Result<Vec<(PathBuf, Remapping, bool)>, Error> {
         let root = dunce::canonicalize(self.root).unwrap_or_else(|_| self.root.to_path_buf());
         let mut pending = self
             .lib_paths
             .iter()
             .map(|path| if path.is_absolute() { path.clone() } else { self.root.join(path) })
             .flat_map(foundry_toml_dir_entries)
-            .map(|entry| (entry, vec![root.clone()]))
             .collect::<BTreeSet<_>>();
-        let mut configs = BTreeMap::<PathBuf, (PathBuf, Vec<PathBuf>)>::new();
-        let mut failed = HashSet::new();
+        let mut seen = HashSet::from([root]);
         let mut remappings = Vec::new();
 
-        while let Some((entry, mut ancestors)) = pending.pop_first() {
-            if ancestors.contains(&entry.canonical) {
+        while let Some(entry) = pending.pop_first() {
+            if !seen.insert(entry.canonical.clone()) {
                 continue;
             }
 
-            let (src, libs) = if let Some(config) = configs.get(&entry.canonical) {
-                config.clone()
-            } else {
-                if failed.contains(&entry.canonical) {
-                    continue;
-                }
-
-                trace!(lib = ?entry.canonical, "find all remappings of nested foundry.toml");
-                // Nested configs are traversed here, so load their declared remappings without
-                // recursively installing another remappings provider.
-                let figment =
-                    Config::with_root(&entry.canonical).to_figment(FigmentProviders::Cast);
-                let Ok(config) = Config::from_figment_fallback(figment) else {
-                    failed.insert(entry.canonical);
-                    continue;
-                };
-                let src = config.src.clone();
-                let libs = config.libs.clone();
-                let config = config.sanitized();
-
-                remappings.extend(
-                    config
-                        .remappings
-                        .into_iter()
-                        .map(Remapping::from)
-                        .map(|remapping| (entry.path.clone(), remapping)),
-                );
-                let remappings_file = entry.canonical.join("remappings.txt");
-                if let Ok(content) = fs::read_to_string(remappings_file)
-                    && let Ok(file_remappings) =
-                        remappings_from_newline(&content).collect::<Result<Vec<_>, _>>()
-                {
-                    remappings.extend(file_remappings.into_iter().map(|remapping| {
-                        (
-                            entry.path.clone(),
-                            RelativeRemapping::new(remapping, &entry.canonical).into(),
-                        )
-                    }));
-                }
-                configs.insert(entry.canonical.clone(), (src.clone(), libs.clone()));
-                (src, libs)
+            trace!(lib = ?entry.canonical, "find all remappings of nested foundry.toml");
+            // Load dependency config inputs without recursively installing another remappings
+            // provider. Canonical identity is used only to read each config once; emitted paths
+            // retain the lexical dependency identity.
+            let figment = Config::with_root(&entry.canonical).to_figment(FigmentProviders::Cast);
+            let Ok(config) = Config::from_figment_fallback(figment) else {
+                continue;
             };
+            let src = config.src.clone();
+            let libs = config.libs.clone();
+            let config = config.sanitized();
 
-            ancestors.push(entry.canonical);
-            for lib in libs {
-                let lib = if lib.is_absolute() { lib } else { entry.path.join(lib) };
-                pending.extend(
-                    foundry_toml_dir_entries(lib)
-                        .into_iter()
-                        .map(|entry| (entry, ancestors.clone())),
-                );
+            remappings.extend(config.remappings.into_iter().map(Remapping::from).map(
+                |remapping| {
+                    (
+                        entry.path.clone(),
+                        rebase_nested_remapping(remapping, &entry.canonical, &entry.path),
+                        false,
+                    )
+                },
+            ));
+            let remappings_file = entry.canonical.join("remappings.txt");
+            if remappings_file.is_file() {
+                let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
+                let file_remappings = remappings_from_newline(&content)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err::<Error, _>(|err| err.to_string().into())?;
+                remappings.extend(file_remappings.into_iter().map(|remapping| {
+                    (
+                        entry.path.clone(),
+                        RelativeRemapping::new(remapping, &entry.path).into(),
+                        false,
+                    )
+                }));
             }
 
-            // Synthesize the declared source remapping for every lexical alias. The source
-            // directory may not exist yet, so `Remapping::find_many` cannot always detect it.
-            if let Some(name) = entry.path.file_name().and_then(|name| name.to_str()) {
+            // Preserve existing physical nested-config discovery. Symlink discovery is limited to
+            // direct configured-library entries; nested symlink graphs remain out of scope.
+            if !fs::symlink_metadata(&entry.path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                for lib in libs {
+                    let lib = if lib.is_absolute() { lib } else { entry.path.join(lib) };
+                    pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
+                        !fs::symlink_metadata(&entry.path)
+                            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                    }));
+                }
+            }
+
+            // Custom source directories are not auto-detected. Standard source directories only
+            // need synthesis while missing; when present, package-root autodetection preserves
+            // imports that include the source directory, such as `forge-std/src/...`.
+            let standard_src = [Path::new("src"), Path::new("contracts"), Path::new("lib")];
+            if (!standard_src.contains(&src.as_path()) || !entry.canonical.join(&src).is_dir())
+                && let Some(name) = entry.path.file_name().and_then(|name| name.to_str())
+            {
                 let mut remapping = Remapping {
                     context: None,
                     name: format!("{name}/"),
@@ -431,11 +436,11 @@ impl RemappingsProvider<'_> {
                 if !remapping.path.ends_with('/') {
                     remapping.path.push('/');
                 }
-                remappings.push((entry.path, remapping));
+                remappings.push((entry.path, remapping, true));
             }
         }
 
-        remappings.into_iter()
+        Ok(remappings)
     }
 
     /// Auto detect remappings from the lib paths
@@ -476,6 +481,36 @@ fn contextual_overlays(
         overlay.context.clone_from(&refinement.context);
     }
     Some(overlays)
+}
+
+fn dependency_owns_path(dependency: &Path, path: &Path) -> bool {
+    path.starts_with(dependency)
+        || dunce::canonicalize(dependency)
+            .ok()
+            .zip(dunce::canonicalize(path).ok())
+            .is_some_and(|(dependency, path)| path.starts_with(dependency))
+}
+
+fn rebase_nested_remapping(
+    mut remapping: Remapping,
+    canonical: &Path,
+    lexical: &Path,
+) -> Remapping {
+    let rebase = |value: &str| {
+        let path = Path::new(value);
+        path.strip_prefix(canonical)
+            .map(|relative| lexical.join(relative).display().to_string())
+            .unwrap_or_else(|_| value.to_string())
+    };
+    remapping.path = rebase(&remapping.path);
+    if let Some(context) = &mut remapping.context {
+        let has_boundary = context.ends_with(['/', '\\']);
+        *context = rebase(context);
+        if has_boundary && !context.ends_with(['/', '\\']) {
+            context.push(MAIN_SEPARATOR);
+        }
+    }
+    remapping
 }
 
 pub fn relative_remapping_preserving_context_boundary(
@@ -569,7 +604,7 @@ mod tests {
             remappings: Ok(vec![]),
         };
 
-        assert!(provider.find_nested_foundry_remappings().next().is_none());
+        assert!(provider.find_nested_foundry_remappings().unwrap().is_empty());
     }
 
     #[cfg(unix)]
@@ -598,7 +633,7 @@ mod tests {
         };
 
         assert_eq!(
-            provider.find_nested_foundry_remappings().collect::<Vec<_>>(),
+            provider.find_nested_foundry_remappings().unwrap(),
             vec![(
                 root.join("lib/dependency-alias"),
                 Remapping {
@@ -606,6 +641,7 @@ mod tests {
                     name: "dependency-alias/".to_string(),
                     path: format!("{}/", root.join("lib/dependency-alias/custom-source").display()),
                 },
+                true,
             )]
         );
     }
@@ -697,7 +733,11 @@ mod tests {
 
         let dependencies = provider
             .find_nested_foundry_remappings()
-            .map(|(dependency, _)| dependency.file_name().unwrap().to_string_lossy().into_owned())
+            .unwrap()
+            .into_iter()
+            .map(|(dependency, _, _)| {
+                dependency.file_name().unwrap().to_string_lossy().into_owned()
+            })
             .collect::<Vec<_>>();
         assert_eq!(dependencies, ["alpha", "alpha", "zeta", "zeta"]);
     }

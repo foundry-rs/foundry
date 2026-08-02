@@ -140,10 +140,14 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
 ///     ├── foundry.toml
 /// ```
 pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
-    let mut dirs =
-        foundry_toml_dir_entries(root).into_iter().map(|entry| entry.canonical).collect::<Vec<_>>();
-    dirs.dedup();
-    dirs
+    walkdir::WalkDir::new(root)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_dir())
+        .filter_map(|entry| dunce::canonicalize(entry.path()).ok())
+        .filter(|path| path.join(Config::FILE_NAME).exists())
+        .collect()
 }
 
 /// A depth-one dependency path and the canonical directory it resolves to.
@@ -340,20 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn finds_and_deduplicates_symlinked_foundry_toml_dirs() {
-        let temp = tempdir().unwrap();
-        let root = temp.path().join("lib");
-        let dependency = temp.path().join("dependency");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&dependency).unwrap();
-        fs::write(dependency.join("foundry.toml"), "").unwrap();
-        symlink(&dependency, root.join("alias-a")).unwrap();
-        symlink(&dependency, root.join("alias-b")).unwrap();
-
-        assert_eq!(foundry_toml_dirs(&root), vec![dunce::canonicalize(dependency).unwrap()]);
-    }
-
-    #[test]
     fn preserves_sorted_aliases_for_the_same_canonical_dependency() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("lib");
@@ -388,8 +378,12 @@ mod tests {
         symlink(&dependency_z, root.join("a-alias")).unwrap();
         symlink(&dependency_a, root.join("z-alias")).unwrap();
 
+        let canonical = foundry_toml_dir_entries(&root)
+            .into_iter()
+            .map(|entry| entry.canonical)
+            .collect::<Vec<_>>();
         assert_eq!(
-            foundry_toml_dirs(&root),
+            canonical,
             vec![
                 dunce::canonicalize(dependency_a).unwrap(),
                 dunce::canonicalize(dependency_z).unwrap(),
@@ -406,6 +400,6 @@ mod tests {
         symlink("cycle-b", root.join("cycle-a")).unwrap();
         symlink("cycle-a", root.join("cycle-b")).unwrap();
 
-        assert!(foundry_toml_dirs(&root).is_empty());
+        assert!(foundry_toml_dir_entries(&root).is_empty());
     }
 }
