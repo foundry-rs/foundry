@@ -13,7 +13,7 @@ use foundry_test_utils::{
     str,
     util::{OutputExt, TestCommand, TestProject},
 };
-use std::str::FromStr;
+use std::{fs, str::FromStr};
 
 /// This will insert _dummy_ contract that uses a library
 ///
@@ -89,6 +89,20 @@ library ChainlinkTWAP {
 
     "src/Contract.sol:Contract".to_string()
 }
+
+forgetest!(create_rejects_unsupported_remote_sponsor, |_prj, cmd| {
+    cmd.args([
+        "create",
+        "src/Counter.sol:Counter",
+        "--sponsor-url",
+        "https://sponsor.tempo.xyz/tp_test",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: --sponsor-url is not supported by forge create; use --tempo.sponsor with --tempo.sponsor-signer or --tempo.sponsor-sig
+
+"#]]);
+});
 
 /// configures the `TestProject` with the given closure and calls the `forge create` command
 fn create_on_chain<F>(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand, f: F)
@@ -349,6 +363,74 @@ forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
     assert!(stdout.contains("Deployed to:"), "{stdout}");
 });
 
+forgetest_async!(create_broadcasts_with_local_tempo_sponsor, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+    let sender_key = hex::encode(wallets[0].credential().to_bytes());
+    let sponsor_key =
+        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+    let sponsor = format!("{:?}", wallets[1].address());
+
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            &sender_key,
+            "--broadcast",
+            "--tempo.fee-token",
+            "PathUSD",
+            "--tempo.sponsor",
+            &sponsor,
+            "--tempo.sponsor-signer",
+            &sponsor_key,
+        ])
+        .assert_success();
+    let output = assert.get_output();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("Deployed to:"), "{stdout}");
+    assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
+});
+
+forgetest_async!(create_rejects_tempo_access_key_before_broadcast, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+    let stderr = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            &rpc,
+            "--tempo.access-key",
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            "--tempo.root-account",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "--broadcast",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("Tempo access-key transactions cannot use CREATE"), "{stderr}");
+});
+
 // tests that we can deploy the template contract
 forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -361,7 +443,32 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     // explicitly byte code hash for consistent checks
     prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
-    cmd.forge_fuse().args([
+    // A matching Tempo Accounts entry must not change an ordinary Ethereum deployment into a
+    // Tempo transaction.
+    let tempo_home = tempfile::tempdir().unwrap();
+    let wallet_dir = tempo_home.path().join("wallet");
+    fs::create_dir_all(&wallet_dir).unwrap();
+    let store = serde_json::json!({
+        "tempo-cli.store": {
+            "state": {
+                "activeAccount": 0,
+                "chainId": 31337,
+                "accounts": [{"address": format!("{dev:?}")}],
+                "accessKeys": [{
+                    "access": format!("{dev:?}"),
+                    "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+                    "chainId": 31337,
+                    "keyType": "secp256k1",
+                    "privateKey": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+                }],
+            },
+        },
+    });
+    fs::write(wallet_dir.join("store.json"), serde_json::to_vec(&store).unwrap()).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.args([
         "create",
         format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
         "--rpc-url",

@@ -34,6 +34,7 @@ use crate::{
         MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
         mutant::{Mutant, MutationResult},
         runner::run_mutations_parallel_with_progress,
+        type_analysis::{collect_mutation_exclusions, normalize_path},
     },
 };
 
@@ -172,6 +173,7 @@ pub async fn run_mutation_testing(
         mutation_config.rerun_failures.as_deref(),
         num_workers,
     )?;
+    let mut mutation_exclusions = collect_mutation_exclusions(&config, output).unwrap_or_default();
 
     if !mutation_config.show_progress && !json_output {
         sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
@@ -203,6 +205,9 @@ pub async fn run_mutation_testing(
         // Create handler for this file, optionally restricting to a subset of
         // contracts by name when --mutate-contract is provided.
         let mut handler = MutationHandler::new(path.clone(), config.clone());
+        if let Some(mutations) = mutation_exclusions.remove(&normalize_path(&path)) {
+            handler = handler.with_mutation_exclusions(mutations);
+        }
         if let Some(filter) = &mutation_config.mutate_contract_pattern {
             handler = handler.with_contract_filter(filter.clone());
         }

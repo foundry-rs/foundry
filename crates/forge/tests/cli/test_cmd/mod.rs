@@ -10,6 +10,8 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
+#[cfg(unix)]
+use std::fs;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod brutalize;
@@ -652,6 +654,110 @@ Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
 "#]]);
 });
 
+#[cfg(unix)]
+forgetest_init!(links_libraries_through_workspace_symlinks, |prj, cmd| {
+    let workspace = prj.root().join("workspace");
+    let airdrops = workspace.join("airdrops");
+    let libraries = workspace.join("library/src/libraries");
+    let package_scope = workspace.join("node_modules/@workspace");
+    fs::create_dir_all(airdrops.join("src")).unwrap();
+    fs::create_dir_all(airdrops.join("test")).unwrap();
+    fs::create_dir_all(&libraries).unwrap();
+    fs::create_dir_all(&package_scope).unwrap();
+    std::os::unix::fs::symlink("../../library", package_scope.join("library")).unwrap();
+
+    fs::write(
+        airdrops.join("foundry.toml"),
+        r#"
+[profile.default]
+allow_paths = ["../"]
+src = "src"
+test = "test"
+out = "out"
+remappings = ["@workspace/=../node_modules/@workspace/"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        libraries.join("Math.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+library Math {
+    function increment(uint256 value) external pure returns (uint256) {
+        return value + 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        libraries.join("Helpers.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Math} from "./Math.sol";
+
+library Helpers {
+    function addTwo(uint256 value) external pure returns (uint256) {
+        return Math.increment(Math.increment(value));
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        airdrops.join("src/Consumer.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Helpers} from "@workspace/library/src/libraries/Helpers.sol";
+
+contract Consumer {
+    function addTwo(uint256 value) external pure returns (uint256) {
+        return Helpers.addTwo(value);
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        airdrops.join("test/Consumer.t.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Consumer} from "../src/Consumer.sol";
+
+contract ConsumerTest {
+    function testAddTwo() external {
+        Consumer consumer = new Consumer();
+        require(consumer.addTwo(1) == 3);
+    }
+}
+"#,
+    )
+    .unwrap();
+    cmd.current_dir(&airdrops).arg("build").assert_success();
+    cmd.forge_fuse().current_dir(&airdrops).arg("test").assert_success();
+    cmd.forge_fuse()
+        .current_dir(&airdrops)
+        .args(["test", "--create2-deployer", "0x0000000000000000000000000000000000000000"])
+        .assert_success();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(airdrops.join("foundry.toml")).unwrap(),
+        "libraries = [\"../library/src/libraries/Helpers.sol:Helpers:0x1111111111111111111111111111111111111111\"]"
+    )
+    .unwrap();
+    let stdout = cmd
+        .forge_fuse()
+        .current_dir(&airdrops)
+        .args(["test", "-vvvv"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("0x1111111111111111111111111111111111111111"), "{stdout}");
+});
+
 forgetest_init!(create2_factory_is_installed_after_constructor_when_no_libraries, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
@@ -975,6 +1081,29 @@ contract BlobForkTest is Test {
     );
 
     cmd.args(["test", "-vvvv"]).assert_success();
+});
+
+// https://github.com/foundry-rs/foundry/issues/10689
+forgetest_init!(flaky_roll_fork_arbitrum_priority_fee_above_max_fee, |prj, cmd| {
+    let endpoint = "https://arb-mainnet.g.alchemy.com/public";
+
+    prj.add_test(
+        "ArbitrumFork.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ArbitrumForkTest is Test {
+    function test_rollFork() public {
+        uint256 forkId = vm.createFork("<url>");
+        bytes32 txHash = 0x2e43e9ececcbb9cd08ce061edc3b4d39ca2b0ba480034e5f4650ba0065bf6b62;
+        vm.rollFork(forkId, txHash);
+    }
+}
+    "#
+        .replace("<url>", endpoint),
+    );
+
+    cmd.arg("test").assert_success();
 });
 
 // https://github.com/foundry-rs/foundry/issues/6579
@@ -2842,8 +2971,8 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
 
     cmd.args(["test", "--junit"]).assert_failure().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="6" failures="2" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0" errors="0" failures="2" time="[..]">
+<testsuites name="Test run" tests="6" skipped="2" failures="2" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" skipped="0" errors="0" failures="2" time="[..]">
         <testcase name="test_junit_assert_fail()" time="[..]">
             <failure message="panic: assertion failed (0x01)"/>
             <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
@@ -2854,7 +2983,7 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
-    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" disabled="2" errors="0" failures="0" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" skipped="2" errors="0" failures="0" time="[..]">
         <testcase name="test_junit_pass()" time="[..]">
             <system-out>[PASS] test_junit_pass() ([GAS])</system-out>
         </testcase>
@@ -2895,8 +3024,8 @@ contract JunitReportTest is Test {
 
     cmd.args(["test", "--junit", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="1" failures="0" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0" failures="0" time="[..]">
+<testsuites name="Test run" tests="1" skipped="0" failures="0" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" skipped="0" errors="0" failures="0" time="[..]">
         <testcase name="test_junit_with_logs()" time="[..]">
             <system-out>[PASS] test_junit_with_logs() ([GAS])/nLogs:/n  Step1/n  Step2/n  Step3/n</system-out>
         </testcase>

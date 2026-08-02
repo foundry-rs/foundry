@@ -175,9 +175,11 @@ async fn create(
     let (sig, args) = if members.is_empty() {
         ("createPolicy(address,uint8)", vec![admin.to_string(), type_arg])
     } else {
+        let members =
+            format!("[{}]", members.iter().map(Address::to_string).collect::<Vec<_>>().join(","));
         (
             "createPolicyWithAccounts(address,uint8,address[])",
-            vec![admin.to_string(), type_arg, address_array(&members)],
+            vec![admin.to_string(), type_arg, members],
         )
     };
     send_tip20_transaction(
@@ -300,10 +302,6 @@ fn warn_if_virtual(account: Address) -> Result<()> {
         )?;
     }
     Ok(())
-}
-
-fn address_array(accounts: &[Address]) -> String {
-    format!("[{}]", accounts.iter().map(Address::to_string).collect::<Vec<_>>().join(","))
 }
 
 impl PolicyKind {

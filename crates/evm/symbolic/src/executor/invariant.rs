@@ -140,6 +140,15 @@ impl SymbolicExecutor {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
+            if std::mem::take(&mut state.pending_storage_hook_revert) {
+                *completed_paths += 1;
+                outcomes.push(TopLevelCallOutcome {
+                    status: TopLevelCallStatus::Revert,
+                    return_data: state.return_data.clone(),
+                    state,
+                });
+                continue;
+            }
             let _path_span =
                 trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
                     .entered();

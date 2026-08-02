@@ -10,7 +10,7 @@ use alloy_trie::{
     nodes::{BranchNodeRef, ExtensionNodeRef, LeafNodeRef, RlpNode},
 };
 use revm::{
-    database::DbAccount,
+    database::{AccountState, DbAccount},
     state::{Account, AccountInfo},
 };
 use std::{array, mem};
@@ -77,7 +77,10 @@ impl StateRootCache {
         let trie = trie.as_mut().unwrap();
         for (address, dirty) in mem::take(dirty) {
             let hashed_address = keccak256(address);
-            let Some(account) = accounts.get(&address) else {
+            let Some(account) = accounts
+                .get(&address)
+                .filter(|account| account.account_state != AccountState::NotExisting)
+            else {
                 trie.accounts.remove(hashed_address);
                 trie.storage.remove(&hashed_address);
                 continue;
@@ -92,7 +95,8 @@ impl StateRootCache {
                 let storage_trie = trie.storage.entry(hashed_address).or_default();
                 for slot in dirty.storage {
                     let key = keccak256(slot.to_be_bytes::<32>());
-                    if let Some(value) = account.storage.get(&slot) {
+                    if let Some(value) = account.storage.get(&slot).filter(|value| !value.is_zero())
+                    {
                         storage_trie.insert(key, alloy_rlp::encode(value));
                     } else {
                         storage_trie.remove(key);
@@ -121,6 +125,9 @@ impl IncrementalStateTrie {
     fn from_accounts(accounts: &AddressMap<DbAccount>, rlp_buf: &mut Vec<u8>) -> Self {
         let mut trie = Self::default();
         for (address, account) in accounts {
+            if account.account_state == AccountState::NotExisting {
+                continue;
+            }
             let hashed_address = keccak256(address);
             let mut storage_trie = IncrementalTrie::from_storage(&account.storage);
             let storage_root = storage_trie.root_with_buf(rlp_buf);
@@ -147,7 +154,7 @@ struct IncrementalTrie {
 impl IncrementalTrie {
     fn from_storage(storage: &U256Map<U256>) -> Self {
         let mut trie = Self::default();
-        for (slot, value) in storage {
+        for (slot, value) in storage.iter().filter(|(_, value)| !value.is_zero()) {
             trie.insert(keccak256(slot.to_be_bytes::<32>()), alloy_rlp::encode(value));
         }
         trie
@@ -390,6 +397,7 @@ pub fn storage_root(storage: &U256Map<U256>) -> B256 {
 pub fn trie_storage(storage: &U256Map<U256>) -> Vec<(Nibbles, Vec<u8>)> {
     let mut storage = storage
         .iter()
+        .filter(|(_, value)| !value.is_zero())
         .map(|(key, value)| {
             let data = alloy_rlp::encode(value);
             (Nibbles::unpack(keccak256(key.to_be_bytes::<32>())), data)
@@ -404,6 +412,7 @@ pub fn trie_storage(storage: &U256Map<U256>) -> Vec<(Nibbles, Vec<u8>)> {
 pub fn trie_accounts(accounts: &AddressMap<DbAccount>) -> Vec<(Nibbles, Vec<u8>)> {
     let mut accounts: Vec<(Nibbles, Vec<u8>)> = accounts
         .iter()
+        .filter(|(_, account)| account.account_state != AccountState::NotExisting)
         .map(|(address, account)| {
             let data = trie_account_rlp(&account.info, &account.storage);
             (Nibbles::unpack(keccak256(*address)), data)
@@ -432,6 +441,21 @@ fn trie_account_rlp_with_storage_root(info: &AccountInfo, storage_root: B256) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_roots_omit_zero_storage_and_non_existing_accounts() {
+        let mut storage = U256Map::default();
+        storage.insert(U256::from(1), U256::ZERO);
+        assert_eq!(storage_root(&storage), EMPTY_ROOT_HASH);
+
+        let mut accounts = AddressMap::default();
+        accounts.insert(
+            alloy_primitives::Address::with_last_byte(1),
+            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
+        );
+        assert_eq!(state_root(&accounts), EMPTY_ROOT_HASH);
+        assert_eq!(StateRootCache::default().root(&accounts), EMPTY_ROOT_HASH);
+    }
 
     fn rebuilt_root(values: &B256Map<Vec<u8>>) -> B256 {
         let mut leaves = values

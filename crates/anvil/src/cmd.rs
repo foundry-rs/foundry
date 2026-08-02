@@ -215,8 +215,8 @@ pub struct NodeArgs {
     /// Path to the cache directory where persisted states are stored (see
     /// `--max-persisted-states`).
     ///
-    /// Note: This does not affect the fork RPC cache location (`storage.json`), which is stored in
-    /// `~/.foundry/cache/rpc/<chain>/<block>/`.
+    /// Note: This does not affect the fork RPC cache location, which uses endpoint-specific files
+    /// under `~/.foundry/cache/rpc/<chain>/<block>/`.
     #[arg(long, value_name = "PATH")]
     pub cache_path: Option<PathBuf>,
 }
@@ -386,16 +386,12 @@ impl NodeArgs {
         generator
     }
 
-    /// Returns the location where to dump the state to.
-    fn dump_state_path(&self) -> Option<PathBuf> {
-        self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned()
-    }
-
     /// Starts the node
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> eyre::Result<()> {
-        let dump_state = self.dump_state_path();
+        let dump_state =
+            self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned();
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
         let preserve_historical_states = self.preserve_historical_states;

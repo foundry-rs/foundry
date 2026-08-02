@@ -93,6 +93,26 @@ Missing dependencies found. Installing now...
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 });
 
+// Checks missing dependencies are auto installed.
+forgetest_init!(can_install_missing_deps_lint, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.clear();
+
+    // Wipe forge-std.
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("lint").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
+"#]]);
+
+    // Assert lockfile.
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
+});
+
 // test to check that install/remove works properly
 forgetest!(can_install_and_remove, |prj, cmd| {
     cmd.git_init();

@@ -1,7 +1,8 @@
 #[cfg(feature = "optimism")]
 use alloy_consensus::{Sealed, Transaction as _};
 use alloy_consensus::{
-    Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxType, Typed2718,
+    SignableTransaction, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
+    TxType, Typed2718,
     crypto::RecoveryError,
     transaction::{
         SignerRecoverable, TxEip7702, TxHashRef,
@@ -10,12 +11,12 @@ use alloy_consensus::{
 };
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, TxHash};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash};
 use alloy_rpc_types::ConversionError;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
 use revm::context::TxEnv;
-use tempo_primitives::{AASigned, TempoTransaction};
+use tempo_primitives::{AASigned, TempoSignature, TempoTransaction};
 use tempo_revm::TempoTxEnv;
 
 //
@@ -141,6 +142,14 @@ impl FoundryTxEnvelope {
         }
     }
 
+    /// Drops pooled sidecars so the transaction uses its canonical block-body representation.
+    pub fn into_canonical(self) -> Self {
+        match self {
+            Self::Eip4844(tx) => Self::Eip4844(tx.map(TxEip4844Variant::drop_sidecar)),
+            tx => tx,
+        }
+    }
+
     /// Returns the hash of the transaction.
     ///
     /// # Note
@@ -209,6 +218,34 @@ impl FoundryTxType {
 }
 
 impl FoundryTypedTx {
+    /// Builds an envelope with a dummy signature for an impersonated account.
+    ///
+    /// The signature uses `r = 1` and `s = 1` because clients reject zero scalar values.
+    pub fn into_impersonated(self) -> FoundryTxEnvelope {
+        let signature = Signature::from_scalars_and_parity(
+            B256::with_last_byte(1),
+            B256::with_last_byte(1),
+            false,
+        );
+        match self {
+            Self::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
+            Self::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
+            Self::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
+            Self::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
+            Self::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
+            #[cfg(feature = "optimism")]
+            Self::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+            #[cfg(feature = "optimism")]
+            Self::PostExec(_) => {
+                unreachable!("op post-exec txs should not be impersonated")
+            }
+            Self::Tempo(tx) => {
+                let tempo_sig: TempoSignature = signature.into();
+                FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))
+            }
+        }
+    }
+
     /// Returns `true` if this is an OP stack deposit transaction.
     #[cfg(feature = "optimism")]
     pub const fn is_deposit(&self) -> bool {
@@ -477,7 +514,6 @@ mod tests {
 
     use alloy_primitives::{TxKind, U256, b256, hex};
     use alloy_rlp::Decodable;
-    use alloy_signer::Signature;
 
     use super::*;
 
@@ -537,6 +573,19 @@ mod tests {
             assert!(FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit::default())).is_deposit());
             assert!(FoundryTxEnvelope::PostExec(Sealed::new(TxPostExec::default())).is_post_exec());
         }
+    }
+
+    #[test]
+    fn impersonated_tx_uses_nonzero_dummy_signature() {
+        let FoundryTxEnvelope::Legacy(tx) =
+            FoundryTypedTx::Legacy(TxLegacy::default()).into_impersonated()
+        else {
+            panic!("expected legacy transaction");
+        };
+
+        assert_eq!(tx.signature().r(), U256::from(1));
+        assert_eq!(tx.signature().s(), U256::from(1));
+        assert!(!tx.signature().v());
     }
 
     #[test]
