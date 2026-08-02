@@ -1,21 +1,64 @@
 //! general eth api tests
 
+use alloy_eips::{
+    eip6110::DEPOSIT_REQUEST_TYPE,
+    eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_TYPE},
+    eip7251::{CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_TYPE},
+    eip7685::{EMPTY_REQUESTS_HASH, Requests},
+};
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
-use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256, address};
+use alloy_genesis::Genesis;
+use alloy_primitives::{Address, B256, Bloom, Bytes, Log, TxKind, U256, address};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    BlockOverrides,
+    BlockNumberOrTag, BlockOverrides,
     request::TransactionRequest,
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
+use alloy_sol_types::{SolEvent, sol};
 use anvil::{EthereumHardfork, NodeConfig, PrecompileFactory, spawn};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
-use revm::precompile::{PrecompileOutput, PrecompileStatus};
+use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
+sol! {
+    event DepositEvent(
+        bytes pubkey,
+        bytes withdrawal_credentials,
+        bytes amount,
+        bytes signature,
+        bytes index
+    );
+}
+
+fn deposit_event_runtime(event: DepositEvent) -> Bytes {
+    let log = DepositEvent::encode_log(&Log { address: Address::ZERO, data: event });
+    let data = log.data.data.as_ref();
+    let data_len = u16::try_from(data.len()).unwrap();
+    const CODE_OFFSET: u16 = 47;
+    let mut code = Vec::with_capacity(usize::from(CODE_OFFSET) + data.len());
+    code.extend([0x61]);
+    code.extend(data_len.to_be_bytes());
+    code.extend([0x61]);
+    code.extend(CODE_OFFSET.to_be_bytes());
+    code.extend([0x5f, 0x39, 0x7f]);
+    code.extend(DepositEvent::SIGNATURE_HASH);
+    code.extend([0x61]);
+    code.extend(data_len.to_be_bytes());
+    code.extend([0x5f, 0xa1, 0x00]);
+    code.extend(data);
+    code.into()
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_simulate_v1() {
@@ -841,7 +884,8 @@ async fn test_simulate_derives_from_historical_base_rpc() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_returns_unchanged_state_root_rpc() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
     let endpoint = handle.http_endpoint();
     let state_root = api.state_root().await.unwrap();
     let response =
@@ -853,6 +897,360 @@ async fn test_simulate_returns_unchanged_state_root_rpc() {
         "0x0000000000000000000000000000000000000000000000000000000000000000"
     );
     assert_eq!(response["result"][0]["stateRoot"], serde_json::to_value(state_root).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
+    for hardfork in [EthereumHardfork::Cancun, EthereumHardfork::Prague] {
+        let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let provider = handle.http_provider();
+        let genesis = provider
+            .get_block_by_number(BlockNumberOrTag::Number(0))
+            .await
+            .unwrap()
+            .expect("genesis block should exist");
+        let next_timestamp = genesis.header.timestamp + 12;
+
+        let simulated = api
+            .simulate_v1(
+                SimulatePayload {
+                    block_state_calls: vec![SimBlock::default()],
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap()
+            .remove(0);
+
+        api.evm_set_next_block_timestamp(next_timestamp).unwrap();
+        api.mine_one().await;
+        let mined = provider
+            .get_block_by_number(BlockNumberOrTag::Number(1))
+            .await
+            .unwrap()
+            .expect("mined block should exist");
+
+        assert_eq!(simulated.inner.header.state_root, mined.header.state_root);
+        assert_eq!(
+            simulated.inner.header.parent_beacon_block_root,
+            mined.header.parent_beacon_block_root
+        );
+        assert_eq!(mined.header.parent_beacon_block_root, Some(B256::ZERO));
+
+        if hardfork >= EthereumHardfork::Prague {
+            assert_eq!(simulated.inner.header.requests_hash, mined.header.requests_hash);
+            assert_eq!(mined.header.requests_hash, Some(EMPTY_REQUESTS_HASH));
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_preserves_beacon_root_override_rpc() {
+    let (_, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+    let provider = handle.http_provider();
+    let genesis = provider
+        .get_block_by_number(BlockNumberOrTag::Number(0))
+        .await
+        .unwrap()
+        .expect("genesis block should exist");
+    let timestamp = genesis.header.timestamp + 12;
+    let beacon_root = B256::repeat_byte(0x42);
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {
+                    "time": format!("0x{timestamp:x}"),
+                    "beaconRoot": beacon_root,
+                }
+            }]
+        }]),
+    )
+    .await;
+    let default_root_response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {"time": format!("0x{timestamp:x}")}
+            }]
+        }]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["parentBeaconBlockRoot"], beacon_root.to_string());
+    assert_ne!(response["result"][0]["stateRoot"], default_root_response["result"][0]["stateRoot"]);
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RequestOutputPrecompileFactory;
+
+impl PrecompileFactory for RequestOutputPrecompileFactory {
+    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+        vec![
+            (
+                WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+                DynPrecompile::from(|input: PrecompileInput<'_>| {
+                    Ok(PrecompileOutput {
+                        status: PrecompileStatus::Success,
+                        bytes: Bytes::from_static(&[0xaa]),
+                        gas_used: 0,
+                        gas_refunded: 0,
+                        state_gas_used: 0,
+                        reservoir: input.reservoir,
+                    })
+                }),
+            ),
+            (
+                CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+                DynPrecompile::from(|input: PrecompileInput<'_>| {
+                    Ok(PrecompileOutput {
+                        status: PrecompileStatus::Success,
+                        bytes: Bytes::from_static(&[0xbb]),
+                        gas_used: 0,
+                        gas_refunded: 0,
+                        state_gas_used: 0,
+                        reservoir: input.reservoir,
+                    })
+                }),
+            ),
+        ]
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PerBlockRequestPrecompileFactory(Arc<AtomicUsize>);
+
+impl PrecompileFactory for PerBlockRequestPrecompileFactory {
+    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+        let calls = Arc::clone(&self.0);
+        vec![(
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+            DynPrecompile::from(move |input: PrecompileInput<'_>| {
+                let value = calls.fetch_add(1, Ordering::SeqCst) as u8 + 1;
+                Ok(PrecompileOutput {
+                    status: PrecompileStatus::Success,
+                    bytes: Bytes::from(vec![value]),
+                    gas_used: 0,
+                    gas_refunded: 0,
+                    state_gas_used: 0,
+                    reservoir: input.reservoir,
+                })
+            }),
+        )]
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multiblock_simulation_applies_transitions_per_block_rpc() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_precompile_factory(PerBlockRequestPrecompileFactory(Arc::clone(&calls))),
+    )
+    .await;
+    let live_state_root = api.state_root().await.unwrap();
+    let first_beacon_root = B256::repeat_byte(0x11);
+    let second_beacon_root = B256::repeat_byte(0x22);
+
+    let blocks = api
+        .simulate_v1(
+            SimulatePayload {
+                block_state_calls: vec![
+                    SimBlock {
+                        block_overrides: Some(BlockOverrides {
+                            beacon_root: Some(first_beacon_root),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    SimBlock {
+                        block_overrides: Some(BlockOverrides {
+                            beacon_root: Some(second_beacon_root),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let first_requests =
+        Requests::new(vec![Bytes::from(vec![WITHDRAWAL_REQUEST_TYPE, 1])]).requests_hash();
+    let second_requests =
+        Requests::new(vec![Bytes::from(vec![WITHDRAWAL_REQUEST_TYPE, 2])]).requests_hash();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(blocks[0].inner.header.parent_beacon_block_root, Some(first_beacon_root));
+    assert_eq!(blocks[1].inner.header.parent_beacon_block_root, Some(second_beacon_root));
+    assert_eq!(blocks[0].inner.header.requests_hash, Some(first_requests));
+    assert_eq!(blocks[1].inner.header.requests_hash, Some(second_requests));
+    assert_eq!(blocks[1].inner.header.parent_hash, blocks[0].inner.header.hash);
+    assert_ne!(blocks[0].inner.header.state_root, blocks[1].inner.header.state_root);
+    assert_eq!(api.state_root().await.unwrap(), live_state_root);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulated_and_mined_prague_request_hashes_match_rpc() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_precompile_factory(RequestOutputPrecompileFactory),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let genesis = provider
+        .get_block_by_number(BlockNumberOrTag::Number(0))
+        .await
+        .unwrap()
+        .expect("genesis block should exist");
+
+    let simulated = api
+        .simulate_v1(
+            SimulatePayload { block_state_calls: vec![SimBlock::default()], ..Default::default() },
+            None,
+        )
+        .await
+        .unwrap()
+        .remove(0);
+
+    api.evm_set_next_block_timestamp(genesis.header.timestamp + 12).unwrap();
+    api.mine_one().await;
+    let mined = provider
+        .get_block_by_number(BlockNumberOrTag::Number(1))
+        .await
+        .unwrap()
+        .expect("mined block should exist");
+    let expected = Requests::new(vec![
+        Bytes::from(vec![WITHDRAWAL_REQUEST_TYPE, 0xaa]),
+        Bytes::from(vec![CONSOLIDATION_REQUEST_TYPE, 0xbb]),
+    ])
+    .requests_hash();
+
+    assert_eq!(simulated.inner.header.state_root, mined.header.state_root);
+    assert_eq!(simulated.inner.header.requests_hash, Some(expected));
+    assert_eq!(mined.header.requests_hash, Some(expected));
+    assert_ne!(expected, EMPTY_REQUESTS_HASH);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_prague_requests_use_genesis_deposit_contract_and_consensus_order_rpc() {
+    let deposit_contract = address!("0000000000000000000000000000000000006110");
+    let mut genesis = Genesis::default();
+    genesis.config.chain_id = 31_337;
+    genesis.config.deposit_contract_address = Some(deposit_contract);
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_genesis(Some(genesis))
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_precompile_factory(RequestOutputPrecompileFactory),
+    )
+    .await;
+    let pubkey = Bytes::from(vec![0x11; 48]);
+    let withdrawal_credentials = Bytes::from(vec![0x22; 32]);
+    let amount = Bytes::from(vec![0x33; 8]);
+    let signature = Bytes::from(vec![0x44; 96]);
+    let index = Bytes::from(vec![0x55; 8]);
+    let event = DepositEvent {
+        pubkey: pubkey.clone(),
+        withdrawal_credentials: withdrawal_credentials.clone(),
+        amount: amount.clone(),
+        signature: signature.clone(),
+        index: index.clone(),
+    };
+    api.anvil_set_code(deposit_contract, deposit_event_runtime(event)).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let request = TransactionRequest::default().from(from).to(deposit_contract).gas_limit(200_000);
+
+    let simulated = api
+        .simulate_v1(
+            SimulatePayload {
+                block_state_calls: vec![SimBlock {
+                    calls: vec![request.clone()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .remove(0);
+
+    let mut deposit_request = vec![DEPOSIT_REQUEST_TYPE];
+    deposit_request.extend(pubkey);
+    deposit_request.extend(withdrawal_credentials);
+    deposit_request.extend(amount);
+    deposit_request.extend(signature);
+    deposit_request.extend(index);
+    let expected = Requests::new(vec![
+        deposit_request.into(),
+        Bytes::from(vec![WITHDRAWAL_REQUEST_TYPE, 0xaa]),
+        Bytes::from(vec![CONSOLIDATION_REQUEST_TYPE, 0xbb]),
+    ])
+    .requests_hash();
+    assert_eq!(simulated.inner.header.requests_hash, Some(expected));
+
+    let _pending =
+        handle.http_provider().send_transaction(WithOtherFields::new(request)).await.unwrap();
+    api.mine_one().await;
+    let mined = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Number(1))
+        .await
+        .unwrap()
+        .expect("mined block should exist");
+    assert_eq!(mined.header.requests_hash, Some(expected));
+}
+
+const SIMULATION_POST_BLOCK_ERROR: &str = "simulation post-block sentinel";
+
+#[derive(Clone, Copy, Debug)]
+struct FailingWithdrawalPrecompileFactory;
+
+impl PrecompileFactory for FailingWithdrawalPrecompileFactory {
+    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+        vec![(
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+            DynPrecompile::from(|_: PrecompileInput<'_>| {
+                Err(PrecompileError::Fatal(SIMULATION_POST_BLOCK_ERROR.to_string()))
+            }),
+        )]
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_discards_candidate_after_post_block_failure_rpc() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_precompile_factory(FailingWithdrawalPrecompileFactory),
+    )
+    .await;
+    let state_root = api.state_root().await.unwrap();
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{
+            "stateOverrides": {
+                "0xc000000000000000000000000000000000000000": {"balance": "0x1"}
+            }
+        }]}]),
+    )
+    .await;
+
+    assert!(response["error"]["message"].as_str().unwrap().contains(SIMULATION_POST_BLOCK_ERROR));
+    assert_eq!(api.state_root().await.unwrap(), state_root);
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
