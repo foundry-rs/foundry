@@ -459,7 +459,8 @@ interface Vm {
     /// earlier precomputation, and source layouts do not match. Registration persists across
     /// reverts and replaces the same target/root callback; callback state rolls back with its
     /// enclosing context, callback reverts propagate, and hooks are suppressed throughout callback
-    /// subtrees. Raw and mapping SSTORE hooks conflict per target, while multiple mapping roots may
+    /// subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent external
+    /// spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping roots may
     /// be registered.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;

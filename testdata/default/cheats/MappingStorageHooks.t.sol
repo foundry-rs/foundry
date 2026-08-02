@@ -33,6 +33,19 @@ contract MappingHookTarget {
         bytes32 slot = keccak256(abi.encodePacked(key));
         assembly { sstore(slot, value) }
     }
+
+    function unallocatedMemoryStore(uint256 value) external {
+        assembly {
+            let slot := keccak256(0x1000, 0x40)
+            sstore(slot, value)
+        }
+    }
+
+    function failedHashThenStore(address implementation, bytes32 slot, uint256 value) external {
+        (bool success,) = implementation.delegatecall{gas: 5_000}("");
+        require(!success);
+        assembly { sstore(slot, value) }
+    }
 }
 
 contract MappingHookImplementation {
@@ -60,6 +73,11 @@ contract MappingStorageHooksTest is Test {
     bytes32 seenOld;
     bytes32 seenNew;
 
+    modifier onlyStorageHook() {
+        require(msg.sender == address(vm), "only storage hook");
+        _;
+    }
+
     function setUp() public {
         target = new MappingHookTarget();
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
@@ -86,6 +104,23 @@ contract MappingStorageHooksTest is Test {
     function testOffsetAndIncompleteStoresDoNotMatch() public {
         target.offsetStore(address(this), 1);
         target.incompleteStore(bytes32(uint256(4)), 1);
+        assertEq(calls, 0);
+    }
+
+    function testUnallocatedKeccakMemoryIsZeroExpanded() public {
+        vm.registerMappingSstoreHook(address(target), bytes32(0), this.onZeroMemory.selector);
+        target.unallocatedMemoryStore(1);
+        assertEq(calls, 1);
+        assertEq(keys.length, 1);
+        assertEq(keys[0], bytes32(0));
+        assertEq(seenSlot, keccak256(new bytes(64)));
+    }
+
+    function testOogKeccakDoesNotRecordProvenance() public {
+        address implementation = address(0xBEEF);
+        vm.etch(implementation, hex"604062100000205000");
+        vm.registerMappingSstoreHook(address(target), bytes32(0), this.onZeroMemory.selector);
+        target.failedHashThenStore(implementation, keccak256(new bytes(64)), 1);
         assertEq(calls, 0);
     }
 
@@ -172,6 +207,19 @@ contract MappingStorageHooksTest is Test {
         assertEq(target.balances(address(0xA11CE)), 0);
     }
 
+    function testCallbackRejectsExternalSpoofing() public {
+        bytes32[] memory callbackKeys = new bytes32[](1);
+        (bool success,) = address(this)
+            .call(
+                abi.encodeCall(
+                    this.onBalance,
+                    (address(target), bytes32(0), bytes32(uint256(1)), callbackKeys, bytes32(0), bytes32(0))
+                )
+            );
+        vm.assertFalse(success);
+        assertEq(calls, 0);
+    }
+
     function storeThenRevert(address owner, uint256 value) external {
         target.setBalance(owner, value);
         revert("rollback");
@@ -184,7 +232,7 @@ contract MappingStorageHooksTest is Test {
         bytes32[] calldata callbackKeys,
         bytes32 oldValue,
         bytes32 newValue
-    ) external {
+    ) external onlyStorageHook {
         assertEq(account, address(target));
         assertEq(root, bytes32(uint256(1)));
         calls++;
@@ -194,34 +242,52 @@ contract MappingStorageHooksTest is Test {
         _setKeys(callbackKeys);
     }
 
-    function onAllowance(address, bytes32, bytes32 root, bytes32[] calldata callbackKeys, bytes32, bytes32) external {
+    function onAllowance(address, bytes32, bytes32 root, bytes32[] calldata callbackKeys, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
         assertEq(root, bytes32(uint256(2)));
         calls++;
         _setKeys(callbackKeys);
     }
 
-    function onReplacement(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+    function onReplacement(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
         calls = 10;
     }
 
-    function onImplementation(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+    function onImplementation(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
         implementationCalls++;
     }
 
-    function onIntermediate(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+    function onIntermediate(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
         intermediateCalls++;
     }
 
-    function onRecursive(address, bytes32, bytes32, bytes32[] calldata callbackKeys, bytes32, bytes32) external {
+    function onRecursive(address, bytes32, bytes32, bytes32[] calldata callbackKeys, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
         calls++;
         bytes32 slot = target.compute(callbackKeys[0], bytes32(uint256(1)));
         target.directStore(slot, 99);
     }
 
-    function onRevert(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external pure {
+    function onRevert(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
         revert("hook revert");
     }
-    function onRaw(address, bytes32, bytes32, bytes32) external {}
+    function onRaw(address, bytes32, bytes32, bytes32) external onlyStorageHook {}
+
+    function onZeroMemory(address, bytes32 slot, bytes32, bytes32[] calldata callbackKeys, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        calls++;
+        seenSlot = slot;
+        _setKeys(callbackKeys);
+    }
 
     function _setKeys(bytes32[] calldata callbackKeys) internal {
         delete keys;

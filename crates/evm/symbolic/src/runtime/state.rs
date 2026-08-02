@@ -423,6 +423,7 @@ impl PathState {
         self.world.merge_replay_metadata_from(&check.world);
         self.storage_load_hooks = check.storage_load_hooks.clone();
         self.storage_store_hooks = check.storage_store_hooks.clone();
+        self.mapping_storage_store_hooks = check.mapping_storage_store_hooks.clone();
     }
 
     pub(crate) fn inherit_mapping_hook_provenance(&mut self, child: &Self) {
@@ -2414,11 +2415,13 @@ mod tests {
         };
         check.storage_load_hooks.insert(target, hook);
         check.storage_store_hooks.insert(target, hook);
+        check.mapping_storage_store_hooks.insert((target, U256::from(2)), hook);
 
         state.merge_noncommitting_check_constraints(&check);
 
         assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
         assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+        assert_eq!(state.mapping_storage_store_hooks.get(&(target, U256::from(2))), Some(&hook));
     }
 
     #[test]
@@ -2437,13 +2440,16 @@ mod tests {
         };
         state.storage_load_hooks.insert(target, old_hook);
         state.storage_store_hooks.insert(target, old_hook);
+        state.mapping_storage_store_hooks.insert((target, U256::from(2)), old_hook);
         check.storage_load_hooks.insert(target, hook);
         check.storage_store_hooks.insert(target, hook);
+        check.mapping_storage_store_hooks.insert((target, U256::from(2)), hook);
 
         state.merge_noncommitting_check_constraints(&check);
 
         assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
         assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+        assert_eq!(state.mapping_storage_store_hooks.get(&(target, U256::from(2))), Some(&hook));
     }
 
     #[test]

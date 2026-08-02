@@ -5266,12 +5266,20 @@ contract MappingRegistrationHandler {
     IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint256 public calls;
 
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
     function registerThenRevert(address target) external {
         hookVm.registerMappingSstoreHook(target, bytes32(0), this.onStore.selector);
         revert("after registration");
     }
 
-    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
         calls++;
     }
 }
@@ -5327,6 +5335,12 @@ contract SymbolicMappingStorageHooks is Test {
     uint256 implementationCalls;
     uint256 ghostSum;
     address expectedAccount;
+    address seenBalanceHolder;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
 
     function setUp() public {
         target = new MappingTarget();
@@ -5371,19 +5385,23 @@ contract SymbolicMappingStorageHooks is Test {
     function checkErc20BalanceAccounting(
         address from,
         address to,
+        address third,
         uint128 minted,
         uint128 moved,
         uint128 burned,
         uint128 allowance
     ) public {
         vm.assume(from != to);
+        vm.assume(third != from && third != to);
         vm.assume(moved <= minted);
         vm.assume(burned <= moved);
 
         token.mint(from, minted);
+        assertEq(seenBalanceHolder, from);
         assertAccounting(from, to);
 
         token.transfer(from, to, moved);
+        assertEq(seenBalanceHolder, to);
         assertAccounting(from, to);
 
         uint256 ghostBeforeApproval = ghostSum;
@@ -5392,9 +5410,15 @@ contract SymbolicMappingStorageHooks is Test {
         assertAccounting(from, to);
 
         token.burn(to, burned);
+        assertEq(seenBalanceHolder, to);
         assertAccounting(from, to);
 
         assertRevertsDoNotChangeAccounting(from, to);
+
+        token.mint(third, 1);
+        assertEq(seenBalanceHolder, third);
+        assertEq(ghostSum, token.totalSupply());
+        assertNotEq(ghostSum, token.balances(from) + token.balances(to));
     }
 
     function assertRevertsDoNotChangeAccounting(address from, address to) internal {
@@ -5538,7 +5562,10 @@ contract SymbolicMappingStorageHooks is Test {
         assertEq(target.get(key), 0);
     }
 
-    function onStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue) external {
+    function onStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
         assertEq(account, address(target));
         assertEq(root, bytes32(0));
         assertEq(keys.length, 1);
@@ -5550,7 +5577,10 @@ contract SymbolicMappingStorageHooks is Test {
         callbackSlot = target.computedSlot(uint256(keys[0]), uint256(71));
         target.directStore(callbackSlot, 1);
     }
-    function onNestedStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32, bytes32) external {
+    function onNestedStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
         assertEq(account, address(target));
         assertEq(root, bytes32(uint256(1)));
         assertEq(keys.length, 2);
@@ -5559,31 +5589,61 @@ contract SymbolicMappingStorageHooks is Test {
         seenSlot = slot;
         nestedCalls++;
     }
-    function onBalanceStore(address account, bytes32, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue) external {
+    function onBalanceStore(address account, bytes32, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
         assertEq(account, address(token));
         assertEq(root, bytes32(0));
         assertEq(keys.length, 1);
+        seenBalanceHolder = address(uint160(uint256(keys[0])));
         ghostSum = ghostSum - uint256(oldValue) + uint256(newValue);
     }
-    function onRawStore(address, bytes32, bytes32, bytes32) external {}
-    function onUnexpectedStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external { unexpectedCalls++; }
-    function onRegisterRoot(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+    function onRawStore(address, bytes32, bytes32, bytes32) external onlyStorageHook {}
+    function onUnexpectedStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        unexpectedCalls++;
+    }
+    function onRegisterRoot(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
         hookVm.registerMappingSstoreHook(
             address(target), bytes32(uint256(73)), this.onUnexpectedStore.selector
         );
     }
-    function onRevertingStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external pure { revert("hook rollback"); }
-    function onProxyStore(address account, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+    function onRevertingStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        revert("hook rollback");
+    }
+    function onProxyStore(address account, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
         assertEq(account, expectedAccount);
         calls++;
     }
-    function onImplementationStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external { implementationCalls++; }
+    function onImplementationStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        implementationCalls++;
+    }
 }
 
 contract SymbolicMappingStorageHooksStale is Test {
     IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
     MappingTarget target;
     uint256 calls;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
 
     function setUp() public {
         target = new MappingTarget();
@@ -5595,7 +5655,12 @@ contract SymbolicMappingStorageHooksStale is Test {
 
     /// forge-config: default.symbolic.invariant_depth = 2
     function invariant_staleProvenanceNeverDispatches() public view { assertEq(calls, 0); }
-    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external { calls++; }
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        calls++;
+    }
 }
 "#,
     );

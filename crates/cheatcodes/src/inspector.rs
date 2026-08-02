@@ -31,7 +31,10 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
-    mapping_slots::{MappingSlots, step as mapping_step},
+    mapping_slots::{
+        MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
+        record_hash as record_mapping_hash, step as mapping_step,
+    },
 };
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
@@ -802,6 +805,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     mapping_storage_store_hooks: AddressHashMap<HashMap<B256, StorageHook>>,
     /// Execution-local provenance used only by mapping storage hooks.
     storage_hook_mapping_slots: AddressHashMap<MappingSlots>,
+    /// A 64-byte Keccak operation awaiting successful completion.
+    pending_mapping_hash: Option<PendingMappingHash>,
     /// Whether any storage hook map contains a callback.
     storage_hooks_registered: bool,
     /// Matching storage access captured before the opcode executes.
@@ -918,6 +923,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             storage_store_hooks: Default::default(),
             mapping_storage_store_hooks: Default::default(),
             storage_hook_mapping_slots: Default::default(),
+            pending_mapping_hash: Default::default(),
             storage_hooks_registered: Default::default(),
             pending_storage_hook: Default::default(),
             active_storage_hook: Default::default(),
@@ -1935,6 +1941,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.gas_metering.paused
             || self.gas_metering.touched
             || self.arbitrary_storage.is_some()
+            || self.mapping_slots.is_some()
             || self.has_active_env_overrides()
             || self.has_storage_hooks()
     }
@@ -2038,17 +2045,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             );
         }
 
-        // `startMappingRecording`: record SSTORE and KECCAK256.
+        // `startMappingRecording`: record SSTORE.
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping_step(mapping_slots, interpreter);
         }
 
         let account = interpreter.input.target_address;
-        if self.mapping_storage_store_hooks.get(&account).is_some_and(|hooks| !hooks.is_empty())
-            && self.active_storage_hook.is_none()
-        {
+        let mapping_hook_active =
+            self.mapping_storage_store_hooks.get(&account).is_some_and(|hooks| !hooks.is_empty())
+                && self.active_storage_hook.is_none();
+        if mapping_hook_active {
             mapping_step(&mut self.storage_hook_mapping_slots, interpreter);
         }
+        self.pending_mapping_hash = if self.mapping_slots.is_some() || mapping_hook_active {
+            capture_mapping_hash(interpreter)
+        } else {
+            None
+        };
 
         // `snapshotGas*`: take a snapshot of the current gas.
         if self.gas_metering.recording {
@@ -2106,6 +2119,27 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
         if self.arbitrary_storage.is_some() {
             self.arbitrary_storage_end(interpreter, ecx);
+        }
+
+        if let Some(pending) = self.pending_mapping_hash.take()
+            && interpreter
+                .bytecode
+                .action
+                .as_ref()
+                .and_then(InterpreterAction::instruction_result)
+                .is_none()
+        {
+            if let Some(mapping_slots) = &mut self.mapping_slots {
+                record_mapping_hash(mapping_slots, interpreter, pending);
+            }
+            if self
+                .mapping_storage_store_hooks
+                .get(&pending.address)
+                .is_some_and(|hooks| !hooks.is_empty())
+                && self.active_storage_hook.is_none()
+            {
+                record_mapping_hash(&mut self.storage_hook_mapping_slots, interpreter, pending);
+            }
         }
 
         if self.active_storage_hook.is_none() {

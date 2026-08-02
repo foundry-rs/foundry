@@ -1,5 +1,5 @@
 use alloy_primitives::{
-    B256, U256, keccak256,
+    Address, B256, U256,
     map::{AddressHashMap, B256HashMap},
 };
 use revm::{
@@ -76,35 +76,56 @@ impl MappingSlots {
     }
 }
 
-/// Function to be used in Inspector::step to record mapping slots and keys
+/// A pending 64-byte Keccak operation captured before execution.
+#[derive(Clone, Copy, Debug)]
+pub struct PendingMappingHash {
+    /// The effective storage address of the executing frame.
+    pub address: Address,
+    /// The memory offset containing the Keccak preimage.
+    pub offset: usize,
+}
+
+/// Captures a 64-byte Keccak operation before execution.
+pub fn capture_hash(interpreter: &Interpreter) -> Option<PendingMappingHash> {
+    if interpreter.bytecode.opcode() != opcode::KECCAK256
+        || interpreter.stack.peek(1).ok()? != U256::from(0x40)
+    {
+        return None;
+    }
+    Some(PendingMappingHash {
+        address: interpreter.input.target_address,
+        offset: interpreter.stack.peek(0).ok()?.try_into().ok()?,
+    })
+}
+
+/// Records a successfully executed 64-byte Keccak operation after memory expansion.
+pub fn record_hash(
+    mapping_slots: &mut AddressHashMap<MappingSlots>,
+    interpreter: &Interpreter,
+    pending: PendingMappingHash,
+) {
+    let Ok(result) = interpreter.stack.peek(0) else { return };
+    let data = interpreter.memory.slice_len(pending.offset, 0x40);
+    let key = B256::from_slice(&data[..0x20]);
+    let parent = B256::from_slice(&data[0x20..]);
+    mapping_slots.entry(pending.address).or_default().record_hash(result.into(), key, parent);
+}
+
+/// Function to be used in `Inspector::step` to record mapping slots.
 #[cold]
 pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
-    #[allow(clippy::collapsible_match)]
-    match interpreter.bytecode.opcode() {
-        opcode::KECCAK256 if interpreter.stack.peek(1) == Ok(U256::from(0x40)) => {
-            let address = interpreter.input.target_address;
-            let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();
-            let data = interpreter.memory.slice_len(offset, 0x40);
-            let low = B256::from_slice(&data[..0x20]);
-            let high = B256::from_slice(&data[0x20..]);
-            let result = keccak256(&*data);
-
-            mapping_slots.entry(address).or_default().record_hash(result, low, high);
-        }
-        opcode::SSTORE => {
-            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
-                && let Ok(slot) = interpreter.stack.peek(0)
-            {
-                mapping_slots.insert(slot.into());
-            }
-        }
-        _ => {}
+    if interpreter.bytecode.opcode() == opcode::SSTORE
+        && let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
+        && let Ok(slot) = interpreter.stack.peek(0)
+    {
+        mapping_slots.insert(slot.into());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::keccak256;
 
     #[test]
     fn resolves_mapping_keys_from_root_to_leaf() {

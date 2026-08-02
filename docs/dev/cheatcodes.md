@@ -170,7 +170,8 @@ Mapping hooks require complete 64-byte Keccak provenance observed after the late
 registration for the target. Resolution follows the complete chain to its terminal root rather
 than stopping at a registered intermediate hash. Scalar, offset, incomplete, unknown, and
 previously precomputed slots do not invoke them. Raw and mapping SSTORE hooks cannot be combined
-for the same target.
+for the same target. Callbacks must authenticate `msg.sender == address(vm)` to prevent external
+spoofing.
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs
