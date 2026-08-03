@@ -1045,7 +1045,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-mpp"
 version = "0.2.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=54c00386713797bd10f021c33cd4d73fc62bd083#54c00386713797bd10f021c33cd4d73fc62bd083"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=9808dede7ad8d388d519fbaeb8aadedfbe7e7ec8#9808dede7ad8d388d519fbaeb8aadedfbe7e7ec8"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -6060,7 +6060,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=fc6094a327729aad6d7c8668746cad6a7118c328#fc6094a327729aad6d7c8668746cad6a7118c328"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=0634600a803ec16553010f6d7bc36c14f40f4525#0634600a803ec16553010f6d7bc36c14f40f4525"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -7743,7 +7743,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.11.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=54c00386713797bd10f021c33cd4d73fc62bd083#54c00386713797bd10f021c33cd4d73fc62bd083"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=9808dede7ad8d388d519fbaeb8aadedfbe7e7ec8#9808dede7ad8d388d519fbaeb8aadedfbe7e7ec8"
 dependencies = [
  "alloy",
  "async-stream",
