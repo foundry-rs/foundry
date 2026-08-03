@@ -1126,28 +1126,17 @@ async fn can_reset_fork_to_new_fork() {
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(eth_rpc_url))).await;
     let provider = handle.http_provider();
 
-    let op = address!("0xC0d3c0d3c0D3c0D3C0d3C0D3C0D3c0d3c0d30007"); // L2CrossDomainMessenger - Dead on mainnet.
+    assert_eq!(provider.get_chain_id().await.unwrap(), 1);
 
-    let tx = TransactionRequest::default().with_to(op).with_input("0x54fd4d50");
+    // Reset within the same execution family. Network-family changes are rejected before commit
+    // because the backend's network semantics are fixed for the lifetime of the node.
+    let sepolia = next_rpc_endpoint(NamedChain::Sepolia);
+    api.anvil_reset(Some(Forking { json_rpc_url: Some(sepolia), block_number: Some(1) }))
+        .await
+        .unwrap();
 
-    let tx = WithOtherFields::new(tx);
-
-    let mainnet_call_output = provider.call(tx).await.unwrap();
-
-    assert_eq!(mainnet_call_output, Bytes::new()); // 0x
-
-    let optimism = next_rpc_endpoint(NamedChain::Optimism);
-
-    api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(optimism.clone()),
-        block_number: Some(124659890),
-    }))
-    .await
-    .unwrap();
-
-    let code = provider.get_code_at(op).await.unwrap();
-
-    assert_ne!(code, Bytes::new());
+    assert_eq!(provider.get_chain_id().await.unwrap(), 11_155_111);
+    assert_eq!(provider.get_block_number().await.unwrap(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

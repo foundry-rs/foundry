@@ -324,6 +324,34 @@ async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_inferred_tempo_fork_reset_to_memory_stays_coherent() {
+    let fork_timestamp = TempoHardfork::T3.mainnet_activation_timestamp().unwrap();
+    let (source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(4217u64))
+            .with_genesis_timestamp(Some(fork_timestamp)),
+    )
+    .await;
+    source_api.mine_one().await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert!(api.backend.is_tempo());
+
+    api.anvil_reset(None).await.unwrap();
+
+    assert!(api.backend.is_tempo());
+    assert!(matches!(api.backend.hardfork(), foundry_evm::hardfork::FoundryHardfork::Tempo(_)));
+    assert_eq!(api.backend.spec_id(), api.backend.hardfork().into());
+    let genesis = handle.http_provider().get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(genesis.header.beneficiary, Address::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
     let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
 

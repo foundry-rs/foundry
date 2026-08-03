@@ -1,6 +1,7 @@
 //! Notifications emitted from the backed
 
 use alloy_consensus::Header;
+use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::B256;
 use alloy_rpc_types::Log;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -35,6 +36,14 @@ pub struct NewBlockNotification {
     pub hash: B256,
     /// block header
     pub header: Arc<Header>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FeeHistoryNotification {
+    pub(crate) hash: B256,
+    pub(crate) header: Arc<Header>,
+    pub(crate) generation: u64,
+    pub(crate) blob_params: BlobParams,
 }
 
 /// Type alias for a receiver that receives [ChainNotification]

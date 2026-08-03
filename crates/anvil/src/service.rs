@@ -6,7 +6,7 @@ use crate::{
         backend::validate::TransactionValidator,
         fees::FeeHistoryService,
         miner::Miner,
-        pool::{Pool, transactions::PoolTransaction},
+        pool::{MiningBatch, Pool},
     },
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
@@ -86,13 +86,15 @@ where
         // producer
         loop {
             // advance block production until pending
-            while let Poll::Ready(Some(outcome)) = pin.block_producer.poll_next_unpin(cx) {
+            while let Poll::Ready(Some((generation, outcome))) =
+                pin.block_producer.poll_next_unpin(cx)
+            {
                 trace!(target: "node", "mined block {}", outcome.block_number);
                 // prune the transactions from the pool
-                pin.pool.on_mined_block(outcome);
+                pin.pool.on_mined_block_at_generation(generation, outcome);
             }
 
-            if let Poll::Ready(transactions) = pin.miner.poll(&pin.pool, cx) {
+            if let Poll::Ready(transactions) = pin.miner.poll_batch(&pin.pool, cx) {
                 // miner returned a set of transaction that we feed to the producer
                 pin.block_producer.queued.push_back(transactions);
             } else {
@@ -115,7 +117,8 @@ where
     }
 }
 
-type MiningResult<N> = (MinedBlockOutcome<<N as Network>::TxEnvelope>, Arc<Backend<N>>);
+type MiningResult<N> =
+    (Option<(u64, MinedBlockOutcome<<N as Network>::TxEnvelope>)>, Arc<Backend<N>>);
 
 /// A type that exclusively mines one block at a time
 #[must_use = "streams do nothing unless polled"]
@@ -125,7 +128,7 @@ struct BlockProducer<N: Network> {
     /// Single active future that mines a new block
     block_mining: Option<JoinHandle<MiningResult<N>>>,
     /// backlog of sets of transactions ready to be mined
-    queued: VecDeque<Vec<Arc<PoolTransaction<N::TxEnvelope>>>>,
+    queued: VecDeque<MiningBatch<N::TxEnvelope>>,
 }
 
 impl<N: Network> BlockProducer<N>
@@ -143,7 +146,7 @@ where
     Backend<N>: TransactionValidator<N::TxEnvelope> + Send + Sync + 'static,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static,
 {
-    type Item = MinedBlockOutcome<N::TxEnvelope>;
+    type Item = (u64, MinedBlockOutcome<N::TxEnvelope>);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -159,8 +162,10 @@ where
                 let mining = tokio::task::spawn_blocking(move || {
                     handle.block_on(async move {
                         trace!(target: "miner", "creating new block");
-                        let block = backend.mine_block(transactions).await;
-                        trace!(target: "miner", "created new block: {}", block.block_number);
+                        let block = backend.mine_pool_batch(transactions).await;
+                        if let Some((_, block)) = &block {
+                            trace!(target: "miner", "created new block: {}", block.block_number);
+                        }
                         (block, backend)
                     })
                 });
@@ -171,9 +176,14 @@ where
         if let Some(mut mining) = pin.block_mining.take() {
             if let Poll::Ready(res) = mining.poll_unpin(cx) {
                 return match res {
-                    Ok((outcome, backend)) => {
+                    Ok((Some(outcome), backend)) => {
                         pin.idle_backend = Some(backend);
                         Poll::Ready(Some(outcome))
+                    }
+                    Ok((None, backend)) => {
+                        pin.idle_backend = Some(backend);
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
                     }
                     Err(err) => {
                         panic!("miner task failed: {err}");

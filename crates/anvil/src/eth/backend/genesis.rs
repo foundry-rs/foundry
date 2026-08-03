@@ -43,6 +43,11 @@ impl GenesisConfig {
         &self,
         mut db: RwLockWriteGuard<'_, Box<dyn Db>>,
     ) -> DatabaseResult<()> {
+        self.apply_genesis_json_alloc_to(&mut **db)
+    }
+
+    /// Applies the initial `genesis.json` alloc to a detached database.
+    pub(crate) fn apply_genesis_json_alloc_to(&self, db: &mut dyn Db) -> DatabaseResult<()> {
         if let Some(ref genesis) = self.genesis_init {
             for (addr, mut acc) in genesis.alloc.clone() {
                 let storage = std::mem::take(&mut acc.storage);

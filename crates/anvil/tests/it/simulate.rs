@@ -12,6 +12,7 @@ use alloy_primitives::{Address, B256, Bloom, Bytes, Log, TxKind, U256, address};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockNumberOrTag, BlockOverrides,
+    anvil::Forking,
     request::TransactionRequest,
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverridesBuilder},
@@ -845,14 +846,32 @@ async fn test_simulate_scopes_block_overrides_and_derives_base_fee_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_pre_london_blocks_keep_base_fee_disabled_rpc() {
-    let (_api, handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+async fn test_fork_simulate_auto_detects_pre_london_base_fee_rpc() {
+    let (berlin_api, berlin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Berlin.into()))
+            .with_genesis_timestamp(Some(1_618_481_223u64)),
+    )
+    .await;
+    berlin_api.evm_set_next_block_timestamp(1_618_481_224u64).unwrap();
+    berlin_api.mine_one().await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(berlin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let endpoint = handle.http_endpoint();
     let response = rpc_request(
-        &handle.http_endpoint(),
+        &endpoint,
         "eth_simulateV1",
         json!([{
-            "blockStateCalls": [{}, {}],
+            "blockStateCalls": [
+                {"blockOverrides": {"baseFeePerGas": "0x3e8"}},
+                {}
+            ],
             "validation": true
         }, "latest"]),
     )
@@ -861,7 +880,101 @@ async fn test_simulate_pre_london_blocks_keep_base_fee_disabled_rpc() {
     assert!(response.get("error").is_none(), "{response}");
     let blocks = response["result"].as_array().unwrap();
     assert_eq!(blocks.len(), 2);
-    assert!(blocks.iter().all(|block| block["baseFeePerGas"] == "0x0"));
+    assert_eq!(blocks[0]["baseFeePerGas"], "0x3e8");
+    assert_eq!(blocks[1]["baseFeePerGas"], "0x0");
+
+    let (london_api, london_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::London.into()))
+            .with_genesis_timestamp(Some(1_628_166_823u64)),
+    )
+    .await;
+    london_api.evm_set_next_block_timestamp(1_628_166_824u64).unwrap();
+    london_api.mine_one().await;
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(london_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {"blockOverrides": {"baseFeePerGas": "0x3e8"}},
+                {}
+            ],
+            "validation": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    let blocks = response["result"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0]["baseFeePerGas"], "0x3e8");
+    assert_eq!(blocks[1]["baseFeePerGas"], "0x36b");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_preserves_explicit_fee_spec_on_reset_rpc() {
+    let (berlin_api, berlin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Berlin.into()))
+            .with_genesis_timestamp(Some(1_618_481_223u64)),
+    )
+    .await;
+    berlin_api.evm_set_next_block_timestamp(1_618_481_224u64).unwrap();
+    berlin_api.mine_one().await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(berlin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Berlin.into())),
+    )
+    .await;
+
+    let (london_api, london_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::London.into()))
+            .with_genesis_timestamp(Some(1_628_166_823u64)),
+    )
+    .await;
+    london_api.evm_set_next_block_timestamp(1_628_166_824u64).unwrap();
+    london_api.mine_one().await;
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(london_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {"blockOverrides": {"baseFeePerGas": "0x3e8"}},
+                {}
+            ],
+            "validation": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    let blocks = response["result"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0]["baseFeePerGas"], "0x3e8");
+    assert_eq!(blocks[1]["baseFeePerGas"], "0x0");
 }
 
 #[tokio::test(flavor = "multi_thread")]

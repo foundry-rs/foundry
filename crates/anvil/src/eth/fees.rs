@@ -2,7 +2,10 @@ use std::{
     collections::BTreeMap,
     fmt,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll},
 };
 
@@ -11,12 +14,15 @@ use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::Blob
 use alloy_network::Network;
 use alloy_primitives::B256;
 use futures::StreamExt;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 use crate::eth::{
-    backend::{info::StorageInfo, notifications::ChainNotifications},
+    backend::{
+        info::StorageInfo,
+        notifications::{ChainNotifications, FeeHistoryNotification},
+    },
     error::BlockchainError,
 };
 
@@ -38,32 +44,38 @@ pub const MIN_SUGGESTED_PRIORITY_FEE: u128 = 1e9 as u128;
 /// Stores the fee related information
 #[derive(Clone, Debug)]
 pub struct FeeManager {
-    /// Hardfork identifier
+    state: Arc<RwLock<FeeState>>,
+    /// Whether the minimum suggested priority fee is enforced
+    is_min_priority_fee_enforced: bool,
+}
+
+/// Mutable fee state that must change atomically when switching forks.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeeState {
+    /// Hardfork identifier.
     spec_id: SpecId,
-    /// The blob params that determine blob fees
-    blob_params: Arc<RwLock<BlobParams>>,
+    /// Network-specific base fee params for EIP-1559 calculations.
+    base_fee_params: BaseFeeParams,
+    /// The blob params that determine blob fees.
+    blob_params: BlobParams,
     /// Tracks the base fee for the next block post London
     ///
     /// This value will be updated after a new block was mined
-    base_fee: Arc<RwLock<u64>>,
-    /// Whether the minimum suggested priority fee is enforced
-    is_min_priority_fee_enforced: bool,
+    base_fee: u64,
     /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
     ///
     /// This value will be updated after a new block was mined
-    blob_excess_gas_and_price: Arc<RwLock<BlobExcessGasAndPrice>>,
+    blob_excess_gas_and_price: BlobExcessGasAndPrice,
     /// The base price to use Pre London
     ///
     /// This will be constant value unless changed manually
-    gas_price: Arc<RwLock<u128>>,
-    elasticity: Arc<RwLock<f64>>,
-    /// Network-specific base fee params for EIP-1559 calculations
-    base_fee_params: BaseFeeParams,
+    gas_price: u128,
+    elasticity: f64,
     /// The active Tempo hardfork, set only when running a Tempo chain.
     ///
     /// Tempo replaces EIP-1559: pre-T7 the base fee is fixed, and T7+ uses the TIP-1067 dynamic
     /// controller. It is updated once after a fork's hardfork is auto-detected.
-    tempo_hardfork: Arc<RwLock<Option<TempoHardfork>>>,
+    tempo_hardfork: Option<TempoHardfork>,
 }
 
 impl FeeManager {
@@ -80,48 +92,81 @@ impl FeeManager {
     ) -> Self {
         let elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
         Self {
-            spec_id,
-            blob_params: Arc::new(RwLock::new(blob_params)),
-            base_fee: Arc::new(RwLock::new(base_fee)),
+            state: Arc::new(RwLock::new(FeeState {
+                spec_id,
+                base_fee_params,
+                blob_params,
+                base_fee,
+                blob_excess_gas_and_price,
+                gas_price,
+                elasticity,
+                tempo_hardfork,
+            })),
             is_min_priority_fee_enforced,
-            gas_price: Arc::new(RwLock::new(gas_price)),
-            blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
-            elasticity: Arc::new(RwLock::new(elasticity)),
-            base_fee_params,
-            tempo_hardfork: Arc::new(RwLock::new(tempo_hardfork)),
         }
+    }
+
+    /// Returns a detached copy whose mutations are not visible to this manager.
+    pub(crate) fn detached(&self) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(self.snapshot())),
+            is_min_priority_fee_enforced: self.is_min_priority_fee_enforced,
+        }
+    }
+
+    /// Returns a snapshot of all mutable fee state.
+    pub(crate) fn snapshot(&self) -> FeeState {
+        *self.state.read()
+    }
+
+    /// Locks all mutable fee state for an atomic replacement.
+    pub(crate) fn write_state(&self) -> RwLockWriteGuard<'_, FeeState> {
+        self.state.write()
     }
 
     /// Returns the active Tempo hardfork, if running a Tempo chain.
     pub fn tempo_hardfork(&self) -> Option<TempoHardfork> {
-        *self.tempo_hardfork.read()
+        self.state.read().tempo_hardfork
     }
 
-    /// Sets the active Tempo hardfork, used after a fork's hardfork is auto-detected.
+    /// Sets the active Tempo hardfork.
     pub fn set_tempo_hardfork(&self, hardfork: Option<TempoHardfork>) {
-        *self.tempo_hardfork.write() = hardfork;
+        self.state.write().tempo_hardfork = hardfork;
+    }
+
+    /// Sets the EVM and Tempo hardfork identifiers atomically.
+    pub fn set_hardfork(&self, spec_id: SpecId, tempo_hardfork: Option<TempoHardfork>) {
+        let mut state = self.state.write();
+        state.spec_id = spec_id;
+        state.tempo_hardfork = tempo_hardfork;
     }
 
     pub fn elasticity(&self) -> f64 {
-        *self.elasticity.read()
+        self.state.read().elasticity
     }
 
     /// Returns true for post London
-    pub const fn is_eip1559(&self) -> bool {
-        (self.spec_id as u8) >= (SpecId::LONDON as u8)
+    pub fn is_eip1559(&self) -> bool {
+        (self.state.read().spec_id as u8) >= (SpecId::LONDON as u8)
     }
 
-    pub const fn is_eip4844(&self) -> bool {
-        (self.spec_id as u8) >= (SpecId::CANCUN as u8)
+    pub fn is_eip4844(&self) -> bool {
+        (self.state.read().spec_id as u8) >= (SpecId::CANCUN as u8)
     }
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
-        if self.is_eip4844() { self.base_fee_per_blob_gas() } else { 0 }
+        let state = self.state.read();
+        if (state.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            state.blob_excess_gas_and_price.blob_gasprice
+        } else {
+            0
+        }
     }
 
     pub fn base_fee(&self) -> u64 {
-        if self.is_eip1559() { *self.base_fee.read() } else { 0 }
+        let state = self.state.read();
+        if (state.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 }
     }
 
     pub const fn is_min_priority_fee_enforced(&self) -> bool {
@@ -130,35 +175,38 @@ impl FeeManager {
 
     /// Raw base gas price
     pub fn raw_gas_price(&self) -> u128 {
-        *self.gas_price.read()
+        self.state.read().gas_price
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        self.is_eip4844().then(|| *self.blob_excess_gas_and_price.read())
+        let state = self.state.read();
+        ((state.spec_id as u8) >= (SpecId::CANCUN as u8)).then_some(state.blob_excess_gas_and_price)
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
-        if self.is_eip4844() { self.blob_excess_gas_and_price.read().blob_gasprice } else { 0 }
+        let state = self.state.read();
+        if (state.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            state.blob_excess_gas_and_price.blob_gasprice
+        } else {
+            0
+        }
     }
 
     /// Returns the current gas price
     pub fn set_gas_price(&self, price: u128) {
-        let mut gas = self.gas_price.write();
-        *gas = price;
+        self.state.write().gas_price = price;
     }
 
     /// Returns the current base fee
     pub fn set_base_fee(&self, fee: u64) {
         trace!(target: "backend::fees", "updated base fee {:?}", fee);
-        let mut base = self.base_fee.write();
-        *base = fee;
+        self.state.write().base_fee = fee;
     }
 
     /// Sets the current blob excess gas and price
     pub fn set_blob_excess_gas_and_price(&self, blob_excess_gas_and_price: BlobExcessGasAndPrice) {
         trace!(target: "backend::fees", "updated blob base fee {:?}", blob_excess_gas_and_price);
-        let mut base = self.blob_excess_gas_and_price.write();
-        *base = blob_excess_gas_and_price;
+        self.state.write().blob_excess_gas_and_price = blob_excess_gas_and_price;
     }
 
     /// Calculates the base fee for the next block
@@ -168,13 +216,19 @@ impl FeeManager {
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
+        let state = self.state.read();
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if self.base_fee() == 0 {
+        if state.base_fee == 0 {
             return 0;
         }
-        self.calculate_next_block_base_fee_per_gas(gas_used, gas_limit, last_fee_per_gas)
+        self.calculate_next_block_base_fee_per_gas_with_state(
+            &state,
+            gas_used,
+            gas_limit,
+            last_fee_per_gas,
+        )
     }
 
     /// Calculates the next block base fee from the parent block without applying the configured
@@ -185,39 +239,61 @@ impl FeeManager {
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
-        if !self.is_eip1559() {
+        self.calculate_next_block_base_fee_per_gas_with_state(
+            &self.state.read(),
+            gas_used,
+            gas_limit,
+            last_fee_per_gas,
+        )
+    }
+
+    fn calculate_next_block_base_fee_per_gas_with_state(
+        &self,
+        state: &FeeState,
+        gas_used: u64,
+        gas_limit: u64,
+        last_fee_per_gas: u64,
+    ) -> u64 {
+        if (state.spec_id as u8) < (SpecId::LONDON as u8) {
             return 0;
         }
         // Tempo replaces EIP-1559 with its own hardfork-specific base fee rules.
-        if let Some(hardfork) = self.tempo_hardfork() {
+        if let Some(hardfork) = state.tempo_hardfork {
             return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
         }
-        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, self.base_fee_params)
+        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, state.base_fee_params)
     }
 
     /// Calculates the next block blob base fee.
     pub fn get_next_block_blob_base_fee_per_gas(&self) -> u128 {
-        self.blob_params().calc_blob_fee(self.blob_excess_gas_and_price.read().excess_blob_gas)
+        let state = self.state.read();
+        state.blob_params.calc_blob_fee(state.blob_excess_gas_and_price.excess_blob_gas)
     }
 
     /// Calculates the next block blob excess gas, using the provided parent blob excess gas and
     /// parent blob gas used
     pub fn get_next_block_blob_excess_gas(&self, blob_excess_gas: u64, blob_gas_used: u64) -> u64 {
-        self.blob_params().next_block_excess_blob_gas_osaka(
-            blob_excess_gas,
-            blob_gas_used,
-            self.base_fee(),
-        )
+        let state = self.state.read();
+        let base_fee =
+            if (state.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 };
+        state.blob_params.next_block_excess_blob_gas_osaka(blob_excess_gas, blob_gas_used, base_fee)
     }
 
     /// Configures the blob params
     pub fn set_blob_params(&self, blob_params: BlobParams) {
-        *self.blob_params.write() = blob_params;
+        self.state.write().blob_params = blob_params;
+    }
+
+    /// Configures the network-specific EIP-1559 parameters.
+    pub fn set_base_fee_params(&self, base_fee_params: BaseFeeParams) {
+        let mut state = self.state.write();
+        state.base_fee_params = base_fee_params;
+        state.elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
     }
 
     /// Returns the active [`BlobParams`]
     pub fn blob_params(&self) -> BlobParams {
-        *self.blob_params.read()
+        self.state.read().blob_params
     }
 }
 
@@ -238,10 +314,14 @@ pub struct FeeHistoryService<N: Network>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    /// blob parameters for the current spec
-    blob_params: BlobParams,
-    /// incoming notifications about new blocks
-    new_blocks: ChainNotifications,
+    /// Current backend reset generation for lifecycle-aware notifications.
+    generation: Option<Arc<AtomicU64>>,
+    /// Blob parameters used by the compatibility notification path.
+    blob_params: Option<BlobParams>,
+    /// Public notifications used by the compatibility constructor.
+    new_blocks: Option<ChainNotifications>,
+    /// Internal notifications carrying reset lifecycle metadata.
+    lifecycle_blocks: Option<futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification>>,
     /// contains all fee history related entries
     cache: FeeHistoryCache,
     /// number of items to consider
@@ -261,8 +341,27 @@ where
         storage_info: StorageInfo<N>,
     ) -> Self {
         Self {
-            blob_params,
-            new_blocks,
+            generation: None,
+            blob_params: Some(blob_params),
+            new_blocks: Some(new_blocks),
+            lifecycle_blocks: None,
+            cache,
+            fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
+            storage_info,
+        }
+    }
+
+    pub(crate) const fn new_with_lifecycle(
+        generation: Arc<AtomicU64>,
+        lifecycle_blocks: futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification>,
+        cache: FeeHistoryCache,
+        storage_info: StorageInfo<N>,
+    ) -> Self {
+        Self {
+            generation: Some(generation),
+            blob_params: None,
+            new_blocks: None,
+            lifecycle_blocks: Some(lifecycle_blocks),
             cache,
             fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
             storage_info,
@@ -275,9 +374,14 @@ where
     }
 
     /// Inserts a new cache entry for the given block
-    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256, header: &impl BlockHeader) {
-        let (result, block_number) = self.create_cache_entry(hash, header);
-        self.insert_cache_entry(result, block_number);
+    pub(crate) fn insert_cache_entry_for_block(
+        &self,
+        hash: B256,
+        header: &impl BlockHeader,
+        blob_params: BlobParams,
+    ) {
+        let (result, block_number) = self.create_cache_entry(hash, header, blob_params);
+        self.insert_cache_entry(result, block_number, None);
     }
 
     /// Create a new history entry for the block
@@ -285,6 +389,7 @@ where
         &self,
         hash: B256,
         header: &impl BlockHeader,
+        blob_params: BlobParams,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
@@ -303,7 +408,7 @@ where
         let base_fee = header.base_fee_per_gas().unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
+        let base_fee_per_blob_gas = header.blob_fee(blob_params);
 
         let mut item = FeeHistoryCacheItem {
             base_fee: base_fee as u128,
@@ -326,7 +431,7 @@ where
             item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
             item.blob_gas_used_ratio = blob_gas_used
                 .map(|g| {
-                    let max = self.blob_params.max_blob_gas_per_block() as f64;
+                    let max = blob_params.max_blob_gas_per_block() as f64;
                     if max == 0.0 { 0.0 } else { g / max }
                 })
                 .unwrap_or(0.0);
@@ -375,10 +480,22 @@ where
         (item, block_number)
     }
 
-    fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
+    fn insert_cache_entry(
+        &self,
+        item: FeeHistoryCacheItem,
+        block_number: Option<u64>,
+        generation: Option<u64>,
+    ) {
         if let Some(block_number) = block_number {
             trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
             let mut cache = self.cache.lock();
+            if generation.is_some_and(|generation| {
+                self.generation
+                    .as_ref()
+                    .is_some_and(|current| generation != current.load(Ordering::Acquire))
+            }) {
+                return;
+            }
             cache.insert(block_number, item);
 
             // adhere to cache limit
@@ -403,10 +520,30 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
 
-        while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
-            // add the imported block.
+        loop {
+            let next = pin
+                .lifecycle_blocks
+                .as_mut()
+                .map_or(Poll::Pending, |blocks| blocks.poll_next_unpin(cx));
+            let Poll::Ready(Some(block)) = next else { break };
+            let Some(generation) = &pin.generation else { continue };
+            if block.generation != generation.load(Ordering::Acquire) {
+                continue;
+            }
+            let (item, block_number) =
+                pin.create_cache_entry(block.hash, block.header.as_ref(), block.blob_params);
+            pin.insert_cache_entry(item, block_number, Some(block.generation));
+        }
+
+        loop {
+            let next =
+                pin.new_blocks.as_mut().map_or(Poll::Pending, |blocks| blocks.poll_next_unpin(cx));
+            let Poll::Ready(Some(notification)) = next else { break };
             if let Some(block) = notification.as_new_block() {
-                pin.insert_cache_entry_for_block(block.hash, block.header.as_ref());
+                let blob_params = pin.blob_params.expect("set by compatibility constructor");
+                let (item, block_number) =
+                    pin.create_cache_entry(block.hash, block.header.as_ref(), blob_params);
+                pin.insert_cache_entry(item, block_number, None);
             }
         }
 

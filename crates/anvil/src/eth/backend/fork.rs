@@ -36,6 +36,7 @@ use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxReceipt;
 use parking_lot::{
     RawRwLock, RwLock,
@@ -60,18 +61,41 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// The RPC URL associated with the state in the underlying database.
-    database_rpc_url: Arc<RwLock<Option<String>>>,
+    database_rpc_url: Option<String>,
+    runtime: Arc<RwLock<ClientForkRuntime>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClientForkRuntime {
+    pub(crate) override_networks: NetworkConfigs,
+    pub(crate) gas_price: u128,
+    pub(crate) gas_limit: u64,
 }
 
 impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
+        let chain_id = config.override_chain_id.unwrap_or(config.chain_id);
+        let runtime = ClientForkRuntime {
+            override_networks: NetworkConfigs::default().with_chain_id(chain_id),
+            gas_price: 0,
+            gas_limit: 0,
+        };
+        Self::new_with_runtime(config, database, runtime)
+    }
+
+    pub(crate) fn new_with_runtime(
+        config: ClientForkConfig<N>,
+        database: Arc<AsyncRwLock<Box<dyn Db>>>,
+        runtime: ClientForkRuntime,
+    ) -> Self {
         let database_rpc_url = config.eth_rpc_url().map(ToOwned::to_owned);
         Self {
             storage: Default::default(),
             config: Arc::new(RwLock::new(config)),
             database,
-            database_rpc_url: Arc::new(RwLock::new(database_rpc_url)),
+            database_rpc_url,
+            runtime: Arc::new(RwLock::new(runtime)),
         }
     }
 
@@ -111,6 +135,14 @@ impl<N: Network> ClientFork<N> {
         self.config.read().base_fee
     }
 
+    pub fn gas_price(&self) -> u128 {
+        self.runtime.read().gas_price
+    }
+
+    pub fn gas_limit(&self) -> u64 {
+        self.runtime.read().gas_limit
+    }
+
     pub fn block_hash(&self) -> B256 {
         self.config.read().block_hash
     }
@@ -119,16 +151,22 @@ impl<N: Network> ClientFork<N> {
         self.config.read().eth_rpc_url().map(|s| s.to_string())
     }
 
-    pub(crate) fn database_rpc_url(&self) -> Option<String> {
-        self.database_rpc_url.read().clone()
-    }
-
-    pub(crate) fn set_database_rpc_url(&self, url: Option<String>) {
-        *self.database_rpc_url.write() = url;
+    pub(crate) fn database_rpc_url(&self) -> Option<&str> {
+        self.database_rpc_url.as_deref()
     }
 
     pub fn chain_id(&self) -> u64 {
         self.config.read().chain_id
+    }
+
+    /// Returns the user-configured chain ID override, if one was provided.
+    pub(crate) fn override_chain_id(&self) -> Option<u64> {
+        self.config.read().override_chain_id
+    }
+
+    /// Returns the user-configured network mode before remote chain discovery.
+    pub(crate) fn override_networks(&self) -> NetworkConfigs {
+        self.runtime.read().override_networks
     }
 
     fn provider(&self) -> Arc<RetryProvider<N>> {
@@ -467,16 +505,22 @@ impl<N: Network> ClientFork<N> {
         let block_hash = block.header().hash();
         let timestamp = block.header().timestamp();
         let base_fee = block.header().base_fee_per_gas();
+        let gas_limit = block.header().gas_limit();
         let total_difficulty = block.header().difficulty();
 
-        let number = block.header().number();
-        self.config.write().update_block(
-            number,
+        let fallback_gas_price = self.runtime.read().gas_price;
+        let gas_price = provider.get_gas_price().await.unwrap_or(fallback_gas_price);
+        let mut config = self.config.write();
+        config.update_block(
+            block.header().number(),
             block_hash,
             timestamp,
             base_fee.map(|g| g as u128),
             total_difficulty,
         );
+        let mut runtime = self.runtime.write();
+        runtime.gas_price = gas_price;
+        runtime.gas_limit = gas_limit;
 
         self.clear_cached_storage();
 

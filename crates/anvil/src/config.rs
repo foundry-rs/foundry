@@ -3,7 +3,7 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
-            fork::{ClientFork, ClientForkConfig},
+            fork::{ClientFork, ClientForkConfig, ClientForkRuntime},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
             time::duration_since_unix_epoch,
@@ -127,7 +127,7 @@ pub struct NodeConfig {
     pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
-    /// The hardfork to use
+    /// The hardfork to force, or `None` to infer it from chain activation data.
     pub hardfork: Option<FoundryHardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<PrivateKeySigner>,
@@ -317,7 +317,14 @@ Chain ID
             );
         }
 
-        if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
+        let active_hardfork = fork
+            .and_then(|fork| fork.config.read().hardfork)
+            .unwrap_or_else(|| self.get_hardfork());
+        let active_base_fee =
+            fork.and_then(ClientFork::base_fee).unwrap_or_else(|| self.get_base_fee() as u128);
+        let active_gas_price =
+            fork.map(ClientFork::gas_price).unwrap_or_else(|| self.get_gas_price());
+        if (SpecId::from(active_hardfork) as u8) < (SpecId::LONDON as u8) {
             let _ = write!(
                 s,
                 r#"
@@ -326,7 +333,7 @@ Gas Price
 
 {}
 "#,
-                self.get_gas_price().green()
+                active_gas_price.green()
             );
         } else {
             let _ = write!(
@@ -337,7 +344,7 @@ Base Fee
 
 {}
 "#,
-                self.get_base_fee().green()
+                active_base_fee.green()
             );
         }
 
@@ -352,6 +359,8 @@ Gas Limit
             {
                 if self.disable_block_gas_limit {
                     "Disabled".to_string()
+                } else if let Some(fork) = fork {
+                    fork.gas_limit().to_string()
                 } else {
                     self.gas_limit.map(|l| l.to_string()).unwrap_or_else(|| {
                         if self.fork_choice.is_some() {
@@ -424,9 +433,9 @@ Genesis Number
               "block_hash": fork.block_hash(),
               "chain_id": fork.chain_id(),
               "wallet": wallet_description,
-              "base_fee": format!("{}", self.get_base_fee()),
-              "gas_price": format!("{}", self.get_gas_price()),
-              "gas_limit": gas_limit,
+              "base_fee": format!("{}", fork.base_fee().unwrap_or_else(|| self.get_base_fee() as u128)),
+              "gas_price": format!("{}", fork.gas_price()),
+              "gas_limit": Some(fork.gas_limit().to_string()),
             })
         } else {
             json!({
@@ -1278,8 +1287,12 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
+        let active_hardfork = fork
+            .as_ref()
+            .and_then(|fork| fork.config.read().hardfork)
+            .unwrap_or_else(|| self.get_hardfork());
         let mut decoder_builder = CallTraceDecoderBuilder::new().with_tempo_hardfork(
-            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork())),
+            self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
         );
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
@@ -1355,10 +1368,10 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>, Option<ForkTransactionReplay>)>
     {
-        let (db, config, replay) =
+        let (db, config, runtime, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
-        let fork = ClientFork::new(config, Arc::clone(&db));
+        let fork = ClientFork::new_with_runtime(config, Arc::clone(&db), runtime);
         Ok((db, Some(fork), replay))
     }
 
@@ -1373,7 +1386,7 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
-        let (db, config, replay) =
+        let (db, config, _, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees).await?;
         eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
         Ok((db, config))
@@ -1384,7 +1397,12 @@ impl NodeConfig {
         eth_rpc_url: String,
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
-    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
+    ) -> Result<(
+        ForkedDatabase<AnyNetwork>,
+        ClientForkConfig,
+        ClientForkRuntime,
+        Option<ForkTransactionReplay>,
+    )> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
 
         // Always bootstrap with the primary URL only to avoid race conditions
@@ -1474,7 +1492,6 @@ latest block number: {latest_block}"
         }
 
         let gas_limit = self.fork_gas_limit(&block);
-        self.gas_limit = Some(gas_limit);
 
         // Cache identity must describe the remote fork block, not local execution overrides that
         // can change after mining (for example, the locally advanced base fee).
@@ -1488,60 +1505,71 @@ latest block number: {latest_block}"
             ..block_env_from_header(&block.header)
         };
 
-        // Determine chain_id early so we can use it consistently
+        // Preserve whether the chain ID was configured explicitly before remote discovery. The
+        // resolved value is stored on this config for the active fork, while the fork metadata
+        // retains the override provenance for later URL changes and fork clearing.
+        let override_chain_id = self.chain_id;
+        let override_networks = self.networks;
+
+        // Resolve remote provenance independently from the local RPC/signing identity.
+        let remote_chain_id = if let Some(fork_chain_id) = self.fork_chain_id.or(fork_chain_id) {
+            fork_chain_id.to()
+        } else {
+            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+        };
+        self.networks = self.networks.with_chain_id(remote_chain_id);
         let chain_id = if let Some(chain_id) = self.chain_id {
+            evm_env.cfg_env.chain_id = chain_id;
             chain_id
         } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
-
-            // need to update the dev signers and env with the chain id
+            // Update the dev signers and environment with the adopted remote chain ID.
+            let chain_id = remote_chain_id;
             self.set_chain_id(Some(chain_id));
             evm_env.cfg_env.chain_id = chain_id;
             chain_id
         };
 
-        // Auto-detect hardfork from chain activation data if not explicitly set.
-        if self.hardfork.is_none()
-            && let Some(hardfork) =
-                FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
-        {
-            evm_env.cfg_env.spec = SpecId::from(hardfork);
-            self.hardfork = Some(hardfork);
-        }
+        // Resolve the fork block's hardfork without materializing it into `self.hardfork`.
+        // That field represents the user's explicit override; keeping inference on the fork
+        // config lets a later reset re-resolve timestamp-based activations.
+        let fork_hardfork = self.hardfork.or_else(|| {
+            FoundryHardfork::from_chain_and_timestamp(remote_chain_id, block.header.timestamp())
+        });
+        let active_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
+        let spec_id = SpecId::from(active_hardfork);
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
+        fees.set_hardfork(
+            spec_id,
+            self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
+        );
+        fees.set_base_fee_params(self.networks.base_fee_params(block.header.timestamp()));
 
-        // The fee manager was built before the fork hardfork was known, so refresh the Tempo
-        // hardfork it uses for base fee calculations.
-        if self.networks.is_tempo() {
-            fees.set_tempo_hardfork(Some(TempoHardfork::from(self.get_hardfork())));
-        }
-
-        // if not set explicitly we use the base fee of the latest block
-        if self.base_fee.is_none()
-            && let Some(base_fee) = block.header.base_fee_per_gas()
-        {
-            self.base_fee = Some(base_fee);
-            evm_env.block_env.basefee = base_fee;
+        let fork_base_fee = self.base_fee.or_else(|| block.header.base_fee_per_gas());
+        evm_env.block_env.basefee = fork_base_fee.unwrap_or_default();
+        if let Some(base_fee) = self.base_fee {
+            fees.set_base_fee(base_fee);
+        } else if let Some(base_fee) = block.header.base_fee_per_gas() {
             // this is the base fee of the current block, but we need the base fee of
             // the next block
-            let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
+            let next_block_base_fee = fees.calculate_next_block_base_fee_per_gas(
                 block.header.gas_used(),
                 gas_limit,
-                block.header.base_fee_per_gas().unwrap_or_default(),
+                base_fee,
             );
 
             // update next base fee
             fees.set_base_fee(next_block_base_fee);
+        } else {
+            // Keep the configured/default local seed behind a pre-London spec so clearing the fork
+            // can restore the non-fork fallback without reviving a previous fork's fee.
+            fees.set_base_fee(self.get_base_fee());
         }
 
         if let (Some(blob_excess_gas), Some(blob_gas_used)) =
             (block.header.excess_blob_gas(), block.header.blob_gas_used())
         {
             // Derive blob params using the fork block timestamp regardless of explicit base fee.
-            let blob_params = get_blob_params(chain_id, block.header.timestamp());
+            let blob_params = get_blob_params(remote_chain_id, block.header.timestamp());
 
             evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                 blob_excess_gas,
@@ -1558,17 +1586,16 @@ latest block number: {latest_block}"
             ));
         }
 
-        // use remote gas price
-        if self.gas_price.is_none()
-            && let Ok(gas_price) = provider.get_gas_price().await
-        {
-            self.gas_price = Some(gas_price);
-            fees.set_gas_price(gas_price);
-        }
+        // Use the configured override or refresh the remote gas price for every target fork.
+        let gas_price = if let Some(gas_price) = self.gas_price {
+            gas_price
+        } else {
+            provider.get_gas_price().await.unwrap_or_else(|_| self.get_gas_price())
+        };
+        fees.set_gas_price(gas_price);
 
         let block_hash = block.header.hash;
 
-        let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
         apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
             evm_env,
@@ -1622,9 +1649,9 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            hardfork: self.hardfork,
+            hardfork: fork_hardfork,
             timestamp: block.header.timestamp(),
-            base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
+            base_fee: fork_base_fee.map(|g| g as u128),
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
@@ -1642,7 +1669,20 @@ latest block number: {latest_block}"
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
-        Ok((db, config, fork_transaction_replay))
+        let runtime = ClientForkRuntime { override_networks, gas_price, gas_limit };
+        Ok((db, config, runtime, fork_transaction_replay))
+    }
+
+    pub(crate) async fn setup_fork_db_config_with_runtime(
+        &mut self,
+        eth_rpc_url: String,
+        evm_env: &mut EvmEnv,
+        fees: &FeeManager,
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, ClientForkRuntime)> {
+        let (db, config, runtime, replay) =
+            self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees).await?;
+        eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        Ok((db, config, runtime))
     }
 
     /// we only use the gas limit value of the block if it is non-zero and the block gas
@@ -2006,5 +2046,30 @@ mod tests {
         let config = NodeConfig::test_tempo();
 
         assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_banner_uses_resolved_hardfork() {
+        let (source_api, source_handle) = crate::spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(1u64))
+                .with_hardfork(Some(EthereumHardfork::Berlin.into()))
+                .with_genesis_timestamp(Some(1_618_481_223u64)),
+        )
+        .await;
+        source_api.evm_set_next_block_timestamp(1_618_481_224u64).unwrap();
+        source_api.mine_one().await;
+
+        let (api, handle) = crate::spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+                .with_fork_block_number(Some(1u64)),
+        )
+        .await;
+        let fork = api.get_fork().unwrap();
+        let banner = handle.config().as_string(Some(&fork));
+
+        assert!(banner.contains("\nGas Price\n"));
+        assert!(!banner.contains("\nBase Fee\n"));
     }
 }

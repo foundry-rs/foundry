@@ -17,12 +17,15 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, Bytes, U256, b256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{Authorization, BlockId, TransactionRequest};
+use alloy_rpc_types::{
+    Authorization, BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking,
+};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc;
+use revm::context_interface::block::BlobExcessGasAndPrice;
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -123,6 +126,114 @@ async fn can_send_eip4844_transaction_fork() {
     let tx_hash = receipt.transaction_hash;
 
     let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_reset_updates_fee_history_blob_params() {
+    let excess_blob_gas = 50_000_000u64;
+    let mut cancun_config = NodeConfig::test()
+        .with_chain_id(Some(1u64))
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_genesis_timestamp(Some(1_710_338_135u64));
+    cancun_config.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+        excess_blob_gas,
+        BlobParams::cancun().update_fraction as u64,
+    ));
+    let (cancun_api, cancun_handle) = spawn(cancun_config).await;
+    cancun_api.mine_one().await;
+
+    let mut prague_config = NodeConfig::test()
+        .with_chain_id(Some(1u64))
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_genesis_timestamp(Some(1_746_612_311u64));
+    prague_config.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+        excess_blob_gas,
+        BlobParams::prague().update_fraction as u64,
+    ));
+    let (prague_api, prague_handle) = spawn(prague_config).await;
+    prague_api.mine_one().await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(cancun_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64))
+            .with_no_storage_caching(true),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(prague_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let sidecar: BlobTransactionSidecar =
+        SidecarBuilder::<SimpleCoder>::from_slice(b"Prague blob").build().unwrap();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(accounts[0])
+                .with_to(accounts[1])
+                .with_max_fee_per_blob_gas(api.blob_base_fee().unwrap().to::<u128>() + 1)
+                .with_blob_sidecar_4844(sidecar),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let fee_history =
+        api.fee_history(U256::from(1u64), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    assert_eq!(receipt.blob_gas_used, Some(DATA_GAS_PER_BLOB));
+    assert_eq!(
+        fee_history.blob_gas_used_ratio,
+        vec![DATA_GAS_PER_BLOB as f64 / BlobParams::prague().max_blob_gas_per_block() as f64]
+    );
+    assert_eq!(
+        fee_history.base_fee_per_blob_gas[0],
+        BlobParams::prague().calc_blob_fee(block.header.excess_blob_gas.unwrap())
+    );
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(cancun_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let sidecar: BlobTransactionSidecar =
+        SidecarBuilder::<SimpleCoder>::from_slice(b"Cancun blob").build().unwrap();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(accounts[0])
+                .with_to(accounts[1])
+                .with_max_fee_per_blob_gas(api.blob_base_fee().unwrap().to::<u128>() + 1)
+                .with_blob_sidecar_4844(sidecar),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let fee_history =
+        api.fee_history(U256::from(1u64), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    assert_eq!(receipt.blob_gas_used, Some(DATA_GAS_PER_BLOB));
+    assert_eq!(
+        fee_history.blob_gas_used_ratio,
+        vec![DATA_GAS_PER_BLOB as f64 / BlobParams::cancun().max_blob_gas_per_block() as f64]
+    );
+    assert_eq!(
+        fee_history.base_fee_per_blob_gas[0],
+        BlobParams::cancun().calc_blob_fee(block.header.excess_blob_gas.unwrap())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
