@@ -70,11 +70,11 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 1         ┆ 14.3%      │
+│ Survived ┆ 1         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 4         ┆ 57.1%      │
+│ Killed   ┆ 4         ┆ 66.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 2         ┆ 28.6%      │
+│ Invalid  ┆ 1         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
@@ -102,7 +102,7 @@ Survived mutants
 4 mutants killed
 
 ────────────────────────────────────────────────────────────
-2 mutants invalid
+1 mutants invalid
 
 ════════════════════════════════════════════════════════════
 
@@ -110,12 +110,12 @@ Survived mutants
 
     // Run mutation testing with --json - verify the output contains valid mutation JSON
     cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
-{"summary":{"total":7,"killed":4,"survived":1,"invalid":2,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":6,"killed":4,"survived":1,"invalid":1,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
 });
 
-forgetest_init!(mutation_testing_prunes_typed_boundary_equivalents, |prj, cmd| {
+forgetest_init!(mutation_testing_retains_gas_distinct_bounds, |prj, cmd| {
     prj.add_source(
         "Boundary.sol",
         r#"
@@ -166,15 +166,94 @@ exclude_operators = [
     )
     .unwrap();
 
+    cmd.args(["test", "--mutate", "src/Boundary.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Boundary.sol":[{"line":7,"column":16,"original":"value == 0","mutant":"value <= 0"}]}}
+
+"#]]);
+});
+
+forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
+    prj.add_source(
+        "Comparisons.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Comparisons {
+    function numericEq(uint256 left, uint256 right) public pure returns (bool) {
+        return left == right;
+    }
+
+    function booleanEq(bool left, bool right) public pure returns (bool) {
+        return left == right;
+    }
+
+    function conjunction(bool left, bool right) public pure returns (bool) {
+        return left && right;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Comparisons.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Comparisons.sol";
+
+contract ComparisonsTest {
+    Comparisons private comparisons = new Comparisons();
+
+    function testNumericEq() public view {
+        assert(comparisons.numericEq(1, 1));
+        assert(!comparisons.numericEq(1, 2));
+        assert(!comparisons.numericEq(2, 1));
+    }
+
+    function testBooleanEq() public view {
+        assert(comparisons.booleanEq(false, false));
+        assert(!comparisons.booleanEq(false, true));
+        assert(!comparisons.booleanEq(true, false));
+        assert(comparisons.booleanEq(true, true));
+    }
+
+    function testConjunction() public view {
+        assert(!comparisons.conjunction(false, false));
+        assert(!comparisons.conjunction(false, true));
+        assert(!comparisons.conjunction(true, false));
+        assert(comparisons.conjunction(true, true));
+    }
+}
+"#,
+    );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[mutation]
+exclude_operators = [
+    "assembly",
+    "assignment",
+    "delete-expression",
+    "elim-delegate",
+    "require",
+    "unary-op",
+]
+"#,
+    )
+    .unwrap();
+
     let output = cmd
-        .args(["test", "--mutate", "src/Boundary.sol", "--mutation-jobs", "1", "--json"])
+        .args(["test", "--mutate", "src/Comparisons.sol", "--mutation-jobs", "1", "--json"])
         .assert_success();
     let summary = mutation_summary(&output.get_output().stdout_lossy());
 
-    assert_eq!(summary["total"], 6);
-    assert_eq!(summary["killed"], 4);
+    assert_eq!(summary["total"], 11);
+    assert_eq!(summary["killed"], 11);
     assert_eq!(summary["survived"], 0);
-    assert_eq!(summary["invalid"], 2);
+    assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["mutation_score"], 100.0);
 });
 
@@ -1637,7 +1716,7 @@ contract VaultTest is Test {
 "#,
     );
 
-    // Type analysis excludes the equivalent msg.value > 0 -> msg.value != 0 mutant.
+    // The gas-distinct msg.value > 0 -> msg.value != 0 mutant remains.
     let mut cmd2 = prj.forge_command();
     cmd2.args(["test", "--mutate", "src/Vault.sol", "--mutation-jobs", "2"]);
     cmd2.assert_success().stdout_eq(str![[r#"
@@ -1651,16 +1730,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 3.4%       │
+│ Survived ┆ 3         ┆ 5.6%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 48        ┆ 81.4%      │
+│ Killed   ┆ 49        ┆ 90.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 7         ┆ 11.9%      │
+│ Invalid  ┆ 1         ┆ 1.9%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 2         ┆ 3.4%       │
+│ Skipped  ┆ 1         ┆ 1.9%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 96.0% (48/50 mutants killed); [ELAPSED]
+Mutation Score: 94.2% (49/52 mutants killed); [ELAPSED]
 ...
 "#]]);
 });

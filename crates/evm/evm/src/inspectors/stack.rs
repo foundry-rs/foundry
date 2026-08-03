@@ -811,7 +811,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
-        if let Some(fuzzer) = &mut self.fuzzer {
+        let storage_hook_active =
+            self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
+        if !storage_hook_active && let Some(fuzzer) = &mut self.fuzzer {
             fuzzer.call_end(ecx, inputs, outcome);
         }
 
@@ -1111,6 +1113,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        let storage_hook_active = if let Some(cheats) = self.cheatcodes.as_mut() {
+            if cheats.has_storage_hooks() && cheats.finish_storage_hook_callback(interpreter, ecx) {
+                return;
+            }
+            cheats.pc = interpreter.bytecode.pc();
+            cheats.is_storage_hook_active()
+        } else {
+            false
+        };
+
         #[cfg(test)]
         if interpreter.bytecode.opcode() == op::JUMPDEST
             && let Some(gate) = &self.inner.early_exit_test_gate
@@ -1139,37 +1151,49 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         match self.static_step_dispatch {
             OpcodeStepDispatch::None => {}
             OpcodeStepDispatch::FuzzerOnly => {
-                if let Some(inspector) = &mut self.fuzzer {
+                if !storage_hook_active && let Some(inspector) = &mut self.fuzzer {
                     inspector.step(interpreter, ecx);
                 }
             }
             OpcodeStepDispatch::General => {
-                call_inspectors!(
-                    [
-                        // These are sorted in definition order.
-                        &mut self.edge_coverage,
-                        &mut self.fuzzer,
-                        &mut self.line_coverage,
-                        &mut self.printer,
-                        &mut self.revert_diag,
-                        &mut self.script_execution_inspector,
-                        &mut self.tracer,
-                    ],
-                    |inspector| (**inspector).step(interpreter, ecx),
-                );
+                if storage_hook_active {
+                    call_inspectors!(
+                        [
+                            // These are sorted in definition order.
+                            &mut self.printer,
+                            &mut self.revert_diag,
+                            &mut self.script_execution_inspector,
+                            &mut self.tracer,
+                        ],
+                        |inspector| (**inspector).step(interpreter, ecx),
+                    );
+                } else {
+                    call_inspectors!(
+                        [
+                            // These are sorted in definition order.
+                            &mut self.edge_coverage,
+                            &mut self.fuzzer,
+                            &mut self.line_coverage,
+                            &mut self.printer,
+                            &mut self.revert_diag,
+                            &mut self.script_execution_inspector,
+                            &mut self.tracer,
+                        ],
+                        |inspector| (**inspector).step(interpreter, ecx),
+                    );
+                }
             }
         }
 
-        if let Some(cheats) = self.cheatcodes.as_mut() {
-            cheats.pc = interpreter.bytecode.pc();
-            if cheats.has_step_hooks() {
-                let opcode = interpreter.bytecode.opcode();
-                if !cheats.has_recording_accesses_only_step_hook()
-                    || matches!(opcode, op::SLOAD | op::SSTORE)
-                {
-                    crate::utils::cold_path();
-                    cheats.step(interpreter, ecx);
-                }
+        if let Some(cheats) = self.cheatcodes.as_mut()
+            && cheats.has_step_hooks()
+        {
+            let opcode = interpreter.bytecode.opcode();
+            if !cheats.has_recording_accesses_only_step_hook()
+                || matches!(opcode, op::SLOAD | op::SSTORE)
+            {
+                crate::utils::cold_path();
+                cheats.step(interpreter, ecx);
             }
         }
     }
@@ -1406,17 +1430,26 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             revert_diag.frame_start();
         }
 
-        call_inspectors!(
-            #[ret]
-            [&mut self.fuzzer],
-            |inspector| {
-                let mut out = None;
-                if let Some(output) = inspector.call(ecx, call) {
-                    out = Some(Some(output));
+        let storage_hook_callback = self
+            .cheatcodes
+            .as_deref()
+            .is_some_and(|cheatcodes| cheatcodes.is_storage_hook_callback(ecx, call));
+        let storage_hook_active =
+            self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
+
+        if !storage_hook_active {
+            call_inspectors!(
+                #[ret]
+                [&mut self.fuzzer],
+                |inspector| {
+                    let mut out = None;
+                    if let Some(output) = inspector.call(ecx, call) {
+                        out = Some(Some(output));
+                    }
+                    out
                 }
-                out
-            },
-        );
+            );
+        }
 
         if self.tracer.is_some() {
             crate::utils::cold_path();
@@ -1443,6 +1476,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             ],
             |inspector| inspector.call(ecx, call).map(Some),
         );
+
+        // Storage hook callbacks are instrumentation frames, not user calls. Let revm execute the
+        // callback after tracing it, but do not apply mocks, pranks, broadcasts, or isolation.
+        if storage_hook_callback {
+            return None;
+        }
 
         // The tracer records call inputs before cheatcodes apply caller overrides such as pranks
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller

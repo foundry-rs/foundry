@@ -449,6 +449,22 @@ impl Cheatcode for accessesCall {
     }
 }
 
+impl Cheatcode for registerSloadHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        ccx.state.register_storage_load_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        ccx.state.register_storage_store_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for recordLogsCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;

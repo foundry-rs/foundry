@@ -141,6 +141,14 @@ contract ParseJsonTest is Test {
         assertEq("hai", decodedData);
     }
 
+    function test_parseJsonComments() public {
+        string memory jsonc = vm.readFile("fixtures/Json/comments.jsonc");
+
+        assertEq(vm.parseJsonUint(jsonc, ".value"), 42);
+        assertTrue(vm.parseJsonBool(jsonc, ".enabled"));
+        assertEq(vm.parseJsonString(jsonc, ".url"), "https://example.com/path/*literal*/");
+    }
+
     function test_null() public {
         bytes memory data = vm.parseJson(json, ".null");
         bytes memory decodedData = abi.decode(data, (bytes));

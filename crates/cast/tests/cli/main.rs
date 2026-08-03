@@ -4,7 +4,7 @@ use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, I256, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{
     Authorization, BlockNumberOrTag, Index, TransactionRequest, engine::JwtSecret,
@@ -2276,6 +2276,99 @@ casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[r#"
 0x[..]	0x0000000000000000000000000000000000000000000000000000000000000001
+
+"#]]);
+});
+
+casttest!(create2_init_code_hash, |prj, cmd| {
+    prj.add_source(
+        "InitCodeHash",
+        r#"
+contract InitCodeHash {
+    int256 public immutable value;
+    address public immutable owner;
+
+    constructor(int256 value_, address owner_) {
+        value = value_;
+        owner = owner_;
+    }
+}
+"#,
+    );
+
+    let owner = address!("0x0000000000000000000000000000000000000001");
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "InitCodeHash", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let mut expected_init_code = hex::decode(bytecode.trim()).unwrap();
+    expected_init_code.extend((I256::unchecked_from(42), owner).abi_encode());
+    let expected = keccak256(expected_init_code);
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "42",
+            &owner.to_string(),
+        ])
+        .assert_success()
+        .stdout_eq(format!("{expected}\n"));
+
+    let mut expected_init_code = hex::decode(bytecode.trim()).unwrap();
+    expected_init_code.extend((I256::unchecked_from(-5), owner).abi_encode());
+    let expected = keccak256(expected_init_code);
+    let root = prj.root().to_str().unwrap();
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "-5",
+            &owner.to_string(),
+            "--root",
+            root,
+        ])
+        .assert_success()
+        .stdout_eq(format!("{expected}\n"));
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "--json",
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "-5",
+            &owner.to_string(),
+        ])
+        .assert_json_stdout(format!(
+            r#"{{"schema_version":1,"success":true,"data":"{expected}","errors":[],"warnings":[]}}"#
+        ));
+});
+
+casttest!(create2_init_code_hash_rejects_abstract_contract, |prj, cmd| {
+    prj.add_source(
+        "AbstractInitCodeHash",
+        r#"
+abstract contract AbstractInitCodeHash {
+    function value() public pure virtual returns (uint256);
+}
+"#,
+    );
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["create2", "init-code-hash", "src/AbstractInitCodeHash.sol:AbstractInitCodeHash"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: no bytecode found in bin object for AbstractInitCodeHash
 
 "#]]);
 });
