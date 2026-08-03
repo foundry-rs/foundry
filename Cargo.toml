@@ -409,7 +409,7 @@ alloy-evm = "0.37.0"
 alloy-op-evm = "0.32.0"
 
 # revm
-revm = { version = "41.0.0", default-features = false }
+revm = { version = "42.0.1", default-features = false }
 revm-inspectors = { version = "0.41.1", features = ["serde"] }
 op-revm = { version = "20.0.0", default-features = false }
 
@@ -425,7 +425,7 @@ clap_complete_nushell = "4"
 # macros
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = "2.0"
+syn = "3.0"
 async-trait = "0.1"
 derive_more = { version = "2.1", features = ["full"] }
 thiserror = "2"
@@ -439,8 +439,8 @@ auto_impl = "1"
 bytes = "1.11"
 walkdir = "2"
 wait-timeout = "0.2"
-prettyplease = "0.2"
-base64 = "0.22"
+prettyplease = "0.3"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
@@ -463,7 +463,7 @@ indicatif = "0.18"
 inturn = "0.2.0"
 itertools = "0.15"
 jsonpath_lib = "0.3"
-k256 = "0.13"
+k256 = "0.14"
 mesc = "0.3"
 memchr = "2.7"
 markdown = "1.0"
@@ -488,7 +488,7 @@ soldeer-core = { version = "=0.11.0", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 toml = "1.1"
 toml_edit = "0.25"
 tower = "0.5"
