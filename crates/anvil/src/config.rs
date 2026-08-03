@@ -1401,48 +1401,36 @@ impl NodeConfig {
                 .wrap_err("failed to establish provider to fork url")?,
         );
 
-        // Fetch independent metadata while resolving the fork block.
-        let fetch_chain_id =
-            self.chain_id.is_none() && (self.fork_choice.is_none() || self.fork_chain_id.is_none());
-        let chain_id_task = tokio::spawn({
-            let provider = Arc::clone(&provider);
-            async move {
-                if fetch_chain_id { provider.get_chain_id().await.map(Some) } else { Ok(None) }
-            }
-        });
-        let fetch_gas_price = self.gas_price.is_none();
-        let gas_price_task = tokio::spawn({
-            let provider = Arc::clone(&provider);
-            async move {
-                if fetch_gas_price { provider.get_gas_price().await.map(Some) } else { Ok(None) }
-            }
-        });
-
-        let (fork_block_number, fork_transaction_replay, block) =
-            if let Some(fork_choice) = &self.fork_choice {
-                let (fork_block_number, fork_transaction_replay) =
-                    derive_block_and_replay(fork_choice, &provider).await.wrap_err(
-                        "failed to derive fork block and transaction replay from fork choice",
-                    )?;
-                (fork_block_number, fork_transaction_replay, None)
+        let (fork_block_number, fork_chain_id, fork_transaction_replay) = if let Some(fork_choice) =
+            &self.fork_choice
+        {
+            let (fork_block_number, fork_transaction_replay) =
+                derive_block_and_replay(fork_choice, &provider).await.wrap_err(
+                    "failed to derive fork block and transaction replay from fork choice",
+                )?;
+            let chain_id = if let Some(chain_id) = self.fork_chain_id {
+                Some(chain_id)
+            } else if self.hardfork.is_none() {
+                let chain_id =
+                    provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
+                Some(U256::from(chain_id))
             } else {
-                // pick the last block number but also ensure it's not pending anymore
-                let (number, block) = find_latest_fork_block(&provider)
-                    .await
-                    .wrap_err("failed to get fork block number")?;
-                (number, None, block)
+                None
             };
 
-        let block = if block.is_some() {
-            block
+            (fork_block_number, chain_id, fork_transaction_replay)
         } else {
-            provider
-                .get_block(BlockNumberOrTag::Number(fork_block_number).into())
+            // pick the last block number but also ensure it's not pending anymore
+            let bn = find_latest_fork_block(&provider)
                 .await
-                .wrap_err("failed to get fork block")?
+                .wrap_err("failed to get fork block number")?;
+            (bn, None, None)
         };
-        let fork_chain_id = chain_id_task.await?.wrap_err("failed to fetch network chain ID")?;
-        let fork_gas_price = gas_price_task.await.ok().and_then(Result::ok).flatten();
+
+        let block = provider
+            .get_block(BlockNumberOrTag::Number(fork_block_number).into())
+            .await
+            .wrap_err("failed to get fork block")?;
 
         let block = if let Some(block) = block {
             block
@@ -1504,9 +1492,11 @@ latest block number: {latest_block}"
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
         } else {
-            let chain_id = fork_chain_id
-                .or_else(|| self.fork_chain_id.map(|chain_id| chain_id.to()))
-                .expect("fetched when chain ID is not configured");
+            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
+                fork_chain_id.to()
+            } else {
+                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+            };
 
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
@@ -1569,7 +1559,9 @@ latest block number: {latest_block}"
         }
 
         // use remote gas price
-        if let Some(gas_price) = fork_gas_price {
+        if self.gas_price.is_none()
+            && let Ok(gas_price) = provider.get_gas_price().await
+        {
             self.gas_price = Some(gas_price);
             fees.set_gas_price(gas_price);
         }
@@ -1952,7 +1944,7 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
 async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
     provider: P,
-) -> Result<(u64, Option<AnyRpcBlock>), TransportError> {
+) -> Result<u64, TransportError> {
     let mut num = provider.get_block_number().await?;
 
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
@@ -1961,35 +1953,18 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
         if let Some(block) = provider.get_block(num.into()).await?
             && !block.header.hash.is_zero()
         {
-            return Ok((num, Some(block)));
+            break;
         }
         // block not actually finalized, so we try the block before
         num = num.saturating_sub(1)
     }
 
-    Ok((num, None))
+    Ok(num)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_provider::{ProviderBuilder, mock::Asserter};
-
-    #[tokio::test]
-    async fn find_latest_fork_block_returns_fetched_block() {
-        let asserter = Asserter::new();
-        asserter.push_success(&"0x1");
-        let mut block = AnyRpcBlock::new(Default::default());
-        block.header.hash = TxHash::repeat_byte(1);
-        asserter.push_success(&block);
-        let provider =
-            ProviderBuilder::new_with_network::<AnyNetwork>().connect_mocked_client(asserter);
-
-        let (number, fetched) = find_latest_fork_block(provider).await.unwrap();
-
-        assert_eq!(number, 1);
-        assert_eq!(fetched.unwrap().header.hash, block.header.hash);
-    }
 
     #[test]
     fn test_prune_history() {
