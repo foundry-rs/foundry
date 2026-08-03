@@ -7,7 +7,7 @@ use std::env;
 use crate::FoundryTransactionBuilder;
 use alloy_chains::{Chain, NamedChain};
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, TxKind, U256, address};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address};
 use alloy_provider::mock::Asserter;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, SolValue};
@@ -16,13 +16,77 @@ use tempo_alloy::{
     contracts::precompiles::{IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS},
     rpc::TempoTransactionRequest,
 };
-use tempo_primitives::transaction::Call;
+use tempo_primitives::transaction::{Call, SignatureType};
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     TIP_FEE_MANAGER_ADDRESS, TempoSponsor, known_fee_token_symbol, resolve_and_set_fee_token,
     resolve_fee_token_symbol,
 };
+
+#[test]
+fn browser_gas_estimation_uses_conservative_webauthn_hint() {
+    let request = TempoTransactionRequest {
+        inner: TransactionRequest {
+            to: Some(TxKind::Create),
+            value: Some(U256::from(7)),
+            input: vec![0x60, 0x00].into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let estimate_request = request.browser_wallet_gas_estimation_request();
+
+    assert_eq!(estimate_request.key_type, Some(SignatureType::WebAuthn));
+    assert_eq!(estimate_request.key_data, Some(Bytes::from_static(&[0x05, 0x78])));
+    let json = serde_json::to_value(&estimate_request).unwrap();
+    assert_eq!(json["keyType"], "webAuthn");
+    assert_eq!(json["keyData"], "0x0578");
+    assert_eq!(
+        estimate_request.calls,
+        vec![Call { to: TxKind::Create, value: U256::from(7), input: vec![0x60, 0x00].into() }]
+    );
+    assert_eq!(estimate_request.inner.to, None);
+    assert_eq!(estimate_request.inner.value, None);
+    assert_eq!(estimate_request.inner.input.input(), None);
+    assert_eq!(request.key_type, None);
+    assert_eq!(request.key_data, None);
+    assert_eq!(request.inner.to, Some(TxKind::Create));
+}
+
+#[test]
+fn browser_gas_estimation_preserves_complete_signer_hints() {
+    for key_type in [SignatureType::Secp256k1, SignatureType::P256, SignatureType::WebAuthn] {
+        let request = TempoTransactionRequest {
+            key_type: Some(key_type),
+            key_data: Some(Bytes::from_static(&[0x01])),
+            ..Default::default()
+        };
+        let estimate_request = request.browser_wallet_gas_estimation_request();
+        assert_eq!(estimate_request.key_type, request.key_type);
+        assert_eq!(estimate_request.key_data, request.key_data);
+    }
+}
+
+#[test]
+fn browser_gas_estimation_fills_missing_webauthn_key_data() {
+    let request =
+        TempoTransactionRequest { key_type: Some(SignatureType::WebAuthn), ..Default::default() };
+    let estimate_request = request.browser_wallet_gas_estimation_request();
+    assert_eq!(estimate_request.key_type, request.key_type);
+    assert_eq!(estimate_request.key_data, Some(Bytes::from_static(&[0x05, 0x78])));
+}
+
+#[test]
+fn browser_gas_estimation_replaces_key_data_without_key_type() {
+    let request = TempoTransactionRequest {
+        key_data: Some(Bytes::from_static(&[0x01])),
+        ..Default::default()
+    };
+    let estimate_request = request.browser_wallet_gas_estimation_request();
+    assert_eq!(estimate_request.key_type, Some(SignatureType::WebAuthn));
+    assert_eq!(estimate_request.key_data, Some(Bytes::from_static(&[0x05, 0x78])));
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

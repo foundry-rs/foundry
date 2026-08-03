@@ -416,6 +416,38 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
 
+    /// Registers a callback invoked after each SLOAD against `target`'s effective storage account,
+    /// including when its code runs by delegatecall.
+    ///
+    /// The callback must have the signature `function(address,bytes32,bytes32) external`.
+    /// Registering another callback for the same target and access kind replaces it. Registration
+    /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
+    /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
+    /// the callback and its entire call subtree. The callback must authenticate
+    /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
+    /// mocks, expectations, log recording, and storage-access recording. It does not inherit
+    /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
+    /// protocol call-depth slots; a load at the maximum legal call depth can have its callback
+    /// rejected as too deep, propagating as a failure of the load.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    function registerSloadHook(address target, bytes4 callback) external;
+
+    /// Registers a callback invoked after each SSTORE against `target`'s effective storage account,
+    /// including when its code runs by delegatecall.
+    ///
+    /// The callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.
+    /// Registering another callback for the same target and access kind replaces it. Registration
+    /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
+    /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
+    /// the callback and its entire call subtree. The callback must authenticate
+    /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
+    /// mocks, expectations, log recording, and storage-access recording. It does not inherit
+    /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
+    /// protocol call-depth slots; a store at the maximum legal call depth can have its callback
+    /// rejected as too deep, propagating as a failure of the store.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    function registerSstoreHook(address target, bytes4 callback) external;
+
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
     /// along with the context of the calls
     #[cheatcode(group = Evm, safety = Safe)]

@@ -6,7 +6,7 @@ use crate::{
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
 use alloy_consensus::{
-    Transaction,
+    BlockHeader, Transaction,
     transaction::{Recovered, SignerRecoverable, TxHashRef},
 };
 use alloy_evm::{
@@ -14,6 +14,7 @@ use alloy_evm::{
     block::{BlockExecutionResult, BlockExecutor, StateDB, TxResult},
 };
 use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_primitives::B256;
 use anvil_core::eth::transaction::{MaybeImpersonatedTransaction, TransactionInfo};
 use eyre::{Context, Result};
 use foundry_evm::core::evm::IntoInstructionResult;
@@ -32,6 +33,13 @@ pub(crate) struct HistoricalReplayTransaction {
     pub(crate) source_index: usize,
 }
 
+/// A validated transaction prefix together with its source block execution inputs.
+pub(crate) struct PreparedForkTransactionReplay {
+    pub(crate) transactions: Vec<HistoricalReplayTransaction>,
+    pub(crate) timestamp: u64,
+    pub(crate) parent_beacon_block_root: Option<B256>,
+}
+
 /// The complete result of executing a historical prefix against an overlay.
 pub(crate) struct ExecutedHistoricalReplay {
     pub(crate) block_result: BlockExecutionResult<FoundryReceiptEnvelope>,
@@ -43,16 +51,18 @@ pub(crate) struct ExecutedHistoricalReplay {
 /// Converts and validates every source-prefix transaction before database execution.
 pub(crate) fn prepare_fork_transaction_replay(
     replay: ForkTransactionReplay,
-) -> Result<Vec<HistoricalReplayTransaction>> {
+) -> Result<PreparedForkTransactionReplay> {
     let source_hash = replay.source_block.header().hash;
     let source_number = replay.source_block.header().number;
+    let timestamp = replay.source_block.header().timestamp();
+    let parent_beacon_block_root = replay.source_block.header().parent_beacon_block_root();
     let source_transactions = replay
         .source_block
         .transactions()
         .as_transactions()
         .expect("full source block validated during resolution");
 
-    source_transactions
+    let transactions = source_transactions
         .iter()
         .take(replay.target_index.saturating_add(1))
         .enumerate()
@@ -82,7 +92,9 @@ pub(crate) fn prepare_fork_transaction_replay(
                 source_index,
             })
         })
-        .collect()
+        .collect::<Result<_>>()?;
+
+    Ok(PreparedForkTransactionReplay { transactions, timestamp, parent_beacon_block_root })
 }
 
 /// Executes a prepared prefix strictly and captures changesets for deferred publication.
