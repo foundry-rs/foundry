@@ -700,7 +700,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // 2. Worker hasn't reached its specific run limit
         'stop: while shared_state.should_continue() && worker.runs < worker_runs {
             // If counterexample recorded, replay it first, without incrementing runs.
-            let (input, fuzz_run) = if worker_id == 0
+            let (input, fuzz_run, is_persisted_replay) = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
                 && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
@@ -729,6 +729,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         failure.fuzz.run,
                         Some(failure.fuzz.worker.unwrap_or(worker_id as u32)),
                     )),
+                    true,
                 )
             } else {
                 runs_since_sync += 1;
@@ -770,6 +771,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         Some(fuzz_run),
                         Some(worker_id as u32),
                     )),
+                    false,
                 )
             };
 
@@ -799,6 +801,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             ) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
+                        if is_persisted_replay {
+                            continue 'stop;
+                        }
                         let total_runs = inc_runs();
 
                         if worker_id == 0 && self.config.corpus.collect_edge_coverage() {
@@ -855,7 +860,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         counterexample: outcome,
                         ..
                     }) => {
-                        inc_runs();
+                        if !is_persisted_replay {
+                            inc_runs();
+                        }
                         worker.failure_run = fuzz_run;
 
                         // Only classify magic skip payloads when the revert originates from the
