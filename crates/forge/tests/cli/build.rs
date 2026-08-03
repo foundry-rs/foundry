@@ -121,6 +121,46 @@ linked/=node_modules/linked/
     }
 );
 
+forgetest!(
+    #[cfg(unix)]
+    can_build_multiple_aliases_to_symlinked_dependency_config,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let dependency = external.path().join("dependency");
+        fs::create_dir_all(dependency.join("custom-source")).unwrap();
+        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n")
+            .unwrap();
+        fs::write(
+            dependency.join("custom-source/Dep.sol"),
+            "pragma solidity >=0.8.0; contract Dep {}\n",
+        )
+        .unwrap();
+        symlink(&dependency, prj.root().join("lib/a-alias")).unwrap();
+        symlink(&dependency, prj.root().join("lib/z-alias")).unwrap();
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep as ADep} from "a-alias/Dep.sol";
+import {Dep as ZDep} from "z-alias/Dep.sol";
+
+contract Root {
+    ADep private a;
+    ZDep private z;
+}
+"#,
+        );
+
+        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+a-alias/=lib/a-alias/custom-source/
+z-alias/=lib/z-alias/custom-source/
+
+"#]]);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
+
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();

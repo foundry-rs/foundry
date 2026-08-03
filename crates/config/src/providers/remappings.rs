@@ -11,7 +11,9 @@ use rayon::prelude::*;
 use std::{
     borrow::Cow,
     cmp::Reverse,
-    collections::{BTreeMap, BTreeSet, HashSet, btree_map::Entry},
+    collections::{
+        BTreeMap, BTreeSet, HashMap, HashSet, btree_map::Entry, hash_map::Entry as HashEntry,
+    },
     fs,
     path::{MAIN_SEPARATOR, Path, PathBuf},
 };
@@ -172,6 +174,13 @@ impl Remappings {
             }
         }
     }
+}
+
+struct CachedNestedConfig {
+    src: PathBuf,
+    libs: Vec<PathBuf>,
+    remappings: Vec<Remapping>,
+    file_remappings: Vec<Remapping>,
 }
 
 /// A figment provider that checks if the remappings were previously set and if they're unset looks
@@ -363,57 +372,48 @@ impl RemappingsProvider<'_> {
             .map(|path| if path.is_absolute() { path.clone() } else { self.root.join(path) })
             .flat_map(foundry_toml_dir_entries)
             .collect::<BTreeSet<_>>();
-        let mut seen = HashSet::from([root]);
+        let mut seen = HashSet::from([root.clone()]);
+        let mut configs = HashMap::<PathBuf, Option<CachedNestedConfig>>::new();
         let mut remappings = Vec::new();
 
         while let Some(entry) = pending.pop_first() {
-            if !seen.insert(entry.canonical.clone()) {
+            if entry.canonical == root {
                 continue;
             }
 
-            trace!(lib = ?entry.canonical, "find all remappings of nested foundry.toml");
             // Load dependency config inputs without recursively installing another remappings
             // provider. Canonical identity is used only to read each config once; emitted paths
             // retain the lexical dependency identity.
-            let figment = Config::with_root(&entry.canonical).to_figment(FigmentProviders::Cast);
-            let Ok(config) = Config::from_figment_fallback(figment) else {
+            let config = match configs.entry(entry.canonical.clone()) {
+                HashEntry::Occupied(config) => config.into_mut(),
+                HashEntry::Vacant(config) => {
+                    trace!(lib = ?entry.canonical, "find all remappings of nested foundry.toml");
+                    config.insert(load_nested_config(&entry.canonical)?)
+                }
+            };
+            let Some(config) = config else {
                 continue;
             };
-            let src = config.src.clone();
-            let libs = config.libs.clone();
-            let config = config.sanitized();
 
-            remappings.extend(config.remappings.into_iter().map(Remapping::from).map(
-                |remapping| {
-                    (
-                        entry.path.clone(),
-                        rebase_nested_remapping(remapping, &entry.canonical, &entry.path),
-                        false,
-                    )
-                },
-            ));
-            let remappings_file = entry.canonical.join("remappings.txt");
-            if remappings_file.is_file() {
-                let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
-                let file_remappings = remappings_from_newline(&content)
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err::<Error, _>(|err| err.to_string().into())?;
-                remappings.extend(file_remappings.into_iter().map(|remapping| {
-                    (
-                        entry.path.clone(),
-                        RelativeRemapping::new(remapping, &entry.path).into(),
-                        false,
-                    )
-                }));
-            }
+            remappings.extend(config.remappings.iter().cloned().map(|remapping| {
+                (
+                    entry.path.clone(),
+                    rebase_nested_remapping(remapping, &entry.canonical, &entry.path),
+                    false,
+                )
+            }));
+            remappings.extend(config.file_remappings.iter().cloned().map(|remapping| {
+                (entry.path.clone(), RelativeRemapping::new(remapping, &entry.path).into(), false)
+            }));
 
             // Preserve existing physical nested-config discovery. Symlink discovery is limited to
             // direct configured-library entries; nested symlink graphs remain out of scope.
-            if !fs::symlink_metadata(&entry.path)
-                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            if seen.insert(entry.canonical.clone())
+                && !fs::symlink_metadata(&entry.path)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
             {
-                for lib in libs {
-                    let lib = if lib.is_absolute() { lib } else { entry.path.join(lib) };
+                for lib in &config.libs {
+                    let lib = if lib.is_absolute() { lib.clone() } else { entry.path.join(lib) };
                     pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
                         !fs::symlink_metadata(&entry.path)
                             .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -425,13 +425,14 @@ impl RemappingsProvider<'_> {
             // need synthesis while missing; when present, package-root autodetection preserves
             // imports that include the source directory, such as `forge-std/src/...`.
             let standard_src = [Path::new("src"), Path::new("contracts"), Path::new("lib")];
-            if (!standard_src.contains(&src.as_path()) || !entry.canonical.join(&src).is_dir())
+            if (!standard_src.contains(&config.src.as_path())
+                || !entry.canonical.join(&config.src).is_dir())
                 && let Some(name) = entry.path.file_name().and_then(|name| name.to_str())
             {
                 let mut remapping = Remapping {
                     context: None,
                     name: format!("{name}/"),
-                    path: entry.path.join(src).display().to_string(),
+                    path: entry.path.join(&config.src).display().to_string(),
                 };
                 if !remapping.path.ends_with('/') {
                     remapping.path.push('/');
@@ -455,6 +456,24 @@ impl RemappingsProvider<'_> {
             .collect::<Vec<_>>()
             .into_iter()
     }
+}
+
+fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
+    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
+    let Ok(config) = Config::from_figment_fallback(figment) else { return Ok(None) };
+    let src = config.src.clone();
+    let libs = config.libs.clone();
+    let remappings = config.sanitized().remappings.into_iter().map(Remapping::from).collect();
+    let remappings_file = root.join("remappings.txt");
+    let file_remappings = if remappings_file.is_file() {
+        let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
+        remappings_from_newline(&content)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err::<Error, _>(|err| err.to_string().into())?
+    } else {
+        Vec::new()
+    };
+    Ok(Some(CachedNestedConfig { src, libs, remappings, file_remappings }))
 }
 
 fn remapping_name_is_prefix(prefix: &str, name: &str) -> bool {
