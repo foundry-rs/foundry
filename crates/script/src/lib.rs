@@ -52,7 +52,7 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -478,9 +478,8 @@ impl ScriptArgs {
                 .or(pre_simulation.script_config.config.code_size_limit)
                 .map(ContractSizeLimits::with_runtime_limit)
                 .unwrap_or_else(|| {
-                    ContractSizeLimits::for_spec_id(
-                        pre_simulation.script_config.config.evm_spec_id(),
-                    )
+                    let spec_id: SpecFor<FEN> = pre_simulation.script_config.config.evm_spec_id();
+                    ContractSizeLimits::for_spec_id(spec_id.into())
                 });
             pre_simulation.args.check_contract_sizes(
                 size_limits,
