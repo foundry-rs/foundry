@@ -16,6 +16,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
     filter::SkipBuildFilter,
+    providers::relative_remapping_preserving_context_boundary,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -193,7 +194,7 @@ impl<'a> From<&'a BuildOpts> for Figment {
         } else {
             args.project_paths.project_root()
         };
-        let mut figment = Config::figment_with_root(root);
+        let mut figment = Config::figment_with_root(&root);
 
         // remappings should stack
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
@@ -203,7 +204,12 @@ impl<'a> From<&'a BuildOpts> for Figment {
             figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default(),
             &generated_remappings,
         );
-        figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
+        let remappings = remappings
+            .into_inner()
+            .into_iter()
+            .map(|remapping| relative_remapping_preserving_context_boundary(remapping, &root))
+            .collect::<Vec<_>>();
+        figment = figment.merge(("remappings", remappings)).merge(args);
 
         if let Some(skip) = &args.skip {
             let mut skip = skip.iter().map(|s| s.file_pattern().to_string()).collect::<Vec<_>>();

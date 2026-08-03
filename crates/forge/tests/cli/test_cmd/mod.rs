@@ -3,6 +3,7 @@
 use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, U256};
 use anvil::{NodeConfig, spawn};
+use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, rpc_endpoints},
@@ -10,6 +11,8 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
+#[cfg(unix)]
+use std::fs;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod brutalize;
@@ -591,7 +594,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-forgetest_init!(rejects_library_key_collisions_across_versions, |prj, cmd| {
+forgetest_init!(links_library_artifacts_across_versions, |prj, cmd| {
     prj.wipe_contracts();
     prj.update_config(|config| config.solc = None);
 
@@ -640,16 +643,189 @@ contract OldTest {{
         ),
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
-Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
-
-"#]]);
+    cmd.arg("test").assert_success();
 
     prj.update_config(|config| config.create2_deployer = Address::ZERO);
-    cmd.forge_fuse().arg("test").assert_failure().stderr_eq(str![[r#"
-Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
+    cmd.forge_fuse().arg("test").assert_success();
+});
 
-"#]]);
+forgetest_init!(links_library_artifacts_across_compiler_profiles, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "Lib.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+library Lib {
+    function identity(uint256 value) external pure returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Prod.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import "src/Lib.sol";
+
+contract Prod {
+    function identity(uint256 value) external view returns (uint256) {
+        return Lib.identity(value);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Profiles.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import "src/Lib.sol";
+import "src/Prod.sol";
+
+contract ProfilesTest {
+    function testProfiles() public {
+        require(Lib.identity(1) == 1);
+        require(new Prod().identity(2) == 2);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "prod".to_string(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: Some(true),
+            optimizer_runs: Some(1),
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: GlobMatcher::from_str("src/Prod.sol").unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: Some(1),
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+
+    cmd.arg("test").assert_success();
+    assert!(prj.artifacts().join("Lib.sol/Lib.json").exists());
+    assert!(prj.artifacts().join("Lib.sol/Lib.prod.json").exists());
+
+    prj.update_config(|config| config.create2_deployer = Address::ZERO);
+    cmd.forge_fuse().arg("test").assert_success();
+});
+
+#[cfg(unix)]
+forgetest_init!(links_libraries_through_workspace_symlinks, |prj, cmd| {
+    let workspace = prj.root().join("workspace");
+    let airdrops = workspace.join("airdrops");
+    let libraries = workspace.join("library/src/libraries");
+    let package_scope = workspace.join("node_modules/@workspace");
+    fs::create_dir_all(airdrops.join("src")).unwrap();
+    fs::create_dir_all(airdrops.join("test")).unwrap();
+    fs::create_dir_all(&libraries).unwrap();
+    fs::create_dir_all(&package_scope).unwrap();
+    std::os::unix::fs::symlink("../../library", package_scope.join("library")).unwrap();
+
+    fs::write(
+        airdrops.join("foundry.toml"),
+        r#"
+[profile.default]
+allow_paths = ["../"]
+src = "src"
+test = "test"
+out = "out"
+remappings = ["@workspace/=../node_modules/@workspace/"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        libraries.join("Math.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+library Math {
+    function increment(uint256 value) external pure returns (uint256) {
+        return value + 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        libraries.join("Helpers.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Math} from "./Math.sol";
+
+library Helpers {
+    function addTwo(uint256 value) external pure returns (uint256) {
+        return Math.increment(Math.increment(value));
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        airdrops.join("src/Consumer.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Helpers} from "@workspace/library/src/libraries/Helpers.sol";
+
+contract Consumer {
+    function addTwo(uint256 value) external pure returns (uint256) {
+        return Helpers.addTwo(value);
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        airdrops.join("test/Consumer.t.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Consumer} from "../src/Consumer.sol";
+
+contract ConsumerTest {
+    function testAddTwo() external {
+        Consumer consumer = new Consumer();
+        require(consumer.addTwo(1) == 3);
+    }
+}
+"#,
+    )
+    .unwrap();
+    cmd.current_dir(&airdrops).arg("build").assert_success();
+    cmd.forge_fuse().current_dir(&airdrops).arg("test").assert_success();
+    cmd.forge_fuse()
+        .current_dir(&airdrops)
+        .args(["test", "--create2-deployer", "0x0000000000000000000000000000000000000000"])
+        .assert_success();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(airdrops.join("foundry.toml")).unwrap(),
+        "libraries = [\"../library/src/libraries/Helpers.sol:Helpers:0x1111111111111111111111111111111111111111\"]"
+    )
+    .unwrap();
+    let stdout = cmd
+        .forge_fuse()
+        .current_dir(&airdrops)
+        .args(["test", "-vvvv"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("0x1111111111111111111111111111111111111111"), "{stdout}");
 });
 
 forgetest_init!(create2_factory_is_installed_after_constructor_when_no_libraries, |prj, cmd| {

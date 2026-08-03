@@ -4234,3 +4234,941 @@ contract SymbolicDeployCodeCheatcode is Test {
     assert!(!stdout.contains("symbolic vm.deployCode"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 });
+
+forgetest_init!(storage_hook_cheatcodes_concrete_and_symbolic, |prj, cmd| {
+    prj.add_test(
+        "StorageHooks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSloadHook(address target, bytes4 callback) external;
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookTarget {
+    event Stored(uint256 value);
+
+    uint256 public value;
+    mapping(address => uint256) public balances;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+
+    function storeTwice(uint256 first, uint256 second) external {
+        value = first;
+        value = second;
+    }
+
+    function storeAndRevert(uint256 newValue) external {
+        value = newValue;
+        revert("target revert");
+    }
+
+    function setBalance(address account, uint256 newValue) external {
+        balances[account] = newValue;
+    }
+
+    function storeAndEmit(uint256 newValue) external {
+        value = newValue;
+        emit Stored(newValue);
+    }
+
+    function storeAfterReturningCall(address returner, uint256 newValue)
+        external
+        returns (uint256 returnDataSize)
+    {
+        (bool ok,) = returner.staticcall(abi.encodeWithSignature("answer()"));
+        require(ok);
+        assembly {
+            sstore(0, newValue)
+            returnDataSize := returndatasize()
+        }
+    }
+}
+
+contract StorageHookReturner {
+    function answer() external pure returns (uint256) {
+        return 42;
+    }
+}
+
+contract StorageHookGasProbe {
+    function readCost(StorageHookTarget target) external view returns (uint256) {
+        uint256 gasBefore = gasleft();
+        target.value();
+        return gasBefore - gasleft();
+    }
+}
+
+contract StorageHookDepthTarget {
+    uint256 public value;
+
+    function recurse(uint256 remaining) external returns (bool) {
+        if (remaining == 0) {
+            return value == 0;
+        }
+        (bool ok, bytes memory data) =
+            address(this).call(abi.encodeCall(this.recurse, (remaining - 1)));
+        return ok && abi.decode(data, (bool));
+    }
+}
+
+contract StorageHookCaller {
+    function store(StorageHookTarget target, uint256 newValue) external {
+        target.store(newValue);
+    }
+}
+
+contract StorageHookImplementation {
+    function store(uint256 newValue) external {
+        assembly {
+            sstore(0, newValue)
+        }
+    }
+}
+
+contract StorageHookProxy {
+    address immutable implementation;
+
+    constructor(address implementation_) {
+        implementation = implementation_;
+    }
+
+    function store(uint256 newValue) external {
+        (bool ok, bytes memory data) =
+            implementation.delegatecall(abi.encodeCall(StorageHookImplementation.store, (newValue)));
+        if (!ok) {
+            assembly {
+                revert(add(data, 32), mload(data))
+            }
+        }
+    }
+}
+
+contract ConstructorStorageHook {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    uint256 public ghostValue;
+
+    constructor(address target) {
+        hookVm.registerSstoreHook(target, ConstructorStorageHook.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        ghostValue = uint256(newValue);
+    }
+
+    function registerThenRevert(address target) external {
+        hookVm.registerSstoreHook(target, ConstructorStorageHook.onStore.selector);
+        revert("after registration");
+    }
+}
+
+contract ConstructorStoreTarget {
+    uint256 public value;
+
+    constructor(uint256 newValue) {
+        value = newValue;
+    }
+}
+
+contract StorageHooksTest is Test {
+    event Stored(uint256 value);
+    event CallbackObserved(uint256 value);
+
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    address constant FINAL_OPCODE_TARGET = address(0xBEEF);
+    address constant TRACE_SUCCESS_TARGET = address(0xA11CE);
+    address constant TRACE_REVERT_TARGET = address(0xB0B);
+    address constant EXISTING_ACCOUNT = address(0xCAFE);
+
+    StorageHookTarget target;
+    StorageHookTarget mappingTarget;
+    StorageHookTarget baseStateTarget;
+    StorageHookTarget unregisteredTarget;
+    StorageHookCaller caller;
+    StorageHookProxy proxy;
+    StorageHookReturner returner;
+    StorageHookTarget coldReadTarget;
+
+    uint256 ghostValue;
+    bytes32 lastSlot;
+    address lastAccount;
+    uint256 loadCount;
+    uint256 recursiveHookCalls;
+    uint256 mappingGhost;
+    uint256 baseStateGhost;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        target = new StorageHookTarget();
+        mappingTarget = new StorageHookTarget();
+        baseStateTarget = new StorageHookTarget();
+        unregisteredTarget = new StorageHookTarget();
+        caller = new StorageHookCaller();
+        proxy = new StorageHookProxy(address(new StorageHookImplementation()));
+        returner = new StorageHookReturner();
+        hookVm.registerSloadHook(address(target), this.onLoad.selector);
+        hookVm.registerSstoreHook(address(target), this.onStore.selector);
+        hookVm.registerSstoreHook(address(mappingTarget), this.onMappingStore.selector);
+        hookVm.registerSstoreHook(address(baseStateTarget), this.onBaseStateStore.selector);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, 5);
+        hookVm.registerSstoreHook(address(proxy), this.onStore.selector);
+        vm.etch(FINAL_OPCODE_TARGET, hex"600035600055");
+        hookVm.registerSstoreHook(FINAL_OPCODE_TARGET, this.branchingStoreHook.selector);
+        vm.etch(TRACE_SUCCESS_TARGET, hex"6001600055600260015500");
+        vm.etch(TRACE_REVERT_TARGET, hex"6001600055600260015500");
+        hookVm.registerSstoreHook(TRACE_SUCCESS_TARGET, this.noopStoreHook.selector);
+        hookVm.registerSstoreHook(TRACE_REVERT_TARGET, this.revertingStoreHook.selector);
+    }
+
+    function onLoad(address account, bytes32 slot, bytes32 value) external onlyStorageHook {
+        lastAccount = account;
+        lastSlot = slot;
+        ghostValue = uint256(value);
+        loadCount++;
+    }
+
+    function onLoadReadingColdSlot(address, bytes32, bytes32) external view onlyStorageHook {
+        coldReadTarget.value();
+    }
+
+    function onStore(address account, bytes32 slot, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        lastAccount = account;
+        lastSlot = slot;
+        ghostValue = uint256(newValue);
+    }
+
+    function onStoreWithInstrumentation(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = returner.answer();
+    }
+
+    function onStoreWithRecording(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = 42;
+    }
+
+    function onMappingStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            mappingGhost = mappingGhost - uint256(oldValue) + uint256(newValue);
+        }
+    }
+
+    function onBaseStateStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            baseStateGhost = baseStateGhost - uint256(oldValue) + uint256(newValue);
+        }
+    }
+
+    function testConcreteArgumentsAndRollback() public {
+        target.store(7);
+        assertEq(ghostValue, 7);
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, bytes32(0));
+
+        assertEq(target.value(), 7);
+        assertEq(loadCount, 1);
+        assertEq(ghostValue, 7);
+
+        (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (11)));
+        assertFalse(ok);
+        assertEq(target.value(), 7);
+        assertEq(ghostValue, 7);
+
+        target.storeTwice(9, 12);
+        assertEq(ghostValue, 12);
+
+        caller.store(target, 15);
+        assertEq(ghostValue, 15);
+
+        unregisteredTarget.store(99);
+        assertEq(ghostValue, 15);
+
+        ghostValue = 0;
+        proxy.store(21);
+        assertEq(lastAccount, address(proxy));
+        assertEq(ghostValue, 21);
+    }
+
+    function testConcreteReplacementAndRevertPropagation() public {
+        hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
+        vm.expectRevert("replacement hook");
+        target.store(1);
+        assertEq(target.value(), 0);
+    }
+
+    function testConcreteFinalOpcodeSstoreCallbacks() public {
+        (bool ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(6)));
+        assertTrue(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+
+        (ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(7)));
+        assertFalse(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+    }
+
+    function testConcreteConstructorSstoreCallbacks() public {
+        uint256 nonce = vm.getNonce(address(this));
+        address constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.onStore.selector);
+
+        ConstructorStoreTarget deployed = new ConstructorStoreTarget(23);
+        assertEq(address(deployed), constructorTarget);
+        assertEq(deployed.value(), 23);
+        assertEq(ghostValue, 23);
+
+        nonce = vm.getNonce(address(this));
+        constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.revertingStoreHook.selector);
+        try new ConstructorStoreTarget(24) {
+            fail();
+        } catch Error(string memory reason) {
+            assertEq(reason, "replacement hook");
+        }
+        assertEq(constructorTarget.code.length, 0);
+        assertEq(ghostValue, 23);
+    }
+
+    function testConcreteRegistrationSurvivesRevert() public {
+        ConstructorStorageHook hook = new ConstructorStorageHook(address(unregisteredTarget));
+        (bool ok,) = address(hook).call(
+            abi.encodeCall(ConstructorStorageHook.registerThenRevert, (address(unregisteredTarget)))
+        );
+        assertFalse(ok);
+
+        unregisteredTarget.store(31);
+        assertEq(hook.ghostValue(), 31);
+    }
+
+    function testIsolateEnclosingRevertRollsBackTargetAndGhost() public {
+        (bool ok,) = address(this).call(abi.encodeCall(this.storeAndRevert, (37)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function storeAndRevert(uint256 newValue) external {
+        target.store(newValue);
+        revert("enclosing revert");
+    }
+
+    function testConcreteCallbackBypassesCallMocks() public {
+        bytes memory callback = abi.encodeWithSelector(
+            this.onStore.selector, address(target), bytes32(0), bytes32(0), bytes32(uint256(17))
+        );
+        vm.mockCall(address(this), callback, bytes(""));
+
+        target.store(17);
+
+        assertEq(ghostValue, 17);
+    }
+
+    function testConcreteCallbackPanicRevertsTargetCall() public {
+        hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
+
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (1)));
+
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+    }
+
+    function testConcreteCallbackPreservesReturnData() public {
+        assertEq(target.storeAfterReturningCall(address(returner), 1), 32);
+    }
+
+    function testConcreteCallbackDoesNotWarmAccesses() public {
+        StorageHookTarget baselineReadTarget = new StorageHookTarget();
+        StorageHookGasProbe probe = new StorageHookGasProbe();
+        coldReadTarget = new StorageHookTarget();
+        hookVm.registerSloadHook(address(target), this.onLoadReadingColdSlot.selector);
+        vm.cool(address(coldReadTarget));
+        vm.coolSlot(address(coldReadTarget), bytes32(0));
+        vm.cool(address(baselineReadTarget));
+        vm.coolSlot(address(baselineReadTarget), bytes32(0));
+
+        target.value();
+
+        assertEq(probe.readCost(coldReadTarget), probe.readCost(baselineReadTarget));
+    }
+
+    function testConcreteCallbackInspectorStateIsIsolated() public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithInstrumentation.selector);
+        bytes memory helperCall = abi.encodeCall(returner.answer, ());
+        vm.mockCall(address(returner), helperCall, abi.encode(uint256(99)));
+        vm.expectCall(address(returner), helperCall, 1);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(1);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+        assertEq(returner.answer(), 99);
+    }
+
+    function testConcreteCallbackCanWriteUnderStaticcall() public {
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), 0);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (1)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
+    function loadAndRevert() external view {
+        target.value();
+        revert("after load");
+    }
+
+    function testConcreteCallbackCannotBeSpoofed() public {
+        vm.expectRevert("only storage hook");
+        this.onStore(address(target), bytes32(0), bytes32(0), bytes32(uint256(99)));
+        assertEq(ghostValue, 0);
+    }
+
+    function testConcreteFullStackSloadPreservesResult() public {
+        address fullStackTarget = address(0xF011);
+        bytes memory code = new bytes(1028);
+        for (uint256 i; i < 1024; i++) {
+            code[i] = bytes1(uint8(0x5f));
+        }
+        code[1024] = bytes1(uint8(0x54));
+        code[1025] = bytes1(uint8(0x56));
+        code[1026] = bytes1(uint8(0x5b));
+        code[1027] = bytes1(uint8(0x00));
+        vm.etch(fullStackTarget, code);
+        vm.store(fullStackTarget, bytes32(0), bytes32(uint256(1026)));
+        hookVm.registerSloadHook(fullStackTarget, this.noopLoadHook.selector);
+
+        (bool ok,) = fullStackTarget.call("");
+
+        assertTrue(ok);
+    }
+
+    function testConcreteStorageHookConsumesCallDepth() public {
+        StorageHookDepthTarget baseline = new StorageHookDepthTarget();
+        StorageHookDepthTarget hooked = new StorageHookDepthTarget();
+        hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
+
+        assertTrue(baseline.recurse(1024));
+        assertFalse(hooked.recurse(1024));
+    }
+
+    function testConcreteTraceSuccess() public {
+        (bool ok,) = TRACE_SUCCESS_TARGET.call("");
+        assertTrue(ok);
+    }
+
+    function testConcreteTraceRevert() public {
+        (bool ok,) = TRACE_REVERT_TARGET.call("");
+        assertFalse(ok);
+    }
+
+    function noopLoadHook(address, bytes32, bytes32) external view onlyStorageHook {}
+
+    function noopStoreHook(address, bytes32, bytes32, bytes32) external view onlyStorageHook {}
+
+    function revertingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
+        revert("replacement hook");
+    }
+
+    function panickingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
+        assert(false);
+    }
+
+    function recursiveStoreHook(address, bytes32, bytes32, bytes32) external onlyStorageHook {
+        recursiveHookCalls++;
+    }
+
+    function branchingStoreHook(address, bytes32, bytes32, bytes32 newValue)
+        external
+        view
+        onlyStorageHook
+    {
+        if (uint256(newValue) == 7) {
+            revert("seven");
+        }
+    }
+
+    function checkSymbolicMapping(address account, uint256 newValue) public {
+        target.setBalance(account, newValue);
+        bytes32 expectedSlot = keccak256(abi.encode(account, uint256(1)));
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, expectedSlot);
+        assertEq(ghostValue, newValue);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkSymbolicAliasedMappingWrites(
+        address first,
+        address second,
+        uint256 firstValue,
+        uint256 secondValue
+    ) public {
+        vm.assume(first == second);
+        mappingTarget.setBalance(first, firstValue);
+        mappingTarget.setBalance(second, secondValue);
+
+        assertEq(mappingGhost, mappingTarget.balances(first));
+    }
+
+    function checkSymbolicPreexistingMappingWrites(uint256 firstValue, uint256 secondValue) public {
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, firstValue);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, secondValue);
+
+        assertEq(baseStateGhost, secondValue);
+    }
+
+    function checkSymbolicLoad(uint256 newValue) public {
+        target.store(newValue);
+        assertEq(target.value(), newValue);
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, bytes32(0));
+        assertEq(loadCount, 1);
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicMultipleWritesAndNestedCall(uint256 first, uint256 second) public {
+        target.storeTwice(first, second);
+        assertEq(ghostValue, second);
+        caller.store(target, first);
+        assertEq(ghostValue, first);
+        unregisteredTarget.store(second);
+        assertEq(ghostValue, first);
+    }
+
+    function checkSymbolicDelegatecall(uint256 newValue) public {
+        proxy.store(newValue);
+        assertEq(lastAccount, address(proxy));
+        assertEq(lastSlot, bytes32(0));
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicRollback(uint256 newValue) public {
+        (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function checkSymbolicCallbackRevert(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function checkSymbolicCallbackPanic(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+    }
+
+    function checkSymbolicCallbackSuppressesRecursiveHooks(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(this), this.recursiveStoreHook.selector);
+
+        target.store(newValue);
+
+        assertEq(ghostValue, newValue);
+        assertEq(recursiveHookCalls, 0);
+    }
+
+    function checkSymbolicCallbackPreservesPendingExpectations(uint256 newValue) public {
+        vm.expectEmit(address(target));
+        emit Stored(newValue);
+
+        target.storeAndEmit(newValue);
+
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicCallbackPreservesReturnData(uint256 newValue) public {
+        assertEq(target.storeAfterReturningCall(address(returner), newValue), 32);
+    }
+
+    function checkSymbolicCallbackInspectorStateIsIsolated(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithRecording.selector);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(newValue);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+    }
+
+    function checkSymbolicCallbackCanWriteUnderStaticcall(uint256 newValue) public {
+        target.store(newValue);
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), newValue);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
+    function checkSymbolicConstructorRegistration(uint256 newValue) public {
+        StorageHookTarget constructorTarget = new StorageHookTarget();
+        ConstructorStorageHook hook = new ConstructorStorageHook(address(constructorTarget));
+
+        constructorTarget.store(newValue);
+
+        assertEq(hook.ghostValue(), newValue);
+    }
+
+    function checkSymbolicFinalOpcodeCallbackBranch(uint256 newValue) public {
+        (bool ok,) = FINAL_OPCODE_TARGET.call(abi.encode(newValue));
+        assertEq(ok, newValue != 7);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcrete",
+            "--gas-limit",
+            "10000000000000",
+            "--disable-block-gas-limit",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--isolate",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testIsolateEnclosingRevertRollsBackTargetAndGhost",
+        ])
+        .assert_success();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcreteTrace",
+            "-vvvvv",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let suite = output.as_object().unwrap().values().next().unwrap();
+
+    let success = &suite["test_results"]["testConcreteTraceSuccess()"];
+    let success_target = success["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+        .find(|node| {
+            node["trace"]["address"].as_str().is_some_and(|address| {
+                address.ends_with("00000000000000000000000000000000000a11ce")
+            })
+        })
+        .unwrap();
+    let resumed_step = success_target["trace"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["pc"] == 5)
+        .unwrap();
+    let sstore_step = success_target["trace"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["pc"] == 4)
+        .unwrap();
+    assert_eq!(
+        resumed_step["gas_remaining"].as_u64().unwrap(),
+        sstore_step["gas_remaining"].as_u64().unwrap() - sstore_step["gas_cost"].as_u64().unwrap()
+    );
+    assert_eq!(resumed_step["gas_cost"], 3);
+
+    let reverted = &suite["test_results"]["testConcreteTraceRevert()"];
+    let reverted_target = reverted["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+        .find(|node| {
+            node["trace"]["address"].as_str().is_some_and(|address| {
+                address.ends_with("0000000000000000000000000000000000000b0b")
+            })
+        })
+        .unwrap();
+    assert!(
+        reverted_target["trace"]["steps"].as_array().unwrap().iter().all(|step| step["pc"] != 5)
+    );
+
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic half of storage_hook_cheatcodes_concrete_and_symbolic because z3 is not available"
+        );
+        return;
+    }
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "checkSymbolic",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicMapping(address,uint256)
+[PASS] checkSymbolicAliasedMappingWrites(address,address,uint256,uint256)
+[PASS] checkSymbolicPreexistingMappingWrites(uint256,uint256)
+[PASS] checkSymbolicLoad(uint256)
+[PASS] checkSymbolicMultipleWritesAndNestedCall(uint256,uint256)
+[PASS] checkSymbolicDelegatecall(uint256)
+[PASS] checkSymbolicRollback(uint256)
+[PASS] checkSymbolicCallbackRevert(uint256)
+[PASS] checkSymbolicCallbackPanic(uint256)
+[PASS] checkSymbolicCallbackSuppressesRecursiveHooks(uint256)
+[PASS] checkSymbolicCallbackPreservesPendingExpectations(uint256)
+[PASS] checkSymbolicCallbackPreservesReturnData(uint256)
+[PASS] checkSymbolicCallbackInspectorStateIsIsolated(uint256)
+[PASS] checkSymbolicCallbackCanWriteUnderStaticcall(uint256)
+[PASS] checkSymbolicConstructorRegistration(uint256)
+[PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256)
+"#]],
+    );
+});
+
+forgetest_init!(storage_hook_callbacks_do_not_leak_fuzz_guidance, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "StorageHookFuzzGuidance.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookFuzzTarget {
+    uint256 public value;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract StorageHookFuzzHelper {
+    function observe(uint256 value) external pure returns (uint256) {
+        if (value == 7) {
+            return 7;
+        }
+        return value;
+    }
+}
+
+contract StorageHookFuzzCallback {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HELPER = address(0x3000);
+
+    uint256 public hits;
+
+    function register(address target) external {
+        hookVm.registerSstoreHook(target, this.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        hits++;
+        assertEq(StorageHookFuzzHelper(HELPER).observe(uint256(newValue)), uint256(newValue));
+    }
+
+    function assertEq(uint256 left, uint256 right) internal pure {
+        require(left == right);
+    }
+}
+
+contract StorageHookFuzzGuidanceTest is Test {
+    address constant TARGET = address(0x1000);
+    address constant CALLBACK = address(0x2000);
+    address constant HELPER = address(0x3000);
+
+    function setUp() public {
+        StorageHookFuzzTarget target = new StorageHookFuzzTarget();
+        StorageHookFuzzCallback callback = new StorageHookFuzzCallback();
+        StorageHookFuzzHelper helper = new StorageHookFuzzHelper();
+        vm.etch(TARGET, address(target).code);
+        vm.etch(CALLBACK, address(callback).code);
+        vm.etch(HELPER, address(helper).code);
+        StorageHookFuzzCallback(CALLBACK).register(TARGET);
+    }
+
+    function testFuzz_hookGuidance(uint256 value) public {
+        StorageHookFuzzTarget(TARGET).store(value);
+        assertEq(uint256(vm.load(CALLBACK, bytes32(0))), 1);
+        if (value == 42) {
+            assertEq(StorageHookFuzzTarget(TARGET).value(), 42);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("fuzz_frontiers")
+        .join("StorageHookFuzzGuidanceTest")
+        .join("testFuzz_hookGuidance")
+        .join("branch-frontiers.json");
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(frontier_path).unwrap()).unwrap();
+    let frontiers = artifact["frontiers"].as_array().unwrap();
+    assert!(!frontiers.is_empty(), "missing user-code frontiers in {artifact:#}");
+    let instrumentation_addresses = [
+        "0x0000000000000000000000000000000000002000",
+        "0x0000000000000000000000000000000000003000",
+    ];
+    assert!(
+        frontiers.iter().all(|frontier| {
+            let address = frontier["site"]["address"].as_str().unwrap();
+            !instrumentation_addresses
+                .iter()
+                .any(|candidate| address.eq_ignore_ascii_case(candidate))
+        }),
+        "{artifact:#}"
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--showmap-out",
+            "showmap",
+            "--showmap-corpus-dir",
+            "fuzz_corpus",
+            "--showmap-trial",
+            "hook",
+        ])
+        .assert_success();
+
+    let runtime_hash_prefix = |artifact: &str| {
+        let artifact: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(prj.root().join(artifact)).unwrap()).unwrap();
+        let bytecode = artifact["deployedBytecode"]["object"].as_str().unwrap();
+        let bytecode = alloy_primitives::hex::decode(bytecode.trim_start_matches("0x")).unwrap();
+        alloy_primitives::hex::encode(&alloy_primitives::keccak256(bytecode)[..8])
+    };
+    let callback_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzCallback.json");
+    let helper_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzHelper.json");
+    let target_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzTarget.json");
+    let mut pending = vec![prj.root().join("showmap")];
+    let mut showmap_files = 0;
+    let mut saw_target_coverage = false;
+    while let Some(path) = pending.pop() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).unwrap();
+            assert!(!body.is_empty(), "empty showmap file: {}", path.display());
+            showmap_files += 1;
+            saw_target_coverage |= body.contains(&format!("evm_{target_hash}_"));
+            assert!(!body.contains(&format!("evm_{callback_hash}_")), "{body}");
+            assert!(!body.contains(&format!("evm_{helper_hash}_")), "{body}");
+        }
+    }
+    assert!(showmap_files > 0, "no showmap files were produced");
+    assert!(saw_target_coverage, "showmap did not contain target coverage");
+});

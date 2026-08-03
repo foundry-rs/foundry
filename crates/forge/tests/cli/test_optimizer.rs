@@ -1,7 +1,7 @@
-//! Tests for the `forge test` with preprocessed cache.
+//! Tests for commands using the preprocessed cache.
 
 #[cfg(unix)]
-forgetest_init!(filtered_tests_reuse_preprocessed_cache, |prj, cmd| {
+forgetest_init!(abi_commands_reuse_preprocessed_cache, |prj, cmd| {
     use foundry_test_utils::util::OutputExt;
     use std::{fs, os::unix::fs::PermissionsExt};
 
@@ -39,6 +39,9 @@ exit 1
         "cached ABI did not select CounterTest: {stdout}"
     );
     assert!(!invoked.exists(), "filtered test compilation did not reuse the preprocessed cache");
+
+    cmd.forge_fuse().args(["selectors", "list"]).assert_success();
+    assert!(!invoked.exists(), "selector compilation did not reuse the preprocessed cache");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/8842>
