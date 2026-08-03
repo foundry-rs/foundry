@@ -97,8 +97,11 @@ pub fn build_project(
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
 
-    if let Some(path) = args.contract.path() {
-        let target_path = canonicalize(project.root().join(path))?;
+    let target_path = match args.contract.path() {
+        Some(path) => Some(canonicalize(project.root().join(path))?),
+        None => project.find_contract_path(&args.contract.name).ok(),
+    };
+    if let Some(target_path) = target_path {
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
         let artifact =
             find_matching_contract_artifact(&mut output, &target_path, Some(&args.contract.name))?;

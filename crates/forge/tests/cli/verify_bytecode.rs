@@ -422,6 +422,9 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
         .expect("contract address in `forge create` output")
         .to_string();
 
+    // Bare contract names should compile only their uniquely resolved source.
+    prj.add_source("Broken", "contract Broken { uint256 public value = doesNotExist; }");
+
     // The local anvil chain has no block explorer: the command must still verify the runtime
     // bytecode and only warn about the unavailable explorer data.
     cmd.forge_fuse();
