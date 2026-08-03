@@ -205,6 +205,9 @@ impl CallArgs {
 
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
+            if self.browser.browser {
+                eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
+            }
             return self.run_curl().await;
         }
 

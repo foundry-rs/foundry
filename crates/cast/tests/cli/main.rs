@@ -6737,6 +6737,19 @@ casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
     assert!(output.contains("nonce"), "expected the nonce in params:\n{output}");
 });
 
+casttest!(curl_call_rejects_browser_wallet, |_prj, cmd| {
+    let stderr = cmd
+        .args(["call", "0xdead000000000000000000000000000000000000", "--browser", "--curl"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("--browser cannot be combined with --curl; use --from <ADDRESS>"),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
 // tests that `--labels` / `--disable-labels` are accepted with `--debug-trace-call`, which
 // forwards them to the trace renderer like `--trace` does
 casttest!(call_labels_accepted_with_debug_trace_call, |_prj, cmd| {

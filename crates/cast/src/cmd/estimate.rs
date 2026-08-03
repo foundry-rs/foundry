@@ -101,7 +101,8 @@ impl EstimateArgs {
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let sender = if let Some(browser) = browser.run::<N>().await? {
+        let browser = browser.run::<N>().await?;
+        let sender = if let Some(browser) = &browser {
             browser.address().into()
         } else {
             SenderKind::from_wallet_opts(wallet).await?
@@ -134,6 +135,7 @@ impl EstimateArgs {
             .build(sender)
             .await?;
 
+        let tx = if browser.is_some() { tx.browser_wallet_gas_estimation_request() } else { tx };
         let gas = provider.estimate_gas(tx).block(block.unwrap_or_default()).await?;
         if cost {
             let gas_price_wei = provider.get_gas_price().await?;
