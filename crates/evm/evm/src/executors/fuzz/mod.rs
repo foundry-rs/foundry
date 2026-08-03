@@ -625,9 +625,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.corpus.payable_value_weight,
         );
         let fuzz_state = fuzz_seed.stateless_worker();
-        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::stateless(
+        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::stateless_with_fixtures(
             generator,
             fuzz_state.clone(),
+            fuzz_fixtures.clone(),
             func.clone(),
             &self.config.corpus,
         )?;

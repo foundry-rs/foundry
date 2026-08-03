@@ -5123,6 +5123,80 @@ Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
     ]);
 });
 
+forgetest_init!(fuzz_mutations_preserve_enum_bounds, |prj, cmd| {
+    let corpus_dir = prj.root().join("enum-corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 256;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_dir.clone());
+        config.fuzz.corpus.corpus_random_sequence_weight = 0;
+        let weights = &mut config.fuzz.corpus.mutation_weights;
+        weights.mutation_weight_splice = 0;
+        weights.mutation_weight_repeat = 0;
+        weights.mutation_weight_interleave = 0;
+        weights.mutation_weight_prefix = 0;
+        weights.mutation_weight_suffix = 0;
+        weights.mutation_weight_abi = 1;
+        weights.mutation_weight_cmp = 0;
+    });
+    prj.add_test(
+        "FuzzEnumMutation.t.sol",
+        r#"
+contract FuzzEnumMutation {
+    enum Choice { A, B, C }
+
+    function testEnum(Choice) public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "FuzzEnumMutation", "-j1"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzEnumMutation.t.sol:FuzzEnumMutation
+[PASS] testEnum(uint8) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    std::fs::remove_dir_all(&corpus_dir).unwrap();
+    prj.clear_cache_dir();
+    prj.update_config(|config| {
+        let weights = &mut config.fuzz.corpus.mutation_weights;
+        weights.mutation_weight_abi = 0;
+        weights.mutation_weight_cmp = 1;
+    });
+    prj.add_test(
+        "FuzzEnumMutation.t.sol",
+        r#"
+contract FuzzEnumMutation {
+    enum Choice { A, B, C }
+
+    function testEnum(Choice) public pure {
+        uint256 raw;
+        assembly {
+            raw := calldataload(4)
+        }
+        require(raw != 255, "unreachable for a valid enum");
+    }
+}
+   "#,
+    );
+
+    cmd.forge_fuse().args(["test", "--mc", "FuzzEnumMutation", "-j1"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/FuzzEnumMutation.t.sol:FuzzEnumMutation
+[PASS] testEnum(uint8) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+});
+
 fn random_failure_reason(stdout: &str) -> String {
     Regex::new(r"\[FAIL: (Random\([^)]+\))")
         .unwrap()
