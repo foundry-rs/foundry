@@ -129,6 +129,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Config(cmd) => cmd.run(),
         ForgeSubcommand::Flatten(cmd) => cmd.run(),
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
+        ForgeSubcommand::StorageLayout(cmd) => cmd.run(),
         ForgeSubcommand::Tree(cmd) => cmd.run(),
         ForgeSubcommand::Geiger(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Doc(cmd) => {

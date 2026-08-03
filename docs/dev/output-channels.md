@@ -129,6 +129,7 @@ Each row's status is one of:
 | `forge test`           | (empty; exit code = pass/fail)                       | JSON test results, JUnit XML with `--junit`| todo   |
 | `forge create`         | Deploy: `Deployer:` / `Deployed to:` / `Transaction hash:` lines. Dry-run: `Contract:` / `Transaction:` / `ABI:` lines. Compiler output may precede (tracked under `forge build`). | JSON `{ deployer, deployedTo, transactionHash }` (or dry-run JSON `{ contract, transaction, abi }`) | todo |
 | `forge inspect <field>`| Just that field's value (`artifact`/`output` prints the contract artifact JSON) | JSON of that field                         | migrated |
+| `forge storage-layout` | Compatibility report (exit code = compatible/incompatible) | JSON compatibility report              | migrated |
 | `forge install`        | (empty)                                              | (empty)                                    | migrated |
 | `forge init`           | (empty)                                              | (empty)                                    | migrated |
 | `forge update`         | (empty)                                              | (empty)                                    | migrated |

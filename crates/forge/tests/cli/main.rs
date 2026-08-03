@@ -28,6 +28,7 @@ mod multi_script;
 mod precompiles;
 mod script;
 mod soldeer;
+mod storage_layout;
 mod svm;
 mod test_cmd;
 mod verify;
