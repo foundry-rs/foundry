@@ -471,7 +471,7 @@ mod tests {
             None,
             BTreeMap::from([(
                 "suite".to_string(),
-                SuiteResult::new(Duration::ZERO, test_results, Vec::new()),
+                SuiteResult::new(Duration::ZERO, test_results, Vec::new(), Default::default()),
             )]),
             false,
             None,
@@ -491,6 +491,7 @@ mod tests {
                         .map(|(idx, result)| (format!("test{idx}()"), result))
                         .collect(),
                     Vec::new(),
+                    Default::default(),
                 ),
             )]),
             false,
@@ -790,6 +791,10 @@ pub struct SuiteResult {
     pub test_results: BTreeMap<String, TestResult>,
     /// Generated warnings.
     pub warnings: Vec<String>,
+    /// Signatures of the internal cheatcodes used in this suite. Kept structured so that
+    /// multi-network passes can be unioned before formatting the suite warning.
+    #[serde(skip)]
+    pub internal_cheatcodes: std::collections::BTreeSet<String>,
 }
 
 impl SuiteResult {
@@ -797,28 +802,14 @@ impl SuiteResult {
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
         mut warnings: Vec<String>,
+        internal_cheatcodes: std::collections::BTreeSet<String>,
     ) -> Self {
-        // Add deprecated cheatcodes warning, if any of them used in current test suite.
-        let mut deprecated_cheatcodes = HashMap::new();
-        for test_result in test_results.values() {
-            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
-        }
-        if !deprecated_cheatcodes.is_empty() {
-            let mut warning =
-                "the following cheatcode(s) are deprecated and will be removed in future versions:"
-                    .to_string();
-            let mut deprecated_cheatcodes = deprecated_cheatcodes.into_iter().collect::<Vec<_>>();
-            deprecated_cheatcodes.sort_unstable_by_key(|(cheatcode, _)| *cheatcode);
-            for (cheatcode, reason) in deprecated_cheatcodes {
-                write!(warning, "\n  {cheatcode}").unwrap();
-                if let Some(reason) = reason {
-                    write!(warning, ": {reason}").unwrap();
-                }
-            }
-            warnings.push(warning);
-        }
+        // Add the internal cheatcodes warning, if any of them was used in this suite.
+        warnings.extend(internal_cheatcodes_warning(&internal_cheatcodes));
+        // Add the deprecated cheatcodes warning, if any of them was used in this suite.
+        warnings.extend(deprecated_cheatcodes_warning(&test_results));
 
-        Self { duration, test_results, warnings }
+        Self { duration, test_results, warnings, internal_cheatcodes }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -889,16 +880,52 @@ impl SuiteResult {
     }
 }
 
-pub(crate) fn internal_cheatcodes_warning(signatures: &[&str]) -> Option<String> {
+pub(crate) const INTERNAL_CHEATCODES_WARNING_HEADER: &str =
+    "the following cheatcode(s) are intended for internal use and may change or be removed:";
+
+pub(crate) const DEPRECATED_CHEATCODES_WARNING_HEADER: &str =
+    "the following cheatcode(s) are deprecated and will be removed in future versions:";
+
+/// Returns `true` for the suite-level cheatcode warnings, which are re-rendered from the
+/// structured data when multi-network passes are merged.
+pub(crate) fn is_suite_cheatcode_warning(warning: &str) -> bool {
+    warning.starts_with(INTERNAL_CHEATCODES_WARNING_HEADER)
+        || warning.starts_with(DEPRECATED_CHEATCODES_WARNING_HEADER)
+}
+
+pub(crate) fn internal_cheatcodes_warning(
+    signatures: &std::collections::BTreeSet<String>,
+) -> Option<String> {
     if signatures.is_empty() {
         return None;
     }
 
-    let mut warning = "the following cheatcode(s) are intended for internal use and may change or \
-                       be removed:"
-        .to_string();
+    let mut warning = INTERNAL_CHEATCODES_WARNING_HEADER.to_string();
     for signature in signatures {
         write!(warning, "\n  {signature}").unwrap();
+    }
+    Some(warning)
+}
+
+pub(crate) fn deprecated_cheatcodes_warning(
+    test_results: &BTreeMap<String, TestResult>,
+) -> Option<String> {
+    let mut deprecated_cheatcodes = HashMap::new();
+    for test_result in test_results.values() {
+        deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
+    }
+    if deprecated_cheatcodes.is_empty() {
+        return None;
+    }
+
+    let mut warning = DEPRECATED_CHEATCODES_WARNING_HEADER.to_string();
+    let mut deprecated_cheatcodes = deprecated_cheatcodes.into_iter().collect::<Vec<_>>();
+    deprecated_cheatcodes.sort_unstable_by_key(|(cheatcode, _)| *cheatcode);
+    for (cheatcode, reason) in deprecated_cheatcodes {
+        write!(warning, "\n  {cheatcode}").unwrap();
+        if let Some(reason) = reason {
+            write!(warning, ": {reason}").unwrap();
+        }
     }
     Some(warning)
 }

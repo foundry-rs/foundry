@@ -17,7 +17,7 @@ use crate::{
         SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
         SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite, SymbolicReplayMetadata,
         SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup, TestStatus,
-        internal_cheatcodes_warning, invariant_campaign_display_name,
+        invariant_campaign_display_name,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -695,19 +695,22 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         &self,
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
-        mut warnings: Vec<String>,
+        warnings: Vec<String>,
     ) -> SuiteResult {
-        if let Some(signatures) = self
+        let internal_cheatcodes = self
             .executor
             .inspector()
             .cheatcodes
             .as_ref()
-            .map(|cheatcodes| cheatcodes.internal_cheatcodes())
-            && let Some(warning) = internal_cheatcodes_warning(&signatures)
-        {
-            warnings.push(warning);
-        }
-        SuiteResult::new(duration, test_results, warnings)
+            .map(|cheatcodes| {
+                cheatcodes
+                    .internal_cheatcodes()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<std::collections::BTreeSet<String>>()
+            })
+            .unwrap_or_default();
+        SuiteResult::new(duration, test_results, warnings, internal_cheatcodes)
     }
 
     /// Returns `true` if `func` should run in the current multi-network pass.

@@ -641,3 +641,55 @@ forgetest_init!(internal_cheatcode_warning_not_duplicated_across_network_passes,
         "internal-cheatcode warning must be emitted once across network passes, got:\n{stderr}"
     );
 });
+
+// Passes observing different internal-cheatcode overloads render different warning strings, so a
+// string-level dedup emits both blocks and repeats the shared signature. The signatures must be
+// unioned across passes and formatted as a single suite warning.
+forgetest_init!(internal_cheatcode_warning_unions_overloads_across_network_passes, |prj, cmd| {
+    prj.add_test(
+        "OverloadInternal.t.sol",
+        r#"
+        interface VmInternal {
+            function _expectCheatcodeRevert() external;
+            function _expectCheatcodeRevert(bytes4) external;
+        }
+
+        contract OverloadInternal {
+            address internal constant VM =
+                address(uint160(uint256(keccak256("hevm cheat code"))));
+
+            function sharedInternal() internal {
+                VmInternal(VM)._expectCheatcodeRevert();
+            }
+
+            function test_default() public {
+                sharedInternal();
+                VmInternal(VM)._expectCheatcodeRevert(bytes4(0x12345678));
+            }
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_tempo() public {
+                sharedInternal();
+            }
+        }
+        "#,
+    );
+
+    let output = cmd.arg("test").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert_eq!(
+        stderr.matches("intended for internal use").count(),
+        1,
+        "expected a single unioned suite warning across passes, got:\n{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("_expectCheatcodeRevert()\n").count(),
+        1,
+        "the shared signature must appear exactly once, got:\n{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("_expectCheatcodeRevert(bytes4)").count(),
+        1,
+        "the overload signature must appear exactly once, got:\n{stderr}"
+    );
+});
