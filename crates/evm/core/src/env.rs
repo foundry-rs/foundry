@@ -701,6 +701,118 @@ impl FromAnyRpcTransaction for TempoTxEnv {
     }
 }
 
+#[cfg(feature = "base")]
+mod base {
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_evm::{BaseTransaction, BaseTxTr, DEPOSIT_TRANSACTION_TYPE};
+
+    use super::*;
+
+    impl<TX: FoundryTransaction> FoundryTransaction for BaseTransaction<TX> {
+        fn set_tx_type(&mut self, tx_type: u8) {
+            self.base.set_tx_type(tx_type);
+        }
+
+        fn set_caller(&mut self, caller: Address) {
+            self.base.set_caller(caller);
+        }
+
+        fn set_gas_limit(&mut self, gas_limit: u64) {
+            self.base.set_gas_limit(gas_limit);
+        }
+
+        fn set_gas_price(&mut self, gas_price: u128) {
+            self.base.set_gas_price(gas_price);
+        }
+
+        fn set_kind(&mut self, kind: TxKind) {
+            self.base.set_kind(kind);
+        }
+
+        fn set_value(&mut self, value: U256) {
+            self.base.set_value(value);
+        }
+
+        fn set_data(&mut self, data: Bytes) {
+            self.base.set_data(data);
+        }
+
+        fn set_nonce(&mut self, nonce: u64) {
+            self.base.set_nonce(nonce);
+        }
+
+        fn set_chain_id(&mut self, chain_id: Option<u64>) {
+            self.base.set_chain_id(chain_id);
+        }
+
+        fn set_access_list(&mut self, access_list: AccessList) {
+            self.base.set_access_list(access_list);
+        }
+
+        fn authorization_list_mut(
+            &mut self,
+        ) -> &mut Vec<Either<SignedAuthorization, RecoveredAuthorization>> {
+            self.base.authorization_list_mut()
+        }
+
+        fn set_gas_priority_fee(&mut self, gas_priority_fee: Option<u128>) {
+            self.base.set_gas_priority_fee(gas_priority_fee);
+        }
+
+        fn set_blob_hashes(&mut self, blob_hashes: Vec<B256>) {
+            self.base.set_blob_hashes(blob_hashes);
+        }
+
+        fn set_max_fee_per_blob_gas(&mut self, max_fee_per_blob_gas: u128) {
+            self.base.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
+        }
+
+        fn enveloped_tx(&self) -> Option<&Bytes> {
+            BaseTxTr::enveloped_tx(self)
+        }
+
+        fn set_enveloped_tx(&mut self, bytes: Bytes) {
+            self.enveloped_tx = Some(bytes);
+        }
+
+        fn source_hash(&self) -> Option<B256> {
+            BaseTxTr::source_hash(self)
+        }
+
+        fn set_source_hash(&mut self, source_hash: B256) {
+            self.deposit.source_hash = source_hash;
+        }
+
+        fn mint(&self) -> Option<u128> {
+            BaseTxTr::mint(self)
+        }
+
+        fn set_mint(&mut self, mint: u128) {
+            self.deposit.mint = Some(mint);
+        }
+
+        fn is_system_transaction(&self) -> bool {
+            BaseTxTr::is_system_transaction(self)
+        }
+
+        fn set_system_transaction(&mut self, is_system_transaction: bool) {
+            self.deposit.is_system_transaction = is_system_transaction;
+        }
+
+        fn is_deposit(&self) -> bool {
+            self.tx_type() == DEPOSIT_TRANSACTION_TYPE
+        }
+    }
+
+    impl FromAnyRpcTransaction for BaseTransaction<TxEnv> {
+        fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
+            let envelope = BaseTxEnvelope::try_from(tx.clone())
+                .map_err(|_| eyre::eyre!("cannot convert transaction to BaseTxEnvelope"))?;
+            Ok(Self::from_recovered_tx(&envelope, tx.from()))
+        }
+    }
+}
+
 #[cfg(feature = "optimism")]
 mod optimism {
     use super::*;
@@ -930,6 +1042,8 @@ mod tests {
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
+    #[cfg(feature = "base")]
+    use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseTransaction, BaseUpgrade};
     use foundry_evm_hardforks::TempoHardfork;
     #[cfg(feature = "monad")]
     use monad_revm::{MonadHardfork, cfg::MONAD_MEMORY_LIMIT};
@@ -957,6 +1071,26 @@ mod tests {
         assert_eq!(evm.ctx().cfg().spec, SpecId::AMSTERDAM);
 
         // Round-trip test to ensure no issues with cloning and setting tx_env and evm_env
+        let tx_env = evm.ctx().tx_clone();
+        evm.ctx_mut().set_tx(tx_env);
+        let evm_env = evm.ctx().evm_clone();
+        evm.ctx_mut().set_evm(evm_env);
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_evm_foundry_context_ext_implementation() {
+        let mut evm = BaseEvmFactory::default().create_evm(EmptyDB::default(), EvmEnv::default());
+
+        evm.ctx_mut().block_mut().set_number(U256::from(123));
+        assert_eq!(evm.ctx().block().number(), U256::from(123));
+
+        evm.ctx_mut().tx_mut().set_nonce(99);
+        assert_eq!(evm.ctx().tx().nonce(), 99);
+
+        evm.ctx_mut().cfg_mut().spec = BaseSpecId::new(BaseUpgrade::Beryl);
+        assert_eq!(evm.ctx().cfg().spec, BaseSpecId::new(BaseUpgrade::Beryl));
+
         let tx_env = evm.ctx().tx_clone();
         evm.ctx_mut().set_tx(tx_env);
         let evm_env = evm.ctx().evm_clone();
@@ -1104,6 +1238,25 @@ mod tests {
         assert_eq!(tx_env.gas_limit, 21001);
         assert_eq!(tx_env.value, U256::from(101));
         assert_eq!(tx_env.kind, TxKind::Call(Address::with_last_byte(0xBB)));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn from_any_rpc_transaction_for_base_eth_envelope() {
+        let from = Address::random();
+        let signed_tx = make_signed_eip1559();
+        let rpc_tx = RpcTransaction::from_transaction(
+            Recovered::new_unchecked(signed_tx.into(), from),
+            TransactionInfo::default(),
+        );
+        let any_tx = <AnyRpcTransaction as From<RpcTransaction>>::from(rpc_tx);
+
+        let tx_env = BaseTransaction::<TxEnv>::from_any_rpc_transaction(&any_tx).unwrap();
+        assert_eq!(tx_env.base.caller, from);
+        assert_eq!(tx_env.base.nonce, 42);
+        assert_eq!(tx_env.base.gas_limit, 21001);
+        assert_eq!(tx_env.base.value, U256::from(101));
+        assert!(tx_env.enveloped_tx.is_some());
     }
 
     #[test]

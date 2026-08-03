@@ -18,6 +18,10 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+#[cfg(feature = "base")]
+use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit};
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionReceipt;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
@@ -227,6 +231,13 @@ blobGasUsed          {}",
 impl UIfmt for TransactionReceipt {
     fn pretty(&self) -> String {
         pretty_receipt(self, self.transaction_type() as u8)
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmt for BaseTransactionReceipt {
+    fn pretty(&self) -> String {
+        pretty_receipt(&self.inner, self.inner.inner.receipt.tx_type() as u8)
     }
 }
 
@@ -474,6 +485,38 @@ input                {}",
     }
 }
 
+#[cfg(feature = "base")]
+impl UIfmt for BaseTxDeposit {
+    fn pretty(&self) -> String {
+        format!(
+            "
+sourceHash           {}
+from                 {}
+to                   {}
+mint                 {}
+value                {}
+gasLimit             {}
+isSystemTransaction  {}
+input                {}",
+            self.source_hash.pretty(),
+            self.from.pretty(),
+            self.to().pretty(),
+            self.mint.pretty(),
+            self.value.pretty(),
+            self.gas_limit.pretty(),
+            self.is_system_transaction,
+            self.input.pretty(),
+        )
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmt for Eip8130Signed {
+    fn pretty(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
 #[cfg(feature = "optimism")]
 impl UIfmt for TxPostExec {
     fn pretty(&self) -> String {
@@ -585,6 +628,20 @@ impl UIfmt for TxEnvelope {
             Self::Eip1559(tx) => tx.pretty(),
             Self::Eip4844(tx) => tx.pretty(),
             Self::Eip7702(tx) => tx.pretty(),
+        }
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmt for BaseTxEnvelope {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Legacy(tx) => tx.pretty(),
+            Self::Eip2930(tx) => tx.pretty(),
+            Self::Eip1559(tx) => tx.pretty(),
+            Self::Eip7702(tx) => tx.pretty(),
+            Self::Deposit(tx) => tx.inner().pretty(),
+            Self::Eip8130(tx) => tx.pretty(),
         }
     }
 }
@@ -791,6 +848,19 @@ impl UIfmtSignatureExt for AnyTxEnvelope {
     }
 }
 
+#[cfg(feature = "base")]
+impl UIfmtSignatureExt for BaseTxEnvelope {
+    fn signature_pretty(&self) -> Option<(String, String, String)> {
+        self.signature().map(|sig| {
+            (
+                FixedBytes::from(sig.r()).pretty(),
+                FixedBytes::from(sig.s()).pretty(),
+                U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
+            )
+        })
+    }
+}
+
 #[cfg(feature = "optimism")]
 impl UIfmtSignatureExt for OpTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
@@ -854,6 +924,21 @@ impl UIfmtReceiptExt for TransactionReceipt {
 
     fn tx_type_pretty(&self) -> String {
         self.transaction_type().to_string()
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmtReceiptExt for BaseTransactionReceipt {
+    fn logs_pretty(&self) -> String {
+        receipt_logs_pretty(&self.inner)
+    }
+
+    fn logs_bloom_pretty(&self) -> String {
+        receipt_logs_bloom_pretty(&self.inner)
+    }
+
+    fn tx_type_pretty(&self) -> String {
+        self.inner.inner.receipt.tx_type().to_string()
     }
 }
 

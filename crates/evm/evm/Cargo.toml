@@ -76,6 +76,13 @@ monad = [
     "foundry-evm-fuzz/monad",
     "foundry-evm-traces/monad",
 ]
+base = [
+    "foundry-common/base",
+    "foundry-config/base",
+    "foundry-evm-core/base",
+    "foundry-evm-hardforks/base",
+    "foundry-evm-networks/base",
+]
 optimism = [
     "foundry-evm-core/optimism",
     "foundry-evm-hardforks/optimism",

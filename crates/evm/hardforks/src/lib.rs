@@ -581,7 +581,7 @@ impl ExecutionSpec for BaseSpecId {
     // Converts only Base namespaced hardforks to a Base spec.
     fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
         match hardfork {
-            FoundryHardfork::Base(hardfork) => Some(BaseSpecId::new(hardfork)),
+            FoundryHardfork::Base(hardfork) => Some(Self::new(hardfork)),
             _ => None,
         }
     }

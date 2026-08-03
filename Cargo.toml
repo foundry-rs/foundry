@@ -549,8 +549,11 @@ monad-revm = { version = "0.6.0", default-features = false, features = [
 ] }
 
 # Base
-base-common-genesis = { git = "https://github.com/base/base", rev = "2dfecc2fa8fae92f084f2cf874b437c5a8d17a29" }
-base-common-evm = { git = "https://github.com/base/base", rev = "2dfecc2fa8fae92f084f2cf874b437c5a8d17a29", default-features = false }
+base-common-consensus = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
+base-common-evm = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
+base-common-genesis = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
+base-common-network = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
+base-common-rpc-types = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 

@@ -308,6 +308,12 @@ impl NetworkVariant {
         matches!(self, Self::Base)
     }
 
+    /// Returns `false` when Base support is not compiled in.
+    #[cfg(not(feature = "base"))]
+    pub const fn is_base(&self) -> bool {
+        false
+    }
+
     /// Returns `true` if this is the Optimism network variant.
     #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {

@@ -40,6 +40,8 @@ use tempo_alloy::TempoNetwork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
+#[cfg(feature = "base")]
+pub mod base;
 pub mod eth;
 #[cfg(feature = "monad")]
 pub mod monad;
@@ -50,6 +52,8 @@ pub mod tempo;
 mod block_context;
 pub use block_context::*;
 
+#[cfg(feature = "base")]
+pub use base::*;
 pub use eth::*;
 #[cfg(feature = "monad")]
 pub use monad::*;
@@ -85,10 +89,9 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
 
     /// Returns whether this concrete EVM network can execute `network`.
     ///
-    /// Non-Monad implementations reject Monad execution because it requires a distinct EVM
-    /// factory. Other existing network compatibility behavior remains unchanged.
+    /// Base and Monad use distinct EVM factories and are rejected by other implementations.
     fn supports_network(network: NetworkVariant) -> bool {
-        !network.is_monad()
+        !network.is_base() && !network.is_monad()
     }
 
     fn is_extra_cheatcode_address(address: Address) -> bool {

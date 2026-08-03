@@ -44,6 +44,26 @@ alloy-sol-types.workspace = true
 alloy-rlp.workspace = true
 foundry-fork-db.workspace = true
 
+# Base
+base-common-consensus = { workspace = true, optional = true, features = [
+    "alloy-compat",
+    "evm",
+    "k256",
+    "serde",
+    "std",
+] }
+base-common-evm = { workspace = true, optional = true, features = [
+    "blst",
+    "c-kzg",
+    "memory_limit",
+    "optional_block_gas_limit",
+    "optional_eip3607",
+    "optional_no_base_fee",
+    "serde",
+    "std",
+] }
+base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
+
 revm = { workspace = true, features = [
     "std",
     "serde",
@@ -97,6 +117,15 @@ monad = [
     "dep:monad-revm",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
+]
+base = [
+    "dep:base-common-consensus",
+    "dep:base-common-evm",
+    "dep:base-common-network",
+    "foundry-common/base",
+    "foundry-config/base",
+    "foundry-evm-hardforks/base",
+    "foundry-evm-networks/base",
 ]
 optimism = [
     "dep:op-alloy-consensus",
