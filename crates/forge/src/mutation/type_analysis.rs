@@ -1,10 +1,8 @@
 //! Type-aware filtering for operator mutations.
 //!
-//! This module records replacements that are either type-invalid or have the same result as the
-//! original comparison for every value in an operand's type range. It deliberately does not filter
-//! replacements merely because they are tautological. For example, `uint256 x == 0` and `x <= 0`
-//! are equivalent, but `x < 0` is retained because changing the original condition to `false` can
-//! expose missing tests.
+//! This module records replacements that are type-invalid. It deliberately does not filter
+//! replacements merely because they return the same value for every input: different operators can
+//! still compile to gas-distinct bytecode.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -12,17 +10,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use alloy_primitives::U256;
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_compilers::{ProjectCompileOutput, compilers::multi::MultiCompiler};
 use foundry_config::Config;
 use solar::{
-    ast::{BinOpKind, LitKind, UnOpKind},
+    ast::{BinOpKind, UnOpKind},
     interface::{Session, source_map::FileName},
     sema::{
         Compiler, Gcx,
-        hir::{self, ElementaryType, ExprKind, TypeKind, Visit},
+        hir::{self, ElementaryType, ExprKind, Visit},
         ty::TyKind,
     },
 };
@@ -150,42 +147,6 @@ impl MutationExclusionCollector<'_> {
                 self.mutations.insert(MutationExclusion::binary(span, candidate));
             }
         }
-
-        if !original.is_cmp() {
-            return;
-        }
-
-        let comparison = if let (Some(range), Some(value)) =
-            (integer_range(self.gcx, left), constant_value(right))
-        {
-            Some((range, value, original, false))
-        } else if let (Some(value), Some(range)) =
-            (constant_value(left), integer_range(self.gcx, right))
-        {
-            Some((range, value, flip(original), true))
-        } else {
-            None
-        };
-        let Some((range, value, normalized_original, operands_reversed)) = comparison else {
-            return;
-        };
-
-        for candidate in [
-            BinOpKind::Lt,
-            BinOpKind::Le,
-            BinOpKind::Gt,
-            BinOpKind::Ge,
-            BinOpKind::Eq,
-            BinOpKind::Ne,
-        ] {
-            if candidate == original {
-                continue;
-            }
-            let normalized_candidate = if operands_reversed { flip(candidate) } else { candidate };
-            if equivalent_at_boundary(range, value, normalized_original, normalized_candidate) {
-                self.mutations.insert(MutationExclusion::binary(span, candidate));
-            }
-        }
     }
 
     fn local_span(&self, span: solar::ast::Span) -> Option<solar::ast::Span> {
@@ -242,172 +203,10 @@ fn comparison_operand_kind(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct IntegerRange {
-    lower: SignedValue,
-    upper: SignedValue,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SignedValue {
-    negative: bool,
-    magnitude: U256,
-}
-
-impl SignedValue {
-    const ZERO: Self = Self { negative: false, magnitude: U256::ZERO };
-
-    fn new(negative: bool, magnitude: U256) -> Self {
-        if magnitude.is_zero() { Self::ZERO } else { Self { negative, magnitude } }
-    }
-}
-
-fn integer_range(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<IntegerRange> {
-    if let Some(ty) = gcx.type_of_expr(expr.id)
-        && let TyKind::Elementary(ty) = ty.peel_refs().kind
-    {
-        return integer_range_for_type(ty);
-    }
-
-    // Fall back to types available during lowering when Solar could not infer this expression.
-    let ty = match &expr.peel_parens().kind {
-        ExprKind::Ident(_) => {
-            let variable = expr.as_variable()?;
-            match gcx.hir.variable(variable).ty.kind {
-                TypeKind::Elementary(ty) => ty,
-                _ => return None,
-            }
-        }
-        ExprKind::Call(callee, args, _) => {
-            let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) =
-                &callee.peel_parens().kind
-            else {
-                return None;
-            };
-            let mut expressions = args.exprs();
-            expressions.next()?;
-            if expressions.next().is_some() {
-                return None;
-            }
-            *ty
-        }
-        _ => return None,
-    };
-    integer_range_for_type(ty)
-}
-
 fn is_unsigned(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
     gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
         matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::UInt(_)))
     })
-}
-
-fn integer_range_for_type(ty: ElementaryType) -> Option<IntegerRange> {
-    match ty {
-        ElementaryType::UInt(size) => {
-            let bits = size.bits();
-            let upper =
-                if bits == 256 { U256::MAX } else { (U256::from(1u8) << bits) - U256::from(1u8) };
-            Some(IntegerRange { lower: SignedValue::ZERO, upper: SignedValue::new(false, upper) })
-        }
-        ElementaryType::Int(size) => {
-            let half = U256::from(1u8) << (size.bits() - 1);
-            Some(IntegerRange {
-                lower: SignedValue::new(true, half),
-                upper: SignedValue::new(false, half - U256::from(1u8)),
-            })
-        }
-        ElementaryType::Address(_) => {
-            let upper = (U256::from(1u8) << 160) - U256::from(1u8);
-            Some(IntegerRange { lower: SignedValue::ZERO, upper: SignedValue::new(false, upper) })
-        }
-        _ => None,
-    }
-}
-
-fn constant_value(expr: &hir::Expr<'_>) -> Option<SignedValue> {
-    match &expr.peel_parens().kind {
-        ExprKind::Lit(lit) => match lit.kind {
-            LitKind::Number(value) => Some(SignedValue::new(false, value)),
-            LitKind::Address(value) => {
-                Some(SignedValue::new(false, U256::from_be_slice(value.as_slice())))
-            }
-            _ => None,
-        },
-        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Neg => {
-            let ExprKind::Lit(lit) = &inner.peel_parens().kind else { return None };
-            let LitKind::Number(value) = lit.kind else { return None };
-            Some(SignedValue::new(true, value))
-        }
-        ExprKind::Member(type_call, member) => {
-            let ExprKind::TypeCall(hir::Type { kind: TypeKind::Elementary(ty), .. }) =
-                &type_call.peel_parens().kind
-            else {
-                return None;
-            };
-            let range = integer_range_for_type(*ty)?;
-            match member.as_str() {
-                "min" => Some(range.lower),
-                "max" => Some(range.upper),
-                _ => None,
-            }
-        }
-        ExprKind::Call(callee, args, _) => {
-            let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) =
-                &callee.peel_parens().kind
-            else {
-                return None;
-            };
-            let mut expressions = args.exprs();
-            let inner = expressions.next()?;
-            if expressions.next().is_some() {
-                return None;
-            }
-            let range = integer_range_for_type(*ty)?;
-            let value = constant_value(inner)?;
-            (value == range.lower || value == range.upper).then_some(value)
-        }
-        _ => None,
-    }
-}
-
-fn equivalent_at_boundary(
-    range: IntegerRange,
-    value: SignedValue,
-    original: BinOpKind,
-    candidate: BinOpKind,
-) -> bool {
-    let pair = (original, candidate);
-    if value == range.lower {
-        matches!(
-            pair,
-            (BinOpKind::Eq, BinOpKind::Le)
-                | (BinOpKind::Le, BinOpKind::Eq)
-                | (BinOpKind::Ne, BinOpKind::Gt)
-                | (BinOpKind::Gt, BinOpKind::Ne)
-        )
-    } else if value == range.upper {
-        matches!(
-            pair,
-            (BinOpKind::Eq, BinOpKind::Ge)
-                | (BinOpKind::Ge, BinOpKind::Eq)
-                | (BinOpKind::Ne, BinOpKind::Lt)
-                | (BinOpKind::Lt, BinOpKind::Ne)
-        )
-    } else {
-        false
-    }
-}
-
-const fn flip(op: BinOpKind) -> BinOpKind {
-    match op {
-        BinOpKind::Lt => BinOpKind::Gt,
-        BinOpKind::Le => BinOpKind::Ge,
-        BinOpKind::Gt => BinOpKind::Lt,
-        BinOpKind::Ge => BinOpKind::Le,
-        BinOpKind::Eq | BinOpKind::Ne => op,
-        _ => unreachable!(),
-    }
 }
 
 #[cfg(test)]
@@ -447,27 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn identifies_only_equivalent_unsigned_lower_bound_mutations() {
-        let range =
-            integer_range_for_type(ElementaryType::UInt(solar::ast::TypeSize::new_int_bits(256)))
-                .unwrap();
-
-        assert!(equivalent_at_boundary(range, SignedValue::ZERO, BinOpKind::Eq, BinOpKind::Le));
-        assert!(!equivalent_at_boundary(range, SignedValue::ZERO, BinOpKind::Eq, BinOpKind::Lt));
-        assert!(equivalent_at_boundary(range, SignedValue::ZERO, BinOpKind::Ne, BinOpKind::Gt));
-    }
-
-    #[test]
-    fn does_not_treat_zero_as_a_signed_boundary() {
-        let range =
-            integer_range_for_type(ElementaryType::Int(solar::ast::TypeSize::new_int_bits(256)))
-                .unwrap();
-
-        assert!(!equivalent_at_boundary(range, SignedValue::ZERO, BinOpKind::Eq, BinOpKind::Le));
-    }
-
-    #[test]
-    fn collects_typed_unsigned_boundary_equivalents() {
+    fn preserves_gas_distinct_unsigned_boundary_mutations() {
         let source = r#"
 contract Test {
     function check(uint256 x) external pure returns (bool) {
@@ -477,22 +256,8 @@ contract Test {
 "#;
         let mutations = collect(source);
 
-        assert!(mutations.contains(&mutation(source, "x == 0", BinOpKind::Le)));
-        assert!(!mutations.contains(&mutation(source, "x == 0", BinOpKind::Lt)));
-    }
-
-    #[test]
-    fn preserves_signed_zero_mutations() {
-        let source = r#"
-contract Test {
-    function check(int256 x) external pure returns (bool) {
-        return x == 0;
-    }
-}
-"#;
-        let mutations = collect(source);
-
         assert!(!mutations.contains(&mutation(source, "x == 0", BinOpKind::Le)));
+        assert!(!mutations.contains(&mutation(source, "x == 0", BinOpKind::Lt)));
     }
 
     #[test]
@@ -636,7 +401,7 @@ contract Test {
     }
 
     #[test]
-    fn handles_reversed_operands_and_upper_bounds() {
+    fn preserves_reversed_and_upper_boundary_mutations() {
         let source = r#"
 contract Test {
     function lower(uint256 x) external pure returns (bool) {
@@ -650,13 +415,13 @@ contract Test {
 "#;
         let mutations = collect(source);
 
-        assert!(mutations.contains(&mutation(source, "0 == x", BinOpKind::Ge)));
+        assert!(!mutations.contains(&mutation(source, "0 == x", BinOpKind::Ge)));
         assert!(!mutations.contains(&mutation(source, "0 == x", BinOpKind::Gt)));
-        assert!(mutations.contains(&mutation(source, "x == type(uint8).max", BinOpKind::Ge)));
+        assert!(!mutations.contains(&mutation(source, "x == type(uint8).max", BinOpKind::Ge)));
     }
 
     #[test]
-    fn uses_inferred_member_types_and_typed_zero_constants() {
+    fn preserves_member_and_typed_constant_boundary_mutations() {
         let source = r#"
 contract Test {
     function empty(bytes memory value) external pure returns (bool) {
@@ -670,7 +435,7 @@ contract Test {
 "#;
         let mutations = collect(source);
 
-        assert!(mutations.contains(&mutation(source, "value.length == 0", BinOpKind::Le)));
-        assert!(mutations.contains(&mutation(source, "value == address(0)", BinOpKind::Le)));
+        assert!(!mutations.contains(&mutation(source, "value.length == 0", BinOpKind::Le)));
+        assert!(!mutations.contains(&mutation(source, "value == address(0)", BinOpKind::Le)));
     }
 }

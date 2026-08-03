@@ -115,7 +115,7 @@ Survived mutants
 "#]]);
 });
 
-forgetest_init!(mutation_testing_prunes_typed_boundary_equivalents, |prj, cmd| {
+forgetest_init!(mutation_testing_retains_gas_distinct_bounds, |prj, cmd| {
     prj.add_source(
         "Boundary.sol",
         r#"
@@ -166,16 +166,12 @@ exclude_operators = [
     )
     .unwrap();
 
-    let output = cmd
-        .args(["test", "--mutate", "src/Boundary.sol", "--mutation-jobs", "1", "--json"])
-        .assert_success();
-    let summary = mutation_summary(&output.get_output().stdout_lossy());
+    cmd.args(["test", "--mutate", "src/Boundary.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Boundary.sol":[{"line":7,"column":16,"original":"value == 0","mutant":"value <= 0"}]}}
 
-    assert_eq!(summary["total"], 4);
-    assert_eq!(summary["killed"], 4);
-    assert_eq!(summary["survived"], 0);
-    assert_eq!(summary["invalid"], 0);
-    assert_eq!(summary["mutation_score"], 100.0);
+"#]]);
 });
 
 forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
@@ -1720,7 +1716,7 @@ contract VaultTest is Test {
 "#,
     );
 
-    // Type analysis excludes the equivalent msg.value > 0 -> msg.value != 0 mutant.
+    // The gas-distinct msg.value > 0 -> msg.value != 0 mutant remains.
     let mut cmd2 = prj.forge_command();
     cmd2.args(["test", "--mutate", "src/Vault.sol", "--mutation-jobs", "2"]);
     cmd2.assert_success().stdout_eq(str![[r#"
@@ -1734,16 +1730,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 3.8%       │
+│ Survived ┆ 3         ┆ 5.6%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 49        ┆ 92.5%      │
+│ Killed   ┆ 49        ┆ 90.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 1         ┆ 1.9%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 1         ┆ 1.9%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 96.1% (49/51 mutants killed); [ELAPSED]
+Mutation Score: 94.2% (49/52 mutants killed); [ELAPSED]
 ...
 "#]]);
 });
