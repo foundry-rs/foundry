@@ -1441,9 +1441,6 @@ impl NodeConfig {
                 .await
                 .wrap_err("failed to get fork block")?
         };
-        let fork_chain_id = chain_id_task.await?.wrap_err("failed to fetch network chain ID")?;
-        let fork_gas_price = gas_price_task.await.ok().and_then(Result::ok).flatten();
-
         let block = if let Some(block) = block {
             block
         } else {
@@ -1462,6 +1459,8 @@ latest block number: {latest_block}"
             }
             eyre::bail!("failed to get block for block number: {fork_block_number}");
         };
+        let fork_chain_id = chain_id_task.await?.wrap_err("failed to fetch network chain ID")?;
+        let fork_gas_price = gas_price_task.await.ok().and_then(Result::ok).flatten();
 
         if let Some(replay) = &fork_transaction_replay {
             let source_header = replay.source_block.header();
