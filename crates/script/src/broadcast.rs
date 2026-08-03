@@ -56,6 +56,7 @@ pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
+    tempo_browser: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -64,8 +65,10 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
+    let request =
+        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
     tx.set_gas_limit(
-        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
             / 100,
     );
@@ -139,6 +142,7 @@ where
         tempo_sponsor: Option<&TempoSponsor>,
         chain: Option<Chain>,
     ) -> Result<()> {
+        let tempo_browser = matches!(self, Self::Browser(..)) && chain.is_some_and(Chain::is_tempo);
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
@@ -197,7 +201,7 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier).await?;
+            estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -1201,7 +1205,8 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
-        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier).await?;
+        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier, false)
+            .await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 

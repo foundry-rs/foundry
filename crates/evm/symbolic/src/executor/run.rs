@@ -266,6 +266,11 @@ impl SymbolicExecutor {
                     stats: self.stats_with_paths(completed_paths),
                 });
             }
+            if std::mem::take(&mut state.pending_storage_hook_revert) {
+                completed_paths += 1;
+                reverted_paths += 1;
+                continue;
+            }
             let _path_span =
                 trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
                     .entered();

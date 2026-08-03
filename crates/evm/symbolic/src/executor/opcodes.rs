@@ -1,6 +1,82 @@
 use super::*;
 
 impl SymbolicExecutor {
+    fn storage_hook_calldata(
+        &mut self,
+        selector: [u8; 4],
+        words: impl IntoIterator<Item = SymExpr>,
+    ) -> SymCalldata {
+        let selector = SymBytes::concrete(&mut self.cx, selector.to_vec());
+        let words = words.into_iter().map(|word| word.into_bytes(&mut self.cx)).collect::<Vec<_>>();
+        let bytes = SymBytes::concat(&mut self.cx, std::iter::once(selector).chain(words));
+        SymCalldata::from_bytes(&mut self.cx, bytes)
+    }
+
+    fn invoke_storage_hook<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        completed_paths: &mut usize,
+        hook: SymbolicStorageHook,
+        calldata: SymCalldata,
+    ) -> Result<StepOutcome, SymbolicError> {
+        let code = state.world.extcode(&mut self.cx, executor, hook.callback_target)?;
+        if code.is_empty() {
+            return Ok(StepOutcome::Continue);
+        }
+
+        let callvalue = SymExpr::zero(&mut self.cx);
+        let frame = CallFrame::new(
+            &mut self.cx,
+            hook.callback_target,
+            hook.callback_target,
+            hook.callback_target,
+            CHEATCODE_ADDRESS,
+            callvalue,
+            false,
+            calldata,
+        );
+        let child = state.storage_hook_child(frame);
+        let outcomes = self.execute_external_call(executor, child, &code, completed_paths)?;
+        if outcomes.is_empty() {
+            return Ok(StepOutcome::AssumeRejected);
+        }
+
+        let mut parents = VecDeque::with_capacity(outcomes.len());
+        for outcome in outcomes {
+            let mut parent = state.clone();
+            parent.constraints = outcome.state.constraints.clone();
+            parent.next_symbol = outcome.state.next_symbol;
+            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
+            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.storage_hook_active = false;
+
+            match outcome.status {
+                TopLevelCallStatus::Success => {
+                    parent.world = outcome.state.world.clone();
+                    parent.block = outcome.state.block.clone();
+                }
+                TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
+                    parent.return_data = outcome.return_data.clone();
+                    parent.pending_storage_hook_revert = true;
+                }
+            }
+            parents.push_back(parent);
+        }
+
+        let Some(first) = self.pop_next_path(&mut parents) else {
+            return Ok(StepOutcome::AssumeRejected);
+        };
+        *state = first;
+        worklist.extend(parents);
+        Ok(if std::mem::take(&mut state.pending_storage_hook_revert) {
+            StepOutcome::Revert
+        } else {
+            StepOutcome::Continue
+        })
+    }
+
     fn push_comparison_result(
         &mut self,
         state: &mut PathState,
@@ -475,10 +551,27 @@ impl SymbolicExecutor {
                     &mut self.cx,
                     executor,
                     state.storage_address,
-                    key,
+                    key.clone(),
                     concrete_key,
                 )?;
-                state.stack.push(value)?;
+                state.stack.push(value.clone())?;
+                if !state.storage_hook_active
+                    && let Some(hook) =
+                        state.storage_load_hooks.get(&state.storage_address).copied()
+                {
+                    let account =
+                        SymExpr::constant(&mut self.cx, address_word(state.storage_address));
+                    let calldata =
+                        self.storage_hook_calldata(hook.callback_selector, [account, key, value]);
+                    return self.invoke_storage_hook(
+                        executor,
+                        state,
+                        worklist,
+                        completed_paths,
+                        hook,
+                        calldata,
+                    );
+                }
             }
             opcode::SSTORE => {
                 if state.is_static {
@@ -488,7 +581,43 @@ impl SymbolicExecutor {
                 let key = state.stack.pop()?;
                 let value = state.stack.pop()?;
                 state.record_sstore(state.storage_address, key.clone());
-                state.world.sstore(state.storage_address, key, value);
+                let hook = (!state.storage_hook_active)
+                    .then(|| state.storage_store_hooks.get(&state.storage_address).copied())
+                    .flatten();
+                let old_value = if hook.is_some() {
+                    let concrete_key = state.constrained_word(&mut self.cx, &key);
+                    Some(state.world.sload(
+                        &mut self.cx,
+                        executor,
+                        state.storage_address,
+                        key.clone(),
+                        concrete_key,
+                    )?)
+                } else {
+                    None
+                };
+                state.world.sstore(state.storage_address, key.clone(), value.clone());
+                if let Some(hook) = hook {
+                    let account =
+                        SymExpr::constant(&mut self.cx, address_word(state.storage_address));
+                    let calldata = self.storage_hook_calldata(
+                        hook.callback_selector,
+                        [
+                            account,
+                            key,
+                            old_value.expect("old value loaded for storage hook"),
+                            value,
+                        ],
+                    );
+                    return self.invoke_storage_hook(
+                        executor,
+                        state,
+                        worklist,
+                        completed_paths,
+                        hook,
+                        calldata,
+                    );
+                }
             }
             opcode::TLOAD => {
                 let key = state.stack.pop()?;
