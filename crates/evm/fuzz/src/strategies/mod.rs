@@ -10,7 +10,7 @@ pub(crate) use param::{fuzz_param_from_state, mutate_param_value};
 
 mod calldata;
 pub use calldata::fuzz_calldata;
-pub(crate) use calldata::fuzz_calldata_from_state;
+pub(crate) use calldata::{constrain_enum_value, fuzz_calldata_from_state};
 
 mod state;
 pub(crate) use state::DictionaryRead;

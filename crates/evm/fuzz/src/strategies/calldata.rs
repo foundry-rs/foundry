@@ -114,6 +114,18 @@ impl EnumClamp {
     }
 }
 
+/// Constrains enum leaves in a decoded value to the range declared by its Solidity type.
+pub(crate) fn constrain_enum_value(
+    value: DynSolValue,
+    input: &Param,
+    fuzz_fixtures: &FuzzFixtures,
+) -> DynSolValue {
+    match EnumClamp::for_param(input, fuzz_fixtures) {
+        Some(plan) => plan.apply(value),
+        None => value,
+    }
+}
+
 /// Wraps `strat` to constrain any enum leaves in `input` to their valid range; a no-op otherwise.
 fn bound_enum(
     strat: BoxedStrategy<DynSolValue>,
