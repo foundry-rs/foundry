@@ -5511,10 +5511,11 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
-            let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
+            let fork_head =
+                self.get_fork().map(|f| (f.block_number(), f.block_hash(), f.timestamp()));
 
             let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
-            let selected_best_number = if let Some((number, hash)) = fork_num_and_hash {
+            let selected_best_number = if let Some((number, hash, _)) = fork_head {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
@@ -5564,6 +5565,25 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             if !is_arbitrum(self.chain_id().to()) {
                 self.set_block_number(selected_best_number);
             }
+
+            // Re-anchor block time to the canonical head selected above so the next blocks
+            // continue its timeline: the saved one when the loaded head stays canonical, the
+            // fork's when the state file is at or below the fork block. Resolving the head by
+            // identity also keeps the timeline of stale blocks a state file can carry above
+            // its own best block out of the anchor. A head rolled back to the fork block has
+            // no header in local storage, so take the fork timestamp, as `reset_fork` does.
+            let canonical_timestamp = match fork_head {
+                Some((fork_number, _, fork_timestamp)) if selected_best_number == fork_number => {
+                    Some(fork_timestamp)
+                }
+                _ => {
+                    let storage = self.blockchain.storage.read();
+                    storage.blocks.get(&storage.best_hash).map(|b| b.header.timestamp)
+                }
+            };
+            if let Some(timestamp) = canonical_timestamp {
+                self.time.reset(timestamp);
+            }
         }
 
         if let Some(latest) = state.blocks.iter().max_by_key(|b| b.header.number()) {
@@ -5588,14 +5608,6 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     header.timestamp,
                 ),
             ));
-
-            // Re-anchor block time to the loaded head so subsequent blocks continue the saved
-            // timeline instead of the node's startup anchor (genesis or fork block). Skip when
-            // the canonical head is not the loaded one (state file at or below the fork block),
-            // comparing by identity since a fork head can share the loaded head's height.
-            if header.hash_slow() == self.blockchain.storage.read().best_hash {
-                self.time.reset(header.timestamp);
-            }
         }
 
         if !self.db.write().await.load_state(state.clone())? {
