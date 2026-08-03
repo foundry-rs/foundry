@@ -5202,6 +5202,13 @@ contract MappingTarget {
     function directStore(bytes32 slot, uint256 value) external {
         assembly { sstore(slot, value) }
     }
+    function equivalentStore(uint256 key, uint256 value, uint256 delta) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(0)));
+        assembly {
+            slot := sub(add(slot, delta), delta)
+            sstore(slot, value)
+        }
+    }
     function offsetStore(uint256 key, uint256 value) external {
         bytes32 slot = bytes32(uint256(keccak256(abi.encode(key, uint256(0)))) + 1);
         assembly { sstore(slot, value) }
@@ -5458,6 +5465,13 @@ contract SymbolicMappingStorageHooks is Test {
         assertEq(calls, 1);
         assertEq(seenKey, key);
         assertEq(seenSlot, slot);
+    }
+
+    function checkConstraintEquivalentProvenance(uint256 key, uint256 value, uint256 delta) public {
+        target.equivalentStore(key, value, delta);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, keccak256(abi.encode(key, uint256(0))));
     }
 
     function checkCallbackSubtreeSuppression(uint256 key, uint256 value) public {

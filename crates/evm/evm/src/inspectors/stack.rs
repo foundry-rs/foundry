@@ -1087,6 +1087,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx: &mut FoundryContextFor<'_, FEN>,
         result: InstructionResult,
     ) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.clear_storage_hook_mapping_slots();
+        }
         if !result.is_revert() {
             return;
         }

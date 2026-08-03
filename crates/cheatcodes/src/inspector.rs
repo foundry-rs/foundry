@@ -381,6 +381,7 @@ struct ActiveStorageHook {
 struct StorageHookInspectorState {
     accesses: RecordAccess,
     recording_accesses: bool,
+    mapping_slots: Option<AddressHashMap<MappingSlots>>,
     recorded_logs: Option<Vec<Vm::Log>>,
     mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
     mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
@@ -3250,6 +3251,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         StorageHookInspectorState {
             accesses: std::mem::take(&mut self.accesses),
             recording_accesses: std::mem::replace(&mut self.recording_accesses, false),
+            mapping_slots: self.mapping_slots.take(),
             recorded_logs: self.recorded_logs.take(),
             mocked_calls: std::mem::take(&mut self.mocked_calls),
             mocked_functions: std::mem::take(&mut self.mocked_functions),
@@ -3264,6 +3266,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     fn restore_storage_hook_inspector_state(&mut self, state: StorageHookInspectorState) {
         self.accesses = state.accesses;
         self.recording_accesses = state.recording_accesses;
+        self.mapping_slots = state.mapping_slots;
         self.recorded_logs = state.recorded_logs;
         self.mocked_calls = state.mocked_calls;
         self.mocked_functions = state.mocked_functions;

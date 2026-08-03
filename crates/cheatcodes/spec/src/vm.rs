@@ -456,12 +456,13 @@ interface Vm {
     /// hook registration for `target` in the current top-level execution match; provenance is
     /// cleared between top-level executions. Resolution follows the complete chain to its terminal
     /// root and ignores registered intermediate hashes. Offsets, incomplete or unknown chains,
-    /// earlier precomputation, and source layouts do not match. Registration persists across
-    /// reverts and replaces the same target/root callback; callback state rolls back with its
-    /// enclosing context, callback reverts propagate, and hooks are suppressed throughout callback
-    /// subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent external
-    /// spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping roots may
-    /// be registered.
+    /// hashes computed before registration or in an earlier top-level execution, and source layouts
+    /// do not match. The contract that calls this cheatcode receives the callback. Registration
+    /// persists across reverts and replaces the same target/root callback; callback state rolls back
+    /// with its enclosing context, callback reverts propagate, and hooks are suppressed throughout
+    /// callback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent
+    /// external spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping
+    /// roots may be registered.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;
 

@@ -302,7 +302,10 @@ root and do not affect the ghost. Both target writes and callback ghost updates 
 enclosing operation reverts. Mapping hooks require complete, exact 64-byte Keccak chains computed
 after the latest mapping-hook registration for that target in the current top-level execution.
 Resolution follows the complete chain to its terminal root instead of stopping at a registered
-intermediate hash; offsets and precomputed or incomplete provenance do not match.
+intermediate hash; offsets, incomplete provenance, hashes computed before registration, and hashes
+from earlier top-level executions do not match. Hashes computed after registration remain usable by
+later calls in the same top-level execution. The contract that calls `registerMappingSstoreHook`
+receives the callback.
 
 ```solidity
 contract RiddleTest is Test {

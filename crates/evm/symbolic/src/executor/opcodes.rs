@@ -1,6 +1,46 @@
 use super::*;
 
 impl SymbolicExecutor {
+    fn mapping_storage_provenance(
+        &mut self,
+        state: &PathState,
+        key: &SymExpr,
+    ) -> Result<Option<SymbolicMappingProvenance>, SymbolicError> {
+        let account = state.storage_address;
+        let observed = |hash: &SymExpr| {
+            state.mapping_hook_keccak_preimages.get(&(account, hash.clone())).cloned()
+        };
+        if let Some(provenance) =
+            key.storage_mapping_provenance_observed_with(&mut self.cx, observed)
+        {
+            return Ok(Some(provenance));
+        }
+
+        let hashes = state
+            .mapping_hook_keccak_preimages
+            .keys()
+            .filter(|(address, _)| *address == account)
+            .map(|(_, hash)| hash.clone())
+            .collect::<Vec<_>>();
+        for hash in hashes {
+            let equality = SymBoolExpr::eq(&mut self.cx, key.clone(), hash.clone());
+            let inequality = equality.not(&mut self.cx);
+            let (_, inequality_is_sat) = self.constraints_with_condition(state, inequality)?;
+            if !inequality_is_sat {
+                return Ok(hash.storage_mapping_provenance_observed_with(
+                    &mut self.cx,
+                    |candidate| {
+                        state
+                            .mapping_hook_keccak_preimages
+                            .get(&(account, candidate.clone()))
+                            .cloned()
+                    },
+                ));
+            }
+        }
+        Ok(None)
+    }
+
     fn storage_hook_calldata(
         &mut self,
         selector: [u8; 4],
@@ -613,23 +653,18 @@ impl SymbolicExecutor {
                 let hook = (!state.storage_hook_active)
                     .then(|| state.storage_store_hooks.get(&state.storage_address).copied())
                     .flatten();
-                let mapping = (!state.storage_hook_active)
-                    .then(|| {
-                        key.storage_mapping_provenance_observed_with(&mut self.cx, |hash| {
-                            state
-                                .mapping_hook_keccak_preimages
-                                .get(&(state.storage_address, hash.clone()))
-                                .cloned()
-                        })
-                    })
-                    .flatten()
-                    .and_then(|p| {
-                        state
-                            .mapping_storage_store_hooks
-                            .get(&(state.storage_address, p.root_slot))
-                            .copied()
-                            .map(|hook| (hook, p))
-                    });
+                let mapping = if state.storage_hook_active {
+                    None
+                } else {
+                    self.mapping_storage_provenance(state, &key)?
+                }
+                .and_then(|p| {
+                    state
+                        .mapping_storage_store_hooks
+                        .get(&(state.storage_address, p.root_slot))
+                        .copied()
+                        .map(|hook| (hook, p))
+                });
                 let old_value = if hook.is_some() || mapping.is_some() {
                     let concrete_key = state.constrained_word(&mut self.cx, &key);
                     Some(state.world.sload(

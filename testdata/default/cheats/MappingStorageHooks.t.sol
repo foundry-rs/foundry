@@ -67,6 +67,7 @@ contract MappingStorageHooksTest is Test {
     uint256 calls;
     uint256 implementationCalls;
     uint256 intermediateCalls;
+    mapping(uint256 => uint256) ghost;
     bytes32[] keys;
     bytes32 staleSlot;
     bytes32 seenSlot;
@@ -197,6 +198,14 @@ contract MappingStorageHooksTest is Test {
         assertEq(calls, 1);
     }
 
+    function testCallbackWritesAreExcludedFromMappingRecording() public {
+        vm.startMappingRecording();
+        target.setBalance(address(0xA11CE), 3);
+
+        assertEq(vm.getMappingLength(address(this), ghostRoot()), 0);
+        assertEq(vm.getMappingLength(address(target), bytes32(uint256(1))), 1);
+    }
+
     function testCallbackRevertPropagates() public {
         bool success;
         bytes memory data;
@@ -239,6 +248,7 @@ contract MappingStorageHooksTest is Test {
         seenSlot = slot;
         seenOld = oldValue;
         seenNew = newValue;
+        ghost[1] = uint256(newValue);
         _setKeys(callbackKeys);
     }
 
@@ -293,6 +303,12 @@ contract MappingStorageHooksTest is Test {
         delete keys;
         for (uint256 i; i < callbackKeys.length; ++i) {
             keys.push(callbackKeys[i]);
+        }
+    }
+
+    function ghostRoot() internal pure returns (bytes32 root) {
+        assembly {
+            root := ghost.slot
         }
     }
 }
