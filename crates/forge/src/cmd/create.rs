@@ -483,8 +483,42 @@ impl CreateArgs {
             deployer.tx.set_nonce_key(U256::ZERO);
         }
 
+        if !chain.is_tempo()
+            && tempo_keychain.is_none()
+            && browser_signer.is_none()
+            && self.tx.access_list.is_none()
+            && !self.tx.tempo.expiring_nonce
+            && deployer.tx.nonce().is_none()
+            && deployer.tx.gas_limit().is_none()
+        {
+            if is_legacy && deployer.tx.gas_price().is_none() {
+                let (nonce, gas_price, gas_limit) = tokio::join!(
+                    provider.get_transaction_count(deployer_address),
+                    provider.get_gas_price(),
+                    provider.estimate_gas(deployer.tx.clone()),
+                );
+                deployer.tx.set_nonce(nonce?);
+                deployer.tx.set_gas_price(gas_price?);
+                deployer.tx.set_gas_limit(gas_limit?);
+            } else if !is_legacy
+                && deployer.tx.max_fee_per_gas().is_none()
+                && deployer.tx.max_priority_fee_per_gas().is_none()
+            {
+                let (nonce, fees, gas_limit) = tokio::join!(
+                    provider.get_transaction_count(deployer_address),
+                    estimate_eip1559_fees(&provider, eip1559_fee_estimate),
+                    provider.estimate_gas(deployer.tx.clone()),
+                );
+                deployer.tx.set_nonce(nonce?);
+                let fees = fees.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                deployer.tx.set_max_fee_per_gas(fees.max_fee_per_gas);
+                deployer.tx.set_max_priority_fee_per_gas(fees.max_priority_fee_per_gas);
+                deployer.tx.set_gas_limit(gas_limit?);
+            }
+        }
+
         // Fetch defaults from provider for values not specified by user.
-        if self.tx.nonce.is_none() && !self.tx.tempo.expiring_nonce {
+        if deployer.tx.nonce().is_none() && !self.tx.tempo.expiring_nonce {
             deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
         }
 
@@ -496,11 +530,13 @@ impl CreateArgs {
         }
 
         if is_legacy {
-            if self.tx.gas_price.is_none() {
+            if deployer.tx.gas_price().is_none() {
                 deployer.tx.set_gas_price(provider.get_gas_price().await?);
             }
         } else {
-            if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
+            if deployer.tx.max_fee_per_gas().is_none()
+                || deployer.tx.max_priority_fee_per_gas().is_none()
+            {
                 let estimate = estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                 // Only honor the browser-suggested tip when the user has not pinned
@@ -517,10 +553,10 @@ impl CreateArgs {
                 let estimate =
                     resolve_broadcast_eip1559_fees(estimate, None, None, browser_suggested_tip)?;
 
-                if self.tx.priority_gas_price.is_none() {
+                if deployer.tx.max_priority_fee_per_gas().is_none() {
                     deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
                 }
-                if self.tx.gas_price.is_none() {
+                if deployer.tx.max_fee_per_gas().is_none() {
                     deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
                 }
             }
@@ -543,7 +579,7 @@ impl CreateArgs {
             deployer.tx.set_access_list(access_list);
         }
 
-        if self.tx.gas_limit.is_none() {
+        if deployer.tx.gas_limit().is_none() {
             let request = if browser_signer.is_some() && chain.is_tempo() {
                 deployer.tx.browser_wallet_gas_estimation_request()
             } else {
