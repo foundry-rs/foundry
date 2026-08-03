@@ -2085,7 +2085,8 @@ impl TestArgs {
         }
 
         if let Some(path) = &self.json_file {
-            let mut results = outcome.results.clone();
+            let mut results =
+                outcome.json_file_results.take().unwrap_or_else(|| outcome.results.clone());
             prepare_results_for_json(&mut results, evm_opts.verbosity, json_trace_depth);
             fs::write_json_file(path, &results)?;
         }
@@ -2870,7 +2871,7 @@ impl TestArgs {
 
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
-        for (contract_name, mut suite_result) in rx {
+        while let Ok((contract_name, mut suite_result)) = rx.recv() {
             let len = suite_result.len();
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
@@ -3213,6 +3214,9 @@ impl TestArgs {
             sh_println!("{summary_report}")?;
         }
 
+        // Keep the receiver alive only when its queued results are needed for the JSON file.
+        let json_results_rx = self.json_file.is_some().then_some(rx);
+
         // Reattach the task.
         match handle.await {
             Ok(result) => {
@@ -3223,6 +3227,21 @@ impl TestArgs {
                 Ok(payload) => std::panic::resume_unwind(payload),
                 Err(e) => return Err(e.into()),
             },
+        }
+
+        // Include suites that completed after fail-fast stopped console output in the JSON file.
+        if let Some(rx) = json_results_rx {
+            let mut results = outcome.results.clone();
+            for (contract_name, suite_result) in rx.try_iter() {
+                if is_multi_pass
+                    && suite_result.test_results.is_empty()
+                    && suite_result.warnings.is_empty()
+                {
+                    continue;
+                }
+                results.insert(contract_name, suite_result);
+            }
+            outcome.json_file_results = Some(results);
         }
 
         // Persist test run failures to enable replaying.
@@ -3780,9 +3799,23 @@ fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>)
 ///
 /// For suites that appear in both, test results are combined (function-level pass routing ensures
 /// each function appears in exactly one pass, so there are no key conflicts in practice).
-fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
-    for (suite_id, other_suite) in other.results {
-        match base.results.entry(suite_id) {
+fn merge_outcomes(base: &mut TestOutcome, mut other: TestOutcome) {
+    if let Some(other_results) = other.json_file_results.take() {
+        let base_results = base.json_file_results.get_or_insert_with(|| base.results.clone());
+        merge_suite_results(base_results, other_results);
+    }
+    merge_suite_results(&mut base.results, other.results);
+    if let Some(decoder) = other.last_run_decoder {
+        base.last_run_decoder = Some(decoder);
+    }
+}
+
+fn merge_suite_results(
+    base: &mut BTreeMap<String, SuiteResult>,
+    other: BTreeMap<String, SuiteResult>,
+) {
+    for (suite_id, other_suite) in other {
+        match base.entry(suite_id) {
             std::collections::btree_map::Entry::Vacant(e) => {
                 e.insert(other_suite);
             }
@@ -3793,9 +3826,6 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
                 base_suite.duration = base_suite.duration.max(other_suite.duration);
             }
         }
-    }
-    if let Some(decoder) = other.last_run_decoder {
-        base.last_run_decoder = Some(decoder);
     }
 }
 

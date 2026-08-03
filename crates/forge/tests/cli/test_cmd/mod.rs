@@ -533,6 +533,71 @@ contract FailingTest {
     );
 });
 
+forgetest!(json_file_fail_fast_preserves_completed_suites, |prj, cmd| {
+    prj.add_test(
+        "Failing.t.sol",
+        r#"
+interface VmFail {
+    function sleep(uint256 milliseconds) external;
+}
+
+contract FailingTest {
+    VmFail constant vm = VmFail(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testBreaks() public {
+        // Let both suites start, but finish this one first.
+        vm.sleep(100);
+        require(false, "boom");
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Passing.t.sol",
+        r#"
+interface VmPass {
+    function sleep(uint256 milliseconds) external;
+}
+
+contract PassingTest {
+    VmPass constant vm = VmPass(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testPass() public {
+        // Complete after the failing suite has stopped console output.
+        vm.sleep(500);
+    }
+}
+"#,
+    );
+
+    let json_path = prj.root().join("test-results.json");
+    let output = cmd
+        .args(["test", "--fail-fast", "-j", "2", "--json-file"])
+        .arg(&json_path)
+        .assert_failure();
+
+    assert!(
+        json_path.exists(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.get_output().stdout),
+        String::from_utf8_lossy(&output.get_output().stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(!stdout.contains("Ran 1 test for test/Passing.t.sol:PassingTest"));
+    assert!(stdout.contains("Encountered a total of 1 failing tests, 0 tests succeeded"));
+
+    let results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(json_path).unwrap()).unwrap();
+    assert_eq!(
+        results["test/Failing.t.sol:FailingTest"]["test_results"]["testBreaks()"]["status"],
+        "Failure"
+    );
+    assert_eq!(
+        results["test/Passing.t.sol:PassingTest"]["test_results"]["testPass()"]["status"],
+        "Success"
+    );
+});
+
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
