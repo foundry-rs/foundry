@@ -119,6 +119,22 @@ Find more information in the book: https://getfoundry.sh/cast/overview
 "#]]);
 });
 
+casttest!(browser_wallet_commands_expose_browser_option, |_prj, cmd| {
+    for (name, args) in [
+        ("call", &["call", "--help"][..]),
+        ("estimate", &["estimate", "--help"]),
+        ("access-list", &["access-list", "--help"]),
+        ("wallet address", &["wallet", "address", "--help"]),
+        ("wallet sign", &["wallet", "sign", "--help"]),
+    ] {
+        let output = cmd.cast_fuse().args(args).assert_success().get_output().stdout_lossy();
+        assert!(
+            output.contains("--browser"),
+            "expected {name} help to expose --browser:\n{output}"
+        );
+    }
+});
+
 // tests that the `cast block` command works correctly
 casttest!(latest_block, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
