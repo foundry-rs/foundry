@@ -1483,6 +1483,131 @@ forgetest!(cannot_inspect_linearization_non_solidity_target, |prj, cmd| {
         .stderr_eq(str![[r#"
 Error: linearization inspection is only supported for Solidity contracts (.sol targets)
 
+    "#]]);
+});
+
+forgetest!(can_check_compatible_storage_layout_from_clone_metadata, |prj, cmd| {
+    prj.add_source(
+        "Layout.sol",
+        r#"
+contract Layout {
+    uint128 internal first;
+}
+"#,
+    );
+
+    let baseline = cmd
+        .args(["inspect", "Layout", "storageLayout", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let baseline: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    prj.create_file(".clone.meta", &serde_json::json!({ "storageLayout": baseline }).to_string());
+    prj.add_source(
+        "Layout.sol",
+        r#"
+contract Layout {
+    uint128 internal first;
+    uint128 internal second;
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Layout", "storageLayout", "--check"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Storage layout is compatible.
+Checked 1 existing variable(s); found 1 compatible append(s).
+
+"#]]);
+});
+
+forgetest!(storage_layout_check_reports_semantic_type_changes_as_json, |prj, cmd| {
+    prj.add_source(
+        "Layout.sol",
+        r#"
+contract Layout {
+    uint256 internal value;
+}
+"#,
+    );
+
+    let baseline = cmd
+        .args(["inspect", "Layout", "storageLayout", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    prj.create_file("layout.json", &baseline);
+    prj.add_source(
+        "Layout.sol",
+        r#"
+contract Layout {
+    bytes32 internal value;
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Layout", "storageLayout", "--check", "layout.json", "--json"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "compatible": false,
+  "status": "incompatible",
+  "reference": "layout.json",
+  "checked": 1,
+  "appended": [],
+  "issues": [
+    {
+      "kind": "type_changed",
+      "path": "storage[0] (`value`)",
+      "message": "storage type kind changed",
+      "expected": "uint256",
+      "actual": "bytes32"
+    }
+  ]
+}
+"#]],
+        )
+        .stderr_eq(str![[r#"
+Error: storage layout compatibility check failed
+
+"#]]);
+});
+
+forgetest!(storage_layout_check_refuses_unreported_namespaced_storage, |prj, cmd| {
+    prj.add_source(
+        "Namespaced.sol",
+        r#"
+/// @custom:storage-location erc7201:example.main
+struct Layout {
+    uint256 value;
+}
+
+contract Namespaced {}
+"#,
+    );
+
+    let baseline = cmd
+        .args(["inspect", "Namespaced", "storageLayout", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    prj.create_file("layout.json", &baseline);
+
+    cmd.forge_fuse()
+        .args(["inspect", "Namespaced", "storageLayout", "--check", "layout.json"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Storage layout compatibility could not be verified:
+- storage: EIP-7201 storage was found, but compiler storage-layout output does not expose namespace roots; namespaced compatibility cannot be proven
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: storage layout compatibility check failed
+
 "#]]);
 });
 
