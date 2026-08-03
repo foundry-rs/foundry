@@ -224,6 +224,41 @@ fn same_tx_sequence(left: &[BasicTxDetails], right: &[BasicTxDetails]) -> bool {
         })
 }
 
+fn accept_synced_corpus_file(
+    entry: &CorpusDirEntry,
+    tx_seq: &[BasicTxDetails],
+    corpus_path: &Path,
+) -> bool {
+    if corpus_path.is_file() {
+        let existing = CorpusDirEntry {
+            path: corpus_path.to_path_buf(),
+            uuid: entry.uuid,
+            timestamp: entry.timestamp,
+        };
+        if existing.read_tx_seq().is_ok_and(|existing| same_tx_sequence(&existing, tx_seq)) {
+            if let Err(err) = std::fs::remove_file(&entry.path) {
+                debug!(target: "corpus", %err, "failed to remove synced corpus link {}", entry.path.display());
+                return false;
+            }
+            return true;
+        }
+
+        warn!(target: "corpus", "not overwriting conflicting corpus file {}", corpus_path.display());
+        let quarantine_path =
+            entry.path.with_file_name(format!("{}.{}.invalid", entry.name(), Uuid::new_v4()));
+        if let Err(err) = std::fs::rename(&entry.path, &quarantine_path) {
+            debug!(target: "corpus", %err, "failed to quarantine conflicting corpus file {}", entry.path.display());
+        }
+        return false;
+    }
+
+    if let Err(err) = std::fs::rename(&entry.path, corpus_path) {
+        debug!(target: "corpus", %err, "failed to move synced corpus from {:?} to {corpus_path:?} dir", entry.path);
+        return false;
+    }
+    true
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CorpusInsertionMode {
     Live,
@@ -283,6 +318,7 @@ pub(crate) struct WorkerCorpusSeed {
     edge_indices: EdgeIndexMap,
     sancov_history_map: Vec<u8>,
     metrics: CorpusMetrics,
+    replay_dirs: Option<Vec<PathBuf>>,
     failed_replays: usize,
     optimization_best_value: Option<I256>,
     optimization_best_sequence: Vec<BasicTxDetails>,
@@ -343,6 +379,7 @@ impl WorkerCorpusSeed {
             edge_indices: self.edge_indices.clone(),
             sancov_history_map: self.sancov_history_map.clone(),
             metrics,
+            replay_dirs: self.replay_dirs.clone(),
             failed_replays: self.failed_replays,
             optimization_best_value: self.optimization_best_value,
             optimization_best_sequence: self.optimization_best_sequence.clone(),
@@ -375,6 +412,8 @@ impl WorkerCorpusSeed {
         let Some(corpus_dir) = &config.corpus_dir else {
             return Ok(seed);
         };
+        let replay_dirs = canonical_replay_dirs(corpus_dir);
+        seed.replay_dirs = Some(replay_dirs.clone());
 
         // Seed in-memory corpus with the persisted optimization best sequence so the mutation
         // engine can build on it in future runs.
@@ -395,7 +434,7 @@ impl WorkerCorpusSeed {
         };
         let mut seen_entries =
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
-        for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
+        for entry in unique_corpus_entries(&replay_dirs, &mut seen_entries) {
             // A corrupt or truncated corpus file (e.g. a process killed mid-write, since entries
             // are persisted non-atomically) must not abort the whole campaign startup: skip it
             // and keep loading the rest of the corpus.
@@ -584,8 +623,8 @@ pub struct WorkerCorpus {
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
     new_entry_indices: Vec<usize>,
-    /// Whether the master still needs to distribute corpus entries loaded at startup.
-    initial_export_pending: bool,
+    /// Corpus directories the master loaded at startup and still needs to distribute.
+    initial_export_dirs: Option<Vec<PathBuf>>,
     /// Worker Dir
     /// corpus_dir/worker1/
     worker_dir: Option<PathBuf>,
@@ -812,8 +851,9 @@ impl WorkerCorpus {
         id: usize,
         config: FuzzCorpusConfig,
         sequence_generator: SequenceGenerator,
-        seed: WorkerCorpusSeed,
+        mut seed: WorkerCorpusSeed,
     ) -> Result<Self> {
+        let initial_export_dirs = if id == 0 { seed.replay_dirs.take() } else { None };
         let worker_dir = config.corpus_dir.as_ref().map(|corpus_dir| {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
             let worker_corpus = worker_dir.join(CORPUS_DIR);
@@ -838,7 +878,7 @@ impl WorkerCorpus {
             current_mutated_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
-            initial_export_pending: id == 0,
+            initial_export_dirs,
             worker_dir,
             last_sync_metrics: Default::default(),
             optimization_best_value: seed.optimization_best_value,
@@ -1213,6 +1253,14 @@ impl WorkerCorpus {
                 Ok(tx_seq) => tx_seq,
                 Err(err) => {
                     warn!(target: "corpus", "skipping unreadable corpus file {}: {err}", entry.path.display());
+                    let quarantine_path = entry.path.with_file_name(format!(
+                        "{}.{}.invalid",
+                        entry.name(),
+                        Uuid::new_v4()
+                    ));
+                    if let Err(err) = std::fs::rename(&entry.path, &quarantine_path) {
+                        debug!(target: "corpus", %err, "failed to quarantine unreadable corpus file {}", entry.path.display());
+                    }
                     continue;
                 }
             };
@@ -1288,8 +1336,7 @@ impl WorkerCorpus {
             if keep_entry && new_coverage {
                 // Move file from sync/ to corpus/ directory.
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
-                if let Err(err) = std::fs::rename(sync_path, &corpus_path) {
-                    debug!(target: "corpus", %err, "failed to move synced corpus from {sync_path:?} to {corpus_path:?} dir");
+                if !accept_synced_corpus_file(&entry, &tx_seq, &corpus_path) {
                     continue;
                 }
 
@@ -1369,8 +1416,11 @@ impl WorkerCorpus {
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
-        let entries = if self.initial_export_pending {
-            read_corpus_dir(&master_corpus_dir).map(|entry| entry.path).collect::<Vec<_>>()
+        let entries = if let Some(replay_dirs) = &self.initial_export_dirs {
+            let mut seen_entries = HashSet::new();
+            unique_corpus_entries(replay_dirs, &mut seen_entries)
+                .map(|entry| entry.path)
+                .collect::<Vec<_>>()
         } else {
             self.new_entry_indices
                 .iter()
@@ -1404,7 +1454,7 @@ impl WorkerCorpus {
             }
         }
 
-        self.initial_export_pending = false;
+        self.initial_export_dirs = None;
         debug!(target: "corpus", %any_distributed, "distributed master corpus to all workers");
 
         Ok(())
@@ -1791,12 +1841,18 @@ mod tests {
         let mut empty = CorpusEntry::new(vec![]);
         empty.timestamp = 0;
         let empty_path = empty.write_to_disk_in(&sync_dir, false).unwrap();
+        let corrupt_path = sync_dir.join(format!("{}-0.json", Uuid::new_v4()));
+        fs::write(&corrupt_path, b"{ not valid json").unwrap();
 
         let imports = manager.load_sync_corpus().unwrap();
 
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].0.timestamp, 0);
         assert!(!empty_path.exists());
+        assert!(!corrupt_path.exists());
+        assert!(fs::read_dir(&sync_dir).unwrap().flatten().any(|entry| {
+            entry.file_name().to_string_lossy().ends_with(".invalid") && entry.path().is_file()
+        }));
     }
 
     #[test]
@@ -1822,7 +1878,7 @@ mod tests {
     fn master_distributes_old_synced_entries() {
         let corpus_root = temp_corpus_dir();
         let mut master = empty_worker_corpus(0, corpus_root.clone());
-        master.initial_export_pending = false;
+        master.initial_export_dirs = None;
         let mut corpus =
             CorpusEntry::new(vec![basic_tx_with_calldata(vec![0; GZIP_THRESHOLD * 2])]);
         corpus.timestamp = 0;
@@ -1841,25 +1897,62 @@ mod tests {
     #[test]
     fn master_distributes_startup_corpus_only_once() {
         let corpus_root = temp_corpus_dir();
-        let mut master = empty_worker_corpus(0, corpus_root.clone());
         let corpus = CorpusEntry::new(vec![basic_tx()]);
         let name = corpus.file_name(false);
-        corpus.write_to_disk_in(&corpus_root.join("worker0").join(CORPUS_DIR), false).unwrap();
+        let non_master_corpus = corpus_root.join("worker1").join(CORPUS_DIR);
+        fs::create_dir_all(&non_master_corpus).unwrap();
+        corpus.write_to_disk_in(&non_master_corpus, false).unwrap();
+        let seed = WorkerCorpusSeed {
+            replay_dirs: Some(canonical_replay_dirs(&corpus_root)),
+            ..Default::default()
+        };
+        let mut master = worker_corpus(0, corpus_root.clone(), seed);
 
-        master.export_to_workers(2).unwrap();
-        let worker_sync = corpus_root.join("worker1").join(SYNC_DIR).join(name);
-        assert!(worker_sync.is_file());
+        master.export_to_workers(3).unwrap();
+        let source_worker_sync = corpus_root.join("worker1").join(SYNC_DIR).join(&name);
+        let other_worker_sync = corpus_root.join("worker2").join(SYNC_DIR).join(&name);
+        assert!(source_worker_sync.is_file());
+        assert!(other_worker_sync.is_file());
 
-        fs::remove_file(&worker_sync).unwrap();
-        master.export_to_workers(2).unwrap();
-        assert!(!worker_sync.exists());
+        let source_entry = read_corpus_dir(source_worker_sync.parent().unwrap()).next().unwrap();
+        assert!(accept_synced_corpus_file(
+            &source_entry,
+            &source_entry.read_tx_seq().unwrap(),
+            &non_master_corpus.join(&name),
+        ));
+        assert!(!source_worker_sync.exists());
+        assert!(non_master_corpus.join(&name).is_file());
+
+        fs::remove_file(&other_worker_sync).unwrap();
+        master.export_to_workers(3).unwrap();
+        assert!(!other_worker_sync.exists());
+
+        let flat_root = temp_corpus_dir();
+        let flat_corpus = CorpusEntry::new(vec![basic_tx()]);
+        let flat_name = flat_corpus.file_name(false);
+        flat_corpus.write_to_disk_in(&flat_root, false).unwrap();
+        let config = corpus_config(flat_root.clone());
+        let seed = WorkerCorpusSeed::load_from_disk::<foundry_evm_core::evm::EthEvmNetwork>(
+            &config,
+            None,
+            ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
+        )
+        .unwrap();
+        fs::create_dir_all(flat_root.join("worker1").join(CORPUS_DIR)).unwrap();
+        let generator =
+            test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
+        let mut flat_master = WorkerCorpus::from_seed(0, config, generator, seed).unwrap();
+
+        flat_master.export_to_workers(2).unwrap();
+
+        assert!(flat_root.join("worker1").join(SYNC_DIR).join(flat_name).is_file());
     }
 
     #[test]
     fn master_fanout_indices_remain_valid_after_eviction() {
         let corpus_root = temp_corpus_dir();
         let mut master = empty_worker_corpus(0, corpus_root.clone());
-        master.initial_export_pending = false;
+        master.initial_export_dirs = None;
         let mut evicted = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
         evicted.total_mutations = 1;
         let retained = CorpusEntry::new(vec![basic_tx_with_calldata([2])]);
@@ -2109,6 +2202,7 @@ mod tests {
                 corpus_count: 1,
                 favored_items: 0,
             },
+            replay_dirs: None,
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: tx_seq,
@@ -2153,6 +2247,7 @@ mod tests {
                 corpus_count: 10,
                 favored_items: 5,
             },
+            replay_dirs: None,
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: vec![basic_tx()],
