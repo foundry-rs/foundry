@@ -38,6 +38,68 @@ contract SymbolicInternalStatus {
     );
 });
 
+forgetest_init!(symbolic_internal_cheatcode_warns_for_constrained_vm_target, |prj, cmd| {
+    skip_unless_z3!("symbolic_internal_cheatcode_warns_for_constrained_vm_target");
+
+    prj.add_test(
+        "SymbolicConstrainedVmTarget.t.sol",
+        r#"
+interface VmProbe {
+    function assume(bool) external;
+}
+
+contract SymbolicConstrainedVmTarget {
+    VmProbe constant vm =
+        VmProbe(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function check_forced_vm_target(address who) public {
+        vm.assume(who == address(vm));
+        (bool success,) = who.call(abi.encodeWithSignature("_expectCheatcodeRevert()"));
+        success;
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicConstrainedVmTarget"])
+        .assert_failure();
+    assert_eq!(
+        output.get_output().stderr_lossy(),
+        "Warning: the following cheatcode(s) are intended for internal use and may change or be \
+         removed:\n  _expectCheatcodeRevert()\n"
+    );
+});
+
+forgetest_init!(symbolic_stable_cheatcode_executes_for_constrained_vm_target, |prj, cmd| {
+    skip_unless_z3!("symbolic_stable_cheatcode_executes_for_constrained_vm_target");
+
+    prj.add_test(
+        "SymbolicConstrainedVmDeal.t.sol",
+        r#"
+interface VmProbe {
+    function assume(bool) external;
+}
+
+contract SymbolicConstrainedVmDeal {
+    VmProbe constant vm =
+        VmProbe(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function check_forced_vm_target_executes(address who) public {
+        vm.assume(who == address(vm));
+        (bool success,) =
+            who.call(abi.encodeWithSignature("deal(address,uint256)", address(0xBEEF), 11));
+        require(success, "deal failed");
+        require(address(0xBEEF).balance == 11, "balance not set");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-contract", "SymbolicConstrainedVmDeal"])
+        .assert_success();
+});
+
 forgetest_init!(symbolic_cheatcodes_accept_symbolic_address_targets, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

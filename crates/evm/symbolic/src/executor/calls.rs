@@ -21,7 +21,13 @@ impl SymbolicExecutor {
         }
         let target = state.stack.pop()?;
         ensure_expr_not_gasleft(&target)?;
-        let target_address = state.world.resolve_address(&target);
+        // Path constraints are ground truth for the target: a word they force to a single
+        // value is concrete even when unresolved (or stale) in the alias table, mirroring
+        // address_or_symbolic_slot. Constants short-circuit inside constrained_word.
+        let target_address = state
+            .constrained_word(&mut self.cx, &target)
+            .map(word_to_address)
+            .or_else(|| state.world.resolve_address(&target));
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to)) if is_known_cheatcode(to) => {
                 let value = state.stack.pop()?;
