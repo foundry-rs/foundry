@@ -1,8 +1,8 @@
 use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
-use alloy_json_abi::{Constructor, JsonAbi};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_json_abi::JsonAbi;
 use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256, hex};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder as AlloyProviderBuilder};
@@ -15,13 +15,12 @@ use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
         LoadConfig, ResolvedLane, find_contract_artifacts, maybe_print_resolved_lane,
-        read_constructor_args_file, resolve_lane,
+        parse_constructor_args, read_constructor_args_file, resolve_lane,
     },
 };
 use foundry_common::{
     FoundryTransactionBuilder,
     compile::{self},
-    fmt::parse_tokens,
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
@@ -222,7 +221,7 @@ impl CreateArgs {
         let params = if let Some(constructor) = &abi.constructor {
             let constructor_args =
                 self.constructor_args_path.clone().map(read_constructor_args_file).transpose()?;
-            self.parse_constructor_args(
+            parse_constructor_args(
                 constructor,
                 constructor_args.as_deref().unwrap_or(&self.constructor_args),
             )?
@@ -733,35 +732,6 @@ impl CreateArgs {
         sh_status!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
     }
-
-    /// Parses the given constructor arguments into a vector of `DynSolValue`s, by matching them
-    /// against the constructor's input params.
-    ///
-    /// Returns a list of parsed values that match the constructor's input params.
-    fn parse_constructor_args(
-        &self,
-        constructor: &Constructor,
-        constructor_args: &[String],
-    ) -> Result<Vec<DynSolValue>> {
-        if constructor.inputs.len() != constructor_args.len() {
-            eyre::bail!(
-                "Constructor argument count mismatch: expected {} but got {}",
-                constructor.inputs.len(),
-                constructor_args.len()
-            );
-        }
-
-        let mut params = Vec::with_capacity(constructor.inputs.len());
-        for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
-            // resolve the input type directly
-            let ty = input
-                .resolve()
-                .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
-            params.push((ty, arg));
-        }
-        let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
-        parse_tokens(params).map_err(Into::into)
-    }
 }
 
 impl figment::Provider for CreateArgs {
@@ -924,6 +894,7 @@ impl From<PendingTransactionError> for ContractDeploymentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_abi::Constructor;
     use alloy_primitives::I256;
 
     #[test]
@@ -994,7 +965,7 @@ mod tests {
             "Hello",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"string","internalType":"string"}],"stateMutability":"nonpayable"}"#).unwrap();
-        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        let params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::String("Hello".to_string())]);
     }
 
@@ -1007,7 +978,7 @@ mod tests {
             "[(1,2), (2,3), (3,4)]",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
-        let _params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        let _params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
     }
 
     #[test]
@@ -1019,7 +990,7 @@ mod tests {
             "-5",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
-        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        let params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
     }
 }
