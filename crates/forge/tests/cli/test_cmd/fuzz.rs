@@ -4326,6 +4326,68 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 "#]]);
 });
 
+forgetest_init!(test_fuzz_stale_success_does_not_consume_run, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.dictionary.dictionary_weight = 0;
+    });
+    prj.add_test(
+        "StaleFailure.t.sol",
+        r#"
+contract StaleFailureTest {
+    error Nonzero(uint256 value);
+
+    function testFuzz_slot(uint256 value) public pure {
+        if (value != 0) revert Nonzero(value);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "StaleFailureTest", "-j1"]).assert_failure();
+
+    let failure_file = prj.root().join("cache/fuzz/failures/StaleFailureTest/testFuzz_slot");
+    let mut failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    let generated_calldata = failure.calldata.clone();
+    assert_ne!(U256::from_be_slice(&generated_calldata[4..]), U256::ZERO);
+
+    let selector = generated_calldata[..4].to_vec();
+    failure.calldata = [selector.as_slice(), &[0; 32]].concat().into();
+    failure.args = Some("0".to_string());
+    failure.raw_args = Some("0".to_string());
+    std::fs::write(&failure_file, serde_json::to_vec(&failure).unwrap()).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "StaleFailureTest", "-j1"]).assert_failure();
+
+    let failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert_eq!(failure.calldata, generated_calldata);
+    assert_eq!(failure.fuzz.seed, Some(U256::from(1)));
+    assert_eq!(failure.fuzz.run, Some(1));
+    assert_eq!(failure.fuzz.worker, Some(0));
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "StaleFailureTest",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-run",
+            "1",
+            "--fuzz-worker",
+            "0",
+            "-j1",
+        ])
+        .assert_failure();
+
+    let failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert_eq!(failure.calldata, generated_calldata);
+});
+
 forgetest_init!(fuzz_basic, |prj, cmd| {
     prj.add_test(
         "Fuzz.t.sol",
