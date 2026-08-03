@@ -640,6 +640,16 @@ pub struct TestArgs {
     #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Trace options")]
     suppress_successful_traces: bool,
 
+    /// Write test results as JSON to the specified file.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with = "list",
+        help_heading = "Display options"
+    )]
+    json_file: Option<PathBuf>,
+
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
     pub junit: bool,
@@ -1167,6 +1177,9 @@ impl TestArgs {
         if self.junit {
             conflicts.push("--junit");
         }
+        if self.json_file.is_some() {
+            conflicts.push("--json-file");
+        }
         if coverage {
             conflicts.push("coverage");
         }
@@ -1196,6 +1209,9 @@ impl TestArgs {
         }
         if self.junit {
             conflicts.push("--junit");
+        }
+        if self.json_file.is_some() {
+            conflicts.push("--json-file");
         }
         if self.list {
             conflicts.push("--list");
@@ -1953,6 +1969,7 @@ impl TestArgs {
 
         // Enable internal tracing for more informative flamegraph/profile.
         config.tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let json_trace_depth = config.tracing.trace_depth;
         let decode_internal_enabled = config.tracing.decode_internal || trace_output.is_some();
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
@@ -2065,6 +2082,12 @@ impl TestArgs {
                     replayed
                 );
             }
+        }
+
+        if let Some(path) = &self.json_file {
+            let mut results = outcome.results.clone();
+            prepare_results_for_json(&mut results, evm_opts.verbosity, json_trace_depth);
+            fs::write_json_file(path, &results)?;
         }
 
         if let Some(trace_output) = trace_output {
@@ -2745,22 +2768,7 @@ impl TestArgs {
         // Run tests in a non-streaming fashion and collect results for serialization.
         if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
-            for suite_result in results.values_mut() {
-                for test_result in suite_result.test_results.values_mut() {
-                    if verbosity >= 2 {
-                        // Decode logs at level 2 and above.
-                        test_result.decoded_logs = decode_console_logs(&test_result.logs);
-                    } else {
-                        // Empty logs for non verbose runs.
-                        test_result.logs = vec![];
-                    }
-                    if let Some(trace_depth) = tracing.trace_depth {
-                        for (_, arena) in &mut test_result.traces {
-                            *arena = trace_arena_at_depth(arena, trace_depth);
-                        }
-                    }
-                }
-            }
+            prepare_results_for_json(&mut results, verbosity, tracing.trace_depth);
             if let Some(regression) = &symbolic_regression {
                 let artifacts = collect_symbolic_artifacts_from_suites(results.values());
                 let regressions = emit_symbolic_regressions(
@@ -3267,6 +3275,27 @@ impl TestArgs {
             let config = self.load_config()?;
             Ok([config.src, config.test])
         })
+    }
+}
+
+fn prepare_results_for_json(
+    results: &mut BTreeMap<String, SuiteResult>,
+    verbosity: u8,
+    trace_depth: Option<usize>,
+) {
+    for suite_result in results.values_mut() {
+        for test_result in suite_result.test_results.values_mut() {
+            if verbosity >= 2 {
+                test_result.decoded_logs = decode_console_logs(&test_result.logs);
+            } else {
+                test_result.logs = Vec::new();
+            }
+            if let Some(trace_depth) = trace_depth {
+                for (_, arena) in &mut test_result.traces {
+                    *arena = trace_arena_at_depth(arena, trace_depth);
+                }
+            }
+        }
     }
 }
 
