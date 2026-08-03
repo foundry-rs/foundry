@@ -226,6 +226,7 @@ pub struct Config {
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
     /// Remappings to use for this repo
+    #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
@@ -1370,6 +1371,21 @@ impl Config {
         }
 
         let project = builder.build(self.compiler()?)?;
+
+        // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
+        // directory boundary with the native separator so a later `Remapping::to_string` does not
+        // discard it while converting the context back to slash-separated solc syntax.
+        #[cfg(windows)]
+        let mut project = project;
+        #[cfg(windows)]
+        for remapping in &mut project.paths.remappings {
+            if let Some(context) = &mut remapping.context
+                && context.ends_with('/')
+            {
+                context.pop();
+                context.push(std::path::MAIN_SEPARATOR);
+            }
+        }
 
         if self.force {
             // Warnings are intentionally dropped here because `sh_warn!` is a circular
@@ -3077,7 +3093,11 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "remappings_serde::serialize"
+    )]
     pub remappings: Vec<RelativeRemapping>,
     /// The active non-Ethereum network (e.g. `"tempo"`).
     #[serde(skip)]
@@ -3119,6 +3139,46 @@ impl BasicConfig {
         Ok(format!(
             "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
+    }
+}
+
+mod remappings_serde {
+    use foundry_compilers::artifacts::remappings::RelativeRemapping;
+    #[cfg(windows)]
+    use path_slash::PathExt as _;
+    use serde::{Serialize, Serializer};
+    #[cfg(windows)]
+    use std::path::Path;
+
+    #[cfg(windows)]
+    fn slash_context(context: &str) -> String {
+        let has_trailing_separator =
+            context.as_bytes().last().is_some_and(|c| *c == b'/' || *c == b'\\');
+        let mut context = Path::new(context).to_slash_lossy().into_owned();
+        if has_trailing_separator && !context.ends_with('/') {
+            context.push('/');
+        }
+        context
+    }
+
+    pub fn serialize<S>(remappings: &[RelativeRemapping], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        remappings
+            .iter()
+            .map(|remapping| {
+                let Some(context) = &remapping.context else { return remapping.to_string() };
+                let mut remapping = remapping.clone();
+                remapping.context = None;
+                #[cfg(windows)]
+                let context = slash_context(context);
+                #[cfg(not(windows))]
+                let context = context.as_str();
+                format!("{context}:{remapping}")
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
     }
 }
 
@@ -4944,6 +5004,38 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn config_serialization_preserves_context_directory_boundary() {
+        let remapping = "lib/outer/:inner/=lib/outer/lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_serialization_preserves_verbatim_unc_context() {
+        let remapping = r"\\?\UNC\server\share\project\:inner/=lib/inner/";
+        let expected = r"\\?\UNC\server\share/project/:inner/=lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
     }
 
     #[test]
