@@ -1,9 +1,11 @@
 //! Pure transaction-sequence generation and mutation primitives.
 
 use crate::{
-    BasicTxDetails,
+    BasicTxDetails, FuzzFixtures,
     invariant::FuzzRunIdentifiedContracts,
-    strategies::{FuzzState, TxGenerator, generate_msg_value, mutate_param_value},
+    strategies::{
+        FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
+    },
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -49,6 +51,7 @@ enum SequenceMode {
 pub struct SequenceGenerator {
     tx: TxGenerator,
     state: FuzzState,
+    fixtures: FuzzFixtures,
     mode: SequenceMode,
     weights: FuzzCorpusMutationWeights,
     mutations: WeightedIndex<u32>,
@@ -138,7 +141,16 @@ impl SequenceGenerator {
         function: Function,
         config: &FuzzCorpusConfig,
     ) -> Result<Self> {
-        Self::new(tx, state, SequenceMode::Stateless(function), config)
+        Self::stateless_with_fixtures(tx, state, FuzzFixtures::default(), function, config)
+    }
+    pub fn stateless_with_fixtures(
+        tx: TxGenerator,
+        state: FuzzState,
+        fixtures: FuzzFixtures,
+        function: Function,
+        config: &FuzzCorpusConfig,
+    ) -> Result<Self> {
+        Self::new(tx, state, fixtures, SequenceMode::Stateless(function), config)
     }
     pub fn invariant(
         tx: TxGenerator,
@@ -146,11 +158,21 @@ impl SequenceGenerator {
         targets: FuzzRunIdentifiedContracts,
         config: &FuzzCorpusConfig,
     ) -> Result<Self> {
-        Self::new(tx, state, SequenceMode::Invariant(targets), config)
+        Self::invariant_with_fixtures(tx, state, FuzzFixtures::default(), targets, config)
+    }
+    pub fn invariant_with_fixtures(
+        tx: TxGenerator,
+        state: FuzzState,
+        fixtures: FuzzFixtures,
+        targets: FuzzRunIdentifiedContracts,
+        config: &FuzzCorpusConfig,
+    ) -> Result<Self> {
+        Self::new(tx, state, fixtures, SequenceMode::Invariant(targets), config)
     }
     fn new(
         tx: TxGenerator,
         state: FuzzState,
+        fixtures: FuzzFixtures,
         mode: SequenceMode,
         config: &FuzzCorpusConfig,
     ) -> Result<Self> {
@@ -185,6 +207,7 @@ impl SequenceGenerator {
         Ok(Self {
             tx,
             state,
+            fixtures,
             mode,
             weights,
             mutations,
@@ -243,8 +266,13 @@ impl SequenceGenerator {
         let hints = entry.comparisons.first().map_or(&[][..], Vec::as_slice);
         match self.arg_mutations.as_ref().map(|d| d.sample(runner.rng()) == 1) {
             Some(true)
-                if !SequenceMutator::cmp_mutate(&mut tx, function, hints, runner)?
-                    && self.weights.mutation_weight_abi > 0
+                if !SequenceMutator::cmp_mutate(
+                    &mut tx,
+                    function,
+                    hints,
+                    runner,
+                    &self.fixtures,
+                )? && self.weights.mutation_weight_abi > 0
                     && !function.inputs.is_empty() =>
             {
                 SequenceMutator::abi_mutate(
@@ -252,6 +280,7 @@ impl SequenceGenerator {
                     function,
                     runner,
                     &self.state,
+                    &self.fixtures,
                     self.payable_weight,
                 )?
             }
@@ -262,11 +291,13 @@ impl SequenceGenerator {
                     function,
                     runner,
                     &self.state,
+                    &self.fixtures,
                     self.payable_weight,
                 )?
             }
             Some(false) if self.weights.mutation_weight_cmp > 0 => {
-                let _ = SequenceMutator::cmp_mutate(&mut tx, function, hints, runner)?;
+                let _ =
+                    SequenceMutator::cmp_mutate(&mut tx, function, hints, runner, &self.fixtures)?;
             }
             None => return Ok((InitialSequence::Single(self.tx.next_tx(runner)?), None)),
             _ => {}
@@ -347,6 +378,7 @@ impl SequenceGenerator {
                             f,
                             runner,
                             &self.state,
+                            &self.fixtures,
                             self.payable_weight,
                         )?;
                     }
@@ -360,7 +392,8 @@ impl SequenceGenerator {
                         for (idx, h) in candidates.cycle().skip(start).take(count) {
                             let tx = &mut seq[idx];
                             if let (_, Some(f)) = targets.targets().fuzzed_artifacts(tx) {
-                                mutated = SequenceMutator::cmp_mutate(tx, f, h, runner)?;
+                                mutated =
+                                    SequenceMutator::cmp_mutate(tx, f, h, runner, &self.fixtures)?;
                                 if mutated {
                                     break;
                                 }
@@ -377,6 +410,7 @@ impl SequenceGenerator {
                                 f,
                                 runner,
                                 &self.state,
+                                &self.fixtures,
                                 self.payable_weight,
                             )?
                         }
@@ -471,6 +505,7 @@ impl SequenceMutator {
         function: &Function,
         runner: &mut TestRunner,
         state: &FuzzState,
+        fixtures: &FuzzFixtures,
         payable_value_weight: u32,
     ) -> Result<()> {
         if function.inputs.is_empty() || tx.call_details.calldata.len() < 4 {
@@ -500,6 +535,11 @@ impl SequenceMutator {
             );
             rounds -= 1;
         }
+        let inputs = inputs
+            .into_iter()
+            .zip(&function.inputs)
+            .map(|(value, input)| constrain_enum_value(value, input, fixtures))
+            .collect::<Vec<_>>();
         tx.call_details.calldata =
             function.abi_encode_input(&inputs).map_err(|err| eyre!(err.to_string()))?.into();
         Ok(())
@@ -510,6 +550,7 @@ impl SequenceMutator {
         function: &Function,
         hints: &[ComparisonHint],
         runner: &mut TestRunner,
+        fixtures: &FuzzFixtures,
     ) -> Result<bool> {
         if hints.is_empty() || tx.call_details.calldata.len() <= 4 {
             return Ok(false);
@@ -520,7 +561,14 @@ impl SequenceMutator {
                 tx.call_details.calldata.as_ref(),
                 hints[(start + offset) % hints.len()],
                 runner,
-            ) && function.abi_decode_input(&calldata[4..]).is_ok()
+            ) && let Ok(inputs) = function.abi_decode_input(&calldata[4..])
+                && inputs
+                    .iter()
+                    .cloned()
+                    .zip(&function.inputs)
+                    .map(|(value, input)| constrain_enum_value(value, input, fixtures))
+                    .zip(&inputs)
+                    .all(|(constrained, input)| constrained == *input)
             {
                 tx.call_details.calldata = calldata.into();
                 return Ok(true);
@@ -684,6 +732,7 @@ mod tests {
                 &function,
                 &[ComparisonHint { lhs: U256::from(7), rhs: U256::from(42) }],
                 &mut runner,
+                &FuzzFixtures::default(),
             )
             .unwrap()
         );

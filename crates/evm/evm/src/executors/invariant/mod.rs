@@ -1802,9 +1802,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_state.collect_fuzzer_values(fuzzer);
             let _ = fuzzer.take_observed_calls();
         }
-        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::invariant(
+        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::invariant_with_fixtures(
             generator,
             fuzz_state.clone(),
+            fuzz_fixtures.clone(),
             targeted_contracts.clone(),
             &config.corpus,
         )?;
