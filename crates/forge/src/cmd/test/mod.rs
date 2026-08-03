@@ -3290,8 +3290,18 @@ fn prepare_results_for_json(
             } else {
                 test_result.logs = Vec::new();
             }
-            if let Some(trace_depth) = trace_depth {
-                for (_, arena) in &mut test_result.traces {
+            for (_, arena) in &mut test_result.traces {
+                // Discard presentation-only decoding populated by the streaming renderer.
+                for node in arena.nodes_mut() {
+                    node.trace.decoded = None;
+                    for log in &mut node.logs {
+                        log.decoded = None;
+                    }
+                    for step in &mut node.trace.steps {
+                        step.decoded = None;
+                    }
+                }
+                if let Some(trace_depth) = trace_depth {
                     *arena = trace_arena_at_depth(arena, trace_depth);
                 }
             }

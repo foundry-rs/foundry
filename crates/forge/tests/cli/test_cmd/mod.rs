@@ -495,15 +495,20 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
     let json_stdout = cmd
         .forge_fuse()
-        .args(["test", "--json", "--json-file"])
-        .arg(&json_path)
+        .args(["test", "-vvvv", "--json"])
         .assert_success()
         .get_output()
         .stdout
         .clone();
-    let stdout_results: serde_json::Value = serde_json::from_slice(&json_stdout).unwrap();
-    let file_results: serde_json::Value =
+    cmd.forge_fuse().args(["test", "-vvvv", "--json-file"]).arg(&json_path).assert_success();
+    let mut stdout_results: serde_json::Value = serde_json::from_slice(&json_stdout).unwrap();
+    let mut file_results: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&json_path).unwrap()).unwrap();
+    for results in [&mut stdout_results, &mut file_results] {
+        let suite = &mut results["src/Simple.t.sol:SimpleContractTest"];
+        suite.as_object_mut().unwrap().remove("duration");
+        suite["test_results"]["test()"].as_object_mut().unwrap().remove("duration");
+    }
     assert_eq!(file_results, stdout_results);
 
     prj.add_test(
