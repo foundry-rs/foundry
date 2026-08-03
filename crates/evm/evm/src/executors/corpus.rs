@@ -113,6 +113,9 @@ struct CorpusEntry {
     /// Timestamp of when this entry was written to disk in seconds.
     #[serde(skip_serializing)]
     timestamp: u64,
+    /// Original filename for an entry imported from another worker.
+    #[serde(skip_serializing)]
+    persisted_file_name: Option<String>,
 }
 
 impl CorpusEntry {
@@ -138,6 +141,7 @@ impl CorpusEntry {
                 .duration_since(UNIX_EPOCH)
                 .expect("time went backwards")
                 .as_secs(),
+            persisted_file_name: None,
         }
     }
 
@@ -161,6 +165,9 @@ impl CorpusEntry {
     }
 
     fn file_name(&self, can_gzip: bool) -> String {
+        if let Some(name) = &self.persisted_file_name {
+            return name.clone();
+        }
         let ext = if self.should_gzip(can_gzip) { ".json.gz" } else { ".json" };
         format!("{}-{}{ext}", self.uuid, self.timestamp)
     }
@@ -577,8 +584,8 @@ pub struct WorkerCorpus {
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
     new_entry_indices: Vec<usize>,
-    /// Last sync timestamp in seconds.
-    last_sync_timestamp: u64,
+    /// Whether the master still needs to distribute corpus entries loaded at startup.
+    initial_export_pending: bool,
     /// Worker Dir
     /// corpus_dir/worker1/
     worker_dir: Option<PathBuf>,
@@ -831,7 +838,7 @@ impl WorkerCorpus {
             current_mutated_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
-            last_sync_timestamp: 0,
+            initial_export_pending: id == 0,
             worker_dir,
             last_sync_metrics: Default::default(),
             optimization_best_value: seed.optimization_best_value,
@@ -1201,9 +1208,6 @@ impl WorkerCorpus {
 
         let mut imports = vec![];
         for entry in read_corpus_dir(&sync_dir) {
-            if entry.timestamp <= self.last_sync_timestamp {
-                continue;
-            }
             // A corrupt or truncated sync file must not abort the whole sync pass: skip it.
             let tx_seq = match entry.read_tx_seq() {
                 Ok(tx_seq) => tx_seq,
@@ -1214,6 +1218,9 @@ impl WorkerCorpus {
             };
             if tx_seq.is_empty() {
                 warn!(target: "corpus", "skipping empty corpus entry: {}", entry.path.display());
+                if let Err(err) = std::fs::remove_file(&entry.path) {
+                    debug!(target: "corpus", %err, "failed to remove empty corpus file {}", entry.path.display());
+                }
                 continue;
             }
             imports.push((entry, tx_seq));
@@ -1224,6 +1231,21 @@ impl WorkerCorpus {
         }
 
         Ok(imports)
+    }
+
+    /// Adds a calibrated sync entry to the local corpus and queues it for fan-out on the master.
+    fn push_synced_corpus_entry(
+        &mut self,
+        mut corpus: CorpusEntry,
+        timestamp: u64,
+        file_name: String,
+    ) {
+        corpus.timestamp = timestamp;
+        corpus.persisted_file_name = Some(file_name);
+        if self.id == 0 {
+            self.new_entry_indices.push(self.in_memory_corpus.len());
+        }
+        self.in_memory_corpus.push(corpus);
     }
 
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
@@ -1278,7 +1300,11 @@ impl WorkerCorpus {
                 );
 
                 let corpus_entry = CorpusEntry::new_with_cmp(tx_seq.clone(), cmp_seq, entry.uuid);
-                self.in_memory_corpus.push(corpus_entry);
+                self.push_synced_corpus_entry(
+                    corpus_entry,
+                    entry.timestamp,
+                    entry.name().to_owned(),
+                );
             } else {
                 // Remove the file as it did not generate new coverage.
                 if let Err(err) = std::fs::remove_file(&entry.path) {
@@ -1343,9 +1369,15 @@ impl WorkerCorpus {
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
-        let filtered_master_corpus = read_corpus_dir(&master_corpus_dir)
-            .filter(|entry| entry.timestamp > self.last_sync_timestamp)
-            .collect::<Vec<_>>();
+        let entries = if self.initial_export_pending {
+            read_corpus_dir(&master_corpus_dir).map(|entry| entry.path).collect::<Vec<_>>()
+        } else {
+            self.new_entry_indices
+                .iter()
+                .filter_map(|&index| self.in_memory_corpus.get(index))
+                .map(|corpus| master_corpus_dir.join(corpus.file_name(self.config.corpus_gzip)))
+                .collect()
+        };
         let mut any_distributed = false;
         for target_worker in 1..num_workers {
             let target_dir = self
@@ -1360,18 +1392,19 @@ impl WorkerCorpus {
                 foundry_common::fs::create_dir_all(&target_dir)?;
             }
 
-            for entry in &filtered_master_corpus {
-                let name = entry.name();
+            for path in &entries {
+                let Some(name) = path.file_name() else { continue };
                 let sync_path = target_dir.join(name);
-                if let Err(err) = std::fs::hard_link(&entry.path, &sync_path) {
-                    debug!(target: "corpus", %err, from=?entry.path, to=?sync_path, "failed to distribute corpus");
+                if let Err(err) = std::fs::hard_link(path, &sync_path) {
+                    debug!(target: "corpus", %err, from=?path, to=?sync_path, "failed to distribute corpus");
                     continue;
                 }
                 any_distributed = true;
-                trace!(target: "corpus", %name, ?target_dir, "distributed corpus");
+                trace!(target: "corpus", name=%name.to_string_lossy(), ?target_dir, "distributed corpus");
             }
         }
 
+        self.initial_export_pending = false;
         debug!(target: "corpus", %any_distributed, "distributed master corpus to all workers");
 
         Ok(())
@@ -1450,12 +1483,9 @@ impl WorkerCorpus {
             self.export_to_master()?;
         }
 
-        let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        self.last_sync_timestamp = last_sync;
-
         self.new_entry_indices.clear();
 
-        debug!(target: "corpus", last_sync, "synced");
+        debug!(target: "corpus", "synced");
 
         Ok(())
     }
@@ -1748,6 +1778,107 @@ mod tests {
             }
         }
         assert_eq!((ok, err), (1, 1), "the corrupt file must read as Err, the valid one as Ok");
+    }
+
+    #[test]
+    fn sync_inbox_loads_entries_regardless_of_timestamp() {
+        let corpus_root = temp_corpus_dir();
+        let manager = empty_worker_corpus(0, corpus_root.clone());
+        let sync_dir = corpus_root.join("worker0").join(SYNC_DIR);
+        let mut corpus = CorpusEntry::new(vec![basic_tx()]);
+        corpus.timestamp = 0;
+        corpus.write_to_disk_in(&sync_dir, false).unwrap();
+        let mut empty = CorpusEntry::new(vec![]);
+        empty.timestamp = 0;
+        let empty_path = empty.write_to_disk_in(&sync_dir, false).unwrap();
+
+        let imports = manager.load_sync_corpus().unwrap();
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].0.timestamp, 0);
+        assert!(!empty_path.exists());
+    }
+
+    #[test]
+    fn synced_entries_are_queued_for_fanout_only_on_master() {
+        let corpus_root = temp_corpus_dir();
+        let mut master = empty_worker_corpus(0, corpus_root.clone());
+        let mut worker = empty_worker_corpus(1, corpus_root);
+        let master_entry = CorpusEntry::new(vec![basic_tx()]);
+        let worker_entry = CorpusEntry::new(vec![basic_tx()]);
+
+        master.push_synced_corpus_entry(master_entry, 1, "master-1.json".to_string());
+        worker.push_synced_corpus_entry(worker_entry, 2, "worker-2.json".to_string());
+
+        assert_eq!(master.new_entry_indices, [0]);
+        assert!(worker.new_entry_indices.is_empty());
+        assert_eq!(master.in_memory_corpus[0].timestamp, 1);
+        assert_eq!(worker.in_memory_corpus[0].timestamp, 2);
+        assert_eq!(master.metrics.corpus_count, 0);
+        assert_eq!(worker.metrics.corpus_count, 0);
+    }
+
+    #[test]
+    fn master_distributes_old_synced_entries() {
+        let corpus_root = temp_corpus_dir();
+        let mut master = empty_worker_corpus(0, corpus_root.clone());
+        master.initial_export_pending = false;
+        let mut corpus =
+            CorpusEntry::new(vec![basic_tx_with_calldata(vec![0; GZIP_THRESHOLD * 2])]);
+        corpus.timestamp = 0;
+        let path =
+            corpus.write_to_disk_in(&corpus_root.join("worker0").join(CORPUS_DIR), true).unwrap();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        assert!(name.ends_with(".json.gz"));
+        master.push_synced_corpus_entry(corpus, 0, name.clone());
+
+        master.export_to_workers(3).unwrap();
+
+        assert!(corpus_root.join("worker1").join(SYNC_DIR).join(&name).is_file());
+        assert!(corpus_root.join("worker2").join(SYNC_DIR).join(name).is_file());
+    }
+
+    #[test]
+    fn master_distributes_startup_corpus_only_once() {
+        let corpus_root = temp_corpus_dir();
+        let mut master = empty_worker_corpus(0, corpus_root.clone());
+        let corpus = CorpusEntry::new(vec![basic_tx()]);
+        let name = corpus.file_name(false);
+        corpus.write_to_disk_in(&corpus_root.join("worker0").join(CORPUS_DIR), false).unwrap();
+
+        master.export_to_workers(2).unwrap();
+        let worker_sync = corpus_root.join("worker1").join(SYNC_DIR).join(name);
+        assert!(worker_sync.is_file());
+
+        fs::remove_file(&worker_sync).unwrap();
+        master.export_to_workers(2).unwrap();
+        assert!(!worker_sync.exists());
+    }
+
+    #[test]
+    fn master_fanout_indices_remain_valid_after_eviction() {
+        let corpus_root = temp_corpus_dir();
+        let mut master = empty_worker_corpus(0, corpus_root.clone());
+        master.initial_export_pending = false;
+        let mut evicted = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        evicted.total_mutations = 1;
+        let retained = CorpusEntry::new(vec![basic_tx_with_calldata([2])]);
+        let evicted_name = evicted.file_name(false);
+        let retained_name = retained.file_name(false);
+        let evicted_timestamp = evicted.timestamp;
+        let retained_timestamp = retained.timestamp;
+        let master_corpus = corpus_root.join("worker0").join(CORPUS_DIR);
+        evicted.write_to_disk_in(&master_corpus, false).unwrap();
+        retained.write_to_disk_in(&master_corpus, false).unwrap();
+        master.push_synced_corpus_entry(evicted, evicted_timestamp, evicted_name.clone());
+        master.push_synced_corpus_entry(retained, retained_timestamp, retained_name.clone());
+
+        master.evict_oldest_corpus().unwrap();
+        master.export_to_workers(2).unwrap();
+
+        let worker_sync = corpus_root.join("worker1").join(SYNC_DIR);
+        assert!(!worker_sync.join(evicted_name).exists());
+        assert!(worker_sync.join(retained_name).is_file());
     }
 
     #[test]
