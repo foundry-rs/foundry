@@ -6,7 +6,6 @@ use crate::{
 };
 use alloy_primitives::{Address, hex};
 use anvil::{NodeConfig, spawn};
-use axum::{Router, body::Bytes as BodyBytes};
 use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
 use foundry_test_utils::{
     forgetest, forgetest_async,
@@ -14,17 +13,7 @@ use foundry_test_utils::{
     str,
     util::{OutputExt, TestCommand, TestProject},
 };
-use serde_json::Value;
-use std::{
-    fs,
-    str::FromStr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
-use tokio::{sync::Barrier, time::timeout};
+use std::{fs, str::FromStr};
 
 /// This will insert _dummy_ contract that uses a library
 ///
@@ -301,68 +290,6 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
-});
-
-forgetest_async!(create_fetches_nonce_and_fees_concurrently, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
-    prj.initialize_default_contracts();
-
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let upstream = handle.http_endpoint();
-    let wallet = handle.dev_wallets().next().unwrap();
-    let pk = hex::encode(wallet.credential().to_bytes());
-
-    let barrier = Arc::new(Barrier::new(2));
-    let serialized = Arc::new(AtomicBool::new(false));
-    let proxy_serialized = serialized.clone();
-    let client = reqwest::Client::new();
-    let app = Router::new().fallback(move |body: BodyBytes| {
-        let upstream = upstream.clone();
-        let barrier = barrier.clone();
-        let serialized = proxy_serialized.clone();
-        let client = client.clone();
-        async move {
-            let request: Value = serde_json::from_slice(&body).unwrap();
-            if matches!(
-                request.get("method").and_then(Value::as_str),
-                Some("eth_getTransactionCount" | "eth_feeHistory")
-            ) && timeout(Duration::from_secs(5), barrier.wait()).await.is_err()
-            {
-                serialized.store(true, Ordering::Relaxed);
-            }
-            client
-                .post(upstream)
-                .header("content-type", "application/json")
-                .body(body)
-                .send()
-                .await
-                .unwrap()
-                .bytes()
-                .await
-                .unwrap()
-        }
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-    cmd.forge_fuse()
-        .args([
-            "create",
-            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
-            "--rpc-url",
-            &endpoint,
-            "--private-key",
-            &pk,
-            "--chain",
-            "31337",
-            "--gas-limit",
-            "100000",
-            "--quiet",
-        ])
-        .assert_success();
-
-    assert!(!serialized.load(Ordering::Relaxed), "nonce and fee requests were serialized");
 });
 
 forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, cmd| {

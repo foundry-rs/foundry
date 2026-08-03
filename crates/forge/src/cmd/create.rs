@@ -484,45 +484,9 @@ impl CreateArgs {
             deployer.tx.set_nonce_key(U256::ZERO);
         }
 
-        let mut prefetched_gas_price = None;
-        let mut prefetched_eip1559_fees = None;
-        let mut prefetched_nonce = None;
-        if self.tx.nonce.is_none() && !self.tx.tempo.expiring_nonce && tempo_keychain.is_none() {
-            if is_legacy && self.tx.gas_price.is_none() {
-                let (nonce, gas_price) = tokio::try_join!(
-                    provider.get_transaction_count(deployer_address),
-                    provider.get_gas_price()
-                )?;
-                prefetched_nonce = Some(nonce);
-                prefetched_gas_price = Some(gas_price);
-            } else if !is_legacy
-                && (self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none())
-            {
-                let (nonce, fees) = tokio::try_join!(
-                    async {
-                        Ok::<_, eyre::Error>(
-                            provider.get_transaction_count(deployer_address).await?,
-                        )
-                    },
-                    async {
-                        estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err(
-                            "Failed to estimate EIP1559 fees. This chain might not support \
-                             EIP1559, try adding --legacy to your command.",
-                        )
-                    }
-                )?;
-                prefetched_nonce = Some(nonce);
-                prefetched_eip1559_fees = Some(fees);
-            }
-        }
-
         // Fetch defaults from provider for values not specified by user.
         if self.tx.nonce.is_none() && !self.tx.tempo.expiring_nonce {
-            let nonce = match prefetched_nonce {
-                Some(nonce) => nonce,
-                None => provider.get_transaction_count(deployer_address).await?,
-            };
-            deployer.tx.set_nonce(nonce);
+            deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
         }
 
         maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
@@ -534,18 +498,11 @@ impl CreateArgs {
 
         if is_legacy {
             if self.tx.gas_price.is_none() {
-                let gas_price = match prefetched_gas_price {
-                    Some(gas_price) => gas_price,
-                    None => provider.get_gas_price().await?,
-                };
-                deployer.tx.set_gas_price(gas_price);
+                deployer.tx.set_gas_price(provider.get_gas_price().await?);
             }
         } else {
             if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
-                let estimate = match prefetched_eip1559_fees {
-                    Some(fees) => fees,
-                    None => estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?,
-                };
+                let estimate = estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                 // Only honor the browser-suggested tip when the user has not pinned
                 // a priority fee; `resolve_broadcast_eip1559_fees` ignores a lower tip.
