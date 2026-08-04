@@ -171,9 +171,9 @@ impl PrecompileFactory for CountingPostBlockPrecompiles {
                         bytes: Bytes::new(),
                         gas_used: 0,
                         gas_refunded: 0,
-                    state_gas_used: 0,
-                    state_gas_spilled: 0,
-                    reservoir: input.reservoir,
+                        state_gas_used: 0,
+                        state_gas_spilled: 0,
+                        reservoir: input.reservoir,
                     })
                 });
                 (address, precompile)
