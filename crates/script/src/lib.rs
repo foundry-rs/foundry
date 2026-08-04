@@ -52,7 +52,7 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -487,7 +487,10 @@ impl ScriptArgs {
                 .code_size_limit
                 .or(pre_simulation.script_config.config.code_size_limit)
                 .map(ContractSizeLimits::with_runtime_limit)
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    let spec_id: SpecFor<FEN> = pre_simulation.script_config.config.evm_spec_id();
+                    ContractSizeLimits::for_spec_id(spec_id.into())
+                });
             pre_simulation.args.check_contract_sizes(
                 size_limits,
                 &pre_simulation.execution_result,
@@ -602,8 +605,8 @@ impl ScriptArgs {
         Ok((func.clone(), data.into()))
     }
 
-    /// Checks if the transaction is a deployment with either a size above the default contract size
-    /// limit or specified `code_size_limit`.
+    /// Checks if the transaction is a deployment with a size above the active EVM specification's
+    /// contract size limit or the specified `code_size_limit`.
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.

@@ -201,7 +201,7 @@ pub struct NodeConfig {
     pub prune_history: PruneStateHistoryConfig,
     /// Max number of states cached on disk.
     pub max_persisted_states: Option<usize>,
-    /// The file where to load the state from
+    /// The initial state to apply and consume during startup.
     pub init_state: Option<SerializableState>,
     /// max number of blocks with transactions in memory
     pub transaction_block_keeper: Option<usize>,
