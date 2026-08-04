@@ -236,7 +236,7 @@ use tempo_revm::{
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
 /// Side-channel container for OP-specific deposit info produced by
-/// [`Backend::build_call_env`] and consumed by the OP transact path.
+/// [`Backend::build_call_env_with_base`] and consumed by the OP transact path.
 ///
 /// When the `optimism` feature is enabled, this is an alias for
 /// `op_revm::DepositTransactionParts`. When disabled, it is a zero-sized
