@@ -1284,14 +1284,18 @@ impl<N: Network> EthApi<N> {
             let mut warmed: Vec<(u64, FeeHistoryCacheItem)> = Vec::new();
             let mut items: Vec<FeeHistoryCacheItem> = Vec::with_capacity(cached.len());
             for (cached_item, n) in cached.into_iter().zip(local_lowest..=highest) {
-                let (block, hash) = self
+                let hash = self
                     .backend
-                    .get_block_with_hash(n)
+                    .block_hash_by_number(n)
                     .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
-                let header = block.header;
                 let item = match cached_item {
                     Some(item) if item.block_hash == hash => item,
                     _ => {
+                        let block = self
+                            .backend
+                            .get_block_by_hash(hash)
+                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                        let header = block.header;
                         let (item, block_number) = create_fee_history_cache_item(
                             hash,
                             &header,
@@ -4906,5 +4910,46 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{NodeConfig, spawn};
+
+    // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fee_history_is_complete_when_cache_entries_are_missing() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let count = 10u64;
+        api.anvil_mine(Some(U256::from(count)), None).await.unwrap();
+
+        // Wait until the asynchronous service has consumed all block notifications, then clear
+        // its cache. With no notifications left to repopulate it, this deterministically exercises
+        // the RPC handler's fallback for canonical blocks whose cache entries are absent.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if (1..=count).all(|number| api.fee_history_cache.lock().contains_key(&number)) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        api.fee_history_cache.lock().clear();
+
+        let fee_history =
+            api.fee_history(U256::from(count), BlockNumber::Latest, vec![50.0]).await.unwrap();
+
+        assert_eq!(fee_history.oldest_block, 1);
+        assert_eq!(fee_history.gas_used_ratio.len(), count as usize);
+        assert_eq!(fee_history.blob_gas_used_ratio.len(), count as usize);
+        assert_eq!(fee_history.base_fee_per_gas.len(), count as usize + 1);
+        assert_eq!(fee_history.base_fee_per_blob_gas.len(), count as usize + 1);
+        let rewards = fee_history.reward.unwrap();
+        assert_eq!(rewards.len(), count as usize);
+        assert!(rewards.iter().all(|reward| reward.len() == 1));
     }
 }

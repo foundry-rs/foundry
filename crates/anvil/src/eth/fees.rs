@@ -296,8 +296,8 @@ where
 
 /// Inserts an entry into the fee history cache and trims it back to `fee_history_limit`.
 ///
-/// Shared by the async [`FeeHistoryService`] and the `eth_feeHistory` fallback so both paths
-/// enforce [`MAX_FEE_HISTORY_CACHE_SIZE`]; inserting directly would let the cache grow unbounded.
+/// Used by the async [`FeeHistoryService`]. The `eth_feeHistory` fallback applies the same bounded
+/// insertion policy to a batch under one lock.
 pub(crate) fn insert_fee_history_cache_item(
     cache: &FeeHistoryCache,
     item: FeeHistoryCacheItem,

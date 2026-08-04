@@ -6,7 +6,8 @@ use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use anvil::{EthereumHardfork, NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use revm::context_interface::block::BlobExcessGasAndPrice;
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -217,54 +218,43 @@ async fn test_can_use_fee_history() {
     }
 }
 
-// Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
-//
-// `eth_feeHistory` reads from a cache that the `FeeHistoryService` populates asynchronously, so it
-// can lag the chain head. Burst-mining many blocks exercises the completeness invariant under that
-// scheduling race; `test_fee_history_ignores_stale_cache_after_reset` deterministically exercises
-// the same on-demand computation path.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_fee_history_complete_when_cache_lags() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
-
-    // Mine a burst of blocks while the cache is updated by a separate task.
-    api.anvil_mine(Some(U256::from(100)), None).await.unwrap();
-
-    let count = 10u64;
-    let fee_history =
-        api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
-
-    // Per-block arrays must have exactly `count` entries; `base_fee_per_gas` additionally includes
-    // the next block, so it has `count + 1`.
-    assert_eq!(fee_history.gas_used_ratio.len(), count as usize, "incomplete gas_used_ratio");
-    assert_eq!(
-        fee_history.base_fee_per_gas.len(),
-        count as usize + 1,
-        "incomplete base_fee_per_gas"
-    );
-}
-
 // `base_fee_per_gas` includes one entry for the block after the requested range. For a
 // historical range, that entry must come from the historical child rather than the current
 // chain head's next-block fee.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fee_history_historical_next_block_fee() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
     let provider = handle.http_provider();
+    let blob_params = api.backend.blob_params();
+    let blob_update_fraction = u64::try_from(blob_params.update_fraction).unwrap();
 
-    for base_fee in [100, 200, 300] {
+    for (base_fee, excess_blob_gas) in [(100, 0), (200, 10_000_000), (300, 20_000_000)] {
         api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
-        api.mine_one().await;
+        api.backend.fees().set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+            excess_blob_gas,
+            blob_update_fraction,
+        ));
+        api.mine_one().await.unwrap();
     }
     api.anvil_set_next_block_base_fee_per_gas(U256::from(400)).await.unwrap();
+    api.backend.fees().set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+        30_000_000,
+        blob_update_fraction,
+    ));
 
     let history =
         api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    let historical = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
     let historical_child = provider.get_block(BlockId::number(2)).await.unwrap().unwrap();
     let historical_next_fee = historical_child.header.base_fee_per_gas.unwrap() as u128;
+    let historical_blob_fee = historical.header.blob_fee().unwrap();
+    let historical_next_blob_fee = historical_child.header.blob_fee().unwrap();
 
     assert_eq!(history.base_fee_per_gas, vec![100, historical_next_fee]);
     assert_ne!(historical_next_fee, api.base_fee().unwrap().unwrap().to::<u128>());
+    assert_eq!(history.base_fee_per_blob_gas, vec![historical_blob_fee, historical_next_blob_fee]);
+    assert_ne!(historical_next_blob_fee, api.backend.fees().base_fee_per_blob_gas());
 }
 
 // Cache entries from the previous chain must not survive `anvil_reset` merely because the new
