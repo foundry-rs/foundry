@@ -39,7 +39,7 @@ jobs:
           script: |
             const usage = [
               '**Usage:** `derek bench <subcommand> [args]` (also `decofe bench ...`).\n',
-              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`\n',
+              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization] [baseline-extra-args=--flag=value,...] [feature-extra-args=--flag=value,...]`\n',
               '- `bench symex [compare-ref=REF] [timeout=N]`\n',
               '- `bench test [compare-ref=REF] [timeout=N] [isolate=true|false]`\n',
               '- `bench build [compare-ref=REF] [timeout=N] [cache=true|false]`\n',
@@ -157,6 +157,21 @@ jobs:
               return { unknown, invalid };
             };
 
+            const validateExtraArgsCsv = (key, value) => {
+              if (value === '') return [];
+              if (value.length > 256) return [`\`${key}\` must be at most 256 characters`];
+              if (/[\s"'`$;&|<>\\\x00-\x1F\x7F]/.test(value)) {
+                return [`\`${key}\` must be a comma-separated list of argv tokens without whitespace, quotes, shell metacharacters, or control characters`];
+              }
+              const invalidTokens = value
+                .split(',')
+                .filter((token) => !/^--[A-Za-z0-9][A-Za-z0-9._-]*(?:=[A-Za-z0-9][A-Za-z0-9._/:@+=-]*)?$/.test(token));
+              if (invalidTokens.length) {
+                return [`\`${key}\` contains invalid token(s): \`${invalidTokens.join('`, `')}\``];
+              }
+              return [];
+            };
+
             const buildFoundryBenchPayload = (opts, benchmarks) => ({
               repository: repoFullName,
               event: 'foundry-bench',
@@ -203,10 +218,12 @@ jobs:
                 timeout: '3600',
                 workers: '',
                 'benchmark-type': 'property',
+                'baseline-extra-args': '',
+                'feature-extra-args': '',
               };
               const { unknown, invalid } = parseArgs(
                 opts,
-                new Set(['compare-ref']),
+                new Set(['compare-ref', 'baseline-extra-args', 'feature-extra-args']),
                 new Set(['timeout', 'workers']),
                 { 'benchmark-type': new Set(['property', 'optimization']) },
               );
@@ -225,6 +242,8 @@ jobs:
                   invalid.push('`workers` must be between 1 and 256');
                 }
               }
+              invalid.push(...validateExtraArgsCsv('baseline-extra-args', opts['baseline-extra-args']));
+              invalid.push(...validateExtraArgsCsv('feature-extra-args', opts['feature-extra-args']));
 
               const errors = [];
               if (unknown.length) errors.push(`Unknown argument(s): \`${unknown.join('`, `')}\``);
@@ -250,6 +269,8 @@ jobs:
                   benchmark_type: opts['benchmark-type'],
                   timeout_seconds: opts.timeout,
                   workers: opts.workers,
+                  baseline_extra_args: opts['baseline-extra-args'],
+                  feature_extra_args: opts['feature-extra-args'],
                 },
               };
 
@@ -260,7 +281,9 @@ jobs:
                 `timeout: \`${opts.timeout}s\``,
                 opts.workers ? `workers: \`${opts.workers}\`` : 'workers: `default`',
                 `benchmark-type: \`${opts['benchmark-type']}\``,
-              ].join(', ');
+                opts['baseline-extra-args'] ? `baseline-extra-args: \`${opts['baseline-extra-args']}\`` : null,
+                opts['feature-extra-args'] ? `feature-extra-args: \`${opts['feature-extra-args']}\`` : null,
+              ].filter(Boolean).join(', ');
             }
 
             if (subcommand !== 'invariant') {
