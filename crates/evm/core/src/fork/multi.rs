@@ -637,9 +637,9 @@ async fn create_fork<
 ) -> eyre::Result<(ForkId, CreatedFork<N, SPEC, BLOCK>, BackendHandler<N, BLOCK>)> {
     // Ensure evm_opts reflects the fork URL (may differ from the resolved CreateFork url when
     // created via cheatcodes, where evm_opts is cloned from the base config).
-    let expected_network = fork.evm_opts.networks.execution_network();
+    let execution_networks = fork.evm_opts.networks;
     let require_endpoint_family_match =
-        fork.evm_opts.fork_network_is_inferred || !fork.evm_opts.networks.has_network_selection();
+        fork.evm_opts.fork_network_is_inferred || !execution_networks.has_network_selection();
     let targets_new_endpoint =
         fork.evm_opts.fork_endpoint.as_ref().is_some_and(|identity| identity.endpoint != fork.url);
     if targets_new_endpoint {
@@ -661,11 +661,13 @@ async fn create_fork<
     let any_provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
     let (evm_env, fork_context) =
         fork.evm_opts.fork_evm_env_with_context::<SPEC, BLOCK, _, _>(&any_provider).await?;
-    if require_endpoint_family_match {
-        eyre::ensure!(
-            fork_context.network == expected_network,
-            "cannot create a `{}` fork with an EVM instantiated for `{expected_network}`",
-            fork_context.network
+    if require_endpoint_family_match
+        && !execution_networks.supports_fork_source(&fork_context.network_profile)
+    {
+        eyre::bail!(
+            "cannot create a `{}` fork with an EVM instantiated for `{}`",
+            fork_context.network,
+            execution_networks.execution_network()
         );
     }
     if let Some(expected) = fork.expected_context

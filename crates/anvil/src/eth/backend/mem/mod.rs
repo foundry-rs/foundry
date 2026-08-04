@@ -4693,12 +4693,16 @@ impl<N: Network> Backend<N> {
             Arc::new(AsyncRwLock::new(Box::new(staged_db)));
         let staged_fork = ClientFork::new(staged_client_config.clone(), Arc::clone(&staged_db));
         let attempt = async {
-            if !self.networks.has_same_execution_profile(&staged_config.networks) {
+            let target_networks =
+                staged_client_config.endpoint_identity.network_profile.unwrap_or_default();
+            if !staged_config.has_explicit_network_selection()
+                && !self.networks.supports_fork_source(&target_networks)
+            {
                 return Err(RpcError::invalid_params(format!(
                     "cannot reset Anvil across execution profiles ({} -> {}); start a new \
                      instance with matching network configuration",
                     self.execution_profile_name(),
-                    staged_config.networks.execution_profile_name()
+                    target_networks.execution_profile_name()
                 ))
                 .into());
             }
@@ -4875,7 +4879,7 @@ impl<N: Network> Backend<N> {
         let target_networks = node_config.detect_fork_network(fork_url).await?;
         let current = self.networks.execution_profile_name();
         let target = target_networks.execution_profile_name();
-        if !self.networks.has_same_execution_profile(&target_networks) {
+        if !self.networks.supports_fork_source(&target_networks) {
             return Err(RpcError::invalid_params(format!(
                 "cannot reset Anvil across network families ({current} -> {target}); start a new instance with matching network configuration"
             ))

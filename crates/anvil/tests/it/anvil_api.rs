@@ -44,7 +44,7 @@ use std::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fork_resets_reject_celo_precompile_transitions() {
+async fn fork_resets_allow_celo_as_a_non_monad_source() {
     let (_ethereum_api, ethereum_origin) = spawn(NodeConfig::test()).await;
     let (_celo_api, celo_origin) = spawn(
         NodeConfig::test()
@@ -60,18 +60,16 @@ async fn fork_resets_reject_celo_precompile_transitions() {
             .with_fork_block_number(Some(0u64)),
     )
     .await;
-    let error = ethereum_fork
+    ethereum_fork
         .anvil_reset(Some(Forking {
             json_rpc_url: Some(celo_origin.http_endpoint()),
             block_number: Some(0),
         }))
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("cannot reset Anvil across network families (ethereum -> celo)"),
-        "unexpected error: {error}"
-    );
+        .unwrap();
+    let node_info = ethereum_fork.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("ethereum"));
+    assert_eq!(node_info.fork_config.fork_url, Some(celo_origin.http_endpoint()));
 
     let (celo_fork, _) = spawn(
         NodeConfig::test()
@@ -80,18 +78,16 @@ async fn fork_resets_reject_celo_precompile_transitions() {
             .with_fork_block_number(Some(0u64)),
     )
     .await;
-    let error = celo_fork
+    celo_fork
         .anvil_reset(Some(Forking {
             json_rpc_url: Some(ethereum_origin.http_endpoint()),
             block_number: Some(0),
         }))
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("cannot reset Anvil across network families (celo -> ethereum)"),
-        "unexpected error: {error}"
-    );
+        .unwrap();
+    let node_info = celo_fork.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("celo"));
+    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
 }
 
 #[tokio::test(flavor = "multi_thread")]

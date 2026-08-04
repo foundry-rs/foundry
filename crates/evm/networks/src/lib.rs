@@ -544,6 +544,15 @@ impl NetworkConfigs {
             }
     }
 
+    /// Returns whether this execution configuration can use `source` as a fork state source
+    /// without rebuilding the instantiated EVM.
+    ///
+    /// Monad uses a distinct EVM factory and instruction provider, so forks cannot cross the
+    /// Monad boundary. Existing non-Monad fork-source compatibility remains unchanged.
+    pub const fn supports_fork_source(&self, source: &Self) -> bool {
+        self.is_monad() == source.is_monad()
+    }
+
     /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
     pub fn active_network_name(&self) -> Option<&'static str> {
         self.resolved_network().and_then(|network| network.hardfork_namespace())
@@ -892,6 +901,28 @@ mod tests {
 
         #[cfg(all(feature = "optimism", feature = "monad"))]
         assert!(!NetworkVariant::Monad.is_optimism());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn fork_sources_only_isolate_monad() {
+        let mut non_monad = vec![
+            NetworkConfigs::default(),
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_celo(),
+            NetworkConfigs::with_tempo(),
+        ];
+        #[cfg(feature = "optimism")]
+        non_monad.push(NetworkConfigs::with_optimism());
+
+        for execution in &non_monad {
+            for source in &non_monad {
+                assert!(execution.supports_fork_source(source));
+            }
+            assert!(!execution.supports_fork_source(&NetworkConfigs::with_monad()));
+            assert!(!NetworkConfigs::with_monad().supports_fork_source(execution));
+        }
+        assert!(NetworkConfigs::with_monad().supports_fork_source(&NetworkConfigs::with_monad()));
     }
 
     #[test]

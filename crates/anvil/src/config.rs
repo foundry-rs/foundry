@@ -1780,7 +1780,7 @@ impl NodeConfig {
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
         if self.inferred_fork_network.is_some()
-            && !self.networks.has_same_execution_profile(&target_profile)
+            && !self.networks.supports_fork_source(&target_profile)
         {
             eyre::bail!(
                 "cannot reset Anvil across execution profiles ({} -> {}); start a new instance \

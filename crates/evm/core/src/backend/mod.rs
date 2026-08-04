@@ -2618,6 +2618,8 @@ mod tests {
     use super::{Fork, apply_state_changeset};
     #[cfg(feature = "monad")]
     use crate::evm::MonadEvmNetwork;
+    #[cfg(feature = "monad")]
+    use crate::fork::CreateFork;
     use crate::{
         backend::{Backend, ForkPosition},
         constants::MONAD_CHEATCODE_ADDRESS,
@@ -2637,6 +2639,8 @@ mod tests {
     use anvil::{NodeConfig, spawn};
     use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
     use foundry_config::{Config, NamedChain};
+    #[cfg(feature = "monad")]
+    use foundry_evm_networks::NetworkConfigs;
     use foundry_fork_db::{
         SharedBackend,
         cache::{BlockchainDb, BlockchainDbMeta},
@@ -2848,6 +2852,72 @@ mod tests {
 
             assert_eq!(temporary.active_fork().unwrap().position, position);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
+    async fn fork_factory_boundary_preserves_explicit_execution_overrides() {
+        async fn inferred_opts(endpoint: String, networks: Option<NetworkConfigs>) -> EvmOpts {
+            let mut opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
+            if let Some(networks) = networks {
+                opts.networks = networks;
+            }
+            opts.infer_network_from_fork().await.unwrap();
+            opts
+        }
+
+        fn target_fork(opts: EvmOpts, url: String) -> CreateFork {
+            CreateFork { url, enable_caching: false, evm_opts: opts, expected_context: None }
+        }
+
+        let (_ethereum_api, ethereum) = spawn(NodeConfig::test()).await;
+        let (_monad_api, monad) = spawn(NodeConfig::test_monad()).await;
+
+        let inferred_ethereum = inferred_opts(ethereum.http_endpoint(), None).await;
+        assert!(inferred_ethereum.fork_network_is_inferred);
+        let error = Backend::<EthEvmNetwork>::spawn(Some(target_fork(
+            inferred_ethereum,
+            monad.http_endpoint(),
+        )))
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot create a `monad` fork with an EVM instantiated for `ethereum`"),
+            "{error}"
+        );
+
+        let inferred_monad = inferred_opts(monad.http_endpoint(), None).await;
+        assert!(inferred_monad.fork_network_is_inferred);
+        let error = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+            inferred_monad,
+            ethereum.http_endpoint(),
+        )))
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot create a `ethereum` fork with an EVM instantiated for `monad`"),
+            "{error}"
+        );
+
+        let explicit_ethereum =
+            inferred_opts(ethereum.http_endpoint(), Some(NetworkConfigs::with_ethereum())).await;
+        assert!(!explicit_ethereum.fork_network_is_inferred);
+        let _backend = Backend::<EthEvmNetwork>::spawn(Some(target_fork(
+            explicit_ethereum,
+            monad.http_endpoint(),
+        )))
+        .unwrap();
+
+        let explicit_monad =
+            inferred_opts(monad.http_endpoint(), Some(NetworkConfigs::with_monad())).await;
+        assert!(!explicit_monad.fork_network_is_inferred);
+        let _backend = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+            explicit_monad,
+            ethereum.http_endpoint(),
+        )))
+        .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]

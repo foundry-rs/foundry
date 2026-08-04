@@ -437,4 +437,23 @@ mod tests {
             monad_revm::MONAD_MAX_INITCODE_SIZE
         );
     }
+
+    #[test]
+    fn evm_factories_only_isolate_monad_forks() {
+        for network in [NetworkVariant::Ethereum, NetworkVariant::Tempo] {
+            assert!(EthEvmNetwork::supports_network(network));
+            assert!(TempoEvmNetwork::supports_network(network));
+            assert!(!MonadEvmNetwork::supports_network(network));
+        }
+        #[cfg(feature = "optimism")]
+        {
+            assert!(EthEvmNetwork::supports_network(NetworkVariant::Optimism));
+            assert!(TempoEvmNetwork::supports_network(NetworkVariant::Optimism));
+            assert!(!MonadEvmNetwork::supports_network(NetworkVariant::Optimism));
+        }
+
+        assert!(!EthEvmNetwork::supports_network(NetworkVariant::Monad));
+        assert!(!TempoEvmNetwork::supports_network(NetworkVariant::Monad));
+        assert!(MonadEvmNetwork::supports_network(NetworkVariant::Monad));
+    }
 }

@@ -17,22 +17,20 @@ use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn inferred_optimism_forks_reject_cross_family_resets() {
+async fn inferred_optimism_forks_allow_non_monad_source_resets() {
     let (_optimism_api, optimism_handle) = spawn(NodeConfig::test().with_optimism()).await;
     let (ethereum_api, _) = spawn(NodeConfig::test()).await;
 
-    let err = ethereum_api
+    ethereum_api
         .anvil_reset(Some(Forking {
             json_rpc_url: Some(optimism_handle.http_endpoint()),
             block_number: Some(0),
         }))
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("cannot reset Anvil across network families (ethereum -> optimism)"),
-        "unexpected error: {err}"
-    );
+        .unwrap();
+    let node_info = ethereum_api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("ethereum"));
+    assert_eq!(node_info.fork_config.fork_url, Some(optimism_handle.http_endpoint()));
 
     let (optimism_api, _) = spawn(
         NodeConfig::test()
@@ -42,18 +40,16 @@ async fn inferred_optimism_forks_reject_cross_family_resets() {
     )
     .await;
     let (_ethereum_origin_api, ethereum_origin) = spawn(NodeConfig::test()).await;
-    let err = optimism_api
+    optimism_api
         .anvil_reset(Some(Forking {
             json_rpc_url: Some(ethereum_origin.http_endpoint()),
             block_number: Some(0),
         }))
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("cannot reset Anvil across network families (optimism -> ethereum)"),
-        "unexpected error: {err}"
-    );
+        .unwrap();
+    let node_info = optimism_api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("optimism"));
+    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
