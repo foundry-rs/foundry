@@ -3274,23 +3274,22 @@ impl<N: Network> Backend<N> {
         if !self.is_fork() {
             if let Some(eth_rpc_url) = forking.json_rpc_url.clone() {
                 let mut evm_env = self.evm_env.read().clone();
+                let mut node_config = self.node_config.read().await.clone();
 
-                let (db, config) = {
-                    let mut node_config = self.node_config.write().await;
+                // we want to force the correct base fee for the next block during
+                // `setup_fork_db_config`
+                node_config.base_fee.take();
+                node_config.fork_urls = vec![eth_rpc_url.clone()];
+                node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
-                    // we want to force the correct base fee for the next block during
-                    // `setup_fork_db_config`
-                    node_config.base_fee.take();
-                    node_config.fork_urls = vec![eth_rpc_url.clone()];
-                    node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
-
-                    node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
-                };
+                let (db, config) =
+                    node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?;
 
                 *self.db.write().await = Box::new(db);
 
                 let fork = ClientFork::new(config, Arc::clone(&self.db));
 
+                *self.node_config.write().await = node_config;
                 *self.evm_env.write() = evm_env;
                 *self.fork.write() = Some(fork);
             } else {

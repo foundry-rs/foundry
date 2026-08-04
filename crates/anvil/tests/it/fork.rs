@@ -646,6 +646,37 @@ async fn test_spawn_fork() {
     assert_eq!(head, U256::from(BLOCK_NUMBER))
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn validates_fork_source_chain_instead_of_local_chain_id() {
+    for chain_id in [NamedChain::ZkSyncTestnet, NamedChain::ZkSync] {
+        let (_origin_api, origin_handle) =
+            spawn(NodeConfig::test().with_chain_id(Some(chain_id as u64))).await;
+
+        let result = try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+                .with_chain_id(Some(31_337u64)),
+        )
+        .await;
+        let Err(error) = result else { panic!("expected zkSync fork startup to fail") };
+        let message = format!("{error:?}");
+        assert!(message.contains("cannot execute native EraVM bytecode"), "{message}");
+        assert!(message.contains("anvil-zksync"), "{message}");
+    }
+
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_chain_id(Some(NamedChain::ZkSync as u64)),
+    )
+    .await;
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::ZkSync as u64);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9743>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_set_storage_visible_to_call() {
@@ -2883,6 +2914,21 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_rpc_url_rejects_zksync_source_atomically() {
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let origin_url = origin_handle.http_endpoint();
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+    let error = api.anvil_set_rpc_url(zksync_handle.http_endpoint()).await.unwrap_err();
+
+    assert!(error.to_string().contains("cannot execute native EraVM bytecode"));
+    assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_with_url_updates_fork_urls() {
     // Spawn an origin node and fork off it
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
@@ -2906,4 +2952,55 @@ async fn test_anvil_reset_with_url_updates_fork_urls() {
         vec![new_url.clone()],
         "ClientForkConfig.fork_urls should reflect the new URL after anvil_reset"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_rejects_zksync_source_atomically() {
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let origin_url = origin_handle.http_endpoint();
+    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+    let original_block = handle.http_provider().get_block_number().await.unwrap();
+    let original_instance_id = api.instance_id();
+
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+    let error = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(zksync_handle.http_endpoint()),
+            block_number: None,
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot execute native EraVM bytecode"));
+    let fork = api.backend.get_fork().unwrap();
+    assert_eq!(fork.eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), original_block);
+    assert_eq!(api.instance_id(), original_instance_id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_from_local_node_rejects_zksync_source_atomically() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await;
+    let original_block = handle.http_provider().get_block_number().await.unwrap();
+    let original_chain_id = handle.http_provider().get_chain_id().await.unwrap();
+    let original_instance_id = api.instance_id();
+
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+    let error = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(zksync_handle.http_endpoint()),
+            block_number: None,
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot execute native EraVM bytecode"));
+    assert!(!api.is_fork());
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), original_block);
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), original_chain_id);
+    assert_eq!(api.instance_id(), original_instance_id);
 }

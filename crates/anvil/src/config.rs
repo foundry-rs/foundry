@@ -3,7 +3,7 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
-            fork::{ClientFork, ClientForkConfig},
+            fork::{ClientFork, ClientForkConfig, ensure_fork_network_supported},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
             time::duration_since_unix_epoch,
@@ -1401,31 +1401,27 @@ impl NodeConfig {
                 .wrap_err("failed to establish provider to fork url")?,
         );
 
-        let (fork_block_number, fork_chain_id, fork_transaction_replay) = if let Some(fork_choice) =
-            &self.fork_choice
-        {
-            let (fork_block_number, fork_transaction_replay) =
-                derive_block_and_replay(fork_choice, &provider).await.wrap_err(
-                    "failed to derive fork block and transaction replay from fork choice",
-                )?;
-            let chain_id = if let Some(chain_id) = self.fork_chain_id {
-                Some(chain_id)
-            } else if self.hardfork.is_none() {
-                let chain_id =
-                    provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-                Some(U256::from(chain_id))
-            } else {
-                None
-            };
-
-            (fork_block_number, chain_id, fork_transaction_replay)
+        let source_chain_id = if let Some(chain_id) = self.fork_chain_id {
+            chain_id.to()
         } else {
-            // pick the last block number but also ensure it's not pending anymore
-            let bn = find_latest_fork_block(&provider)
-                .await
-                .wrap_err("failed to get fork block number")?;
-            (bn, None, None)
+            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
         };
+        ensure_fork_network_supported(source_chain_id)?;
+
+        let (fork_block_number, fork_transaction_replay) =
+            if let Some(fork_choice) = &self.fork_choice {
+                let (fork_block_number, fork_transaction_replay) =
+                    derive_block_and_replay(fork_choice, &provider).await.wrap_err(
+                        "failed to derive fork block and transaction replay from fork choice",
+                    )?;
+                (fork_block_number, fork_transaction_replay)
+            } else {
+                // pick the last block number but also ensure it's not pending anymore
+                let bn = find_latest_fork_block(&provider)
+                    .await
+                    .wrap_err("failed to get fork block number")?;
+                (bn, None)
+            };
 
         let block = provider
             .get_block(BlockNumberOrTag::Number(fork_block_number).into())
@@ -1492,16 +1488,10 @@ latest block number: {latest_block}"
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
         } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
-
             // need to update the dev signers and env with the chain id
-            self.set_chain_id(Some(chain_id));
-            evm_env.cfg_env.chain_id = chain_id;
-            chain_id
+            self.set_chain_id(Some(source_chain_id));
+            evm_env.cfg_env.chain_id = source_chain_id;
+            source_chain_id
         };
 
         // Auto-detect hardfork from chain activation data if not explicitly set.
