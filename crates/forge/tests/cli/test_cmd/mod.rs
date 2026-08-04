@@ -2194,6 +2194,133 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(failed_fuzz_test_shows_only_failure_logs, |prj, cmd| {
+    let persist_dir = prj.cache().parent().unwrap().join("persist");
+    prj.update_config(|config| {
+        config.fuzz.runs = 5;
+        config.fuzz.show_logs = false;
+        config.fuzz.failure_persist_dir = Some(persist_dir);
+    });
+    prj.add_test(
+        "FuzzLogs.t.sol",
+        r#"
+contract FuzzLogsTest {
+    event log_named_uint(string key, uint256 value);
+
+    function testFuzzLogs(uint256 value) public {
+        if (value == 154) {
+            emit log_named_uint("FAILING CASE", value);
+            revert("target value");
+        }
+        emit log_named_uint("SUCCESSFUL CASE", value);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--match-test",
+        "testFuzzLogs",
+        "--fuzz-seed",
+        "1",
+        "--threads",
+        "1",
+        "-vv",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  FAILING CASE: 154
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    prj.update_config(|config| config.fuzz.runs = 128);
+    prj.add_test(
+        "FuzzLogs.t.sol",
+        r#"
+interface Vm {
+    function sleep(uint256 duration) external;
+}
+
+contract FuzzLogsTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    event log_named_uint(string key, uint256 value);
+
+    function testFuzzLogs(uint256 value) public {
+        if (value == 154) {
+            emit log_named_uint("FAILING CASE", value);
+            vm.sleep(100);
+            revert("target value");
+        }
+        emit log_named_uint("SUCCESSFUL CASE", value);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzzLogs",
+            "--fuzz-seed",
+            "1",
+            "--threads",
+            "2",
+            "-vv",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: [..], [AVG_GAS])
+Logs:
+  FAILING CASE: 154
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: [..], [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+});
+
 // tests that `forge test` with inline config `show_logs = false` for fuzz tests will
 // still display `console.log` from the last run at verbosity >= 2 (issue #11039)
 forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
