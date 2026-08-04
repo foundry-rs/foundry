@@ -11,8 +11,8 @@ use foundry_config::{Config, figment::Figment};
 use foundry_evm::opts::EvmOpts;
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
-pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Config, EvmOpts)> {
-    let config = load_config_from_provider(figment.clone())?;
+pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Config>, EvmOpts)> {
+    let config = Box::new(load_config_from_provider(figment.clone())?);
     let mut evm_opts = figment.extract::<EvmOpts>()?;
     evm_opts.networks = config.networks;
     Ok((config, evm_opts))

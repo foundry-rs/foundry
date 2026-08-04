@@ -29,7 +29,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
-    utils::{LoadConfig, TraceResult, load_config_from_provider, parse_ether_value},
+    utils::{LoadConfig, TraceResult, parse_ether_value},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -220,36 +220,40 @@ impl CallArgs {
         }
 
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        let (mut config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         if self.tx.tempo.is_tempo() {
             evm_opts.networks = NetworkConfigs::with_tempo();
             evm_opts.infer_network_from_fork().await?;
-            return self.run_with_network_and_opts::<TempoEvmNetwork>(evm_opts).await;
+            return self.run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts).await;
         }
         if let Some(chain) = self.chain {
             evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
         }
         evm_opts.infer_network_from_fork().await?;
-        if self.chain.is_none() {
-            self.chain = evm_opts.env.chain_id.map(Chain::from_id);
+        if self.chain.is_none()
+            && let Some(chain_id) = evm_opts.env.chain_id
+        {
+            let chain = Chain::from_id(chain_id);
+            self.chain = Some(chain);
+            config.chain = Some(chain);
         }
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_network_and_opts::<TempoEvmNetwork>(evm_opts).await;
+            return self.run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts).await;
         }
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_network_and_opts::<MonadEvmNetwork>(evm_opts).await;
+            return self.run_with_network_and_opts::<MonadEvmNetwork>(config, evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_network_and_opts::<OpEvmNetwork>(evm_opts).await;
+            return self.run_with_network_and_opts::<OpEvmNetwork>(config, evm_opts).await;
         }
 
-        self.run_with_network_and_opts::<EthEvmNetwork>(evm_opts).await
+        self.run_with_network_and_opts::<EthEvmNetwork>(config, evm_opts).await
     }
 
     fn validate_trace_args(&self) -> Result<()> {
@@ -286,18 +290,17 @@ impl CallArgs {
             );
         }
         // Keep the public generic wrapper independent of the network-specific future layout.
-        Box::pin(self.run_with_network_and_opts::<FEN>(evm_opts)).await
+        Box::pin(self.run_with_network_and_opts::<FEN>(config, evm_opts)).await
     }
 
     async fn run_with_network_and_opts<FEN: FoundryEvmNetwork>(
         self,
+        mut config: Box<Config>,
         evm_opts: EvmOpts,
     ) -> Result<()>
     where
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
-        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let mut config = load_config_from_provider(figment)?;
         config.networks = evm_opts.networks;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;

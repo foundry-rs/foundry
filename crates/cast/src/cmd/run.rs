@@ -27,7 +27,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts, TracingArgs},
-    utils::{TraceResult, init_progress, load_config_from_provider},
+    utils::{TraceResult, init_progress},
 };
 use foundry_common::{
     SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder, shell,
@@ -164,25 +164,27 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await?;
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_evm::<TempoEvmNetwork>(evm_opts).await;
+            return self.run_with_evm::<TempoEvmNetwork>(config, evm_opts).await;
         }
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_evm::<MonadEvmNetwork>(evm_opts).await;
+            return self.run_with_evm::<MonadEvmNetwork>(config, evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_evm::<OpEvmNetwork>(evm_opts).await;
+            return self.run_with_evm::<OpEvmNetwork>(config, evm_opts).await;
         }
 
-        self.run_with_evm::<EthEvmNetwork>(evm_opts).await
+        self.run_with_evm::<EthEvmNetwork>(config, evm_opts).await
     }
 
-    async fn run_with_evm<FEN: FoundryEvmNetwork>(mut self, evm_opts: EvmOpts) -> Result<()> {
-        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let mut config = load_config_from_provider(figment)?;
+    async fn run_with_evm<FEN: FoundryEvmNetwork>(
+        mut self,
+        mut config: Box<Config>,
+        evm_opts: EvmOpts,
+    ) -> Result<()> {
         config.networks = evm_opts.networks;
         self.tracing.labels.append(&mut self.legacy_labels);
         config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
