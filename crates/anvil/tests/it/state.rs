@@ -156,6 +156,47 @@ async fn test_load_state_equal_height_fork_keeps_fork_anchor() {
     );
 }
 
+// Loading a legacy account-only state at the fork head must still reset timestamp controls to
+// the canonical fork timeline, even though the state has no block environment.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_blockless_state_reanchors_time_to_fork_head() {
+    let (api_remote, handle_remote) = spawn(NodeConfig::test()).await;
+    api_remote.mine_one().await.unwrap();
+    let remote_head = api_remote
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(handle_remote.http_endpoint()))).await;
+    let one_year_ahead = remote_head.timestamp + 31_536_000;
+    api.evm_increase_time(U256::from(60)).await.unwrap();
+    api.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+
+    let state = SerializableState::default();
+    let state = Bytes::from(serde_json::to_vec(&state).unwrap());
+    assert!(api.anvil_load_state(state).await.unwrap());
+
+    api.mine_one().await.unwrap();
+    let new_head = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+    assert_eq!(new_head.parent_hash, remote_head.hash);
+    assert!(
+        new_head.timestamp < one_year_ahead,
+        "block after loading a blockless state reused pending timestamp controls: {} >= {}",
+        new_head.timestamp,
+        one_year_ahead
+    );
+}
+
 // When `anvil_loadState` rolls an already-advanced fork back to its fork head (state file at
 // or below the fork block), the discarded local timeline must not leak into the next block:
 // block time re-anchors to the fork head, exactly like `anvil_reset`.

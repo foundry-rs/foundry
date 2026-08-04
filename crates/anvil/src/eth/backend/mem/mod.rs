@@ -5813,6 +5813,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
         let mut selected_head = None;
         let mut selected_header = None;
@@ -5927,10 +5928,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             // identity also keeps the timeline of stale blocks a state file can carry above
             // its own best block out of the anchor. A head rolled back to the fork block has
             // no header in local storage, so take the fork timestamp, as `reset_fork` does.
-            match (fork_head, selected_head) {
-                (Some((fork_number, _, fork_timestamp)), Some((selected_number, _)))
-                    if selected_number == fork_number =>
-                {
+            match fork_head {
+                Some((_, fork_hash, fork_timestamp)) if storage.best_hash == fork_hash => {
                     Some(fork_timestamp)
                 }
                 _ => storage.blocks.get(&storage.best_hash).map(|b| b.header.timestamp),
