@@ -9,7 +9,7 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -31,6 +31,7 @@ use anvil_core::{
 use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryTxEnvelope;
+use futures::{FutureExt, StreamExt};
 use tempo_hardfork::TempoHardfork;
 
 use std::{
@@ -58,7 +59,7 @@ async fn can_set_block_gas_limit() {
     let block_gas_limit = U256::from(1337);
     assert!(api.evm_set_block_gas_limit(block_gas_limit).unwrap());
     // Mine a new block, and check the new block gas limit
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block_gas_limit.to::<u64>(), latest_block.header.gas_limit);
 }
@@ -599,16 +600,16 @@ async fn test_fork_revert_next_block_timestamp() {
     let (api, _handle) = spawn(fork_config()).await;
 
     // Mine a new block, and check the new block gas limit
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     let state_snapshot = api.evm_snapshot().await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     api.evm_revert(state_snapshot).await.unwrap();
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block, latest_block);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert!(block.header.timestamp >= latest_block.header.timestamp);
 }
@@ -623,13 +624,13 @@ async fn test_set_next_block_prevrandao() {
     let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
 
     api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.mix_hash, Some(prevrandao));
 
     // the override only applies to a single block: the next block uses the default derivation
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_ne!(next.header.mix_hash, Some(prevrandao));
 }
@@ -647,7 +648,7 @@ async fn test_set_next_block_prevrandao_evm() {
 
     let prevrandao = b256!("0x00000000000000000000000000000000000000000000000000000000deadbeef");
     api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
     let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
@@ -668,7 +669,7 @@ async fn test_set_next_block_prevrandao_cleared_on_reset() {
     api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
     // resetting must drop the pending override before it is consumed by a block
     api.anvil_reset(None).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_ne!(block.header.mix_hash, Some(prevrandao));
@@ -686,7 +687,7 @@ async fn test_set_next_block_prevrandao_cleared_on_revert() {
     api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
     // reverting must drop the pending override before it is consumed by a block
     api.evm_revert(state_snapshot).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_ne!(block.header.mix_hash, Some(prevrandao));
@@ -700,11 +701,11 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     let provider = handle.http_provider();
 
     // Mine a new block, and check the new block gas limit
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     let state_snapshot = api.evm_snapshot().await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     api.evm_revert(state_snapshot).await.unwrap();
 
     let multicall_contract =
@@ -844,8 +845,8 @@ async fn flaky_test_reorg() {
     let value = storage.getValue().call().await.unwrap();
     assert_eq!("initial value".to_string(), value);
 
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     // Test raw transaction data
     let mut tx = TxEip1559 {
@@ -892,7 +893,7 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Arbitrum as u64))).await;
     let provider = handle.http_provider();
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let recipient = accounts[1].address();
     let value = U256::from(100);
@@ -970,11 +971,268 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
             .unwrap();
 
     let replay = Arc::new(PoolTransaction::new(pending).with_replay());
-    let outcome = api.backend.mine_block(vec![replay, ordinary]).await;
+    let outcome = api.backend.mine_block(vec![replay, ordinary]).await.unwrap();
     assert_eq!(outcome.included.len(), 1);
     assert_eq!(outcome.included[0].hash(), replay_hash);
     assert_eq!(outcome.invalid.len(), 1);
     assert_eq!(outcome.invalid[0].hash(), ordinary_hash);
+}
+
+#[derive(Clone, Copy)]
+enum FinalizationFailure {
+    RevertingSystemCall,
+    MalformedDeposit,
+}
+
+async fn assert_failed_mining_is_atomic(failure: FinalizationFailure) {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_base_fee(Some(0));
+    let clean_config = config.clone();
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let contract = match failure {
+        FinalizationFailure::RevertingSystemCall => {
+            address!("0x1000000000000000000000000000000000000000")
+        }
+        FinalizationFailure::MalformedDeposit => {
+            address!("0x00000000219ab540356cbb839cbe05303d7705fa")
+        }
+    };
+    api.anvil_set_auto_mine(false).await.unwrap();
+    api.anvil_set_code(contract, Bytes::from_static(&[0x60, 0x01, 0x5f, 0x55, 0x00]))
+        .await
+        .unwrap();
+
+    match failure {
+        FinalizationFailure::RevertingSystemCall => {
+            api.anvil_set_code(
+                address!("0x00000961ef480eb55e80d19ad83579a64c007002"),
+                Bytes::from_static(&[0x5f, 0x5f, 0xfd]),
+            )
+            .await
+            .unwrap();
+        }
+        FinalizationFailure::MalformedDeposit => {
+            let mut code = vec![0x60, 0x01, 0x5f, 0x55, 0x7f];
+            code.extend_from_slice(
+                keccak256(b"DepositEvent(bytes,bytes,bytes,bytes,bytes)").as_slice(),
+            );
+            code.extend_from_slice(&[0x5f, 0x5f, 0xa1, 0x00]);
+            api.anvil_set_code(contract, code.into()).await.unwrap();
+        }
+    }
+
+    let genesis = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let best_hash = api.backend.best_hash();
+    let base_fee = api.base_fee().unwrap();
+    let blob_fee = api.excess_blob_gas_and_price().unwrap();
+    let balance = provider.get_balance(sender).await.unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    let storage = provider.get_storage_at(contract, U256::ZERO).await.unwrap();
+    let mut notifications = api.new_block_notifications();
+    let request =
+        TransactionRequest::default().from(sender).to(contract).gas_price(0).gas_limit(100_000);
+    api.send_transaction(WithOtherFields::new(request.clone())).await.unwrap();
+
+    let error = api.mine_one().await.unwrap_err();
+    let message = error.to_string();
+    match failure {
+        FinalizationFailure::RevertingSystemCall => {
+            assert!(message.contains("execution reverted"), "{message}");
+        }
+        FinalizationFailure::MalformedDeposit => {
+            assert!(message.contains("deposit") || message.contains("decode"), "{message}");
+        }
+    }
+
+    let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(api.backend.best_number(), 0);
+    assert_eq!(api.backend.best_hash(), best_hash);
+    assert_eq!(latest.header.hash, genesis.header.hash);
+    assert_eq!(latest.header.state_root, genesis.header.state_root);
+    assert_eq!(api.base_fee().unwrap(), base_fee);
+    assert_eq!(api.excess_blob_gas_and_price().unwrap(), blob_fee);
+    assert_eq!(provider.get_balance(sender).await.unwrap(), balance);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), storage);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 1);
+    assert!(notifications.next().now_or_never().is_none());
+
+    // A successful retry must produce the same root as a node that never executed the failed
+    // candidate, proving recovery publication matches a clean execution.
+    let valid_code = Bytes::from_static(&[0x60, 0x01, 0x5f, 0x55, 0x00]);
+    api.anvil_set_code(contract, valid_code.clone()).await.unwrap();
+    if matches!(failure, FinalizationFailure::RevertingSystemCall) {
+        api.anvil_set_code(address!("0x00000961ef480eb55e80d19ad83579a64c007002"), Bytes::new())
+            .await
+            .unwrap();
+    }
+
+    let (clean_api, _clean_handle) = spawn(clean_config).await;
+    clean_api.anvil_set_auto_mine(false).await.unwrap();
+    clean_api.anvil_set_code(contract, valid_code).await.unwrap();
+    if matches!(failure, FinalizationFailure::RevertingSystemCall) {
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        clean_api
+            .anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd]))
+            .await
+            .unwrap();
+        clean_api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+    }
+    clean_api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+
+    api.mine_one().await.unwrap();
+    clean_api.mine_one().await.unwrap();
+    let recovered = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let clean = clean_api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(recovered.header.state_root, clean.header.state_root);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reverting_prague_transition_rolls_back_mining() {
+    assert_failed_mining_is_atomic(FinalizationFailure::RevertingSystemCall).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn malformed_deposit_request_rolls_back_mining() {
+    assert_failed_mining_is_atomic(FinalizationFailure::MalformedDeposit).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mining_rpcs_preserve_controls_on_failure() {
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    for method in ["anvil_mine", "evm_mine", "evm_mine_detailed"] {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_base_fee(Some(0));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+        let genesis = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        let next_timestamp = genesis.header.timestamp + 100;
+        api.evm_set_next_block_timestamp(next_timestamp).unwrap();
+        api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+
+        let result: std::result::Result<serde_json::Value, _> = if method == "anvil_mine" {
+            provider.raw_request(method.into(), (U256::from(1),)).await
+        } else {
+            provider
+                .raw_request(
+                    method.into(),
+                    (MineOptions::Options { timestamp: None, blocks: Some(1) },),
+                )
+                .await
+        };
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("execution reverted"), "{method}: {error}");
+        assert_eq!(api.backend.best_number(), 0, "{method}");
+
+        api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+        api.mine_one().await.unwrap();
+        let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        assert_eq!(block.header.timestamp, next_timestamp, "{method}");
+        assert_eq!(block.header.mix_hash, Some(prevrandao), "{method}");
+
+        api.evm_increase_time(U256::from(1)).await.unwrap();
+        api.mine_one().await.unwrap();
+        let following = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        assert_ne!(following.header.mix_hash, Some(prevrandao), "{method}");
+        assert_eq!(following.header.timestamp, next_timestamp + 1, "{method}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_anvil_mine_preserves_interval_adjustment() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_base_fee(Some(0));
+    let (api, _) = spawn(config).await;
+    let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+    api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+    let genesis = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    api.evm_set_block_timestamp_interval(17).unwrap();
+
+    api.anvil_mine(Some(U256::from(2)), Some(U256::from(60))).await.unwrap_err();
+    api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, genesis.header.timestamp + 17);
+    assert!(api.evm_remove_block_timestamp_interval().unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mining_reselects_from_live_pool_after_failure() {
+    for drop_failed_transaction in [false, true] {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_base_fee(Some(0));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+
+        let first = TransactionRequest::default()
+            .from(accounts[0].address())
+            .to(accounts[1].address())
+            .value(U256::from(1));
+        let first_hash = api.send_transaction(WithOtherFields::new(first)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(api.backend.best_number(), 0);
+        assert!(provider.get_transaction_receipt(first_hash).await.unwrap().is_none());
+
+        if drop_failed_transaction {
+            assert_eq!(api.anvil_drop_transaction(first_hash).await.unwrap(), Some(first_hash));
+        }
+        api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+        let second = TransactionRequest::default()
+            .from(accounts[1].address())
+            .to(accounts[2].address())
+            .value(U256::from(1));
+        let second_hash = api.send_transaction(WithOtherFields::new(second)).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if provider.get_transaction_receipt(second_hash).await.unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let first_receipt = provider.get_transaction_receipt(first_hash).await.unwrap();
+        assert_eq!(first_receipt.is_some(), !drop_failed_transaction);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fixed_and_mixed_mining_failures_remain_bounded() {
+    for mixed in [false, true] {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_base_fee(Some(0))
+            .with_mixed_mining(mixed, Some(Duration::from_millis(100)));
+        let (api, _handle) = spawn(config).await;
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(api.backend.best_number(), 0, "mixed={mixed}");
+
+        api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while api.backend.best_number() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("scheduler did not recover, mixed={mixed}"));
+        assert_eq!(api.backend.best_number(), 1, "mixed={mixed}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1006,7 +1264,7 @@ async fn test_reorg_blockhash_opcode_consistency() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     for (block_num, rpc_before, opcode_before) in &cached_hashes {
         let rpc_after =
@@ -1062,7 +1320,7 @@ async fn test_reorg_deep_blockhash_consistency() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let tip_after_reorg = api.block_number().unwrap().to::<u64>();
 
@@ -1104,7 +1362,7 @@ async fn test_rollback() {
 
     // Mine 5 blocks
     for _ in 0..5 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     // Get block 4 for later comparison
@@ -1134,8 +1392,8 @@ async fn test_arb_get_block() {
     let (api, _handle) = spawn(NodeConfig::test().with_chain_id(Some(421611u64))).await;
 
     // Mine two blocks
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let best_number = api.block_number().unwrap().to::<u64>();
 
@@ -1161,7 +1419,7 @@ async fn test_mine_blk_with_prev_timestamp() {
     // mock timestamp
     api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1175,7 +1433,7 @@ async fn test_mine_blk_with_prev_timestamp() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Subsequent block should have a greater timestamp than previous block
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1200,7 +1458,7 @@ async fn test_increase_time_by_zero() {
 
     api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1325,7 +1583,7 @@ async fn test_anvil_reset_non_fork() {
 
     // Mine some blocks and make transactions
     for _ in 0..5 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     // Send a transaction
@@ -1366,7 +1624,7 @@ async fn test_anvil_reset_non_fork() {
     assert_eq!(to_balance_after_reset, U256::ZERO);
 
     // Test we can continue mining after reset
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(new_block.header.number, 1);
 }
@@ -1382,7 +1640,7 @@ async fn test_anvil_reset_fork_to_non_fork() {
 
     // Mine some blocks
     for _ in 0..3 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     // Reset to non-fork mode
@@ -1397,7 +1655,7 @@ async fn test_anvil_reset_fork_to_non_fork() {
     assert_eq!(block.header.number, 0);
 
     // Verify we can still mine blocks
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(new_block.header.number, 1);
 }
@@ -1491,7 +1749,7 @@ async fn can_get_default_base_fee_tempo_t0() {
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
     assert_eq!(

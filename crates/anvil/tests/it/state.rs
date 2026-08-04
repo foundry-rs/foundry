@@ -24,8 +24,8 @@ async fn state_without_block_history() -> (Value, Address, U256, u64) {
     let balance = U256::from(10363);
     let (api, _handle) = spawn(NodeConfig::test()).await;
     api.anvil_set_balance(account, balance).await.unwrap();
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let mut state = serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
     let state = state.as_object_mut().unwrap();
@@ -47,8 +47,8 @@ async fn can_load_state() {
 
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let num = api.block_number().unwrap();
 
@@ -83,7 +83,7 @@ async fn finalized_block_hash_consistent_after_load_state() {
 
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     // Get the original genesis block hash
     let original_genesis = api.block_by_number(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
@@ -162,7 +162,7 @@ async fn can_load_state_without_block_history() {
     assert_eq!(checkpoint.header.hash, api.backend.best_hash());
     assert_eq!(api.backend.fees().base_fee(), next_base_fee);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(latest.header.number, 3);
     assert_eq!(latest.header.parent_hash, checkpoint.header.hash);
@@ -187,10 +187,10 @@ async fn can_load_state_without_block_history_at_runtime() {
 
     let (api, _handle) = spawn(NodeConfig::test()).await;
     api.backend.set_coinbase(address!("0000000000000000000000000000000000000001"));
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let parent =
         api.block_by_number(alloy_eips::BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let previous =
         api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
@@ -204,7 +204,7 @@ async fn can_load_state_without_block_history_at_runtime() {
     assert_ne!(checkpoint.header.hash, previous.header.hash);
     assert_eq!(checkpoint.header.hash, api.backend.best_hash());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(latest.header.number, 3);
     assert_eq!(latest.header.parent_hash, checkpoint.header.hash);
@@ -235,9 +235,9 @@ async fn state_without_block_history_restores_osaka_blob_excess_gas() {
 async fn rejects_nonempty_block_history_without_best_block() {
     let (source, _handle) = spawn(NodeConfig::test()).await;
     source.backend.set_coinbase(address!("0000000000000000000000000000000000000002"));
-    source.mine_one().await;
-    source.mine_one().await;
-    source.mine_one().await;
+    source.mine_one().await.unwrap();
+    source.mine_one().await.unwrap();
+    source.mine_one().await.unwrap();
     let mut state = source.serialized_state(false).await.unwrap();
     state.blocks.retain(|block| block.header.number != 3);
     assert!(!state.blocks.is_empty());
@@ -247,7 +247,7 @@ async fn rejects_nonempty_block_history_without_best_block() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let original_coinbase = address!("0000000000000000000000000000000000000001");
     api.backend.set_coinbase(original_coinbase);
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let original =
         api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert!(api.block_by_hash(incoming_hash).await.unwrap().is_none());
@@ -260,7 +260,7 @@ async fn rejects_nonempty_block_history_without_best_block() {
     assert_eq!(api.backend.coinbase(), original_coinbase);
     assert!(api.block_by_hash(incoming_hash).await.unwrap().is_none());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(latest.header.number, original.header.number + 1);
     assert_eq!(latest.header.parent_hash, original.header.hash);
@@ -270,12 +270,12 @@ async fn rejects_nonempty_block_history_without_best_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn loaded_state_fees_use_selected_head() {
     let (source, _handle) = spawn(NodeConfig::test()).await;
-    source.mine_one().await;
+    source.mine_one().await.unwrap();
     let mut state = source.serialized_state(false).await.unwrap();
     let selected_hash = source.backend.best_hash();
     let selected_next_base_fee = source.backend.fees().base_fee();
 
-    source.mine_one().await;
+    source.mine_one().await.unwrap();
     let newer_state = source.serialized_state(false).await.unwrap();
     let newer_block =
         newer_state.blocks.into_iter().find(|block| block.header.number == 2).unwrap();
@@ -287,7 +287,7 @@ async fn loaded_state_fees_use_selected_head() {
     assert_eq!(api.backend.best_hash(), selected_hash);
     assert_eq!(api.backend.fees().base_fee(), selected_next_base_fee);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(alloy_eips::BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(latest.header.parent_hash, selected_hash);
     assert_eq!(latest.header.base_fee_per_gas, Some(selected_next_base_fee));
@@ -335,7 +335,7 @@ async fn test_make_sure_historical_state_is_not_cleared_on_dump() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let ser_state = api.serialized_state(true).await.unwrap();
     foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
@@ -375,7 +375,7 @@ async fn can_preserve_historical_states_between_dump_and_load() {
 
     let change_greeting_blk_num = tx.block_number.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let ser_state = api.serialized_state(true).await.unwrap();
     foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
@@ -502,7 +502,7 @@ async fn test_fork_load_state_keeps_number_opcode_in_sync() {
 
     // Runtime code: NUMBER, PUSH0, SSTORE, STOP.
     api.anvil_set_code(target, bytes!("435f5500")).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let serialized_state = api.serialized_state(false).await.unwrap();
 
@@ -543,7 +543,7 @@ async fn test_fork_load_state_with_greater_state_block() {
     )
     .await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block_number = api.block_number().unwrap();
 
@@ -1042,8 +1042,8 @@ async fn blockhash_opcode_consistent_after_load_state() {
     let state_file = tmp.path().join("state.json");
 
     let (api, _handle) = spawn(NodeConfig::test()).await;
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let block1_hash = api
         .block_by_number(alloy_eips::BlockNumberOrTag::Number(1))
@@ -1079,8 +1079,8 @@ async fn blockhash_opcode_consistent_after_load_state() {
 async fn blockhash_opcode_consistent_after_loading_older_state() {
     let (source_api, _source_handle) =
         spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000_000_u64))).await;
-    source_api.mine_one().await;
-    source_api.mine_one().await;
+    source_api.mine_one().await.unwrap();
+    source_api.mine_one().await.unwrap();
 
     let block1_hash = source_api
         .block_by_number(alloy_eips::BlockNumberOrTag::Number(1))
