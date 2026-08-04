@@ -90,10 +90,24 @@ jobs:
         run: cargo check --locked --bins --no-default-features --features "aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad"
 
   monad-library-tests:
+    name: Monad library (${{ matrix.package }})
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - foundry-evm-hardforks
+          - foundry-evm-networks
+          - foundry-config
+          - foundry-evm-core
+          - foundry-evm
+          - foundry-evm-traces
+          - forge-script
+          - forge-verify
+          - chisel
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -104,18 +118,11 @@ jobs:
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Test Monad libraries
-        run: |
-          cargo build --locked -p forge --features monad
-          cargo test --locked -p foundry-evm-hardforks --features monad --lib -- --skip flaky_
-          cargo test --locked -p foundry-evm-networks --features monad --lib -- --skip flaky_
-          cargo test --locked -p foundry-config --features monad --lib -- --skip flaky_
-          cargo test --locked -p foundry-evm-core --features monad --lib -- --skip flaky_
-          cargo test --locked -p foundry-evm --features monad --lib -- --skip flaky_
-          cargo test --locked -p foundry-evm-traces --features monad --lib -- --skip flaky_
-          cargo test --locked -p forge-script --features monad --lib -- --skip flaky_
-          cargo test --locked -p forge-verify --features monad --lib -- --skip flaky_
-          cargo test --locked -p chisel --features monad --lib -- --skip flaky_
+      - name: Build Forge for verification tests
+        if: matrix.package == 'forge-verify'
+        run: cargo build --locked -p forge --features monad
+      - name: Test Monad library
+        run: cargo test --locked -p ${{ matrix.package }} --features monad --lib -- --skip flaky_
 
   monad-integration-tests:
     name: Monad integration (${{ matrix.suite }})
