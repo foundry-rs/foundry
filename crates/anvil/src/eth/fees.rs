@@ -341,6 +341,7 @@ where
     let base_fee_per_blob_gas = header.blob_fee(blob_params);
 
     let mut item = FeeHistoryCacheItem {
+        block_hash: hash,
         base_fee: base_fee as u128,
         gas_used_ratio: 0f64,
         blob_gas_used_ratio: 0f64,
@@ -433,6 +434,7 @@ pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 /// A single item in the whole fee history cache
 #[derive(Clone, Debug)]
 pub struct FeeHistoryCacheItem {
+    pub block_hash: B256,
     pub base_fee: u128,
     pub gas_used_ratio: f64,
     pub base_fee_per_blob_gas: Option<u128>,

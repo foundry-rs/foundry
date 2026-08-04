@@ -220,14 +220,14 @@ async fn test_can_use_fee_history() {
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
 //
 // `eth_feeHistory` reads from a cache that the `FeeHistoryService` populates asynchronously, so it
-// can lag the chain head. Burst-mining many blocks makes the cache trail behind; the response must
-// still cover the full requested range instead of silently dropping the not-yet-cached blocks.
+// can lag the chain head. Burst-mining many blocks exercises the completeness invariant under that
+// scheduling race; `test_fee_history_ignores_stale_cache_after_reset` deterministically exercises
+// the same on-demand computation path.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fee_history_complete_when_cache_lags() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
-    // Mine a burst of blocks. The cache is updated by a separate task and will not have caught up
-    // by the time the RPC call below runs.
+    // Mine a burst of blocks while the cache is updated by a separate task.
     api.anvil_mine(Some(U256::from(100)), None).await.unwrap();
 
     let count = 10u64;
@@ -242,6 +242,50 @@ async fn test_fee_history_complete_when_cache_lags() {
         count as usize + 1,
         "incomplete base_fee_per_gas"
     );
+}
+
+// `base_fee_per_gas` includes one entry for the block after the requested range. For a
+// historical range, that entry must come from the historical child rather than the current
+// chain head's next-block fee.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_historical_next_block_fee() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    for base_fee in [100, 200, 300] {
+        api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
+        api.mine_one().await;
+    }
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(400)).await.unwrap();
+
+    let history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    let historical_child = provider.get_block(BlockId::number(2)).await.unwrap().unwrap();
+    let historical_next_fee = historical_child.header.base_fee_per_gas.unwrap() as u128;
+
+    assert_eq!(history.base_fee_per_gas, vec![100, historical_next_fee]);
+    assert_ne!(historical_next_fee, api.base_fee().unwrap().unwrap().to::<u128>());
+}
+
+// Cache entries from the previous chain must not survive `anvil_reset` merely because the new
+// chain reuses the same block number.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_ignores_stale_cache_after_reset() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let old_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Number(0), vec![]).await.unwrap();
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    let genesis_base_fee = genesis.header.base_fee_per_gas.unwrap() as u128;
+    let new_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Number(0), vec![]).await.unwrap();
+
+    assert_ne!(old_history.base_fee_per_gas[0], genesis_base_fee);
+    assert_eq!(new_history.base_fee_per_gas[0], genesis_base_fee);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -222,14 +222,27 @@ impl<N: Network> EthApi<N> {
     /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
     fn lowest_suggestion_tip(&self) -> u128 {
         let block_number = self.backend.best_number();
-        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
+        let cache = self.fee_history_cache.lock();
+        let latest_tip = self
+            .backend
+            .get_block_with_hash(block_number)
+            .and_then(|(_, hash)| cache.get(&block_number).filter(|item| item.block_hash == hash))
+            .and_then(|item| item.rewards.iter().copied().min());
 
-        match latest_cached_block {
-            Some(block) => block.rewards.iter().copied().min(),
-            None => self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min(),
-        }
-        .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
-        .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
+        latest_tip
+            .or_else(|| {
+                cache
+                    .iter()
+                    .filter(|(number, item)| {
+                        self.backend
+                            .get_block_with_hash(**number)
+                            .is_some_and(|(_, hash)| item.block_hash == hash)
+                    })
+                    .flat_map(|(_, item)| item.rewards.iter().copied())
+                    .min()
+            })
+            .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
+            .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
     }
 
     /// Returns true if auto mining is enabled, and false.
@@ -1251,22 +1264,22 @@ impl<N: Network> EthApi<N> {
                 (local_lowest..=highest).map(|n| cache.get(&n).cloned()).collect()
             };
 
-            // Resolve the whole range into concrete items: take each cache hit, or compute the
-            // miss on demand (without holding the lock) using the same logic as the service. A
-            // block that can't be found is a hard error rather than a silently dropped entry, so
-            // `items` always holds exactly one entry per requested block.
+            // Resolve the whole range into concrete items. Cache entries include their block hash
+            // so a reset or reorg that reuses a block number cannot return data from the old
+            // canonical chain. Compute misses and stale entries on demand without holding the
+            // lock. A block that can't be found is a hard error rather than a silently dropped
+            // entry, so `items` always holds exactly one entry per requested block.
             let mut warmed: Vec<(u64, FeeHistoryCacheItem)> = Vec::new();
             let mut items: Vec<FeeHistoryCacheItem> = Vec::with_capacity(cached.len());
             for (cached_item, n) in cached.into_iter().zip(local_lowest..=highest) {
+                let (block, hash) = self
+                    .backend
+                    .get_block_with_hash(n)
+                    .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                let header = block.header;
                 let item = match cached_item {
-                    Some(item) => item,
-                    None => {
-                        let block = self
-                            .backend
-                            .get_block(n)
-                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
-                        let header = block.header;
-                        let hash = header.hash_slow();
+                    Some(item) if item.block_hash == hash => item,
+                    _ => {
                         let (item, block_number) = create_fee_history_cache_item(
                             hash,
                             &header,
@@ -1320,16 +1333,20 @@ impl<N: Network> EthApi<N> {
 
         response.reward = Some(rewards);
 
-        // add the next block's base fee to the response
-        // The spec states that `base_fee_per_gas` "[..] includes the next block after the
-        // newest of the returned range, because this value can be derived from the
-        // newest block"
-        response.base_fee_per_gas.push(self.backend.fees().base_fee() as u128);
-
-        // Same goes for the `base_fee_per_blob_gas`:
-        // > [..] includes the next block after the newest of the returned range, because this
-        // > value can be derived from the newest block.
-        response.base_fee_per_blob_gas.push(self.backend.fees().base_fee_per_blob_gas());
+        // Both base-fee arrays include the block after the returned range. For a historical
+        // request, use that block's header; the fee manager tracks the block after the current
+        // chain head and would therefore append an unrelated value. Prefer an existing child even
+        // when `highest` was the head at the start of this request, since mining can advance it.
+        let next_number = highest
+            .checked_add(1)
+            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(highest)))?;
+        let (next_base_fee, next_blob_base_fee) = self
+            .backend
+            .fee_history_next_fees(highest)
+            .await
+            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(next_number)))?;
+        response.base_fee_per_gas.push(next_base_fee);
+        response.base_fee_per_blob_gas.push(next_blob_base_fee);
 
         Ok(response)
     }

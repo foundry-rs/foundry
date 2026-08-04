@@ -323,14 +323,16 @@ async fn test_fork_optimism_with_transaction_hash() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_fee_history() {
-    let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.http_provider();
+    let (api, _handle) = spawn(fork_config()).await;
+    let fork = api.get_fork().unwrap();
 
     let count = 10u64;
-    let _history =
+    let history =
         api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
-    let _provider_history =
-        provider.get_fee_history(count, BlockNumberOrTag::Latest, &[]).await.unwrap();
+    let upstream_history =
+        fork.fee_history(count, BlockNumberOrTag::Number(BLOCK_NUMBER), &[]).await.unwrap();
+
+    assert_eq!(history, upstream_history);
 }
 
 // Regression test for a fork-range bug in `eth_feeHistory`: when the requested range straddles
