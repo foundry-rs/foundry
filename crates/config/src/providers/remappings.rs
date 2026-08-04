@@ -408,9 +408,9 @@ impl RemappingsProvider<'_> {
 
             // Preserve existing physical nested-config discovery. Symlink discovery is limited to
             // direct configured-library entries; nested symlink graphs remain out of scope.
-            if seen.insert(entry.canonical.clone())
-                && !fs::symlink_metadata(&entry.path)
-                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            if !fs::symlink_metadata(&entry.path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                && seen.insert(entry.canonical.clone())
             {
                 for lib in &config.libs {
                     let lib = if lib.is_absolute() { lib.clone() } else { entry.path.join(lib) };
@@ -663,6 +663,40 @@ mod tests {
                 true,
             )]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_remappings_traverse_physical_dependency_after_symlink_alias() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("project");
+        let dependency = root.join("lib/z-dependency");
+        let nested = dependency.join("lib/nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir(nested.join("custom-source")).unwrap();
+        fs::write(root.join(Config::FILE_NAME), "").unwrap();
+        fs::write(dependency.join(Config::FILE_NAME), "[profile.default]\nlibs = [\"lib\"]\n")
+            .unwrap();
+        fs::write(nested.join(Config::FILE_NAME), "[profile.default]\nsrc = \"custom-source\"\n")
+            .unwrap();
+        symlink(&dependency, root.join("lib/a-dependency-alias")).unwrap();
+        let libs = vec![PathBuf::from("lib")];
+        let provider = RemappingsProvider {
+            auto_detect_remappings: true,
+            lib_paths: Cow::Borrowed(&libs),
+            root: &root,
+            remappings: Ok(vec![]),
+        };
+
+        assert!(provider.find_nested_foundry_remappings().unwrap().contains(&(
+            nested.clone(),
+            Remapping {
+                context: None,
+                name: "nested/".to_string(),
+                path: format!("{}/", nested.join("custom-source").display()),
+            },
+            true,
+        )));
     }
 
     #[test]
