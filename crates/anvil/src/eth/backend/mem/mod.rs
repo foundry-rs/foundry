@@ -157,7 +157,7 @@ use foundry_evm::{
     utils::{
         apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
         get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id,
-        get_blob_params_by_spec_id,
+        get_blob_params_by_hardfork,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -1740,7 +1740,6 @@ impl<N: Network> Backend<N> {
     }
 
     fn simulation_blob_params_at_timestamp(&self, timestamp: u64) -> BlobParams {
-        let spec_id = self.spec_id();
         let configured_hardfork = self.hardfork();
         if let FoundryHardfork::Ethereum(
             configured
@@ -1761,28 +1760,9 @@ impl<N: Network> Backend<N> {
                 (EthereumHardfork::Bpo1, _) | (_, EthereumHardfork::Bpo1) => EthereumHardfork::Bpo1,
                 _ => EthereumHardfork::Osaka,
             };
-            return Self::simulation_blob_params_for_hardfork(hardfork.into(), spec_id);
+            return get_blob_params_by_hardfork(hardfork.into());
         }
-        Self::simulation_blob_params_for_hardfork(configured_hardfork, spec_id)
-    }
-
-    fn simulation_blob_params_for_hardfork(
-        hardfork: FoundryHardfork,
-        spec_id: SpecId,
-    ) -> BlobParams {
-        match hardfork {
-            FoundryHardfork::Ethereum(EthereumHardfork::Prague) => BlobParams::prague(),
-            FoundryHardfork::Ethereum(EthereumHardfork::Osaka) => BlobParams::osaka(),
-            FoundryHardfork::Ethereum(EthereumHardfork::Bpo1) => BlobParams::bpo1(),
-            FoundryHardfork::Ethereum(EthereumHardfork::Bpo2) => BlobParams::bpo2(),
-            FoundryHardfork::Ethereum(
-                EthereumHardfork::Bpo3
-                | EthereumHardfork::Bpo4
-                | EthereumHardfork::Bpo5
-                | EthereumHardfork::Amsterdam,
-            ) => BlobParams::bpo2(),
-            _ => get_blob_params_by_spec_id(spec_id),
-        }
+        get_blob_params_by_hardfork(configured_hardfork)
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)

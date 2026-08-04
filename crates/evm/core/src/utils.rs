@@ -1,4 +1,4 @@
-use crate::{EvmEnv, FoundryBlock};
+use crate::{EvmEnv, FoundryBlock, hardfork::FoundryHardfork};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
@@ -183,6 +183,23 @@ pub fn get_blob_params_by_spec_id(spec: SpecId) -> BlobParams {
     }
 }
 
+/// Returns the blob parameters selected by an explicit Foundry hardfork.
+pub fn get_blob_params_by_hardfork(hardfork: FoundryHardfork) -> BlobParams {
+    match hardfork {
+        FoundryHardfork::Ethereum(EthereumHardfork::Prague) => BlobParams::prague(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Osaka) => BlobParams::osaka(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Bpo1) => BlobParams::bpo1(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Bpo2) => BlobParams::bpo2(),
+        FoundryHardfork::Ethereum(
+            EthereumHardfork::Bpo3
+            | EthereumHardfork::Bpo4
+            | EthereumHardfork::Bpo5
+            | EthereumHardfork::Amsterdam,
+        ) => BlobParams::bpo2(),
+        _ => get_blob_params_by_spec_id(hardfork.into()),
+    }
+}
+
 /// Returns the blob base fee update fraction based on the spec id.
 pub fn get_blob_base_fee_update_fraction_by_spec_id(spec: SpecId) -> u64 {
     get_blob_params_by_spec_id(spec).update_fraction as u64
@@ -281,5 +298,19 @@ mod tests {
             get_blob_base_fee_update_fraction_by_spec_id(SpecId::AMSTERDAM),
             BlobParams::bpo2().update_fraction as u64
         );
+    }
+
+    #[test]
+    fn blob_params_by_explicit_hardfork() {
+        for (hardfork, expected) in [
+            (EthereumHardfork::Cancun, BlobParams::cancun()),
+            (EthereumHardfork::Prague, BlobParams::prague()),
+            (EthereumHardfork::Osaka, BlobParams::osaka()),
+            (EthereumHardfork::Bpo1, BlobParams::bpo1()),
+            (EthereumHardfork::Bpo2, BlobParams::bpo2()),
+            (EthereumHardfork::Amsterdam, BlobParams::bpo2()),
+        ] {
+            assert_eq!(get_blob_params_by_hardfork(hardfork.into()), expected);
+        }
     }
 }

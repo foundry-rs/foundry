@@ -47,10 +47,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
     hardforks::latest_active_tempo_hardfork,
-    utils::{
-        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
-        get_blob_base_fee_update_fraction,
-    },
+    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use parking_lot::RwLock;
 use rand_08::thread_rng;
@@ -77,7 +74,7 @@ use yansi::Paint;
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 use foundry_evm::{
     traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
-    utils::get_blob_params,
+    utils::{get_blob_params, get_blob_params_by_hardfork},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
@@ -639,17 +636,14 @@ impl NodeConfig {
                 self.genesis.as_ref().and_then(|g| g.excess_blob_gas).unwrap_or(0);
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
-                get_blob_base_fee_update_fraction(
-                    self.protocol_chain_id(),
-                    self.get_genesis_timestamp(),
-                ),
+                self.get_blob_params().update_fraction as u64,
             )
         }
     }
 
     /// Returns the [`BlobParams`] that should be used.
     pub fn get_blob_params(&self) -> BlobParams {
-        get_blob_params(self.protocol_chain_id(), self.get_genesis_timestamp())
+        get_blob_params_by_hardfork(self.get_hardfork())
     }
 
     /// Returns the hardfork to use

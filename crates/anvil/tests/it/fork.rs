@@ -12,6 +12,7 @@ use alloy_eips::{
     eip7840::BlobParams,
     eip7910::{EthConfig, SystemContract},
 };
+use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex, uint,
@@ -2822,6 +2823,59 @@ async fn test_fork_reset_updates_bpo_blob_schedule_in_both_directions() {
     assert_blob_schedule(bpo1_params);
     api.mine_one().await.unwrap();
     assert_blob_schedule(bpo1_params);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_memory_reset_restores_selected_blob_schedule_in_both_directions() {
+    let excess_blob_gas = 20_000_000u64;
+    let configured = |hardfork: EthereumHardfork| {
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(hardfork.into()))
+            .with_genesis(Some(Genesis {
+                timestamp: hardfork.mainnet_activation_timestamp().unwrap(),
+                excess_blob_gas: Some(excess_blob_gas),
+                ..Default::default()
+            }))
+    };
+
+    let (cancun_origin_api, cancun_origin) = spawn(configured(EthereumHardfork::Cancun)).await;
+    let (bpo2_origin_api, bpo2_origin) = spawn(configured(EthereumHardfork::Bpo2)).await;
+    cancun_origin_api.mine_one().await.unwrap();
+    bpo2_origin_api.mine_one().await.unwrap();
+
+    let assert_blob_schedule = |api: &EthApi<FoundryNetwork>, expected: BlobParams| {
+        assert_eq!(api.backend.blob_params(), expected);
+        let fees = api.excess_blob_gas_and_price().unwrap().unwrap();
+        assert!(fees.excess_blob_gas > 0);
+        assert_eq!(fees.blob_gasprice, expected.calc_blob_fee(fees.excess_blob_gas));
+    };
+
+    let (cancun_api, _) = spawn(configured(EthereumHardfork::Cancun)).await;
+    assert_blob_schedule(&cancun_api, BlobParams::cancun());
+    cancun_api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(bpo2_origin.http_endpoint()),
+            block_number: Some(1),
+        }))
+        .await
+        .unwrap();
+    assert_blob_schedule(&cancun_api, BlobParams::bpo2());
+    cancun_api.anvil_reset(None).await.unwrap();
+    assert_blob_schedule(&cancun_api, BlobParams::cancun());
+
+    let (bpo2_api, _) = spawn(configured(EthereumHardfork::Bpo2)).await;
+    assert_blob_schedule(&bpo2_api, BlobParams::bpo2());
+    bpo2_api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(cancun_origin.http_endpoint()),
+            block_number: Some(1),
+        }))
+        .await
+        .unwrap();
+    assert_blob_schedule(&bpo2_api, BlobParams::cancun());
+    bpo2_api.anvil_reset(None).await.unwrap();
+    assert_blob_schedule(&bpo2_api, BlobParams::bpo2());
 }
 
 #[tokio::test(flavor = "multi_thread")]
