@@ -80,6 +80,31 @@ async fn setup_token_test(
     (rpc, token, handle)
 }
 
+async fn setup_units_contract(
+    prj: &foundry_test_utils::TestProject,
+    cmd: &mut foundry_test_utils::TestCommand,
+    contract: &str,
+    constructor_args: &[&str],
+) -> (String, String, NodeHandle) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source("TestTokenUnits.sol", include_str!("../fixtures/TestTokenUnits.sol"));
+
+    let contract = format!("src/TestTokenUnits.sol:{contract}");
+    let mut args =
+        vec!["create", "--private-key", anvil_const::PK1, "--rpc-url", &rpc, "--broadcast"];
+    args.push(&contract);
+    if !constructor_args.is_empty() {
+        args.push("--constructor-args");
+        args.extend_from_slice(constructor_args);
+    }
+    cmd.args(args).assert_success();
+
+    (rpc, anvil_const::TOKEN.to_string(), handle)
+}
+
 casttest!(erc20_balance_applies_call_overrides, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
@@ -212,6 +237,394 @@ forgetest_async!(erc20_approval_allowance, |prj, cmd| {
     // Verify allowance was set
     let allowance = get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc);
     assert_eq!(allowance, approve_amount);
+});
+
+forgetest_async!(erc20_units_format_six_decimal_reads, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "TestTokenUnits", &["6"]).await;
+
+    cmd.cast_fuse()
+        .args(["erc20", "balance", &token, anvil_const::ADDR1, "--units", "6", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1000
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["erc20", "total-supply", &token, "--units", "auto", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1000
+
+"#]]);
+
+    cmd.cast_fuse().args([
+        "--json",
+        "erc20",
+        "balance",
+        &token,
+        anvil_const::ADDR1,
+        "--units",
+        "auto",
+        "--rpc-url",
+        &rpc,
+    ]);
+    cmd.assert_json_stdout(str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": "1000",
+  "errors": [],
+  "warnings": []
+}
+
+"#]]);
+});
+
+forgetest_async!(erc20_units_format_eighteen_decimals, |prj, cmd| {
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR1,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1000
+
+"#]]);
+});
+
+forgetest_async!(erc20_units_preserve_raw_default, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "TestTokenUnits", &["6"]).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            "1",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    assert_eq!(get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc), U256::from(1));
+});
+
+forgetest_async!(erc20_units_parse_write_amounts, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "TestTokenUnits", &["6"]).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            "1.5",
+            "--units",
+            "6",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+    assert_eq!(get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc), U256::from(1_500_000));
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "approve",
+            &token,
+            anvil_const::ADDR2,
+            "2.5",
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+    assert_eq!(
+        get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc),
+        U256::from(2_500_000)
+    );
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "mint",
+            &token,
+            anvil_const::ADDR2,
+            "0.25",
+            "--units",
+            "6",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+    assert_eq!(get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc), U256::from(1_750_000));
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "burn",
+            &token,
+            "0.125",
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "allowance",
+            &token,
+            anvil_const::ADDR1,
+            anvil_const::ADDR2,
+            "--units",
+            "6",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+2.500000
+
+"#]]);
+});
+
+casttest!(erc20_units_reject_malformed_value, |_prj, cmd| {
+    cmd.args([
+        "erc20",
+        "balance",
+        anvil_const::TOKEN,
+        anvil_const::ADDR1,
+        "--units",
+        "tokens",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: invalid value 'tokens' for '--units <DECIMALS|auto>': invalid units `tokens`; expected `auto` or a decimal count from 0 to 77
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+casttest!(erc20_units_reject_auto_curl, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    cmd.args([
+        "erc20",
+        "balance",
+        anvil_const::TOKEN,
+        anvil_const::ADDR1,
+        "--units",
+        "auto",
+        "--rpc-url",
+        rpc,
+        "--curl",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#""#]])
+    .stderr_eq(str![[r#"
+Error: `--units auto` cannot be used with `--curl`; use `--units <DECIMALS>` or omit `--units` for raw amounts
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            anvil_const::TOKEN,
+            anvil_const::ADDR2,
+            "1",
+            "--units",
+            "auto",
+            "--rpc-url",
+            rpc,
+            "--curl",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: `--units auto` cannot be used with `--curl`; use `--units <DECIMALS>` or omit `--units` for raw amounts
+
+"#]]);
+});
+
+casttest!(erc20_units_reject_malformed_amount, |_prj, cmd| {
+    cmd.args([
+        "erc20",
+        "transfer",
+        anvil_const::TOKEN,
+        anvil_const::ADDR2,
+        "1.💥",
+        "--units",
+        "1",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+        "--private-key",
+        anvil_const::PK1,
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#""#]])
+    .stderr_eq(str![[r#"
+Error: invalid ERC-20 amount `1.💥`; expected an unsigned ASCII decimal
+
+"#]]);
+});
+
+forgetest_async!(erc20_units_reject_precision_loss, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "TestTokenUnits", &["6"]).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            "1.0000001",
+            "--units",
+            "6",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: ERC-20 amount `1.0000001` has more than 6 decimal places and would lose precision
+
+"#]]);
+});
+
+forgetest_async!(erc20_units_auto_rejects_missing_metadata, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "MissingDecimalsToken", &[]).await;
+
+    cmd.cast_fuse()
+        .args(["erc20", "balance", &token, anvil_const::ADDR1, "--units", "6", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR1,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: failed to query ERC-20 decimals() for `--units auto`; use `--units <DECIMALS>` or omit `--units` for raw amounts
+
+...
+"#]]);
+});
+
+forgetest_async!(erc20_units_auto_rejects_reverting_metadata, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "RevertingDecimalsToken", &[]).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR1,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: failed to query ERC-20 decimals() for `--units auto`; use `--units <DECIMALS>` or omit `--units` for raw amounts
+
+...
+"#]]);
+});
+
+forgetest_async!(erc20_units_auto_rejects_excess_metadata, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "ExcessDecimalsToken", &[]).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR1,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: ERC-20 decimals() returned 78, but at most 77 decimals are supported; omit `--units` to use raw amounts
+
+"#]]);
+});
+
+forgetest_async!(erc20_units_auto_rejects_nonstandard_metadata, |prj, cmd| {
+    let (rpc, token, _handle) =
+        setup_units_contract(&prj, &mut cmd, "NonstandardDecimalsToken", &[]).await;
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            &token,
+            anvil_const::ADDR1,
+            "--units",
+            "auto",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#""#]])
+        .stderr_eq(str![[r#"
+Error: failed to query ERC-20 decimals() for `--units auto`; use `--units <DECIMALS>` or omit `--units` for raw amounts
+
+...
+"#]]);
 });
 
 // tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly
@@ -579,6 +992,14 @@ casttest!(erc20_transfer_help_includes_tempo_expires, |_prj, cmd| {
     let output =
         cmd.args(["erc20", "transfer", "--help"]).assert_success().get_output().stdout_lossy();
 
+    assert!(
+        output.contains("--units <DECIMALS|auto>"),
+        "expected erc20 transfer help to expose --units, got:\n{output}",
+    );
+    assert!(
+        output.contains("Without this option, amounts are raw integers"),
+        "expected erc20 transfer help to document raw amount defaults, got:\n{output}",
+    );
     assert!(
         output.contains("--tempo.expires <SECONDS>"),
         "expected erc20 transfer help to expose --tempo.expires, got:\n{output}",
