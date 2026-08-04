@@ -36,6 +36,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
+use foundry_common::FoundryTransactionBuilder;
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
@@ -64,7 +65,9 @@ use tempo_precompiles::{
 };
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
-    transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType, TokenLimit},
+    transaction::{
+        Call, KeyAuthorization, KeychainSignature, PrimitiveSignature, SignatureType, TokenLimit,
+    },
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
@@ -499,6 +502,70 @@ async fn test_tempo_fork_forwards_request_extensions() {
         .await
         .unwrap();
     assert_eq!(simulated[0]["calls"][0]["status"], "0x0");
+    assert_eq!(simulated[0]["transactions"][0]["calls"], serde_json::to_value(calls).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_executes_request_extensions_locally() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    source_api.mine_one().await;
+    let source_provider = source_handle.http_provider();
+    let from = source_handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let balance = IERC20::new(PATH_USD, &source_provider).balanceOf(from).call().await.unwrap();
+    let calls = [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))];
+    let request = tempo_call_request(from, calls.clone());
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = fork_handle.http_provider();
+
+    fork_api.anvil_deal_tip20(from, PATH_USD, balance + U256::from(1)).await.unwrap();
+    fork_api.mine_one().await;
+    assert_eq!(
+        IERC20::new(PATH_USD, &source_provider).balanceOf(from).call().await.unwrap(),
+        balance
+    );
+    assert_eq!(
+        IERC20::new(PATH_USD, &provider).balanceOf(from).call().await.unwrap(),
+        balance + U256::from(1)
+    );
+
+    for method in ["eth_call", "eth_estimateGas"] {
+        provider
+            .raw_request::<_, serde_json::Value>(
+                method.into(),
+                serde_json::json!([request.clone(), "latest"]),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("unexpected {method} error: {error}"));
+    }
+
+    let access_list = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_createAccessList".into(),
+            serde_json::json!([request.clone(), "latest"]),
+        )
+        .await
+        .unwrap();
+    assert!(access_list["error"].is_null(), "unexpected access list error: {access_list}");
+
+    let payload = serde_json::json!({
+        "blockStateCalls": [{"calls": [request]}],
+        "returnFullTransactions": true,
+    });
+    let simulated = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_simulateV1".into(),
+            serde_json::json!([payload, "latest"]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(simulated[0]["calls"][0]["status"], "0x1");
     assert_eq!(simulated[0]["transactions"][0]["calls"], serde_json::to_value(calls).unwrap());
 }
 
@@ -3041,17 +3108,14 @@ async fn test_tempo_estimate_gas_with_provisioned_key() {
     let account = handle.dev_accounts().next().unwrap();
     let recipient = Address::random();
     let access_key = PrivateKeySigner::random();
+    let spending_limit = U256::from(1_000_000);
     let authorize = authorizeKeyCall {
         keyId: access_key.address(),
         signatureType: KeychainSignatureType::Secp256k1,
         config: KeyRestrictions {
             expiry: u64::MAX,
             enforceLimits: true,
-            limits: vec![KeychainTokenLimit {
-                token: PATH_USD,
-                amount: U256::from(1_000_000),
-                period: 0,
-            }],
+            limits: vec![KeychainTokenLimit { token: PATH_USD, amount: spending_limit, period: 0 }],
             allowAnyCalls: true,
             allowedCalls: vec![],
         },
@@ -3075,15 +3139,76 @@ async fn test_tempo_estimate_gas_with_provisioned_key() {
     let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
     assert!(receipt.status());
 
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+    let nonce = provider.get_transaction_count(account).await.unwrap();
+    let transfer_amount = U256::from(1);
+    let transfer = tempo_transfer(recipient, transfer_amount);
     let request = serde_json::json!({
         "from": account,
         "type": "0x76",
+        "chainId": chain_id,
         "feeToken": PATH_USD,
+        "maxPriorityFeePerGas": base_fee / 10,
+        "maxFeePerGas": base_fee * 2,
+        "nonce": nonce,
         "keyId": access_key.address(),
-        "calls": [tempo_transfer(recipient, U256::ZERO)],
+        "calls": [transfer],
     });
-    let gas = provider.raw_request::<_, U256>("eth_estimateGas".into(), (request,)).await.unwrap();
-    assert!(gas > U256::from(21_000));
+    let gas = provider
+        .raw_request::<_, U256>("eth_estimateGas".into(), (request.clone(),))
+        .await
+        .unwrap();
+    let gas_limit = gas.to::<u64>();
+
+    let token = IERC20::new(PATH_USD, &provider);
+    let recipient_balance = token.balanceOf(recipient).call().await.unwrap();
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token: Some(PATH_USD),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit,
+        calls: vec![transfer],
+        access_list: Default::default(),
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_payer_signature: None,
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let signing_hash = KeychainSignature::signing_hash(tempo_tx.signature_hash(), account);
+    let signature = access_key.sign_hash(&signing_hash).await.unwrap();
+    let tempo_signature = TempoSignature::Keychain(KeychainSignature::new(
+        account,
+        PrimitiveSignature::Secp256k1(signature),
+    ));
+    let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(tempo_tx, tempo_signature));
+    let mut encoded = Vec::new();
+    envelope.encode_2718(&mut encoded);
+
+    let receipt =
+        provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "transaction should succeed with estimated gas: {gas_limit}");
+    assert!(
+        receipt.gas_used() <= gas_limit,
+        "gas used ({}) should not exceed estimate ({gas_limit})",
+        receipt.gas_used()
+    );
+    assert_eq!(
+        token.balanceOf(recipient).call().await.unwrap(),
+        recipient_balance + transfer_amount
+    );
+
+    let mut over_limit = request;
+    over_limit["nonce"] = serde_json::json!(nonce + 1);
+    over_limit["calls"] =
+        serde_json::json!([tempo_transfer(recipient, spending_limit + U256::from(1))]);
+    let err =
+        provider.raw_request::<_, U256>("eth_estimateGas".into(), (over_limit,)).await.unwrap_err();
+    assert!(err.to_string().contains("execution reverted"), "unexpected error: {err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4953,6 +5078,31 @@ async fn test_gas_estimation_tempo_aa_transaction() {
     assert!(
         gas_estimate > 21000,
         "Tempo AA gas estimate should be greater than 21000, got: {gas_estimate}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_browser_webauthn_gas_estimation() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect_http(handle.http_endpoint().parse().unwrap());
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let request = tempo_alloy::rpc::TempoTransactionRequest {
+        inner: TransactionRequest::default().from(accounts[0]),
+        fee_token: Some(PATH_USD),
+        nonce_key: Some(U256::ZERO),
+        calls: vec![Call { to: TxKind::Call(accounts[1]), value: U256::ZERO, input: Bytes::new() }],
+        ..Default::default()
+    };
+
+    let secp256k1_estimate = provider.estimate_gas(request.clone()).await.unwrap();
+    let webauthn_estimate =
+        provider.estimate_gas(request.browser_wallet_gas_estimation_request()).await.unwrap();
+
+    assert!(
+        webauthn_estimate > secp256k1_estimate + 7_000,
+        "WebAuthn estimate should cover its variable signature data: \
+         secp256k1={secp256k1_estimate}, webauthn={webauthn_estimate}"
     );
 }
 

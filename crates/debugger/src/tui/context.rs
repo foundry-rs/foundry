@@ -483,9 +483,9 @@ impl TUIContext<'_> {
     }
 
     fn handle_pc_input_key_event(&mut self, event: KeyEvent) {
-        if let Some(input) =
-            handle_prompt_input_key_event(&mut self.pc_input, event, |_, c| is_pc_input_char(c))
-        {
+        if let Some(input) = handle_prompt_input_key_event(&mut self.pc_input, event, |_, c| {
+            c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
+        }) {
             self.goto_pc_from_input(&input);
         }
     }
@@ -574,10 +574,6 @@ impl TUIContext<'_> {
 
     fn goto_pc_from_input(&mut self, input: &str) {
         self.move_to_pc_from_input(input, find_pc_target);
-    }
-
-    fn continue_to_pc_from_input(&mut self, input: &str) {
-        self.move_to_pc_from_input(input, find_next_pc_target);
     }
 
     fn move_to_pc_from_input(
@@ -709,7 +705,7 @@ impl TUIContext<'_> {
                 return self.set_error(command_usage(command, "<pc>"));
             }
             if is_continue_command {
-                self.continue_to_pc_from_input(pc);
+                self.move_to_pc_from_input(pc, find_next_pc_target);
             } else {
                 self.goto_pc_from_input(pc);
             }
@@ -1204,10 +1200,6 @@ fn handle_prompt_input_key_event(
     }
 
     None
-}
-
-const fn is_pc_input_char(c: char) -> bool {
-    c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
 }
 
 fn is_buffer_offset_input_char(input: &str, c: char) -> bool {

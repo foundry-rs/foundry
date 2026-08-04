@@ -133,13 +133,9 @@ impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection
         }
     }
 
-    /// Returns a compatibility `RpcHandler`
-    fn compat_helper(&self) -> ContextAwareHandler<Handler> {
-        ContextAwareHandler { handler: self.handler.clone(), context: self.context.clone() }
-    }
-
     fn process_request(&mut self, req: serde_json::Result<Request>) {
-        let handler = self.compat_helper();
+        let handler =
+            ContextAwareHandler { handler: self.handler.clone(), context: self.context.clone() };
         self.processing.push(Box::pin(async move {
             match req {
                 Ok(req) => handle_request(req, handler).await,

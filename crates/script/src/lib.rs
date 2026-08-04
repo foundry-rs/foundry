@@ -54,7 +54,7 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -90,6 +90,8 @@ pub use wallet_session::ScriptWalletSessionArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
+
+const DEFAULT_CONFIRMATIONS: u64 = 1;
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
@@ -220,6 +222,14 @@ pub struct ScriptArgs {
     /// only after its previous one has been confirmed and succeeded.
     #[arg(long)]
     pub slow: bool,
+
+    /// The number of confirmations to wait for after broadcasting.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_CONFIRMATIONS,
+        value_parser = RangedU64ValueParser::<u64>::new().range(1..),
+    )]
+    pub confirmations: u64,
 
     /// Disables interactive prompts that might appear when deploying big contracts.
     ///
@@ -478,7 +488,7 @@ impl ScriptArgs {
                 return Ok(None);
             }
 
-            let size_limits = pre_simulation.args.contract_size_limits(
+            let size_limits = pre_simulation.args.contract_size_limits::<FEN>(
                 &pre_simulation.script_config.config,
                 &pre_simulation.script_config.evm_opts,
             );
@@ -596,8 +606,8 @@ impl ScriptArgs {
         Ok((func.clone(), data.into()))
     }
 
-    /// Checks if the transaction is a deployment with either a size above the default contract size
-    /// limit or specified `code_size_limit`.
+    /// Checks if the transaction is a deployment with a size above the active EVM specification's
+    /// contract size limit or the specified `code_size_limit`.
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.
@@ -686,7 +696,11 @@ impl ScriptArgs {
         Ok(())
     }
 
-    fn contract_size_limits(&self, config: &Config, evm_opts: &EvmOpts) -> ContractSizeLimits {
+    fn contract_size_limits<FEN: FoundryEvmNetwork>(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+    ) -> ContractSizeLimits {
         self.evm
             .env
             .code_size_limit
@@ -699,7 +713,10 @@ impl ScriptArgs {
                     .contract_size_limits()
                     .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
             })
-            .unwrap_or_default()
+            .unwrap_or_else(|| {
+                let spec_id: SpecFor<FEN> = config.evm_spec_id();
+                ContractSizeLimits::for_spec_id(spec_id.into())
+            })
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
@@ -909,10 +926,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.update_sender(sender).await?;
         }
         Ok(())
-    }
-
-    async fn get_runner(&mut self) -> Result<ScriptRunner<FEN>> {
-        self._get_runner(None, false, false).await
     }
 
     async fn get_runner_with_cheatcodes(
@@ -1248,6 +1261,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_confirmations() {
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
+        assert_eq!(args.confirmations, DEFAULT_CONFIRMATIONS);
+
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--confirmations", "6"]);
+        assert_eq!(args.confirmations, 6);
+
+        let err =
+            ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--confirmations", "0"])
+                .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
     fn verify_external_requires_verify() {
         let err = ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--verify-external"])
             .unwrap_err();
@@ -1368,7 +1395,7 @@ mod tests {
         .await
         .unwrap();
 
-        let _runner = script.get_runner().await.unwrap();
+        let _runner = script._get_runner(None, false, false).await.unwrap();
 
         assert_eq!(script.source_chain_id, Some(NamedChain::MonadTestnet as u64));
         assert_eq!(script.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
@@ -1702,7 +1729,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
 
-        let limits = args.contract_size_limits(&Config::default(), &evm_opts);
+        let limits = args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts);
 
         assert!(limits.runtime > ContractSizeLimits::default().runtime);
         assert!(limits.initcode > ContractSizeLimits::default().initcode);
@@ -1721,7 +1748,7 @@ mod tests {
         let mut config = Config { code_size_limit: Some(128), ..Default::default() };
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
         assert_eq!(
-            args.contract_size_limits(&config, &evm_opts),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
             ContractSizeLimits::with_runtime_limit(64)
         );
 
@@ -1729,7 +1756,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         config.code_size_limit = Some(128);
         assert_eq!(
-            args.contract_size_limits(&config, &evm_opts),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
             ContractSizeLimits::with_runtime_limit(128)
         );
     }

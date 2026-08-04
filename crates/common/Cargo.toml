@@ -81,7 +81,6 @@ flate2.workspace = true
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 mpp.workspace = true
-fs2.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true

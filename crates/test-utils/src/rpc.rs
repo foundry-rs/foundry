@@ -185,7 +185,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     }
 
     if matches!(chain, BinanceSmartChainTestnet) {
-        return "https://bsc-testnet-rpc.publicnode.com".to_string();
+        return "https://bsc-testnet.bnbchain.org".to_string();
     }
 
     if matches!(chain, Celo) {
@@ -235,6 +235,8 @@ fn debug_url(url: &str) -> impl std::fmt::Display + '_ {
         path = url.path().get(..8).unwrap_or(url.path()),
     )
 }
+
+const MONAD_SYSTEM_ADDRESS: &str = "0x6f49a8f621353f12378d0046e7d7e4b9b249dc9e";
 
 /// Spawns an RPC proxy that presents one transaction as a canonical Monad protocol envelope.
 pub async fn spawn_canonical_monad_system_rpc(endpoint: String, target_hash: B256) -> String {
@@ -345,6 +347,7 @@ fn canonicalize_monad_system_transaction(transaction: &mut Value, target_hash: &
         })
         .flatten();
 
+    transaction.insert("from".to_string(), json!(MONAD_SYSTEM_ADDRESS));
     transaction.insert("gas".to_string(), json!("0x0"));
     transaction.insert("gasPrice".to_string(), json!("0x0"));
     transaction.insert("type".to_string(), json!("0x0"));
@@ -442,6 +445,7 @@ mod tests {
 
         assert_eq!(responses[0]["result"]["gasUsed"], "0x0");
         assert_eq!(responses[1]["result"]["gas"], "0x0");
+        assert_eq!(responses[1]["result"]["from"], MONAD_SYSTEM_ADDRESS);
         assert_eq!(responses[1]["result"]["type"], "0x0");
         assert_eq!(responses[1]["result"]["r"], "0x1");
         assert_eq!(responses[1]["result"]["s"], "0x1");

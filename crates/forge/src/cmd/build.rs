@@ -361,7 +361,7 @@ fn contract_size_limits(config: &Config) -> ContractSizeLimits {
                 .contract_size_limits()
                 .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
         })
-        .unwrap_or_default()
+        .unwrap_or_else(|| ContractSizeLimits::for_spec_id(config.evm_spec_id()))
 }
 /// Notice shown on lint-on-build failure; printed separately so it survives single-line
 /// cause-chain rendering.

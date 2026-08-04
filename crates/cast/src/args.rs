@@ -935,7 +935,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::Create2(cmd) => {
-            cmd.run()?;
+            cmd.execute()?;
         }
         CastSubcommand::Wallet { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {

@@ -2587,9 +2587,23 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     fork: &mut Fork<N, B>,
     persistent_accounts: &HashSet<Address>,
 ) -> Result<(), BackendError> {
-    // commit the state and update the loaded accounts
-    fork.db.commit(state);
-    fork.refresh_journaled_states(journaled_state, persistent_accounts)
+    // Refresh cloned journals against a cloned database so a failed read cannot publish only part
+    // of the transaction state.
+    let mut staged_db = fork.db.clone();
+    let mut staged_journaled_state = journaled_state.clone();
+    let mut staged_fork_journaled_state = fork.journaled_state.clone();
+    staged_db.commit(state);
+    update_state(&mut staged_journaled_state.state, &mut staged_db, Some(persistent_accounts))?;
+    update_state(
+        &mut staged_fork_journaled_state.state,
+        &mut staged_db,
+        Some(persistent_accounts),
+    )?;
+
+    fork.db = staged_db;
+    *journaled_state = staged_journaled_state;
+    fork.journaled_state = staged_fork_journaled_state;
+    Ok(())
 }
 
 fn fork_block_number(fork: &ForkId) -> Option<u64> {
@@ -2601,6 +2615,7 @@ fn fork_block_number(fork: &ForkId) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use super::{Fork, apply_state_changeset};
     #[cfg(feature = "monad")]
     use crate::evm::MonadEvmNetwork;
     use crate::{
@@ -2612,21 +2627,113 @@ mod tests {
     };
     use alloy_consensus::transaction::Recovered;
     use alloy_network::{
-        AnyRpcTransaction, AnyTxEnvelope, AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
+        AnyNetwork, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, UnknownTxEnvelope,
+        UnknownTypedTransaction,
     };
     use alloy_primitives::{Address, B256, U256, address};
-    use alloy_provider::Provider;
+    use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::Transaction as RpcTransaction;
     use alloy_serde::WithOtherFields;
     use anvil::{NodeConfig, spawn};
     use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
     use foundry_config::{Config, NamedChain};
-    use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
-    use revm::{
-        context::{BlockEnv, TxEnv},
-        database::DatabaseRef,
-        primitives::hardfork::SpecId,
+    use foundry_fork_db::{
+        SharedBackend,
+        cache::{BlockchainDb, BlockchainDbMeta},
     };
+    use revm::{
+        context::{BlockEnv, JournalInner, TxEnv},
+        database::{AccountState, CacheDB, DatabaseRef, DbAccount},
+        primitives::hardfork::SpecId,
+        state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
+    };
+    use std::collections::HashSet;
+
+    fn fork_with_closed_backend() -> Fork<AnyNetwork, BlockEnv> {
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(Asserter::new());
+        let db = BlockchainDb::new(
+            BlockchainDbMeta::new(BlockEnv::default(), "http://localhost".to_string()),
+            None,
+        );
+        let (backend, handler) = SharedBackend::new(provider, db, None);
+        drop(handler);
+        Fork {
+            db: CacheDB::new(backend),
+            journaled_state: JournalInner::new(),
+            source_chain_id: 1,
+            position: ForkPosition::AfterBlock { block_number: 0 },
+        }
+    }
+
+    #[test]
+    fn failed_fork_state_refresh_does_not_publish_transaction_changes() {
+        let mut fork = fork_with_closed_backend();
+        let externally_loaded = Address::with_last_byte(1);
+        let fork_loaded = Address::with_last_byte(2);
+        let committed = Address::with_last_byte(3);
+        let missing_slot = U256::from(1);
+
+        let cached_external = AccountInfo { balance: U256::from(11), ..Default::default() };
+        let cached_fork = AccountInfo { balance: U256::from(12), ..Default::default() };
+        fork.db.insert_account_info(externally_loaded, cached_external);
+        fork.db.insert_account_info(fork_loaded, cached_fork);
+
+        let mut journaled_state = JournalInner::new();
+        let external_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        journaled_state.state.insert(externally_loaded, external_account);
+
+        let mut fork_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(2), ..Default::default() });
+        fork_account
+            .storage
+            .insert(missing_slot, EvmStorageSlot::new(U256::ZERO, TransactionId::ZERO));
+        fork.journaled_state.state.insert(fork_loaded, fork_account);
+
+        let mut committed_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(13), ..Default::default() });
+        committed_account.mark_touch();
+        let mut state = EvmState::default();
+        state.insert(committed, committed_account);
+
+        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        assert!(result.is_err());
+        assert!(!fork.db.cache.accounts.contains_key(&committed));
+        assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
+        assert_eq!(fork.journaled_state.state[&fork_loaded].info.balance, U256::from(2));
+    }
+
+    #[test]
+    fn failed_fork_state_refresh_preserves_not_existing_account() {
+        let mut fork = fork_with_closed_backend();
+        let address = Address::with_last_byte(1);
+        let missing_slot = U256::from(1);
+        fork.db.cache.accounts.insert(address, DbAccount::new_not_existing());
+
+        let mut journaled_state = JournalInner::new();
+        let mut journaled_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        journaled_account
+            .storage
+            .insert(missing_slot, EvmStorageSlot::new(U256::from(7), TransactionId::ZERO));
+        journaled_state.state.insert(address, journaled_account);
+
+        let mut touched_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(13), ..Default::default() });
+        touched_account.mark_touch();
+        let mut state = EvmState::default();
+        state.insert(address, touched_account);
+
+        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        assert!(result.is_err());
+        assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
+        assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));
+        assert_eq!(
+            journaled_state.state[&address].storage[&missing_slot].present_value(),
+            U256::from(7)
+        );
+    }
 
     #[test]
     fn persistent_accounts_follow_the_active_network() {

@@ -9,7 +9,7 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
-        pool::transactions::{PoolTransaction, TransactionOrder},
+        pool::transactions::TransactionOrder,
     },
     mem::{self, in_memory_db::StateRootDb},
 };
@@ -18,7 +18,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
-use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
+use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
 };
@@ -52,8 +52,6 @@ use foundry_evm::{
         get_blob_base_fee_update_fraction,
     },
 };
-use foundry_primitives::FoundryTxEnvelope;
-use itertools::Itertools;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use revm::{
@@ -100,6 +98,13 @@ struct ForkOverrides {
     gas_limit: Option<u64>,
     gas_price: Option<u128>,
     base_fee: Option<u64>,
+}
+
+/// One-shot source data for a transaction-hash fork replay.
+#[derive(Clone, Debug)]
+pub(crate) struct ForkTransactionReplay {
+    pub(crate) source_block: AnyRpcBlock,
+    pub(crate) target_index: usize,
 }
 
 /// The default IPC endpoint
@@ -172,6 +177,8 @@ pub struct NodeConfig {
     pub fork_execution_chain_id: Option<u64>,
     /// Network family most recently inferred from a fork endpoint.
     inferred_fork_network: Option<NetworkVariant>,
+    /// Network configuration replaced by chain-ID inference, if any.
+    chain_id_network_base: Option<NetworkConfigs>,
     /// User-provided gas settings captured before fork-derived values are materialized.
     fork_overrides: Option<ForkOverrides>,
     /// The generator used to generate the dev accounts
@@ -216,7 +223,7 @@ pub struct NodeConfig {
     pub prune_history: PruneStateHistoryConfig,
     /// Max number of states cached on disk.
     pub max_persisted_states: Option<usize>,
-    /// The file where to load the state from
+    /// The initial state to apply and consume during startup.
     pub init_state: Option<SerializableState>,
     /// max number of blocks with transactions in memory
     pub transaction_block_keeper: Option<usize>,
@@ -543,6 +550,7 @@ impl Default for NodeConfig {
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
             inferred_fork_network: None,
+            chain_id_network_base: None,
             fork_overrides: None,
             // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
@@ -732,9 +740,17 @@ impl NodeConfig {
 
     /// Sets the chain id and updates all wallets
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
+        if let Some(base) = self.chain_id_network_base.take() {
+            self.networks = base;
+        }
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        self.networks = self.networks.with_chain_id(chain_id);
+        let base = self.networks;
+        let inferred = base.with_chain_id(chain_id);
+        if !base.has_network_selection() && inferred.has_network_selection() {
+            self.chain_id_network_base = Some(base);
+        }
+        self.networks = inferred;
         self.update_wallet_chain_id(chain_id);
     }
 
@@ -1185,6 +1201,7 @@ impl NodeConfig {
     pub const fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self.inferred_fork_network = None;
+        self.chain_id_network_base = None;
         self
     }
 
@@ -1193,6 +1210,7 @@ impl NodeConfig {
     pub fn with_tempo(mut self) -> Self {
         self.networks = NetworkConfigs::with_tempo();
         self.inferred_fork_network = None;
+        self.chain_id_network_base = None;
         self
     }
 
@@ -1202,6 +1220,7 @@ impl NodeConfig {
     pub fn with_monad(mut self) -> Self {
         self.networks = NetworkConfigs::with_monad();
         self.inferred_fork_network = None;
+        self.chain_id_network_base = None;
         self
     }
 
@@ -1211,6 +1230,7 @@ impl NodeConfig {
     pub fn with_optimism(mut self) -> Self {
         self.networks = NetworkConfigs::with_optimism();
         self.inferred_fork_network = None;
+        self.chain_id_network_base = None;
         self
     }
 
@@ -1247,7 +1267,9 @@ impl NodeConfig {
     /// [Backend](mem::Backend)
     ///
     /// *Note*: only memory based backend for now
-    pub(crate) async fn setup<N>(&mut self) -> Result<mem::Backend<N>>
+    pub(crate) async fn setup<N>(
+        &mut self,
+    ) -> Result<(mem::Backend<N>, Option<ForkTransactionReplay>)>
     where
         N: alloy_network::Network<
                 TxEnvelope = foundry_primitives::FoundryTxEnvelope,
@@ -1305,12 +1327,14 @@ impl NodeConfig {
             tempo_hardfork,
         );
 
-        let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
+        let (db, fork, fork_transaction_replay) =
             if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
-                self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
+                self.setup_fork_db_with_replay(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
                 let track_history = self.prune_history.is_state_history_supported();
-                (Arc::new(TokioRwLock::new(Box::new(StateRootDb::new(track_history)))), None)
+                let db: Arc<TokioRwLock<Box<dyn Db>>> =
+                    Arc::new(TokioRwLock::new(Box::new(StateRootDb::new(track_history))));
+                (db, None, None)
             };
 
         // if provided use all settings of `genesis.json`
@@ -1417,9 +1441,7 @@ impl NodeConfig {
                 eyre::bail!("fork endpoint changed while Anvil was being initialized");
             }
         }
-        backend.commit_startup_fork_cache();
-
-        Ok(backend)
+        Ok((backend, fork_transaction_replay))
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
@@ -1434,10 +1456,23 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
-        let (db, config) = self.setup_fork_db_config(eth_rpc_url, evm_env, fees).await?;
+        let (db, fork, replay) = self.setup_fork_db_with_replay(eth_rpc_url, evm_env, fees).await?;
+        eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        Ok((db, fork))
+    }
+
+    async fn setup_fork_db_with_replay(
+        &mut self,
+        eth_rpc_url: String,
+        evm_env: &mut EvmEnv,
+        fees: &FeeManager,
+    ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>, Option<ForkTransactionReplay>)>
+    {
+        let (db, config, replay) =
+            self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
-        Ok((db, Some(fork)))
+        Ok((db, Some(fork), replay))
     }
 
     fn fork_provider(&self, eth_rpc_url: &str) -> Result<RetryProvider> {
@@ -1642,6 +1677,7 @@ impl NodeConfig {
         let effective_network =
             self.networks.resolved_network().unwrap_or(NetworkVariant::Ethereum);
         self.networks.has_network_selection()
+            && self.chain_id_network_base.is_none()
             && self.inferred_fork_network != Some(effective_network)
     }
 
@@ -1676,6 +1712,18 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
+        let (db, config, replay) =
+            self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees).await?;
+        eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        Ok((db, config))
+    }
+
+    pub(crate) async fn setup_fork_db_config_with_replay(
+        &mut self,
+        eth_rpc_url: String,
+        evm_env: &mut EvmEnv,
+        fees: &FeeManager,
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
         let fork_overrides = *self.fork_overrides.get_or_insert(ForkOverrides {
             gas_limit: self.gas_limit,
@@ -1694,8 +1742,8 @@ impl NodeConfig {
         for _ in 0..3 {
             let before = self.resolved_fork_endpoint_identity(&provider).await?;
             let derived = if let Some(fork_choice) = &self.fork_choice {
-                derive_block_and_transactions(fork_choice, &provider).await.wrap_err(
-                    "failed to derive fork block number and force transactions from fork choice",
+                derive_block_and_replay(fork_choice, &provider).await.wrap_err(
+                    "failed to derive fork block and transaction replay from fork choice",
                 )?
             } else {
                 (
@@ -1705,7 +1753,7 @@ impl NodeConfig {
                     None,
                 )
             };
-            let (fork_block_number, force_transactions) = derived;
+            let (fork_block_number, fork_transaction_replay) = derived;
             let block = provider
                 .get_block(BlockNumberOrTag::Number(fork_block_number).into())
                 .await
@@ -1718,11 +1766,11 @@ impl NodeConfig {
             let after = self.resolved_fork_endpoint_identity(&provider).await?;
             if before == after {
                 stable_snapshot =
-                    Some((before, fork_block_number, force_transactions, block, gas_price));
+                    Some((before, fork_block_number, fork_transaction_replay, block, gas_price));
                 break;
             }
         }
-        let (fork_identity, fork_block_number, force_transactions, block, gas_price) =
+        let (fork_identity, fork_block_number, fork_transaction_replay, block, gas_price) =
             stable_snapshot.ok_or_else(|| {
                 eyre::eyre!(
                     "fork endpoint changed while its identity and block context were being resolved"
@@ -1747,6 +1795,7 @@ impl NodeConfig {
         if !self.has_explicit_network_selection() {
             self.networks = self.networks.with_rpc_profile(target_profile);
             self.inferred_fork_network = Some(target_network);
+            self.chain_id_network_base = None;
         }
 
         let block = if let Some(block) = block {
@@ -1767,6 +1816,28 @@ latest block number: {latest_block}"
             }
             eyre::bail!("failed to get block for block number: {fork_block_number}");
         };
+
+        if let Some(replay) = &fork_transaction_replay {
+            let source_header = replay.source_block.header();
+            eyre::ensure!(
+                block.header.hash == source_header.parent_hash,
+                "fork transaction block {} at {} has parent {}, but fetched fork block at {} has \
+                 hash {}",
+                source_header.hash,
+                source_header.number,
+                source_header.parent_hash,
+                block.header.number,
+                block.header.hash
+            );
+            eyre::ensure!(
+                block.header.number.checked_add(1) == Some(source_header.number),
+                "fork transaction block {} has number {}, but fetched parent {} has number {}",
+                source_header.hash,
+                source_header.number,
+                block.header.hash,
+                block.header.number
+            );
+        }
 
         let gas_limit = self.fork_gas_limit_with_override(&block, fork_overrides.gas_limit);
         self.gas_limit = Some(gas_limit);
@@ -1953,7 +2024,6 @@ latest block number: {latest_block}"
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used().map(|g| g as u128),
             blob_excess_gas_and_price: evm_env.block_env.blob_excess_gas_and_price,
-            force_transactions,
         };
 
         debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
@@ -1963,7 +2033,7 @@ latest block number: {latest_block}"
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
-        Ok((db, config))
+        Ok((db, config, fork_transaction_replay))
     }
 
     /// we only use the gas limit value of the block if it is non-zero and the block gas
@@ -2014,10 +2084,10 @@ pub(crate) const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
 /// If the fork choice is a transaction hash, determine the block that the transaction was mined in,
 /// and return the block number before the fork block along with all transactions in the fork block
 /// that are before (and including) the fork transaction.
-async fn derive_block_and_transactions(
+async fn derive_block_and_replay(
     fork_choice: &ForkChoice,
     provider: &Arc<RetryProvider>,
-) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction<FoundryTxEnvelope>>>)> {
+) -> eyre::Result<(BlockNumber, Option<ForkTransactionReplay>)> {
     match fork_choice {
         ForkChoice::Block(block_number) => {
             let block_number = *block_number;
@@ -2034,38 +2104,88 @@ async fn derive_block_and_transactions(
             let transaction = provider
                 .get_transaction_by_hash(transaction_hash.0.into())
                 .await?
-                .ok_or_else(|| eyre::eyre!("failed to get fork transaction by hash"))?;
+                .ok_or_else(|| eyre::eyre!("fork transaction {transaction_hash} was not found"))?;
             let transaction_block_number = transaction.block_number().ok_or_else(|| {
-                eyre::eyre!("fork transaction is not mined yet (no block number)")
+                eyre::eyre!("fork transaction {transaction_hash} is not mined (no block number)")
+            })?;
+            let transaction_block_hash = transaction.block_hash().ok_or_else(|| {
+                eyre::eyre!("fork transaction {transaction_hash} is not mined (no block hash)")
             })?;
 
             // Get the block pertaining to the fork transaction.
-            let transaction_block = provider
-                .get_block_by_number(transaction_block_number.into())
-                .full()
-                .await?
-                .ok_or_else(|| eyre::eyre!("failed to get fork block by number"))?;
-
-            // Filter out transactions that are after the fork transaction.
-            let filtered_transactions = transaction_block
-                .transactions
-                .as_transactions()
-                .ok_or_else(|| eyre::eyre!("failed to get transactions from full fork block"))?
-                .iter()
-                .take_while_inclusive(|&transaction| transaction.tx_hash() != transaction_hash.0)
-                .collect::<Vec<_>>();
-
-            // Convert the transactions to PoolTransactions
-            let force_transactions = filtered_transactions
-                .iter()
-                .map(|&transaction| {
-                    PoolTransaction::try_from(transaction.clone()).map(PoolTransaction::with_replay)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| eyre::eyre!("Err converting to pool transactions {e}"))?;
-            Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))
+            let transaction_block =
+                provider.get_block_by_hash(transaction_block_hash).full().await?.ok_or_else(
+                    || {
+                        eyre::eyre!(
+                            "failed to get fork block {transaction_block_hash} for transaction \
+                         {transaction_hash}"
+                        )
+                    },
+                )?;
+            let replay = validate_fork_transaction_replay(
+                *transaction_hash,
+                &transaction,
+                transaction_block,
+            )?;
+            Ok((transaction_block_number.saturating_sub(1), Some(replay)))
         }
     }
+}
+
+fn validate_fork_transaction_replay(
+    transaction_hash: TxHash,
+    transaction: &alloy_network::AnyRpcTransaction,
+    source_block: AnyRpcBlock,
+) -> eyre::Result<ForkTransactionReplay> {
+    let source_hash = source_block.header.hash;
+    let source_number = source_block.header.number;
+    let transaction_block_hash = transaction.block_hash().ok_or_else(|| {
+        eyre::eyre!("fork transaction {transaction_hash} is not mined (no block hash)")
+    })?;
+    let transaction_block_number = transaction.block_number().ok_or_else(|| {
+        eyre::eyre!("fork transaction {transaction_hash} is not mined (no block number)")
+    })?;
+
+    eyre::ensure!(
+        source_hash == transaction_block_hash,
+        "fork transaction {transaction_hash} reports block {transaction_block_hash}, but fetched \
+         block hash is {source_hash}"
+    );
+    eyre::ensure!(
+        source_number == transaction_block_number,
+        "fork transaction {transaction_hash} reports block number {transaction_block_number}, but \
+         fetched block {source_hash} has number {source_number}"
+    );
+    eyre::ensure!(
+        source_number > 0,
+        "fork transaction {transaction_hash} is in genesis block {source_hash}, which has no parent"
+    );
+
+    let transactions = source_block.transactions.as_transactions().ok_or_else(|| {
+        eyre::eyre!("fork block {source_hash} at {source_number} did not include full transactions")
+    })?;
+    let mut matches =
+        transactions.iter().enumerate().filter(|(_, tx)| tx.tx_hash() == transaction_hash);
+    let target_index = matches.next().map(|(index, _)| index).ok_or_else(|| {
+        eyre::eyre!(
+            "fork transaction {transaction_hash} is absent from block {source_hash} at \
+             {source_number}"
+        )
+    })?;
+    eyre::ensure!(
+        matches.next().is_none(),
+        "fork transaction {transaction_hash} occurs more than once in block {source_hash} at \
+         {source_number}"
+    );
+    if let Some(reported_index) = transaction.transaction_index() {
+        eyre::ensure!(
+            reported_index == target_index as u64,
+            "fork transaction {transaction_hash} reports index {reported_index}, but occurs at \
+             index {target_index} in block {source_hash}"
+        );
+    }
+
+    Ok(ForkTransactionReplay { source_block, target_index })
 }
 
 /// Fork delimiter used to specify which block or transaction to fork from.
@@ -2350,6 +2470,33 @@ mod tests {
         config.set_chain_id(Some(10u64));
 
         assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    fn chain_id_network_inference_is_replaceable_and_clearable() {
+        let mut config = NodeConfig::test();
+        config.set_chain_id(Some(4217u64));
+        assert!(config.networks.is_tempo());
+
+        config.set_chain_id(Some(NamedChain::Celo as u64));
+        assert!(config.networks.is_celo());
+        assert!(!config.networks.is_tempo());
+
+        config.set_chain_id(Some(1u64));
+        assert!(!config.networks.has_network_selection());
+
+        config.set_chain_id(Some(4217u64));
+        config.set_chain_id(None::<u64>);
+        assert!(!config.networks.has_network_selection());
+    }
+
+    #[test]
+    fn chain_id_preserves_explicit_network_selection() {
+        let mut config = NodeConfig::test_tempo();
+        config.set_chain_id(Some(NamedChain::Celo as u64));
+
+        assert!(config.networks.is_tempo());
+        assert!(!config.networks.is_celo());
     }
 
     #[test]

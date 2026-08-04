@@ -45,10 +45,11 @@ pub struct LazyMppHttpTransport(MppHttpTransport<LazyAccountsProvider>);
 
 impl LazyMppHttpTransport {
     /// Create a transport that opens Tempo Accounts only after a paid challenge.
-    pub fn lazy(client: reqwest::Client, url: Url) -> Self {
+    pub fn lazy(client: reqwest::Client, url: Url, headers: reqwest::header::HeaderMap) -> Self {
         let provider = LazyAccountsProvider::new(url.to_string());
         Self(
             MppHttpTransport::new(client, url, provider)
+                .with_headers(headers)
                 .with_max_concurrent_requests(MAX_CONCURRENT_MPP_HTTP_REQUESTS),
         )
     }

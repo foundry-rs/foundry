@@ -259,7 +259,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
             script_config.evm_opts.fork_url = Some(rpc.clone());
-            let mut runner = script_config.get_runner().await?;
+            let mut runner = script_config._get_runner(None, false, false).await?;
             runner.executor.enable_block_context_progression()?;
             Ok((rpc, runner))
         });
@@ -309,6 +309,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             let provider_info = manager
                 .get_or_init_provider(
                     &tx.rpc,
+                    self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
                     self.args.legacy,
                     self.script_config.config.eip1559_fee_estimate,
                 )
@@ -343,6 +344,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                             tx,
                             &provider_info.provider,
                             self.args.gas_estimate_multiplier,
+                            false,
                         )
                         .await
                         {

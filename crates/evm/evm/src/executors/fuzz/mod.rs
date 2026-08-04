@@ -22,14 +22,11 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
     FuzzFixtures, FuzzRunMetadata, FuzzTestResult,
-    strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state, fuzz_msg_value},
+    strategies::{EvmFuzzState, TxGenerator},
 };
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
-use proptest::{
-    strategy::{Just, Strategy},
-    test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner},
-};
+use proptest::test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json::json;
 use std::{
@@ -304,7 +301,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 value: failure.value,
             },
         };
-        self.resolve_stateless_tx(&mut tx)?;
+        self.resolve_stateless_tx_with_executor(&self.executor_f, &mut tx)?;
         let mut call = self.executor_f.call_raw(
             tx.sender,
             tx.call_details.target,
@@ -446,10 +443,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
     }
 
-    fn resolve_stateless_tx(&self, tx: &mut BasicTxDetails) -> Result<()> {
-        self.resolve_stateless_tx_with_executor(&self.executor_f, tx)
-    }
-
     fn resolve_stateless_tx_with_executor(
         &self,
         executor: &Executor<FEN>,
@@ -501,11 +494,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
         result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
         let (_, last_run_worker_idx) = last_run_worker.expect("at least one worker");
+        let mut output_worker_idx = last_run_worker_idx;
 
         if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
             result.success = false;
 
             let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
+            output_worker_idx = failed_worker_idx;
             let failed_worker = &mut workers[failed_worker_idx];
 
             let counterexample = failed_worker.counterexample.take();
@@ -551,7 +546,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
 
         if !self.config.show_logs {
-            result.logs = workers[last_run_worker_idx].logs.clone();
+            result.logs = workers[output_worker_idx].logs.clone();
         }
 
         for mut worker in workers {
@@ -610,25 +605,24 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         progress: Option<&ProgressBar>,
     ) -> Result<WorkerState<FEN>> {
         // Prepare
-        let fuzz_state = shared_state.state.fork();
-        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let calldata_strategy = proptest::prop_oneof![
-            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state, fuzz_fixtures),
-        ];
-        let value_strategy = if func.state_mutability == alloy_json_abi::StateMutability::Payable {
-            fuzz_msg_value(self.config.corpus.payable_value_weight).boxed()
-        } else {
-            Just(None).boxed()
-        };
-        let sender = self.sender;
-        let strategy =
-            (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| BasicTxDetails {
-                warp: None,
-                roll: None,
-                sender,
-                call_details: CallDetails { target: address, calldata, value },
-            });
+        let fuzz_seed = shared_state.state.fork();
+        let generator = TxGenerator::stateless(
+            fuzz_seed.clone(),
+            fuzz_fixtures.clone(),
+            address,
+            self.sender,
+            func.clone(),
+            self.config.dictionary.dictionary_weight,
+            self.config.corpus.payable_value_weight,
+        );
+        let fuzz_state = fuzz_seed.stateless_worker();
+        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::stateless_with_fixtures(
+            generator,
+            fuzz_state.clone(),
+            fuzz_fixtures.clone(),
+            func.clone(),
+            &self.config.corpus,
+        )?;
 
         let replay_target = ReplayTarget {
             stateless: Some(StatelessReplayTarget { function: func, address }),
@@ -638,7 +632,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let mut corpus = WorkerCorpus::new(
             worker_id,
             self.config.corpus.clone(),
-            strategy.boxed(),
+            generator,
             // Master worker replays the persisted corpus using the executor
             (worker_id == 0).then_some(&self.executor_f),
             replay_target,
@@ -673,7 +667,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         if let Some(target_run) = self.config.run {
             for _ in 1..target_run {
-                if let Err(err) = corpus.new_input(&mut runner, &fuzz_state, func) {
+                if let Err(err) = corpus.new_sequence(&mut runner) {
                     worker.failure = Some(TestCaseError::fail(format!(
                         "failed to generate fuzzed input in worker {}: {err}",
                         worker.id
@@ -698,7 +692,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // 2. Worker hasn't reached its specific run limit
         'stop: while shared_state.should_continue() && worker.runs < worker_runs {
             // If counterexample recorded, replay it first, without incrementing runs.
-            let (input, fuzz_run) = if worker_id == 0
+            let (input, fuzz_run, is_persisted_replay) = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
                 && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
@@ -727,6 +721,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         failure.fuzz.run,
                         Some(failure.fuzz.worker.unwrap_or(worker_id as u32)),
                     )),
+                    true,
                 )
             } else {
                 runs_since_sync += 1;
@@ -749,8 +744,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
-                let input = match corpus.new_input(&mut runner, &fuzz_state, func) {
-                    Ok(input) => input,
+                let input = match corpus.new_sequence(&mut runner) {
+                    Ok(plan) => plan.into_first(),
                     Err(err) => {
                         worker.failure = Some(TestCaseError::fail(format!(
                             "failed to generate fuzzed input in worker {}: {err}",
@@ -768,6 +763,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         Some(fuzz_run),
                         Some(worker_id as u32),
                     )),
+                    false,
                 )
             };
 
@@ -797,6 +793,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             ) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
+                        if is_persisted_replay {
+                            continue 'stop;
+                        }
                         let total_runs = inc_runs();
 
                         if worker_id == 0 && self.config.corpus.collect_edge_coverage() {
@@ -853,7 +852,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         counterexample: outcome,
                         ..
                     }) => {
-                        inc_runs();
+                        if !is_persisted_replay {
+                            inc_runs();
+                        }
                         worker.failure_run = fuzz_run;
 
                         // Only classify magic skip payloads when the revert originates from the
@@ -865,7 +866,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         } else {
                             rd.maybe_decode(&outcome.1.result, status)
                         };
-                        worker.logs.extend(outcome.1.logs.clone());
+                        if self.config.show_logs {
+                            worker.logs.extend(outcome.1.logs.clone());
+                        } else {
+                            worker.logs.clone_from(&outcome.1.logs);
+                        }
                         worker.counterexample = Some(outcome);
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         shared_state.try_claim_failure(worker_id);

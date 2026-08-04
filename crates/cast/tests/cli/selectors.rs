@@ -145,6 +145,16 @@ casttest!(selectors_json_envelope, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(selectors_exclude_fallback_dispatch, |_prj, cmd| {
+    // Bytecode with ABI-dispatched selector 0x11111111 and fallback-dispatched selector 0x22222222.
+    let bytecode = "5f3560e01c806322222222146025576004361060215780631111111114602357005b005b005b00";
+
+    cmd.args(["selectors", bytecode]).assert_success().stdout_eq(str![[r#"
+0x11111111		payable
+
+"#]]);
+});
+
 casttest!(abi_encode_event_json_envelope, |_prj, cmd| {
     cmd.args([
         "abi-encode-event",

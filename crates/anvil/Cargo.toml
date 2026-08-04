@@ -45,6 +45,7 @@ alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
+alloy-hardforks.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }

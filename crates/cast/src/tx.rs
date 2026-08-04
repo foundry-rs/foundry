@@ -776,7 +776,12 @@ where
 
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
     async fn estimate_gas(&mut self) -> Result<()> {
-        match self.provider.estimate_gas(self.tx.clone()).await {
+        let request = if self.browser && self.chain.is_tempo() {
+            self.tx.browser_wallet_gas_estimation_request()
+        } else {
+            self.tx.clone()
+        };
+        match self.provider.estimate_gas(request).await {
             Ok(estimated) => {
                 self.tx.set_gas_limit(estimated);
                 Ok(())

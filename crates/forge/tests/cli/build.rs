@@ -1,4 +1,5 @@
 use crate::utils::generate_large_init_contract;
+use foundry_compilers::artifacts::EvmVersion;
 #[cfg(feature = "monad")]
 use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
@@ -206,6 +207,27 @@ forgetest!(build_sizes_respects_monad_network_code_size_limit, |prj, cmd| {
     "init_size": 50125,
     "runtime_margin": 131010,
     "init_margin": 212019
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+forgetest!(build_sizes_respects_amsterdam_code_size_limits, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Amsterdam;
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 65474,
+    "init_margin": 80947
   }
 }
 "#]]

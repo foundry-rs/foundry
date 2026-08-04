@@ -1,26 +1,54 @@
 use alloy_consensus::{
-    SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, transaction::TxEip7702,
+    SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559,
+    transaction::TxEip7702,
 };
-use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync};
-use alloy_primitives::{Address, B256, Bytes, U256, address, hex};
-use alloy_provider::Provider;
+use alloy_eips::eip2718::Decodable2718;
+use alloy_network::{
+    ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse, TxSignerSync,
+};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address, hex};
+use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    Authorization, BlockId, BlockNumberOrTag, TransactionRequest,
+    Authorization, BlockId, BlockNumberOrTag, Index, TransactionRequest,
     anvil::Forking,
     simulate::{SimBlock, SimulatePayload},
-    trace::parity::{TraceResults, TraceType},
+    state::{AccountOverride, StateOverride},
+    trace::{
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
+        parity::{TraceResults, TraceType},
+    },
 };
-use alloy_rpc_types_eth::{Bundle, EthCallResponse};
+use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_serde::WithOtherFields;
-use alloy_signer::SignerSync;
-use anvil::{NodeConfig, NodeHandle, spawn};
-use foundry_evm::hardfork::MonadHardfork;
+use alloy_sol_types::SolCall;
+use anvil::{
+    NodeConfig, NodeHandle,
+    eth::pool::transactions::{PoolTransaction, TransactionOrder},
+    spawn,
+};
+use anvil_core::eth::transaction::PendingTransaction;
+use foundry_evm::hardfork::{FoundryHardfork, MonadHardfork};
 use foundry_evm_networks::NetworkConfigs;
-use monad_revm::MONAD_TESTNET_CHAIN_ID;
-
+use foundry_primitives::FoundryTxEnvelope;
+use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
+use monad_revm::{
+    MONAD_TESTNET_CHAIN_ID,
+    staking::{
+        constants::SYSTEM_ADDRESS,
+        interface::IMonadStaking::syscallRewardCall,
+        storage::{
+            consensus_view_key, global_slots, val_id_secp_key, validator_key, validator_offsets,
+        },
+    },
+};
+use std::sync::Arc;
 const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");
 const RESERVE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002000");
+const BALANCE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002001");
+const CHAIN_ID_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002002");
+const CLZ_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002003");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 const RESERVE_RETURN_PROBE_CODE: [u8; 25] =
     hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
@@ -295,6 +323,398 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target() {
+    const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
+    const VALIDATOR_AUTH: Address = address!("0x2222222222222222222222222222222222222222");
+    const VALIDATOR_ID: u64 = 7;
+
+    let origin_config = NodeConfig::test()
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_genesis_timestamp(Some(
+            MonadHardfork::MonadNine.testnet_activation_timestamp().unwrap(),
+        ))
+        .with_transaction_order(TransactionOrder::Fifo);
+    let (origin_api, origin_handle) = spawn(origin_config).await;
+    let origin_provider = origin_handle.http_provider();
+    let participant = origin_provider.get_accounts().await.unwrap()[0];
+    let reward = mon(25);
+    let initial_system_balance = mon(100);
+    let initial_staking_balance = mon(3);
+
+    origin_api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
+    origin_api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
+    origin_api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
+    origin_api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
+    origin_api
+        .anvil_set_code(RESERVE_PROBE_ADDRESS, Bytes::from(hex!("60015f355500")))
+        .await
+        .unwrap();
+    origin_api
+        .anvil_set_code(
+            BALANCE_PROBE_ADDRESS,
+            Bytes::from(hex!("730000000000000000000000000000000000001000315f5260205ff3")),
+        )
+        .await
+        .unwrap();
+    origin_api
+        .anvil_set_code(CHAIN_ID_PROBE_ADDRESS, Bytes::from(hex!("465f5260205ff3")))
+        .await
+        .unwrap();
+    origin_api
+        .anvil_set_storage_at(
+            STAKING_ADDRESS,
+            val_id_secp_key(&BLOCK_AUTHOR),
+            storage_value(left_aligned_u64(VALIDATOR_ID)),
+        )
+        .await
+        .unwrap();
+    origin_api
+        .anvil_set_storage_at(
+            STAKING_ADDRESS,
+            consensus_view_key(VALIDATOR_ID, 0),
+            storage_value(mon(100)),
+        )
+        .await
+        .unwrap();
+    origin_api
+        .anvil_set_storage_at(STAKING_ADDRESS, consensus_view_key(VALIDATOR_ID, 1), B256::ZERO)
+        .await
+        .unwrap();
+    origin_api
+        .anvil_set_storage_at(
+            STAKING_ADDRESS,
+            validator_key(VALIDATOR_ID, validator_offsets::ADDRESS_FLAGS),
+            storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+        )
+        .await
+        .unwrap();
+
+    origin_api.mine_one().await;
+    let parent_block = origin_provider.get_block_number().await.unwrap();
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+
+    let reward_tx = |nonce| {
+        TransactionRequest::default()
+            .with_from(SYSTEM_ADDRESS)
+            .with_to(STAKING_ADDRESS)
+            .with_nonce(nonce)
+            .with_value(reward)
+            .with_input(Bytes::from(syscallRewardCall { blockAuthor: BLOCK_AUTHOR }.abi_encode()))
+            .with_gas_limit(1_000_000)
+            .with_gas_price(2_000_000_000)
+    };
+    let first_reward = origin_provider.send_transaction(reward_tx(11).into()).await.unwrap();
+    let first_reward_hash = *first_reward.tx_hash();
+    let first_probe = origin_provider
+        .send_transaction(
+            reserve_probe_tx(participant, 0, 0, mon(2)).with_gas_price(2_000_000_000).into(),
+        )
+        .await
+        .unwrap();
+    let first_probe_hash = *first_probe.tx_hash();
+    let second_probe = origin_provider
+        .send_transaction(
+            reserve_probe_tx(participant, 1, 1, mon(1)).with_gas_price(2_000_000_000).into(),
+        )
+        .await
+        .unwrap();
+    let second_probe_hash = *second_probe.tx_hash();
+    let target_reward = origin_provider.send_transaction(reward_tx(12).into()).await.unwrap();
+    let target_reward_hash = *target_reward.tx_hash();
+    origin_api.mine_one().await;
+
+    let source_block = origin_api
+        .block_by_number_full(BlockNumberOrTag::Number(parent_block + 1))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        source_block
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(TransactionResponse::tx_hash)
+            .collect::<Vec<_>>(),
+        [first_reward_hash, first_probe_hash, second_probe_hash, target_reward_hash]
+    );
+
+    let endpoint =
+        spawn_canonical_monad_system_rpc(origin_handle.http_endpoint(), first_reward_hash).await;
+    let endpoint = spawn_canonical_monad_system_rpc(endpoint, target_reward_hash).await;
+    let canonical_provider = foundry_common::provider::get_http_provider(&endpoint);
+    let canonical_target =
+        canonical_provider.get_transaction_by_hash(target_reward_hash).await.unwrap().unwrap();
+    assert_eq!(canonical_target.from(), SYSTEM_ADDRESS);
+    let canonical_block = canonical_provider
+        .get_block_by_number(BlockNumberOrTag::Number(parent_block + 1))
+        .full()
+        .await
+        .unwrap()
+        .unwrap();
+    let canonical_target = canonical_block
+        .transactions
+        .as_transactions()
+        .unwrap()
+        .iter()
+        .find(|transaction| transaction.tx_hash() == target_reward_hash)
+        .unwrap();
+    assert_eq!(canonical_target.from(), SYSTEM_ADDRESS);
+    let config = monad_nine_config()
+        .with_chain_id(Some(1u64))
+        .with_genesis_accounts(Vec::new())
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(endpoint.clone()))
+        .with_fork_transaction_hash(Some(target_reward_hash))
+        .with_no_mining(true);
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_chain_id().await.unwrap(), 1);
+
+    let replayed_target =
+        provider.get_transaction_by_hash(target_reward_hash).await.unwrap().unwrap();
+    assert_eq!(replayed_target.from(), SYSTEM_ADDRESS);
+    assert_eq!(replayed_target.tx_hash(), target_reward_hash);
+    let first_receipt = provider.get_transaction_receipt(first_reward_hash).await.unwrap().unwrap();
+    let target_receipt =
+        provider.get_transaction_receipt(target_reward_hash).await.unwrap().unwrap();
+    let replay_block_hash = target_receipt.block_hash.unwrap();
+    let replay_block_number = target_receipt.block_number.unwrap();
+    for receipt in [&first_receipt, &target_receipt] {
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used, 0);
+        assert_eq!(receipt.effective_gas_price, 0);
+    }
+    for probe_hash in [first_probe_hash, second_probe_hash] {
+        assert!(provider.get_transaction_receipt(probe_hash).await.unwrap().unwrap().status());
+    }
+
+    assert_eq!(provider.get_transaction_count(SYSTEM_ADDRESS).await.unwrap(), 13);
+    assert_eq!(provider.get_balance(SYSTEM_ADDRESS).await.unwrap(), initial_system_balance);
+    assert_eq!(
+        provider.get_balance(STAKING_ADDRESS).await.unwrap(),
+        initial_staking_balance + reward * U256::from(2)
+    );
+    assert_eq!(provider.get_transaction_count(participant).await.unwrap(), 2);
+    assert_eq!(
+        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::ZERO).await.unwrap(),
+        U256::ONE
+    );
+    assert_eq!(provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::ONE).await.unwrap(), U256::ONE);
+    assert_eq!(
+        provider.get_storage_at(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).await.unwrap(),
+        left_aligned_u64(VALIDATOR_ID)
+    );
+    assert_eq!(
+        provider
+            .get_storage_at(
+                STAKING_ADDRESS,
+                validator_key(VALIDATOR_ID, validator_offsets::UNCLAIMED_REWARDS),
+            )
+            .await
+            .unwrap(),
+        reward * U256::from(2)
+    );
+
+    let replay: TraceResults = provider
+        .client()
+        .request("trace_replayTransaction", (target_reward_hash, vec![TraceType::StateDiff]))
+        .await
+        .unwrap();
+    assert!(replay.state_diff.unwrap().contains_key(&STAKING_ADDRESS));
+
+    let _: GethTrace = provider
+        .client()
+        .request("debug_traceTransaction", (target_reward_hash, GethDebugTracingOptions::default()))
+        .await
+        .unwrap();
+
+    let transaction_opcode_gas: Option<TransactionOpcodeGas> = provider
+        .client()
+        .request("trace_transactionOpcodeGas", (target_reward_hash,))
+        .await
+        .unwrap();
+    assert_eq!(transaction_opcode_gas.unwrap().transaction_hash, target_reward_hash);
+
+    let opcode_gas: Option<BlockOpcodeGas> = provider
+        .client()
+        .request("trace_blockOpcodeGas", (BlockId::hash(replay_block_hash),))
+        .await
+        .unwrap();
+    let opcode_gas = opcode_gas.unwrap();
+    assert_eq!(opcode_gas.transactions.len(), 4);
+    assert_eq!(
+        opcode_gas
+            .transactions
+            .iter()
+            .map(|transaction| transaction.transaction_hash)
+            .collect::<Vec<_>>(),
+        [first_reward_hash, first_probe_hash, second_probe_hash, target_reward_hash]
+    );
+
+    let staking_after_target: Option<RpcAccountInfo> = provider
+        .client()
+        .request(
+            "debug_accountInfoAt",
+            (BlockId::hash(replay_block_hash), Index::from(3), STAKING_ADDRESS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        staking_after_target.unwrap().balance,
+        initial_staking_balance + reward * U256::from(2)
+    );
+
+    let balance_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(TransactionRequest::default().to(BALANCE_PROBE_ADDRESS)),
+            BlockId::number(replay_block_number),
+            GethDebugTracingCallOptions::default().with_tx_index(3),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(balance_trace) = balance_trace else {
+        panic!("expected default balance probe trace")
+    };
+    assert_eq!(U256::from_be_slice(&balance_trace.return_value), initial_staking_balance + reward);
+
+    let chain_id_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(TransactionRequest::default().to(CHAIN_ID_PROBE_ADDRESS)),
+            BlockId::number(replay_block_number),
+            GethDebugTracingCallOptions::default().with_tx_index(3),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(chain_id_trace) = chain_id_trace else {
+        panic!("expected default chain ID probe trace")
+    };
+    assert_eq!(
+        U256::from_be_slice(&chain_id_trace.return_value),
+        U256::from(MONAD_TESTNET_CHAIN_ID)
+    );
+
+    let state = api.serialized_state(true).await.unwrap();
+    for reward_hash in [first_reward_hash, target_reward_hash] {
+        let reward_info = state
+            .transactions
+            .iter()
+            .find(|transaction| transaction.info.transaction_hash == reward_hash)
+            .unwrap();
+        assert_eq!(reward_info.info.from, SYSTEM_ADDRESS);
+    }
+    let serialized_replay_block_hash = state
+        .transactions
+        .iter()
+        .find(|transaction| transaction.info.transaction_hash == target_reward_hash)
+        .unwrap()
+        .block_hash;
+    assert_eq!(serialized_replay_block_hash, replay_block_hash);
+    let replay_profile = state.monad_block_replay_profiles[&replay_block_hash];
+    assert_eq!(replay_profile.execution_chain_id, MONAD_TESTNET_CHAIN_ID);
+    assert_eq!(replay_profile.hardfork, MonadHardfork::MonadNine);
+
+    let loaded_config = monad_eight_config()
+        .with_chain_id(Some(1u64))
+        .with_genesis_accounts(Vec::new())
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(endpoint))
+        .with_fork_block_number(Some(parent_block))
+        .with_transaction_block_keeper(Some(1usize))
+        .with_init_state(Some(state))
+        .with_no_mining(true);
+    let (loaded_api, loaded_handle) = spawn(loaded_config).await;
+    let loaded_provider = loaded_handle.http_provider();
+    let loaded_state = loaded_api.serialized_state(false).await.unwrap();
+    for reward_hash in [first_reward_hash, target_reward_hash] {
+        let reward_info = loaded_state
+            .transactions
+            .iter()
+            .find(|transaction| transaction.info.transaction_hash == reward_hash)
+            .unwrap();
+        assert_eq!(reward_info.info.from, SYSTEM_ADDRESS);
+    }
+    let loaded_replay_profile = loaded_state.monad_block_replay_profiles[&replay_block_hash];
+    assert_eq!(loaded_replay_profile, replay_profile);
+    let mut state_overrides = StateOverride::default();
+    state_overrides.insert(
+        CLZ_PROBE_ADDRESS,
+        AccountOverride {
+            code: Some(Bytes::from(hex!("60011e60005260206000f3"))),
+            ..Default::default()
+        },
+    );
+    let clz_trace = loaded_provider
+        .debug_trace_call(
+            WithOtherFields::new(TransactionRequest::default().to(CLZ_PROBE_ADDRESS)),
+            BlockId::number(replay_block_number),
+            GethDebugTracingCallOptions::default()
+                .with_tx_index(3)
+                .with_state_overrides(state_overrides),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(clz_trace) = clz_trace else {
+        panic!("expected default CLZ probe trace")
+    };
+    assert!(!clz_trace.failed);
+    assert_eq!(U256::from_be_slice(&clz_trace.return_value), U256::from(255));
+    let loaded_opcode_gas: Option<TransactionOpcodeGas> = loaded_provider
+        .client()
+        .request("trace_transactionOpcodeGas", (target_reward_hash,))
+        .await
+        .unwrap();
+    assert_eq!(loaded_opcode_gas.unwrap().transaction_hash, target_reward_hash);
+
+    loaded_api.mine_one().await;
+    let local_block_hash = loaded_provider
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .hash;
+    let pruned_state = loaded_api.serialized_state(false).await.unwrap();
+    assert_eq!(pruned_state.monad_block_replay_profiles[&replay_block_hash], replay_profile);
+    let local_profile = pruned_state.monad_block_replay_profiles[&local_block_hash];
+    assert_eq!(local_profile.execution_chain_id, 1);
+    assert_eq!(local_profile.hardfork, MonadHardfork::MonadEight);
+    let participants = &pruned_state.monad_block_participants[&replay_block_hash];
+    assert!(participants.contains(&SYSTEM_ADDRESS));
+    assert!(participants.contains(&participant));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_transaction_hash_preserves_hardfork_on_chain_id_collision() {
+    let (_origin_api, origin_handle) = spawn(monad_eight_config().with_chain_id(Some(1u64))).await;
+    let origin_provider = origin_handle.http_provider();
+    let accounts = origin_provider.get_accounts().await.unwrap();
+    let receipt = origin_provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(accounts[0])
+                .with_to(accounts[1])
+                .with_value(U256::ONE)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let config = NodeConfig::test()
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+        .with_fork_transaction_hash(Some(receipt.transaction_hash))
+        .with_no_mining(true);
+    let (api, handle) = spawn(config).await;
+
+    assert_eq!(api.backend.hardfork(), FoundryHardfork::Monad(MonadHardfork::MonadEight));
+    assert!(handle.http_provider().call(reserve_balance_call()).await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_mining_tracks_eip7702_authorities() {
     let (api, handle) = spawn(monad_nine_config()).await;
     let provider = handle.http_provider();
@@ -312,7 +732,8 @@ async fn monad_mining_tracks_eip7702_authorities() {
 
     let authorization =
         Authorization { chain_id: U256::from(31337), address: Address::ZERO, nonce: 0 };
-    let signature = wallets[0].sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let signature = Signature::new(U256::ZERO, U256::ZERO, true);
+    api.anvil_impersonate_signature(signature.as_bytes().into(), authority).await.unwrap();
     let mut tx = TxEip7702 {
         chain_id: 31337,
         nonce: 0,
@@ -326,22 +747,71 @@ async fn monad_mining_tracks_eip7702_authorities() {
     let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
     let mut encoded = Vec::new();
     tx.into_signed(signature).eip2718_encode(&mut encoded);
-    provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+    let authorization =
+        PendingTransaction::new(FoundryTxEnvelope::decode_2718(&mut encoded.as_slice()).unwrap())
+            .unwrap();
+    let authorization_hash = *authorization.hash();
 
-    provider
-        .send_transaction(
-            reserve_probe_tx(authority, 1, 6, U256::from(3_000_000_000_000_000_000u128)).into(),
-        )
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let mut probe = TxEip1559 {
+        chain_id: 31337,
+        nonce: 1,
+        gas_limit: 100_000,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(RESERVE_PROBE_ADDRESS),
+        value: U256::from(3_000_000_000_000_000_000u128),
+        input: Bytes::copy_from_slice(&U256::from(6).to_be_bytes::<32>()),
+        ..Default::default()
+    };
+    let signature = wallets[0].sign_transaction_sync(&mut probe).unwrap();
+    let mut encoded = Vec::new();
+    probe.into_signed(signature).eip2718_encode(&mut encoded);
+    let probe =
+        PendingTransaction::new(FoundryTxEnvelope::decode_2718(&mut encoded.as_slice()).unwrap())
+            .unwrap();
+    let probe_hash = *probe.hash();
+
+    let outcome = api
+        .backend
+        .mine_block(vec![
+            Arc::new(PoolTransaction::new(authorization)),
+            Arc::new(PoolTransaction::new(probe)),
+        ])
+        .await;
+    assert_eq!(outcome.included.len(), 2);
+    assert!(outcome.invalid.is_empty());
 
     assert_eq!(
         provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(6)).await.unwrap(),
         U256::ONE
     );
+
+    let replay: TraceResults = provider
+        .client()
+        .request("trace_replayTransaction", (probe_hash, vec![TraceType::StateDiff]))
+        .await
+        .unwrap();
+    let slot = B256::from(U256::from(6).to_be_bytes::<32>());
+    let state_diff = replay.state_diff.unwrap();
+    let delta = &state_diff.get(&RESERVE_PROBE_ADDRESS).unwrap().storage[&slot];
+    let replayed_value =
+        delta.as_added().copied().or_else(|| delta.as_changed().map(|change| change.to)).unwrap();
+    assert_eq!(replayed_value, B256::from(U256::ONE.to_be_bytes::<32>()));
+
+    let state = api.serialized_state(false).await.unwrap();
+    let authorization_block_hash = state
+        .transactions
+        .iter()
+        .find(|transaction| transaction.info.transaction_hash == authorization_hash)
+        .unwrap()
+        .block_hash;
+    assert!(state.monad_block_participants[&authorization_block_hash].contains(&authority));
+
+    let (loaded_api, _) =
+        spawn(monad_nine_config().with_genesis_accounts(Vec::new()).with_init_state(Some(state)))
+            .await;
+    let loaded_state = loaded_api.serialized_state(false).await.unwrap();
+    assert!(loaded_state.monad_block_participants[&authorization_block_hash].contains(&authority));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -656,6 +1126,37 @@ async fn monad_fork_infers_anvil_identity_and_exact_hardfork() {
         );
         let result = fork_handle.http_provider().call(reserve_balance_call()).await.unwrap();
         assert!(result.is_empty());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_execution_chain_override_does_not_select_network_family() {
+    let (_origin_api, origin_handle) =
+        spawn(monad_nine_config().with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))).await;
+    let endpoint = origin_handle.http_endpoint();
+    let execution_chain_id = 4217u64;
+    let configs = [
+        NodeConfig::test()
+            .with_chain_id(Some(execution_chain_id))
+            .with_eth_rpc_url(Some(endpoint.clone())),
+        NodeConfig::test().with_eth_rpc_url(Some(endpoint)).with_chain_id(Some(execution_chain_id)),
+    ];
+
+    for config in configs {
+        let config = config.with_no_storage_caching(true).with_fork_block_number(Some(0u64));
+        let (api, handle) = spawn(config).await;
+
+        let node_info = api.anvil_node_info().await.unwrap();
+        assert_eq!(node_info.network.as_deref(), Some("monad"));
+        assert_eq!(node_info.environment.chain_id, execution_chain_id);
+        assert_eq!(
+            api.anvil_metadata().await.unwrap().forked_network.unwrap().chain_id,
+            MONAD_TESTNET_CHAIN_ID
+        );
+        assert_eq!(
+            handle.http_provider().call(reserve_balance_call()).await.unwrap(),
+            Bytes::from(vec![0; 32])
+        );
     }
 }
 
@@ -1059,6 +1560,23 @@ fn monad_eight_config() -> NodeConfig {
 
 fn mon(value: u64) -> U256 {
     U256::from(value) * U256::from(1_000_000_000_000_000_000u128)
+}
+
+fn left_aligned_u64(value: u64) -> U256 {
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&value.to_be_bytes());
+    U256::from_be_bytes(bytes)
+}
+
+fn address_and_flags(address: Address, flags: u64) -> U256 {
+    let mut bytes = [0u8; 32];
+    bytes[..20].copy_from_slice(address.as_slice());
+    bytes[20..28].copy_from_slice(&flags.to_be_bytes());
+    U256::from_be_bytes(bytes)
+}
+
+fn storage_value(value: U256) -> B256 {
+    B256::from(value.to_be_bytes::<32>())
 }
 
 async fn assert_monad_reset_to_memory(

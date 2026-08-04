@@ -22,16 +22,17 @@ jobs:
       contents: read
     steps:
       - name: Checkout trusted validator
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.ref }}
           path: trusted
           persist-credentials: false
           sparse-checkout: .github/scripts/validate_changelog.py
           sparse-checkout-cone-mode: false
 
       - name: Checkout pull request
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pull-request
@@ -43,17 +44,11 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EXEMPT: ${{ contains(github.event.pull_request.labels.*.name, 'L-ignore') }}
-          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
         run: |
           validator=trusted/.github/scripts/validate_changelog.py
           if [[ ! -f "$validator" ]]; then
-            if [[ "$SAME_REPOSITORY" != "true" || ! "$AUTHOR_ASSOCIATION" =~ ^(OWNER|MEMBER|COLLABORATOR)$ ]]; then
-              echo "The trusted changelog validator is not available on the base branch." >&2
-              exit 1
-            fi
-            # Bootstrap the validator only for its initial trusted same-repository PR.
-            validator=pull-request/.github/scripts/validate_changelog.py
+            echo "The trusted changelog validator is not available on the current base branch." >&2
+            exit 1
           fi
           args=(--root pull-request --base "$BASE_SHA" --head "$HEAD_SHA")
           if [[ "$EXEMPT" == "true" ]]; then

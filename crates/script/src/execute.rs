@@ -242,6 +242,8 @@ pub struct RpcData {
     pub total_rpcs: HashSet<String>,
     /// If true, one of the transactions did not have a rpc.
     pub missing_rpc: bool,
+    /// Chain IDs already fetched for each RPC URL.
+    pub(crate) chain_ids: HashMap<String, u64>,
 }
 
 impl RpcData {
@@ -250,7 +252,7 @@ impl RpcData {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
         let total_rpcs = txs.iter().filter_map(|tx| tx.rpc.clone()).collect::<HashSet<_>>();
 
-        Self { total_rpcs, missing_rpc }
+        Self { total_rpcs, missing_rpc, chain_ids: HashMap::default() }
     }
 
     /// Returns true if script might be multi-chain.
@@ -260,15 +262,18 @@ impl RpcData {
     }
 
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
-    async fn check_shanghai_support(&self) -> Result<()> {
+    async fn check_shanghai_support(&mut self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
             let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
-            let id = provider.get_chain_id().await.ok()?;
-            NamedChain::try_from(id).ok()
+            Some((rpc.clone(), provider.get_chain_id().await.ok()?))
         });
 
-        let chains = join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
+        self.chain_ids.extend(join_all(chain_ids).await.into_iter().flatten());
+        let iter = self
+            .chain_ids
+            .values()
+            .filter_map(|id| NamedChain::try_from(*id).ok())
+            .map(|chain| (chain.supports_shanghai(), chain));
         if iter.clone().any(|(s, _)| !s) {
             let msg = format!(
                 "\
@@ -277,7 +282,7 @@ Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
 For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                 iter.filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| *chain as u64)
+                    .map(|(_, chain)| chain as u64)
                     .format(", ")
             );
             sh_warn!("{msg}")?;
@@ -322,8 +327,6 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     async fn prepare_simulation_inner(self, silent: bool) -> Result<PreSimulationState<FEN>> {
         let returns = self.get_returns()?;
 
-        let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
-
         let mut txs: BroadcastableTransactions<FEN::Network> =
             self.execution_result.transactions.clone().unwrap_or_default();
 
@@ -336,7 +339,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 *req = req.clone().with_input_kind(input, TransactionInputKind::Both);
             }
         }
-        let rpc_data = RpcData::from_transactions(&txs);
+        let mut rpc_data = RpcData::from_transactions(&txs);
 
         if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
@@ -349,6 +352,8 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         if !silent {
             rpc_data.check_shanghai_support().await?;
         }
+
+        let decoder = self.build_trace_decoder(&self.build_data.known_contracts, &rpc_data).await?;
 
         Ok(PreSimulationState {
             args: self.args,
@@ -366,10 +371,21 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     async fn build_trace_decoder(
         &self,
         known_contracts: &ContractsByArtifact,
+        rpc_data: &RpcData,
     ) -> Result<CallTraceDecoder> {
-        let chain_id = self.script_config.source_chain_id.map(Chain::from);
+        let chain_id = self.script_config.source_chain_id.map(Chain::from).or_else(|| {
+            self.script_config
+                .evm_opts
+                .fork_url
+                .as_ref()
+                .and_then(|url| rpc_data.chain_ids.get(url))
+                .map(|chain_id| (*chain_id).into())
+        });
+        let chain_id = match chain_id {
+            Some(chain_id) => Some(chain_id),
+            None => self.script_config.evm_opts.get_remote_chain_id().await,
+        };
         let resolved_hardfork = self.script_config.hardfork;
-
         let mut tracing = self.script_config.config.tracing.clone();
         tracing.labels.extend(self.execution_result.labeled_addresses.clone());
 

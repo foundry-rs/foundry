@@ -8,7 +8,9 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use anvil::{NodeConfig, spawn};
+use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -20,6 +22,7 @@ use serde_json::Value;
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
@@ -1235,6 +1238,47 @@ forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 25)])
         .await;
+});
+
+forgetest_async!(fork_script_reuses_chain_ids, |prj, cmd| {
+    static CHAIN_ID_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+    CHAIN_ID_REQUESTS.store(0, Ordering::Relaxed);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let client = client.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            if request.get("method").and_then(Value::as_str) == Some("eth_chainId") {
+                CHAIN_ID_REQUESTS.fetch_add(1, Ordering::Relaxed);
+            }
+            client
+                .post(upstream)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    ScriptTester::new_broadcast(cmd, &endpoint, prj.root())
+        .add_deployer(0)
+        .add_sig("ScriptAdditionalContracts", "run()")
+        .args(&["--chain", "1"])
+        .simulate(ScriptOutcome::OkSimulation);
+
+    assert_eq!(CHAIN_ID_REQUESTS.load(Ordering::Relaxed), 2);
+    assert_eq!(latest_dry_run_sequence(prj.root()).chain, 31337);
 });
 
 forgetest_async!(can_deploy_and_simulate_mixed_broadcast_modes, |prj, cmd| {
@@ -4805,6 +4849,77 @@ forgetest_async!(script_check_contract_sizes_warns_at_default_limit, |prj, cmd| 
 Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
 
 "#]]);
+});
+
+forgetest_async!(script_check_contract_sizes_uses_amsterdam_code_size_limit, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 50_000);
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Amsterdam;
+    });
+
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000_000))).await;
+    cmd.set_current_dir(prj.root());
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    let assert = cmd
+        .args([
+            "script",
+            "DeployLarge",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--gas-limit",
+            "1000000000",
+        ])
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(!stderr.contains("above the contract size limit"), "{stderr}");
+});
+
+forgetest_async!(script_check_contract_sizes_uses_network_specific_spec, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 50_000);
+
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000_000))).await;
+    let (_tempo_api, tempo_handle) =
+        spawn(NodeConfig::test_tempo().with_gas_limit(Some(1_000_000_000))).await;
+    let rpc = handle.http_endpoint();
+    let tempo_rpc = tempo_handle.http_endpoint();
+    cmd.set_current_dir(prj.root());
+    for (networks, hardfork, rpc_url, is_tempo) in [
+        (foundry_evm_networks::NetworkConfigs::with_optimism(), None, rpc.as_str(), false),
+        (Default::default(), Some("optimism:karst"), rpc.as_str(), false),
+        (foundry_evm_networks::NetworkConfigs::with_tempo(), None, tempo_rpc.as_str(), true),
+        (Default::default(), Some("tempo:T8"), tempo_rpc.as_str(), true),
+    ] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Amsterdam;
+            config.networks = networks;
+            config.hardfork = hardfork.map(|hardfork| hardfork.parse().unwrap());
+        });
+
+        cmd.forge_fuse();
+        for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"]
+        {
+            cmd.unset_env(var);
+        }
+        cmd.args(["script", "DeployLarge", "--rpc-url", rpc_url, "--gas-limit", "1000000000"]);
+        if is_tempo {
+            cmd.args([
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "--tempo.fee-token",
+                "0x20c0000000000000000000000000000000000000",
+            ]);
+        }
+        let assert = cmd.assert_success();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        assert!(
+            stderr.contains("above the contract size limit (50308 > 24576)"),
+            "missing size warning for {hardfork:?}: {stderr}"
+        );
+    }
 });
 
 // Tests that `forge script` honors `code_size_limit` configured via foundry.toml

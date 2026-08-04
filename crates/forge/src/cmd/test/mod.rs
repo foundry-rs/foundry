@@ -648,6 +648,16 @@ pub struct TestArgs {
     #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Trace options")]
     suppress_successful_traces: bool,
 
+    /// Write test results as JSON to the specified file.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with = "list",
+        help_heading = "Display options"
+    )]
+    json_file: Option<PathBuf>,
+
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
     pub junit: bool,
@@ -1175,6 +1185,9 @@ impl TestArgs {
         if self.junit {
             conflicts.push("--junit");
         }
+        if self.json_file.is_some() {
+            conflicts.push("--json-file");
+        }
         if coverage {
             conflicts.push("coverage");
         }
@@ -1204,6 +1217,9 @@ impl TestArgs {
         }
         if self.junit {
             conflicts.push("--junit");
+        }
+        if self.json_file.is_some() {
+            conflicts.push("--json-file");
         }
         if self.list {
             conflicts.push("--list");
@@ -1964,6 +1980,7 @@ impl TestArgs {
 
         // Enable internal tracing for more informative flamegraph/profile.
         config.tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let json_trace_depth = config.tracing.trace_depth;
         let decode_internal_enabled = config.tracing.decode_internal || trace_output.is_some();
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
@@ -2081,6 +2098,13 @@ impl TestArgs {
                     replayed
                 );
             }
+        }
+
+        if let Some(path) = &self.json_file {
+            let mut results =
+                outcome.json_file_results.take().unwrap_or_else(|| outcome.results.clone());
+            prepare_results_for_json(&mut results, evm_opts.verbosity, json_trace_depth);
+            fs::write_json_file(path, &results)?;
         }
 
         if let Some(trace_output) = trace_output {
@@ -2789,22 +2813,7 @@ impl TestArgs {
         // Run tests in a non-streaming fashion and collect results for serialization.
         if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
-            for suite_result in results.values_mut() {
-                for test_result in suite_result.test_results.values_mut() {
-                    if verbosity >= 2 {
-                        // Decode logs at level 2 and above.
-                        test_result.decoded_logs = decode_console_logs(&test_result.logs);
-                    } else {
-                        // Empty logs for non verbose runs.
-                        test_result.logs = vec![];
-                    }
-                    if let Some(trace_depth) = tracing.trace_depth {
-                        for (_, arena) in &mut test_result.traces {
-                            *arena = trace_arena_at_depth(arena, trace_depth);
-                        }
-                    }
-                }
-            }
+            prepare_results_for_json(&mut results, verbosity, tracing.trace_depth);
             if let Some(regression) = &symbolic_regression {
                 let artifacts = collect_symbolic_artifacts_from_suites(results.values());
                 let regressions = emit_symbolic_regressions(
@@ -2923,7 +2932,7 @@ impl TestArgs {
 
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
-        for (contract_name, mut suite_result) in rx {
+        while let Ok((contract_name, mut suite_result)) = rx.recv() {
             let len = suite_result.len();
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
@@ -3266,6 +3275,9 @@ impl TestArgs {
             sh_println!("{summary_report}")?;
         }
 
+        // Keep the receiver alive only when its queued results are needed for the JSON file.
+        let json_results_rx = self.json_file.is_some().then_some(rx);
+
         // Reattach the task.
         match handle.await {
             Ok(result) => {
@@ -3276,6 +3288,21 @@ impl TestArgs {
                 Ok(payload) => std::panic::resume_unwind(payload),
                 Err(e) => return Err(e.into()),
             },
+        }
+
+        // Include suites that completed after fail-fast stopped console output in the JSON file.
+        if let Some(rx) = json_results_rx {
+            let mut results = outcome.results.clone();
+            for (contract_name, suite_result) in rx.try_iter() {
+                if is_multi_pass
+                    && suite_result.test_results.is_empty()
+                    && suite_result.warnings.is_empty()
+                {
+                    continue;
+                }
+                results.insert(contract_name, suite_result);
+            }
+            outcome.json_file_results = Some(results);
         }
 
         // Persist test run failures to enable replaying.
@@ -3328,6 +3355,37 @@ impl TestArgs {
             let config = self.load_config()?;
             Ok([config.src, config.test])
         })
+    }
+}
+
+fn prepare_results_for_json(
+    results: &mut BTreeMap<String, SuiteResult>,
+    verbosity: u8,
+    trace_depth: Option<usize>,
+) {
+    for suite_result in results.values_mut() {
+        for test_result in suite_result.test_results.values_mut() {
+            if verbosity >= 2 {
+                test_result.decoded_logs = decode_console_logs(&test_result.logs);
+            } else {
+                test_result.logs = Vec::new();
+            }
+            for (_, arena) in &mut test_result.traces {
+                // Discard presentation-only decoding populated by the streaming renderer.
+                for node in arena.nodes_mut() {
+                    node.trace.decoded = None;
+                    for log in &mut node.logs {
+                        log.decoded = None;
+                    }
+                    for step in &mut node.trace.steps {
+                        step.decoded = None;
+                    }
+                }
+                if let Some(trace_depth) = trace_depth {
+                    *arena = trace_arena_at_depth(arena, trace_depth);
+                }
+            }
+        }
     }
 }
 
@@ -3810,9 +3868,23 @@ fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>)
 ///
 /// For suites that appear in both, test results are combined (function-level pass routing ensures
 /// each function appears in exactly one pass, so there are no key conflicts in practice).
-fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
-    for (suite_id, other_suite) in other.results {
-        match base.results.entry(suite_id) {
+fn merge_outcomes(base: &mut TestOutcome, mut other: TestOutcome) {
+    if let Some(other_results) = other.json_file_results.take() {
+        let base_results = base.json_file_results.get_or_insert_with(|| base.results.clone());
+        merge_suite_results(base_results, other_results);
+    }
+    merge_suite_results(&mut base.results, other.results);
+    if let Some(decoder) = other.last_run_decoder {
+        base.last_run_decoder = Some(decoder);
+    }
+}
+
+fn merge_suite_results(
+    base: &mut BTreeMap<String, SuiteResult>,
+    other: BTreeMap<String, SuiteResult>,
+) {
+    for (suite_id, other_suite) in other {
+        match base.entry(suite_id) {
             std::collections::btree_map::Entry::Vacant(e) => {
                 e.insert(other_suite);
             }
@@ -3823,9 +3895,6 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
                 base_suite.duration = base_suite.duration.max(other_suite.duration);
             }
         }
-    }
-    if let Some(decoder) = other.last_run_decoder {
-        base.last_run_decoder = Some(decoder);
     }
 }
 

@@ -1,6 +1,6 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
+use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{
@@ -37,7 +37,7 @@ use alloy_transport::TransportError;
 use foundry_common::provider::RetryProvider;
 use foundry_evm::hardfork::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
+use foundry_primitives::FoundryTxReceipt;
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -841,8 +841,6 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub headers: Vec<String>,
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
-    /// Transactions to force include in the forked chain
-    pub force_transactions: Option<Vec<PoolTransaction<FoundryTxEnvelope>>>,
 }
 
 impl<N: Network> ClientForkConfig<N> {
