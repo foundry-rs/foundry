@@ -1206,6 +1206,11 @@ mod tests {
     async fn script_fork_cache_distinguishes_same_height_contexts() {
         let (api_a, handle_a) = spawn(NodeConfig::test()).await;
         let (api_b, handle_b) = spawn(NodeConfig::test()).await;
+        let state_address = address!("0000000000000000000000000000000000001337");
+        let balance_a = U256::from(1);
+        let balance_b = U256::from(2);
+        api_a.anvil_set_balance(state_address, balance_a).await.unwrap();
+        api_b.anvil_set_balance(state_address, balance_b).await.unwrap();
         let original_prevrandao = B256::with_last_byte(0x42);
         api_a.anvil_set_next_block_prevrandao(original_prevrandao).await.unwrap();
         api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
@@ -1224,12 +1229,14 @@ mod tests {
         )
         .await
         .unwrap();
-        config._get_runner(None, false, false).await.unwrap();
+        let runner_a = config._get_runner(None, false, false).await.unwrap();
+        assert_eq!(runner_a.executor.get_balance(state_address).unwrap(), balance_a);
         let first_a = config.resolved_fork().unwrap().unwrap().clone();
         assert!(config.backends.contains_key(&first_a));
 
         config.set_fork_url(url_b.clone());
-        config._get_runner(None, false, false).await.unwrap();
+        let runner_b = config._get_runner(None, false, false).await.unwrap();
+        assert_eq!(runner_b.executor.get_balance(state_address).unwrap(), balance_b);
         let context_b = config.resolved_fork().unwrap().unwrap().clone();
         assert_eq!(context_b.number(), 1);
         assert!(config.backends.contains_key(&first_a));
@@ -1259,6 +1266,7 @@ mod tests {
         let runner = config._get_runner(None, false, false).await.unwrap();
         assert!(config.backends.contains_key(&second_a));
         assert_eq!(config.backends.len(), 3);
+        assert_eq!(runner.executor.get_balance(state_address).unwrap(), balance_a);
         assert_eq!(runner.executor.evm_env().block_env.prevrandao(), replacement.header.mix_hash);
     }
 
