@@ -45,7 +45,7 @@ impl<'a> LocalTraceIdentifier<'a> {
         &self,
         runtime_code: &[u8],
         creation_code: &[u8],
-    ) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
+    ) -> Option<(&'a ArtifactId, &'a JsonAbi, Option<usize>)> {
         let len = runtime_code.len();
 
         let mut min_score = f64::MAX;
@@ -62,6 +62,7 @@ impl<'a> LocalTraceIdentifier<'a> {
 
             if let Some(bytecode) = contract_bytecode {
                 let mut current_bytecode = current_bytecode;
+                let mut constructor_args_offset = None;
                 if is_creation && current_bytecode.len() > bytecode.len() {
                     // Try to decode ctor args with contract abi.
                     if let Some(constructor) = contract.abi.constructor() {
@@ -69,7 +70,8 @@ impl<'a> LocalTraceIdentifier<'a> {
                         if constructor.abi_decode_input(constructor_args).is_ok() {
                             // If we can decode args with current abi then remove args from
                             // code to compare.
-                            current_bytecode = &current_bytecode[..bytecode.len()]
+                            current_bytecode = &current_bytecode[..bytecode.len()];
+                            constructor_args_offset = Some(bytecode.len());
                         }
                     }
                 }
@@ -77,11 +79,11 @@ impl<'a> LocalTraceIdentifier<'a> {
                 let score = bytecode_diff_score(&bytecode, current_bytecode);
                 if score == 0.0 {
                     trace!(target: "evm::traces::local", "found exact match");
-                    return Some((id, &contract.abi));
+                    return Some((id, &contract.abi, constructor_args_offset));
                 }
                 if score < *min_score {
                     *min_score = score;
-                    min_score_id = Some((id, &contract.abi));
+                    min_score_id = Some((id, &contract.abi, constructor_args_offset));
                 }
             }
             None
@@ -177,7 +179,8 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                         (code.as_ref(), &[] as &[u8])
                     }
                 };
-                let (id, abi) = self.identify_code(runtime_code, creation_code)?;
+                let (id, abi, constructor_args_offset) =
+                    self.identify_code(runtime_code, creation_code)?;
                 trace!(target: "evm::traces::local", id=%id.identifier(), "identified");
 
                 Some(IdentifiedAddress {
@@ -185,6 +188,7 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                     contract: Some(id.identifier()),
                     label: Some(id.name.clone()),
                     abi: Some(Cow::Borrowed(abi)),
+                    constructor_args_offset,
                     artifact_id: Some(id.clone()),
                 })
             })

@@ -328,6 +328,7 @@ interface Vm {
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
     function getRecordedLogs() external view returns (Log[] memory logs);
     function getRecordedLogsJson() external view returns (string memory logsJson);
+    function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
@@ -373,6 +374,7 @@ interface Vm {
     function parseInt(string calldata stringifiedValue) external pure returns (int256 parsedValue);
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
     function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);
+    function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
@@ -448,6 +450,8 @@ interface Vm {
     function readLink(string calldata linkPath) external view returns (string memory targetPath);
     function record() external;
     function recordLogs() external;
+    function registerSloadHook(address target, bytes4 callback) external;
+    function registerSstoreHook(address target, bytes4 callback) external;
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
     function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
     function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);

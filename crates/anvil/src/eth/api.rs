@@ -1,6 +1,6 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, State},
-    sign::build_impersonated,
+    backend::mem::{BlockRequest, DatabaseRef, State, sanitize_simulation_blocks},
+    preserve_simulation_request_fields,
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
@@ -9,7 +9,7 @@ use crate::{
             self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
-            notifications::NewBlockNotifications,
+            notifications::ChainNotifications,
             validate::TransactionValidator,
         },
         error::{
@@ -27,7 +27,7 @@ use crate::{
                 PoolTransaction, TransactionOrder, TransactionPriority, TxMarker, to_marker,
             },
         },
-        sign::{self, Signer},
+        sign::Signer,
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -60,7 +60,7 @@ use alloy_rpc_types::{
     erc4337::TransactionConditional,
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
-    simulate::{SimulatePayload, SimulatedBlock},
+    simulate::{MAX_SIMULATE_BLOCKS, SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
@@ -73,26 +73,31 @@ use alloy_rpc_types::{
     txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction, StateContext};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         EthRequest,
-        block::BlockInfo,
+        block::{BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use foundry_common::{
     provider::ProviderBuilder,
+    tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, FoundryTxType, FoundryTypedTx, PaymentLaneClassification, PaymentLaneReason,
+    FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -777,8 +782,9 @@ impl<N: Network> EthApi<N> {
         self.backend.impersonate_signature(signature, address).await
     }
 
-    /// Returns a new block event stream that yields Notifications when a new block was added
-    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+    /// Returns a new block event stream that yields Notifications when a new block was added or
+    /// when logs were removed from the canonical chain due to a reorg
+    pub fn new_block_notifications(&self) -> ChainNotifications {
         self.backend.new_block_notifications()
     }
 
@@ -936,9 +942,15 @@ impl<N: Network> EthApi<N> {
     /// Returns block header with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByHash`
-    pub async fn header_by_hash(&self, hash: B256) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByHash");
-        Ok(self.backend.block_by_hash(hash).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_hash(hash).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given hash.
@@ -1427,11 +1439,12 @@ impl<N: Network> EthApi<N> {
                 BlockRequest::Number(number)
             }
         };
+        let inner = request.as_ref();
         let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-            request.max_fee_per_blob_gas,
+            inner.gas_price,
+            inner.max_fee_per_gas,
+            inner.max_priority_fee_per_gas,
+            inner.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 
@@ -1661,35 +1674,39 @@ impl EthApi<FoundryNetwork> {
     /// This will execute the transaction request and find the best gas limit via binary search.
     fn do_estimate_gas_with_state(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: FoundryTransactionRequest,
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
     ) -> Result<u128> {
+        let inner = request.as_ref();
         let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-            request.max_fee_per_blob_gas,
+            inner.gas_price,
+            inner.max_fee_per_gas,
+            inner.max_priority_fee_per_gas,
+            inner.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
+        let mut highest_gas_limit = inner.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
 
         // Tempo AA transactions pay fees in ERC-20 tokens, not ETH. Only treat requests as
         // Tempo AA in Tempo mode, otherwise `feeToken` should not bypass ETH funds checks.
-        let is_tempo_aa_tx =
-            self.backend.is_tempo() && request.other.get("feeToken").is_some_and(|v| !v.is_null());
+        let is_tempo_aa_tx = self.backend.is_tempo() && request.is_tempo();
+        let is_tempo_keychain = matches!(
+            &request,
+            FoundryTransactionRequest::Tempo(request) if request.key_id.is_some()
+        );
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // Check transfer value before any fast path, and cap gas limit by sender balance when the
         // request has a non-zero gas price. Only enforce this for explicit senders: calls without
         // `from` historically estimate against the default caller and must not be capped by the
         // zero address balance.
-        if !is_tempo_aa_tx && let Some(from) = request.from {
+        if !is_tempo_aa_tx && let Some(from) = inner.from {
             let mut available_funds = self.backend.get_balance_with_state(state, from)?;
-            if let Some(value) = request.value {
+            if let Some(value) = inner.value {
                 if value > available_funds {
                     return Err(InvalidTransactionError::InsufficientFunds.into());
                 }
@@ -1709,14 +1726,14 @@ impl EthApi<FoundryNetwork> {
         // Skip this optimization for Tempo mode since native ETH transfers are not allowed
         // and Tempo AA transactions have higher intrinsic gas costs (~46k).
         if !self.backend.is_tempo() {
-            let to = request.to.as_ref().and_then(TxKind::to);
+            let to = inner.to.as_ref().and_then(TxKind::to);
 
             // check certain fields to see if the request could be a simple transfer
-            let maybe_transfer = (request.input.input().is_none()
-                || request.input.input().is_some_and(|data| data.is_empty()))
-                && request.authorization_list.is_none()
-                && request.access_list.is_none()
-                && request.blob_versioned_hashes.is_none();
+            let maybe_transfer = (inner.input.input().is_none()
+                || inner.input.input().is_some_and(|data| data.is_empty()))
+                && inner.authorization_list.is_none()
+                && inner.access_list.is_none()
+                && inner.blob_versioned_hashes.is_none();
 
             if maybe_transfer
                 && highest_gas_limit >= MIN_TRANSACTION_GAS
@@ -1728,12 +1745,15 @@ impl EthApi<FoundryNetwork> {
             }
         }
 
-        let mut call_to_estimate = request.clone();
-        call_to_estimate.gas = Some(highest_gas_limit as u64);
-
         // execute the call without writing to db
-        let ethres =
-            self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
+        let ethres = self.backend.call_with_state_typed_gas_limit(
+            &state,
+            request.clone(),
+            fees.clone(),
+            block_env.clone(),
+            highest_gas_limit as u64,
+            is_tempo_keychain,
+        );
 
         let gas_used = match ethres.try_into()? {
             GasEstimationCallResult::Success(gas) => Ok(gas),
@@ -1763,12 +1783,13 @@ impl EthApi<FoundryNetwork> {
 
         // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > 1 {
-            request.gas = Some(mid_gas_limit as u64);
-            let ethres = self.backend.call_with_state(
+            let ethres = self.backend.call_with_state_typed_gas_limit(
                 &state,
                 request.clone(),
                 fees.clone(),
                 block_env.clone(),
+                mid_gas_limit as u64,
+                is_tempo_keychain,
             );
 
             match ethres.try_into()? {
@@ -1936,8 +1957,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthCallMany(bundles, state_context, state_override) => {
                 self.call_many(bundles, state_context, state_override).await.to_rpc_result()
             }
+            EthRequest::EthCallBundle(bundle) => self.call_bundle(bundle).await.to_rpc_result(),
             EthRequest::EthSimulateV1(simulation, block) => {
-                self.simulate_v1(simulation, block).await.to_rpc_result()
+                self.simulate_v1_raw(simulation, block).await.to_rpc_result()
             }
             EthRequest::EthCreateAccessList(call, block, state_override) => {
                 self.create_access_list(call, block, state_override).await.to_rpc_result()
@@ -2106,6 +2128,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
+            EthRequest::DealTIP20(addr, token_addr, val) => {
+                self.anvil_deal_tip20(addr, token_addr, val).await.to_rpc_result()
+            }
             EthRequest::SetERC20Allowance(owner, spender, token_addr, val) => self
                 .anvil_set_erc20_allowance(owner, spender, token_addr, val)
                 .await
@@ -2269,7 +2294,7 @@ impl EthApi<FoundryNetwork> {
     fn sign_request(&self, from: &Address, typed_tx: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
         match typed_tx {
             #[cfg(feature = "optimism")]
-            FoundryTypedTx::Deposit(_) => return Ok(build_impersonated(typed_tx)),
+            FoundryTypedTx::Deposit(_) => return Ok(typed_tx.into_impersonated()),
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
@@ -2459,13 +2484,20 @@ impl EthApi<FoundryNetwork> {
     /// Returns block header with given number.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByNumber`
-    pub async fn header_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_number(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number == BlockNumber::Pending {
-            return Ok(Some(self.pending_block().await.header.clone()));
+            let WithOtherFields { inner: block, other } = self.pending_block().await.0;
+            return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
 
-        Ok(self.backend.block_by_number(number).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_number(number).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given number
@@ -2634,12 +2666,13 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<String> {
         node_info!("eth_signTransaction");
+        let request = self.parse_transaction_request(request)?;
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
+        let from = request.from().map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
-        let (nonce, _) = self.request_nonce(&request, from).await?;
+        let (nonce, _) = self.request_nonce_for_transaction(&request, from).await?;
 
         let request = self.build_tx_request(request, nonce).await?;
 
@@ -2655,17 +2688,18 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
+        let request = self.parse_transaction_request(request)?;
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
+        let from = request.from().map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
-        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        let (nonce, on_chain_nonce) = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = sign::build_impersonated(typed_tx);
+            let transaction = typed_tx.into_impersonated();
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -2687,16 +2721,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_resend`
     pub async fn resend_transaction(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
         gas_price: Option<U256>,
         gas_limit: Option<U64>,
     ) -> Result<TxHash> {
         node_info!("eth_resend");
+        let mut request = self.parse_transaction_request(request)?;
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
+        let from = request.from().map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
-        let nonce = request.nonce.ok_or_else(|| {
+        let nonce = request.nonce().ok_or_else(|| {
             BlockchainError::InvalidTransactionRequest(
                 "missing transaction nonce in transaction spec".to_string(),
             )
@@ -2717,7 +2752,7 @@ impl EthApi<FoundryNetwork> {
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
         let pending_transaction = if self.is_impersonated(from) {
-            let transaction = sign::build_impersonated(typed_tx);
+            let transaction = typed_tx.into_impersonated();
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_resend: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -2743,7 +2778,8 @@ impl EthApi<FoundryNetwork> {
             return Ok(receipt);
         }
         while let Some(notification) = stream.next().await {
-            if let Some(block) = self.backend.get_block_by_hash(notification.hash)
+            if let Some(new_block) = notification.as_new_block()
+                && let Some(block) = self.backend.get_block_by_hash(new_block.hash)
                 && block.body.transactions.iter().any(|tx| tx.hash() == hash)
                 && let Some(receipt) = self.backend.transaction_receipt(hash).await?
             {
@@ -2811,7 +2847,7 @@ impl EthApi<FoundryNetwork> {
         self.ensure_typed_transaction_supported(&transaction)?;
 
         if self.backend.is_tempo() && TempoHardfork::from(self.backend.hardfork()).is_t5() {
-            let classification = transaction.classify_t5_payment_lane();
+            let classification = classify_payment_lane(tx.as_ref());
             trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
         }
 
@@ -2835,7 +2871,7 @@ impl EthApi<FoundryNetwork> {
         };
 
         let pool_transaction =
-            PoolTransaction { requires, provides, pending_transaction, priority };
+            PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
@@ -2862,16 +2898,13 @@ impl EthApi<FoundryNetwork> {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
-        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+        FoundryTxEnvelope::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
-        Ok(self.classify_transaction_envelope(&transaction))
+        Ok(self.classify_transaction_lane(tx.as_ref()))
     }
 
-    fn classify_transaction_envelope(
-        &self,
-        transaction: &FoundryTxEnvelope,
-    ) -> PaymentLaneClassification {
+    fn classify_transaction_lane(&self, raw: &[u8]) -> PaymentLaneClassification {
         if !self.backend.is_tempo() {
             return PaymentLaneClassification::general(PaymentLaneReason::NotTempo);
         }
@@ -2880,7 +2913,7 @@ impl EthApi<FoundryNetwork> {
             return PaymentLaneClassification::general(PaymentLaneReason::T5NotActive);
         }
 
-        transaction.classify_t5_payment_lane()
+        classify_payment_lane(raw)
     }
 
     /// Sends signed transaction, returning its receipt.
@@ -2920,7 +2953,7 @@ impl EthApi<FoundryNetwork> {
                     "not available on past forked blocks".to_string(),
                 ));
             }
-            return Ok(fork.call(&request, Some(number.into())).await?);
+            return Ok(fork.call_raw(&request, Some(number.into())).await?);
         }
 
         let fees = FeeDetails::new(
@@ -2976,25 +3009,131 @@ impl EthApi<FoundryNetwork> {
         .await
     }
 
+    /// Simulates a bundle of signed transactions against the requested state.
+    ///
+    /// Handler for ETH RPC call: `eth_callBundle`.
+    pub async fn call_bundle(&self, bundle: EthCallBundle) -> Result<EthCallBundleResponse> {
+        node_info!("eth_callBundle");
+        if bundle.txs.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle missing txs".to_string(),
+            )));
+        }
+        if bundle.block_number == 0 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle missing blockNumber".to_string(),
+            )));
+        }
+
+        let block_request = self.block_request(Some(bundle.state_block_number.into())).await?;
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.call_bundle(bundle).await?);
+        }
+
+        let transactions = bundle
+            .txs
+            .iter()
+            .map(|raw| {
+                let mut data = raw.as_ref();
+                if data.is_empty() {
+                    return Err(BlockchainError::EmptyRawTransactionData);
+                }
+                let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+                    .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+                self.ensure_typed_transaction_supported(&transaction)?;
+                PendingTransaction::new(transaction).map_err(Into::into)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.on_blocking_task(|this| async move {
+            this.backend.call_bundle(bundle, transactions, Some(block_request)).await
+        })
+        .await
+    }
+
     pub async fn simulate_v1(
         &self,
         request: SimulatePayload,
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
+        self.simulate_v1_raw(preserve_simulation_request_fields(request), block_number).await
+    }
+
+    pub(crate) async fn simulate_v1_raw(
+        &self,
+        mut request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block_number: Option<BlockId>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
+        const DEFAULT_BLOCK_INTERVAL_SECS: u64 = 12;
+
         node_info!("eth_simulateV1");
-        let block_request = self.block_request(block_number).await?;
+        if request.block_state_calls.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params("empty input")));
+        }
+        if request.block_state_calls.len() > MAX_SIMULATE_BLOCKS as usize {
+            return Err(BlockchainError::RpcError(RpcError {
+                code: ErrorCode::ServerError(-38026),
+                message: "too many blocks".into(),
+                data: None,
+            }));
+        }
+        let block_id = block_number;
+        let block_request =
+            self.block_request(block_number).await.map_err(|error| match error {
+                BlockchainError::BlockOutOfRange(_, _) | BlockchainError::BlockNotFound => {
+                    BlockchainError::RpcError(RpcError {
+                        code: ErrorCode::ServerError(-32000),
+                        message: "header not found".into(),
+                        data: None,
+                    })
+                }
+                error => error,
+            })?;
+        let block_interval = self.backend.time().block_timestamp_interval().unwrap_or_else(|| {
+            self.miner
+                .block_interval()
+                .map(|duration| {
+                    duration
+                        .as_secs()
+                        .saturating_add(u64::from(duration.subsec_nanos() != 0))
+                        .max(1)
+                })
+                .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS)
+        });
+
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(number)
         {
-            return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
+            let block_id = match block_id {
+                Some(BlockId::Hash(hash)) => BlockId::Hash(hash),
+                _ => number.into(),
+            };
+            let base_block = fork.fetch_block(block_id).await?.ok_or_else(|| {
+                BlockchainError::RpcError(RpcError {
+                    code: ErrorCode::ServerError(-32000),
+                    message: "header not found".into(),
+                    data: None,
+                })
+            })?;
+            request.block_state_calls = sanitize_simulation_blocks(
+                request.block_state_calls,
+                base_block.header.number(),
+                base_block.header.timestamp(),
+                block_interval,
+            )?;
+            return Ok(fork.simulate_v1(&request, Some(base_block.header.hash.into())).await?);
         }
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
-            let simulated_blocks = this.backend.simulate(request, Some(block_request)).await?;
+            let simulated_blocks =
+                this.backend.simulate_raw(request, Some(block_request), block_interval).await?;
             trace!(target : "node", "Simulate status {:?}", simulated_blocks);
 
             Ok(simulated_blocks)
@@ -3017,7 +3156,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
     ) -> Result<AccessListResult> {
@@ -3033,8 +3172,9 @@ impl EthApi<FoundryNetwork> {
                     "not available on past forked blocks".to_string(),
                 ));
             }
-            return Ok(fork.create_access_list(&request, Some(number.into())).await?);
+            return Ok(fork.create_access_list_raw(&request, Some(number.into())).await?);
         }
+        let typed_request = self.parse_transaction_request(request.clone())?;
 
         self.backend
             .with_database_at(Some(block_request), |state, block_env| {
@@ -3054,12 +3194,12 @@ impl EthApi<FoundryNetwork> {
                 // EVM failures (including reverts) are surfaced in the result's `error`
                 // field per the execution-apis `eth_createAccessList` spec, so callers
                 // can still inspect the traced slots when execution fails.
-                request.access_list = Some(access_list.clone());
-                let (exit, _, gas_used, _) = self.backend.call_with_state(
+                let (exit, _, gas_used, _) = self.backend.call_with_state_typed_access_list(
                     &cache_db,
-                    request,
+                    typed_request,
                     FeeDetails::zero(),
                     block_env,
+                    access_list.clone(),
                 )?;
 
                 Ok(AccessListResult {
@@ -3099,30 +3239,28 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_fillTransaction`
     pub async fn fill_transaction(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
     ) -> Result<FillTransaction<AnyRpcTransaction>> {
         node_info!("eth_fillTransaction");
+        let mut request = self.parse_transaction_request(request)?;
 
-        let from = match request.as_ref().from() {
+        let from = match request.from() {
             Some(from) => from,
             None => self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)?,
         };
 
-        let nonce = if let Some(nonce) = request.as_ref().nonce() {
-            nonce
-        } else {
-            self.request_nonce(&request, from).await?.0
-        };
+        let nonce = self.request_nonce_for_transaction(&request, from).await?.0;
 
         // Prefill gas limit with estimated gas and bubble up estimation errors directly.
-        if request.as_ref().gas_limit().is_none() {
-            let estimated_gas =
-                self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
-            request.as_mut().set_gas_limit(estimated_gas.to());
+        if request.gas_limit().is_none() {
+            let estimated_gas = self
+                .do_estimate_gas_typed(request.clone(), Some(BlockNumber::Pending.into()))
+                .await?;
+            request.set_gas_limit(estimated_gas as u64);
         }
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
-        let tx = build_impersonated(typed_tx);
+        let tx = typed_tx.into_impersonated();
 
         let raw = tx.encoded_2718().into();
 
@@ -3408,10 +3546,44 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawTransactions`.
     pub async fn raw_transactions(&self, block: BlockId) -> Result<Vec<Bytes>> {
         node_info!("debug_getRawTransactions");
-        let Some(block) = self.backend.get_block(block) else {
+
+        if let Some(block) = self.backend.get_block(block) {
+            return Ok(block
+                .body
+                .transactions
+                .into_iter()
+                .map(|tx| tx.into_inner().into_canonical().encoded_2718().into())
+                .collect());
+        }
+
+        // In fork mode, serve pre-fork blocks from the upstream provider. Genuinely unknown or
+        // out-of-range blocks yield an empty result, mirroring reth; transport errors propagate.
+        let Some(fork) = self.get_fork() else {
             return Ok(Vec::new());
         };
-        Ok(block.body.transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect())
+        let block = match block {
+            BlockId::Number(BlockNumber::Pending) => None,
+            BlockId::Number(number) => {
+                let number = self.backend.convert_block_number(Some(number));
+                if !fork.predates_fork_inclusive(number) {
+                    return Ok(Vec::new());
+                }
+                fork.block_by_number_full(number).await?
+            }
+            BlockId::Hash(hash) => fork
+                .block_by_hash_full(hash.block_hash)
+                .await?
+                .filter(|block| fork.predates_fork_inclusive(block.header().number())),
+        };
+        let Some(block) = block else {
+            return Ok(Vec::new());
+        };
+        let BlockTransactions::Full(txs) = block.transactions() else {
+            return Err(BlockchainError::Internal(
+                "fork provider returned a non-full block for a full block request".to_string(),
+            ));
+        };
+        Ok(txs.iter().map(|tx| tx.as_ref().encoded_2718().into()).collect())
     }
 
     /// Returns RLP encoded raw block header.
@@ -3429,7 +3601,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn raw_block(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawBlock");
         let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
-        Ok(alloy_rlp::encode(&block).into())
+        Ok(alloy_rlp::encode(canonical_block(block)).into())
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index
@@ -3568,10 +3740,14 @@ impl EthApi<FoundryNetwork> {
             // mine all the blocks
             for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
-                if let Some(interval) = interval {
-                    this.backend.time().increase_time(interval);
+                let pending_increase =
+                    interval.map(|interval| this.backend.time().apply_time_increase(interval));
+                if let Err(error) = this.mine_one().await {
+                    if let Some(pending) = pending_increase {
+                        this.backend.time().revert_time_increase(pending);
+                    }
+                    return Err(error);
                 }
-                this.mine_one().await;
             }
             Ok(())
         })
@@ -3658,6 +3834,12 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<()> {
         node_info!("anvil_dealERC20");
 
+        if self.backend.is_tempo()
+            && self.backend.try_set_tip20_balance(address, token_address, balance).await?
+        {
+            return Ok(());
+        }
+
         sol! {
             #[sol(rpc)]
             contract IERC20 {
@@ -3681,6 +3863,21 @@ impl EthApi<FoundryNetwork> {
         )
         .await?;
 
+        Ok(())
+    }
+
+    /// Deals TIP-20 tokens to an address.
+    ///
+    /// Handler for RPC call: `anvil_dealTIP20`.
+    pub async fn anvil_deal_tip20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> Result<()> {
+        node_info!("anvil_dealTIP20");
+        self.ensure_tempo_mode()?;
+        self.backend.set_tip20_balance(address, token_address, balance).await?;
         Ok(())
     }
 
@@ -3812,7 +4009,7 @@ impl EthApi<FoundryNetwork> {
 
                         // Handle signer and convert to pending transaction
                         if self.is_impersonated(from) {
-                            let transaction = sign::build_impersonated(typed_tx);
+                            let transaction = typed_tx.into_impersonated();
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)
                         } else {
@@ -3823,7 +4020,7 @@ impl EthApi<FoundryNetwork> {
                     }
                 };
 
-                let pooled = PoolTransaction::new(pending);
+                let pooled = PoolTransaction::new(pending).with_replay();
                 txs.entry(block_index).or_default().push(Arc::new(pooled));
             }
 
@@ -3909,14 +4106,15 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
+        let request = self.parse_transaction_request(request)?;
         // either use the impersonated account of the request's `from` field
-        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
+        let from = request.from().ok_or(BlockchainError::NoSignerAvailable)?;
 
-        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        let (nonce, on_chain_nonce) = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
-        let transaction = sign::build_impersonated(typed_tx);
+        let transaction = typed_tx.into_impersonated();
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -4074,7 +4272,7 @@ impl EthApi<FoundryNetwork> {
         self.on_blocking_task(|this| async move {
             // mine all the blocks
             for _ in 0..blocks_to_mine {
-                this.mine_one().await;
+                this.mine_one().await?;
             }
             Ok(())
         })
@@ -4100,12 +4298,13 @@ impl EthApi<FoundryNetwork> {
                     "not available on past forked blocks".to_string(),
                 ));
             }
-            return Ok(fork.estimate_gas(&request, Some(number.into())).await?);
+            return Ok(fork.estimate_gas_raw(&request, Some(number.into())).await?);
         }
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
+            let request = this.parse_transaction_request(request)?;
             this.backend
                 .with_database_at(Some(block_request), |state, mut block| {
                     let mut cache_db = CacheDB::new(state);
@@ -4119,6 +4318,22 @@ impl EthApi<FoundryNetwork> {
                         cache_db.apply_block_overrides(*block_overrides, &mut block);
                     }
                     this.do_estimate_gas_with_state(request, &cache_db, block)
+                })
+                .await?
+        })
+        .await
+    }
+
+    async fn do_estimate_gas_typed(
+        &self,
+        request: FoundryTransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> Result<u128> {
+        let block_request = self.block_request(block_number).await?;
+        self.on_blocking_task(|this| async move {
+            this.backend
+                .with_database_at(Some(block_request), |state, block| {
+                    this.do_estimate_gas_with_state(request, &state, block)
                 })
                 .await?
         })
@@ -4190,7 +4405,7 @@ impl EthApi<FoundryNetwork> {
                 .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
 
             loop {
-                let block = tokio::select! {
+                let notification = tokio::select! {
                     biased;
                     // Exit when the subscriber unsubscribes, even while awaiting the next block.
                     _ = tx.closed() => break,
@@ -4198,6 +4413,10 @@ impl EthApi<FoundryNetwork> {
                         Some(block) => block,
                         None => break,
                     },
+                };
+
+                let Some(block) = notification.as_new_block() else {
+                    continue;
                 };
 
                 let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
@@ -4228,12 +4447,13 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Mines exactly one block
-    pub async fn mine_one(&self) {
+    pub async fn mine_one(&self) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await;
+        let outcome = self.backend.mine_block(transactions).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);
+        Ok(())
     }
 
     /// Returns the pending block with tx hashes
@@ -4276,10 +4496,9 @@ impl EthApi<FoundryNetwork> {
     /// to build a [`FoundryTypedTx`].
     async fn build_tx_request(
         &self,
-        request: WithOtherFields<TransactionRequest>,
+        mut request: FoundryTransactionRequest,
         nonce: u64,
     ) -> Result<FoundryTypedTx> {
-        let mut request = Into::<FoundryTransactionRequest>::into(request);
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
             request.set_from(from);
@@ -4288,7 +4507,11 @@ impl EthApi<FoundryNetwork> {
         // Fill common fields for all tx types
         request.chain_id().is_none().then(|| request.set_chain_id(self.chain_id()));
         request.nonce().is_none().then(|| request.set_nonce(nonce));
-        request.kind().is_none().then(|| request.set_kind(TxKind::default()));
+        let is_tempo_batch =
+            matches!(&request, FoundryTransactionRequest::Tempo(tx) if !tx.calls.is_empty());
+        if request.kind().is_none() && !is_tempo_batch {
+            request.set_kind(TxKind::default());
+        }
         if request.gas_limit().is_none() {
             let fallback_gas_limit = {
                 let evm_env = self.backend.evm_env().read();
@@ -4300,7 +4523,7 @@ impl EthApi<FoundryNetwork> {
                 }
             };
             let estimated_gas = self
-                .do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
+                .do_estimate_gas_typed(request.clone(), None)
                 .await
                 .map(|v| v as u64)
                 .unwrap_or_else(|_| {
@@ -4411,7 +4634,7 @@ impl EthApi<FoundryNetwork> {
         let from = *pending_transaction.sender();
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction =
-            PoolTransaction { requires, provides, pending_transaction, priority };
+            PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
@@ -4483,6 +4706,30 @@ impl EthApi<FoundryNetwork> {
     /// Ensures anvil runs in Tempo mode (`--tempo`), the RPC method is unavailable otherwise.
     fn ensure_tempo_mode(&self) -> Result<()> {
         if self.backend.is_tempo() { Ok(()) } else { Err(BlockchainError::RpcUnimplemented) }
+    }
+
+    fn parse_transaction_request(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+    ) -> Result<FoundryTransactionRequest> {
+        self.backend.parse_transaction_request(request)
+    }
+
+    async fn request_nonce_for_transaction(
+        &self,
+        request: &FoundryTransactionRequest,
+        from: Address,
+    ) -> Result<(u64, u64)> {
+        if let FoundryTransactionRequest::Tempo(request) = request
+            && let Some(nonce_key) = request.nonce_key.filter(|key| !key.is_zero())
+        {
+            if let Some(nonce) = request.nonce() {
+                return Ok((nonce, 0));
+            }
+            let nonce = self.backend.tempo_nonce(from, nonce_key, None).await?;
+            return Ok((nonce, 0));
+        }
+        self.request_nonce(request.as_ref(), from).await
     }
 }
 
@@ -4569,11 +4816,18 @@ fn execution_error(exit: InstructionResult) -> Option<String> {
 }
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
-fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
-    match request.kind() {
+fn determine_base_gas_by_kind(request: &FoundryTransactionRequest) -> u128 {
+    let inner = request.as_ref();
+    let kind = match request {
+        FoundryTransactionRequest::Tempo(request) => {
+            request.calls.first().map(|call| call.to).or_else(|| inner.kind())
+        }
+        _ => inner.kind(),
+    };
+    match kind {
         Some(TxKind::Call(_)) => {
             MIN_TRANSACTION_GAS
-                + request.inner().authorization_list.as_ref().map_or(0, |auths_list| {
+                + inner.authorization_list.as_ref().map_or(0, |auths_list| {
                     auths_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
                 })
         }

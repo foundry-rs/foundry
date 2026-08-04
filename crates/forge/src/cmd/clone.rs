@@ -25,6 +25,7 @@ use foundry_compilers::{
     compilers::solc::Solc,
 };
 use foundry_config::{Chain, Config};
+use path_slash::PathExt;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use std::{
@@ -117,6 +118,10 @@ pub struct CloneArgs {
     #[arg(long, value_name = "URL")]
     pub sourcify_url: Option<String>,
 
+    /// Clone the implementation contract if the address is a proxy.
+    #[arg(long)]
+    pub implementation: bool,
+
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
@@ -142,6 +147,7 @@ impl CloneArgs {
             keep_directory_structure,
             source,
             sourcify_url,
+            implementation,
             no_commit: _,
         } = self;
 
@@ -151,9 +157,13 @@ impl CloneArgs {
 
         // If sourcify_url is specified, use Sourcify as the source
         let source = if sourcify_url.is_some() { SourceExplorer::Sourcify } else { source };
+        eyre::ensure!(
+            !implementation || matches!(source, SourceExplorer::Etherscan),
+            "--implementation is only supported with Etherscan"
+        );
 
         // step 1. get the metadata from client based on source type
-        let (meta, explorer_name, sourcify_client) = match source {
+        let (address, meta, explorer_name, sourcify_client) = match source {
             SourceExplorer::Etherscan => {
                 let client = config
                     .get_etherscan_config_with_chain(Some(chain))?
@@ -162,14 +172,16 @@ impl CloneArgs {
                     })?
                     .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 sh_status!("Downloading the source code of {address} from Etherscan...")?;
-                let meta = Self::collect_metadata_from_client(address, &client).await?;
-                (meta, "Etherscan", None)
+                let (address, meta) =
+                    Self::collect_metadata_from_client(address, &client, implementation).await?;
+                (address, meta, "Etherscan", None)
             }
             SourceExplorer::Sourcify => {
                 let client = SourcifyClient::with_url(chain, sourcify_url.as_deref());
                 sh_status!("Downloading the source code of {address} from Sourcify...")?;
-                let meta = Self::collect_metadata_from_client(address, &client).await?;
-                (meta, "Sourcify", Some(client))
+                let (address, meta) =
+                    Self::collect_metadata_from_client(address, &client, false).await?;
+                (address, meta, "Sourcify", Some(client))
             }
         };
 
@@ -224,12 +236,30 @@ impl CloneArgs {
     pub(crate) async fn collect_metadata_from_client<C: ExplorerClient>(
         address: Address,
         client: &C,
-    ) -> Result<Metadata> {
+        implementation: bool,
+    ) -> Result<(Address, Metadata)> {
         let mut meta = client.contract_source_code(address).await?;
         eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
         let meta = meta.items.remove(0);
+
+        if !implementation || meta.proxy == 0 {
+            eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
+            return Ok((address, meta));
+        }
+
+        let implementation_address = meta
+            .implementation
+            .ok_or_else(|| eyre::eyre!("proxy at {address} has no implementation address"))?;
+        sh_status!(
+            "Contract at {address} is a proxy, cloning implementation at \
+             {implementation_address}..."
+        )?;
+
+        let mut meta = client.contract_source_code(implementation_address).await?;
+        eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
+        let meta = meta.items.remove(0);
         eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
-        Ok(meta)
+        Ok((implementation_address, meta))
     }
 
     /// Initialize an empty project at the root directory.
@@ -309,6 +339,7 @@ impl CloneArgs {
     ) -> Result<()> {
         // dump sources and update the remapping in configuration
         let remappings = dump_sources(meta, root, keep_directory_structure)?;
+        ensure_source_entrypoint(root)?;
         Config::update_at(root, |config, doc| {
             let profile = config.profile.as_str().as_str();
 
@@ -633,6 +664,51 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     }
 
     Ok(remappings.into_iter().map(|r| r.into_relative(root)).collect())
+}
+
+/// Ensure sources moved into `lib` remain buildable from the project's `src` directory.
+fn ensure_source_entrypoint(root: &Path) -> Result<()> {
+    let src = root.join("src");
+    let has_src_sources = fs::files_with_ext(&src, "sol").next().is_some();
+    if has_src_sources {
+        return Ok(());
+    }
+    let forge_std = root.join("lib/forge-std");
+    let mut sources = fs::files_with_ext(root, "sol")
+        .filter(|path| !path.starts_with(&src) && !path.starts_with(&forge_std))
+        .collect::<Vec<_>>();
+    if sources.is_empty() {
+        eyre::ensure!(has_src_sources, "no Solidity sources found in cloned contract");
+        return Ok(());
+    }
+    sources.sort_unstable();
+
+    let imports = sources
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| source_import(root, index, &path))
+        .collect::<Result<Vec<_>>>()?
+        .join("\n");
+    let mut entrypoint = src.join("Clone.sol");
+    let mut index = 0;
+    while entrypoint.exists() {
+        index += 1;
+        entrypoint = src.join(format!("Clone{index}.sol"));
+    }
+    fs::write(entrypoint, format!("{imports}\n"))?;
+    Ok(())
+}
+
+/// Return a namespaced import for a source path that is safe to embed in Solidity.
+fn source_import(root: &Path, index: usize, path: &Path) -> Result<String> {
+    let path = path.strip_prefix(root)?;
+    eyre::ensure!(path.to_str().is_some(), "source path is not valid UTF-8: {path:?}");
+    let path = path.to_slash_lossy();
+    eyre::ensure!(
+        !path.chars().any(|c| c == '"' || c == '\\' || c.is_control()),
+        "source path contains characters unsupported in a Solidity import: {path:?}"
+    );
+    Ok(format!("import * as CloneSource{index} from \"../{path}\";"))
 }
 
 /// Compile the project in the root directory, and return the compilation result.
@@ -1083,6 +1159,171 @@ mod tests {
         mocked_client
     }
 
+    fn contract_metadata(
+        contract_name: &str,
+        proxy: bool,
+        implementation: Option<Address>,
+    ) -> ContractMetadata {
+        ContractMetadata {
+            items: vec![Metadata {
+                source_code: SourceCodeMetadata::SourceCode(format!(
+                    "contract {contract_name} {{}}"
+                )),
+                abi: "[]".to_string(),
+                contract_name: contract_name.to_string(),
+                compiler_version: "v0.8.10+commit.fc410830".to_string(),
+                optimization_used: 1,
+                runs: 100_000,
+                constructor_arguments: Bytes::new(),
+                evm_version: "Default".to_string(),
+                library: String::new(),
+                license_type: String::new(),
+                proxy: u64::from(proxy),
+                implementation,
+                swarm_source: String::new(),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolves_sparklend_proxy_implementation() {
+        let proxy = "0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359".parse().unwrap();
+        let implementation = "0x6175ddec3b9b38c88157c10a01ed4a3fa8639cc6".parse().unwrap();
+        let proxy_meta = contract_metadata(
+            "InitializableImmutableAdminUpgradeabilityProxy",
+            true,
+            Some(implementation),
+        );
+        let implementation_meta = contract_metadata("AToken", false, None);
+        let mut client = super::MockExplorerClient::new();
+        client.expect_contract_source_code().times(2).returning(move |address| {
+            if address == proxy {
+                Ok(proxy_meta.clone())
+            } else if address == implementation {
+                Ok(implementation_meta.clone())
+            } else {
+                unreachable!("unexpected address: {address}")
+            }
+        });
+
+        let (resolved, meta) =
+            CloneArgs::collect_metadata_from_client(proxy, &client, true).await.unwrap();
+
+        assert_eq!(resolved, implementation);
+        assert_eq!(meta.contract_name, "AToken");
+    }
+
+    #[tokio::test]
+    async fn test_resolves_solidity_implementation_from_vyper_proxy() {
+        let proxy = "0x0000000000000000000000000000000000000001".parse().unwrap();
+        let implementation = "0x0000000000000000000000000000000000000002".parse().unwrap();
+        let mut proxy_meta = contract_metadata("VyperProxy", true, Some(implementation));
+        proxy_meta.items[0].compiler_version = "vyper:0.3.10".to_string();
+        let implementation_meta = contract_metadata("Implementation", false, None);
+        let mut client = super::MockExplorerClient::new();
+        client.expect_contract_source_code().times(2).returning(move |address| {
+            if address == proxy {
+                Ok(proxy_meta.clone())
+            } else if address == implementation {
+                Ok(implementation_meta.clone())
+            } else {
+                unreachable!("unexpected address: {address}")
+            }
+        });
+
+        let (resolved, meta) =
+            CloneArgs::collect_metadata_from_client(proxy, &client, true).await.unwrap();
+
+        assert_eq!(resolved, implementation);
+        assert_eq!(meta.contract_name, "Implementation");
+    }
+
+    #[tokio::test]
+    async fn test_stops_at_direct_proxy_implementation() {
+        let first = "0x0000000000000000000000000000000000000001".parse().unwrap();
+        let second = "0x0000000000000000000000000000000000000002".parse().unwrap();
+        let third = "0x0000000000000000000000000000000000000003".parse().unwrap();
+        let first_meta = contract_metadata("FirstProxy", true, Some(second));
+        let second_meta = contract_metadata("SecondProxy", true, Some(third));
+        let mut client = super::MockExplorerClient::new();
+        client.expect_contract_source_code().times(2).returning(move |address| {
+            if address == first {
+                Ok(first_meta.clone())
+            } else if address == second {
+                Ok(second_meta.clone())
+            } else {
+                unreachable!("unexpected address: {address}")
+            }
+        });
+
+        let (resolved, meta) =
+            CloneArgs::collect_metadata_from_client(first, &client, true).await.unwrap();
+
+        assert_eq!(resolved, second);
+        assert_eq!(meta.contract_name, "SecondProxy");
+    }
+
+    #[test]
+    fn test_adds_entrypoint_for_library_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("src");
+        let library = temp.path().join("lib/dependency/src");
+        let other_library = temp.path().join("lib/other/src");
+        let forge_std = temp.path().join("lib/forge-std/src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&library).unwrap();
+        std::fs::create_dir_all(&other_library).unwrap();
+        std::fs::create_dir_all(&forge_std).unwrap();
+        std::fs::write(library.join("AToken.sol"), "contract AToken {}").unwrap();
+        std::fs::write(library.join("Helper.sol"), "contract Helper {}").unwrap();
+        std::fs::write(other_library.join("Helper.sol"), "contract Helper {}").unwrap();
+        std::fs::write(forge_std.join("Test.sol"), "contract Test {}").unwrap();
+        std::fs::write(
+            temp.path().join("foundry.toml"),
+            "[profile.default]\nsrc = \"src\"\nlibs = [\"lib\"]\n",
+        )
+        .unwrap();
+
+        ensure_source_entrypoint(temp.path()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(src.join("Clone.sol")).unwrap(),
+            "import * as CloneSource0 from \"../lib/dependency/src/AToken.sol\";\n\
+             import * as CloneSource1 from \"../lib/dependency/src/Helper.sol\";\n\
+             import * as CloneSource2 from \"../lib/other/src/Helper.sol\";\n"
+        );
+        compile_project(temp.path()).unwrap();
+    }
+
+    #[test]
+    fn test_does_not_add_entrypoint_when_src_has_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("src");
+        let library = temp.path().join("lib/dependency/src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&library).unwrap();
+        std::fs::write(src.join("Contract.sol"), "contract Contract {}").unwrap();
+        std::fs::write(library.join("Dependency.sol"), "contract Dependency {}").unwrap();
+
+        ensure_source_entrypoint(temp.path()).unwrap();
+
+        assert!(!src.join("Clone.sol").exists());
+    }
+
+    #[test]
+    fn test_rejects_unsafe_source_import_path() {
+        let root = Path::new("root");
+        let path = root.join("lib/dependency/Unsafe\"Source.sol");
+
+        let err = source_import(root, 0, &path).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "source path contains characters unsupported in a Solidity import: \
+             \"lib/dependency/Unsafe\\\"Source.sol\""
+        );
+    }
+
     /// Fetch the metadata and creation data from Etherscan and dump them to the testdata folder.
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "this test is used to dump mock data from Etherscan"]
@@ -1112,7 +1353,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut project_root = temp_dir.path().to_path_buf();
         let client = mock_etherscan(address);
-        let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
+        let (_, meta) =
+            CloneArgs::collect_metadata_from_client(address, &client, false).await.unwrap();
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default())
             .await
             .unwrap();

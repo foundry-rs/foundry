@@ -510,9 +510,8 @@ fn print_linearization(
     let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
     if compiler.sess().dcx.has_errors().is_err() {
         eyre::bail!("{diags}");
-    } else {
-        let _ = sh_eprint!("{diags}");
     }
+    let _ = sh_eprint!("{diags}");
     if !lowered {
         eyre::bail!(
             "unable to inspect linearization: failed to lower Solidity ASTs for `{}`",

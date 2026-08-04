@@ -119,6 +119,9 @@ pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayo
 mod coverage;
 pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
 
+mod trace;
+pub use trace::TracingConfig;
+
 mod fee;
 pub use fee::Eip1559FeeEstimatePreset;
 
@@ -145,6 +148,9 @@ use extend::Extends;
 
 use foundry_evm_networks::NetworkConfigs;
 pub use semver;
+
+#[cfg(not(test))]
+static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
 
 /// Foundry configuration
 ///
@@ -220,6 +226,7 @@ pub struct Config {
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
     /// Remappings to use for this repo
+    #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
@@ -297,7 +304,7 @@ pub struct Config {
     pub optimizer_details: Option<OptimizerDetails>,
     /// Model checker settings.
     pub model_checker: Option<ModelCheckerSettings>,
-    /// verbosity to use
+    /// Verbosity to use for global output.
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
@@ -379,6 +386,8 @@ pub struct Config {
     pub coverage: CoverageConfig,
     /// Configuration for mutation testing
     pub mutation: MutationConfig,
+    /// Configuration for trace rendering.
+    pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to show `console.log` outputs in realtime during script/test execution
@@ -549,7 +558,8 @@ pub struct Config {
     /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
     pub enable_tx_gas_limit: bool,
 
-    /// Address labels
+    /// Deprecated address-label alias; use [`TracingConfig::labels`].
+    #[serde(default, skip_serializing_if = "AddressHashMap::is_empty")]
     pub labels: AddressHashMap<String>,
 
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
@@ -744,8 +754,10 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "symbolic",
         "coverage",
         "mutation",
+        "tracing",
         "labels",
         "dependencies",
         "soldeer",
@@ -828,13 +840,13 @@ impl Config {
     #[doc(alias = "try_from")]
     pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         trace!("load config with provider: {:?}", provider.metadata());
-        Self::from_figment(Figment::from(provider))
+        Self::from_figment(Figment::from(provider.legacy_labels()))
     }
 
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let provider = Figment::from(provider).select(self.profile.clone());
+        let provider = Figment::from(provider.legacy_labels()).select(self.profile.clone());
         let invariant_corpus_random_sequence_weight_configured =
             self.invariant.corpus_random_sequence_weight_configured
                 || provider.contains("invariant.corpus_random_sequence_weight")
@@ -980,12 +992,14 @@ impl Config {
             .merge(
                 Env::prefixed("DAPP_")
                     .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global(),
+                    .global()
+                    .legacy_labels(),
             )
             .merge(
                 Env::prefixed("DAPP_TEST_")
                     .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global(),
+                    .global()
+                    .legacy_labels(),
             )
             .merge(DappEnvCompatProvider)
             .merge(EtherscanEnvProvider::default())
@@ -1002,7 +1016,8 @@ impl Config {
                             key.into()
                         }
                     })
-                    .global(),
+                    .global()
+                    .legacy_labels(),
             )
             .select(profile.clone());
 
@@ -1100,8 +1115,11 @@ impl Config {
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
 
-        self.remappings =
-            self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
+        self.remappings = self
+            .remappings
+            .into_iter()
+            .map(|r| relative_remapping_preserving_context_boundary(r.into(), &root))
+            .collect();
 
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
@@ -1353,6 +1371,21 @@ impl Config {
         }
 
         let project = builder.build(self.compiler()?)?;
+
+        // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
+        // directory boundary with the native separator so a later `Remapping::to_string` does not
+        // discard it while converting the context back to slash-separated solc syntax.
+        #[cfg(windows)]
+        let mut project = project;
+        #[cfg(windows)]
+        for remapping in &mut project.paths.remappings {
+            if let Some(context) = &mut remapping.context
+                && context.ends_with('/')
+            {
+                context.pop();
+                context.push(std::path::MAIN_SEPARATOR);
+            }
+        }
 
         if self.force {
             // Warnings are intentionally dropped here because `sh_warn!` is a circular
@@ -2175,8 +2208,26 @@ impl Config {
         }
         #[cfg(not(test))]
         {
-            static CACHE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
-            CACHE.get_or_init(Self::force_selected_profile).clone()
+            SELECTED_PROFILE.get_or_init(Self::force_selected_profile).clone()
+        }
+    }
+
+    /// Sets the selected profile before it is initialized.
+    ///
+    /// Returns the previously selected profile if it was already initialized to a different value.
+    pub fn try_set_selected_profile(profile: Profile) -> Result<(), Profile> {
+        #[cfg(test)]
+        {
+            let _ = profile;
+            Ok(())
+        }
+        #[cfg(not(test))]
+        {
+            match SELECTED_PROFILE.set(profile) {
+                Ok(()) => Ok(()),
+                Err(profile) if SELECTED_PROFILE.get() == Some(&profile) => Ok(()),
+                Err(_) => Err(SELECTED_PROFILE.get().expect("profile initialized").clone()),
+            }
         }
     }
 
@@ -2386,19 +2437,24 @@ impl Config {
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
         if let Some(cache_dir) = Self::foundry_rpc_cache_dir() {
             let mut cache = Cache { chains: vec![] };
-            if !cache_dir.exists() {
+            let Some(entries) = Self::ignore_not_found(cache_dir.read_dir())? else {
                 return Ok(cache);
-            }
-            if let Ok(entries) = cache_dir.as_path().read_dir() {
-                for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
-                        cache.chains.push(Self::list_foundry_chain_cache(chain)?);
-                    }
+            };
+            for entry in entries {
+                let Some(entry) = Self::ignore_not_found(entry)? else {
+                    continue;
+                };
+                let Some(metadata) = Self::ignore_not_found(fs::metadata(entry.path()))? else {
+                    continue;
+                };
+                if !metadata.is_dir() {
+                    continue;
                 }
-                Ok(cache)
-            } else {
-                eyre::bail!("failed to access foundry_cache_dir");
+                if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
+                    cache.chains.push(Self::list_foundry_chain_cache(chain)?);
+                }
             }
+            Ok(cache)
         } else {
             eyre::bail!("failed to get foundry_cache_dir");
         }
@@ -2429,44 +2485,109 @@ impl Config {
     /// The path provided to this function should point to a cached chain folder.
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
-        if !chain_path.exists() {
+        let Some(entries) = Self::ignore_not_found(chain_path.read_dir())? else {
             return Ok(blocks);
-        }
-        for block in chain_path.read_dir()?.flatten() {
-            let file_type = block.file_type()?;
-            let file_name = block.file_name();
-            let filepath = if file_type.is_dir() {
-                block.path().join("storage.json")
-            } else if file_type.is_file()
-                && file_name.to_string_lossy().chars().all(char::is_numeric)
-            {
-                block.path()
-            } else {
+        };
+        for block in entries {
+            let Some(block) = Self::ignore_not_found(block)? else {
                 continue;
             };
-            blocks.push((file_name.to_string_lossy().into_owned(), fs::metadata(filepath)?.len()));
+            if let Some(block) = Self::get_cached_block(block)? {
+                blocks.push(block);
+            }
         }
         Ok(blocks)
     }
 
+    fn get_cached_block(block: fs::DirEntry) -> eyre::Result<Option<(String, u64)>> {
+        let file_name = block.file_name();
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(block.path()))? else {
+            return Ok(None);
+        };
+        let size = if metadata.is_dir() {
+            let Some(cache_files) = Self::ignore_not_found(block.path().read_dir())? else {
+                return Ok(None);
+            };
+            let mut size = 0;
+            for cache_file in cache_files {
+                let Some(cache_file) = Self::ignore_not_found(cache_file)? else {
+                    continue;
+                };
+                size += Self::get_cache_file_size(cache_file)?.unwrap_or_default();
+            }
+            if size == 0 {
+                return Ok(None);
+            }
+            size
+        } else if metadata.is_file() && file_name.to_string_lossy().chars().all(char::is_numeric) {
+            metadata.len()
+        } else {
+            return Ok(None);
+        };
+        Ok(Some((file_name.to_string_lossy().into_owned(), size)))
+    }
+
+    fn get_cache_file_size(cache_file: fs::DirEntry) -> eyre::Result<Option<u64>> {
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(cache_file.path()))?
+        else {
+            return Ok(None);
+        };
+        let cache_file_name = cache_file.file_name();
+        let cache_file_name = cache_file_name.to_string_lossy();
+        if !metadata.is_file()
+            || (cache_file_name != "storage.json"
+                && !cache_file_name
+                    .strip_prefix("storage-")
+                    .and_then(|name| name.strip_suffix(".json"))
+                    .is_some_and(|hash| {
+                        hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                    }))
+        {
+            return Ok(None);
+        }
+        Ok(Some(metadata.len()))
+    }
+
     /// The path provided to this function should point to the etherscan cache for a chain.
     fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
-        if !chain_path.exists() {
+        let Some(entries) = Self::ignore_not_found(fs::read_dir(chain_path))? else {
             return Ok(0);
-        }
+        };
+        Self::get_cached_dir_size(entries)
+    }
 
-        fn dir_size_recursive(mut dir: fs::ReadDir) -> eyre::Result<u64> {
-            dir.try_fold(0, |acc, file| {
-                let file = file?;
-                let size = match file.metadata()? {
-                    data if data.is_dir() => dir_size_recursive(fs::read_dir(file.path())?)?,
-                    data => data.len(),
-                };
-                Ok(acc + size)
-            })
+    fn get_cached_dir_size(entries: fs::ReadDir) -> eyre::Result<u64> {
+        let mut size = 0;
+        for entry in entries {
+            let Some(entry) = Self::ignore_not_found(entry)? else {
+                continue;
+            };
+            size += Self::get_cached_entry_size(entry)?.unwrap_or_default();
         }
+        Ok(size)
+    }
 
-        dir_size_recursive(fs::read_dir(chain_path)?)
+    fn get_cached_entry_size(entry: fs::DirEntry) -> eyre::Result<Option<u64>> {
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(entry.path()))? else {
+            return Ok(None);
+        };
+        if metadata.is_dir() {
+            let Some(entries) = Self::ignore_not_found(fs::read_dir(entry.path()))? else {
+                return Ok(None);
+            };
+            Ok(Some(Self::get_cached_dir_size(entries)?))
+        } else {
+            Ok(Some(metadata.len()))
+        }
+    }
+
+    /// Treats cache entries removed during enumeration as absent.
+    fn ignore_not_found<T>(result: io::Result<T>) -> eyre::Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err.into()),
+        }
     }
 
     fn merge_toml_provider(
@@ -2487,10 +2608,10 @@ impl Config {
         if profile != Self::DEFAULT_PROFILE {
             profiles.push(profile.clone());
         }
-        let provider = toml_provider.strict_select(profiles);
-
-        // apply any key fixes
-        let provider = &BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
+        // Apply key fixes before selecting profiles, while standalone sections and profile names
+        // are still distinguishable.
+        let provider = ForcedSnakeCaseData(toml_provider).strict_select(profiles);
+        let provider = &BackwardsCompatTomlProvider(provider);
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
@@ -2717,11 +2838,16 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         let root = Value::serialize(self.root.clone())?;
+        let labels = Value::serialize(&self.labels)?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
+            entry.insert("labels".to_string(), labels.clone());
+            normalize_legacy_labels_in_profile(entry);
         }
         if let Some(entry) = data.get_mut(&self.profile) {
             entry.insert("root".to_string(), root);
+            entry.insert("labels".to_string(), labels);
+            normalize_legacy_labels_in_profile(entry);
         }
         Ok(data)
     }
@@ -2788,6 +2914,7 @@ impl Default for Config {
             symbolic: SymbolicConfig::default(),
             coverage: CoverageConfig::default(),
             mutation: MutationConfig::default(),
+            tracing: TracingConfig::default(),
             always_use_create_2_factory: false,
             eip1559_fee_estimate: Eip1559FeeEstimatePreset::default(),
             ffi: false,
@@ -2966,7 +3093,11 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "remappings_serde::serialize"
+    )]
     pub remappings: Vec<RelativeRemapping>,
     /// The active non-Ethereum network (e.g. `"tempo"`).
     #[serde(skip)]
@@ -2995,11 +3126,11 @@ impl BasicConfig {
             let mut endpoints = toml::value::Table::new();
             endpoints.insert(
                 "tempo".to_string(),
-                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::TEMPO_RPC_URL.to_string()),
             );
             endpoints.insert(
                 "moderato".to_string(),
-                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::MODERATO_RPC_URL.to_string()),
             );
             document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
         }
@@ -3008,6 +3139,46 @@ impl BasicConfig {
         Ok(format!(
             "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
+    }
+}
+
+mod remappings_serde {
+    use foundry_compilers::artifacts::remappings::RelativeRemapping;
+    #[cfg(windows)]
+    use path_slash::PathExt as _;
+    use serde::{Serialize, Serializer};
+    #[cfg(windows)]
+    use std::path::Path;
+
+    #[cfg(windows)]
+    fn slash_context(context: &str) -> String {
+        let has_trailing_separator =
+            context.as_bytes().last().is_some_and(|c| *c == b'/' || *c == b'\\');
+        let mut context = Path::new(context).to_slash_lossy().into_owned();
+        if has_trailing_separator && !context.ends_with('/') {
+            context.push('/');
+        }
+        context
+    }
+
+    pub fn serialize<S>(remappings: &[RelativeRemapping], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        remappings
+            .iter()
+            .map(|remapping| {
+                let Some(context) = &remapping.context else { return remapping.to_string() };
+                let mut remapping = remapping.clone();
+                remapping.context = None;
+                #[cfg(windows)]
+                let context = slash_context(context);
+                #[cfg(not(windows))]
+                let context = context.as_str();
+                format!("{context}:{remapping}")
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
     }
 }
 
@@ -3061,7 +3232,11 @@ mod tests {
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write, num::NonZeroUsize};
+    use std::{
+        fs::File,
+        io::{self, Write},
+        num::NonZeroUsize,
+    };
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -4624,29 +4799,46 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [fuzz]
                 runs = 100
 
                 [invariant]
                 runs = 120
 
+                [symbolic]
+                enabled = true
+                max_paths = 12
+                storage_layout = "generic"
+
                 [profile.ci.fuzz]
                 runs = 420
 
                 [profile.ci.invariant]
                 runs = 500
-            ",
+
+                [profile.ci.symbolic]
+                max_paths = 34
+                dump_smt = true
+            "#,
             )?;
 
             let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 100);
             assert_eq!(config.invariant.runs, 120);
+            assert!(config.symbolic.enabled);
+            assert_eq!(config.symbolic.max_paths, 12);
+            assert_eq!(config.symbolic.storage_layout, SymbolicStorageLayout::Generic);
+            assert!(!config.symbolic.dump_smt);
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
             let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.runs, 500);
+            assert!(config.symbolic.enabled);
+            assert_eq!(config.symbolic.max_paths, 34);
+            assert_eq!(config.symbolic.storage_layout, SymbolicStorageLayout::Generic);
+            assert!(config.symbolic.dump_smt);
 
             Ok(())
         });
@@ -4812,6 +5004,38 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn config_serialization_preserves_context_directory_boundary() {
+        let remapping = "lib/outer/:inner/=lib/outer/lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_serialization_preserves_verbatim_unc_context() {
+        let remapping = r"\\?\UNC\server\share\project\:inner/=lib/inner/";
+        let expected = r"\\?\UNC\server\share/project/:inner/=lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
     }
 
     #[test]
@@ -5227,6 +5451,8 @@ mod tests {
             jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
             jail.set_env("FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", "12");
             jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
+            jail.set_env("FOUNDRY_SYMBOLIC_MAX_PATHS", "64");
+            jail.set_env("FOUNDRY_SYMBOLIC_DUMP_SMT", "true");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
@@ -5243,6 +5469,8 @@ mod tests {
             assert!(config.invariant.corpus_random_sequence_weight_configured);
             assert_eq!(config.invariant.corpus.payable_value_weight, 12);
             assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+            assert_eq!(config.symbolic.max_paths, 64);
+            assert!(config.symbolic.dump_smt);
 
             Ok(())
         });
@@ -5556,6 +5784,18 @@ mod tests {
             writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
         }
 
+        fn fake_endpoint_block_cache(
+            chain_path: &Path,
+            block_number: &str,
+            endpoint: &str,
+            size_bytes: usize,
+        ) {
+            let block_path = chain_path.join(block_number);
+            let file_path = block_path.join(format!("storage-{endpoint}.json"));
+            let mut file = File::create(file_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
+        }
+
         fn fake_block_cache_block_path_as_file(
             chain_path: &Path,
             block_number: &str,
@@ -5569,6 +5809,13 @@ mod tests {
         let chain_dir = tempdir()?;
 
         fake_block_cache(chain_dir.path(), "1", 100);
+        fake_endpoint_block_cache(
+            chain_dir.path(),
+            "1",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            50,
+        );
+        fake_endpoint_block_cache(chain_dir.path(), "1", "backup", 75);
         fake_block_cache(chain_dir.path(), "2", 500);
         fake_block_cache_block_path_as_file(chain_dir.path(), "3", 900);
         // Pollution file that should not show up in the cached block
@@ -5583,13 +5830,107 @@ mod tests {
         let block3 = &result.iter().find(|x| x.0 == "3").unwrap();
 
         assert_eq!(block1.0, "1");
-        assert_eq!(block1.1, 100);
+        assert_eq!(block1.1, 150);
         assert_eq!(block2.0, "2");
         assert_eq!(block2.1, 500);
         assert_eq!(block3.0, "3");
         assert_eq!(block3.1, 900);
 
         chain_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn list_cached_blocks_ignores_removed_entries() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let block_path = chain_dir.path().join("1");
+        fs::create_dir(&block_path)?;
+        File::create(block_path.join("storage.json"))?;
+
+        let block = fs::read_dir(chain_dir.path())?.next().unwrap()?;
+        let cache_file = fs::read_dir(&block_path)?.next().unwrap()?;
+        fs::remove_dir_all(block_path)?;
+
+        assert!(Config::get_cached_block(block)?.is_none());
+        assert!(Config::get_cache_file_size(cache_file)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ignore_not_found_propagates_other_errors() {
+        assert!(
+            Config::ignore_not_found::<()>(Err(io::Error::from(io::ErrorKind::NotFound)))
+                .unwrap()
+                .is_none()
+        );
+
+        let err =
+            Config::ignore_not_found::<()>(Err(io::Error::from(io::ErrorKind::PermissionDenied)))
+                .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn cache_listing_propagates_not_a_directory() -> eyre::Result<()> {
+        let cache_file = tempfile::NamedTempFile::new()?;
+
+        let err = Config::get_cached_blocks(cache_file.path()).unwrap_err();
+        assert_eq!(err.downcast_ref::<io::Error>().unwrap().kind(), io::ErrorKind::NotADirectory);
+
+        let err = Config::get_cached_block_explorer_data(cache_file.path()).unwrap_err();
+        assert_eq!(err.downcast_ref::<io::Error>().unwrap().kind(), io::ErrorKind::NotADirectory);
+        Ok(())
+    }
+
+    #[test]
+    fn list_cached_blocks_uses_replaced_entry_type() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let block_path = chain_dir.path().join("1");
+        File::create(&block_path)?;
+        let block = fs::read_dir(chain_dir.path())?.next().unwrap()?;
+
+        fs::remove_file(&block_path)?;
+        fs::create_dir(&block_path)?;
+        fs::write(block_path.join("storage.json"), [0; 10])?;
+
+        assert_eq!(Config::get_cached_block(block)?, Some(("1".to_string(), 10)));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_cached_blocks_ignores_symlinks() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let target_dir = tempdir()?;
+        fs::write(target_dir.path().join("storage.json"), [0; 10])?;
+        std::os::unix::fs::symlink(target_dir.path(), chain_dir.path().join("1"))?;
+
+        let block_path = chain_dir.path().join("2");
+        fs::create_dir(&block_path)?;
+        let target_file = tempfile::NamedTempFile::new()?;
+        fs::write(target_file.path(), [0; 10])?;
+        std::os::unix::fs::symlink(target_file.path(), block_path.join("storage.json"))?;
+
+        assert!(Config::get_cached_blocks(chain_dir.path())?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn list_etherscan_cache_ignores_removed_entries() -> eyre::Result<()> {
+        let cache_dir = tempdir()?;
+        let sources_path = cache_dir.path().join("sources");
+        fs::create_dir(&sources_path)?;
+        File::create(sources_path.join("metadata.json"))?;
+
+        let sources = fs::read_dir(cache_dir.path())?.next().unwrap()?;
+        let metadata = fs::read_dir(&sources_path)?.next().unwrap()?;
+        fs::remove_dir_all(sources_path)?;
+
+        assert!(Config::get_cached_entry_size(sources)?.is_none());
+        assert!(Config::get_cached_entry_size(metadata)?.is_none());
         Ok(())
     }
 
@@ -5712,9 +6053,289 @@ mod tests {
                     ),
                 ])
             );
+            assert_eq!(config.tracing.labels, config.labels);
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "[labels]".to_string(),
+                    new: "[tracing.labels]".to_string(),
+                }]
+            );
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_parse_deprecated_profile_labels() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.labels]
+                0x0000000000000000000000000000000000000001 = "Alice"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let labels = AddressHashMap::from_iter(vec![(
+                address!("0x0000000000000000000000000000000000000001"),
+                "Alice".to_string(),
+            )]);
+            assert_eq!(config.labels, labels);
+            assert_eq!(config.tracing.labels, labels);
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "labels".to_string(),
+                    new: "tracing.labels".to_string(),
+                }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_env_labels_use_tracing_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "FOUNDRY_LABELS",
+                r#"{ "0x0000000000000000000000000000000000000001" = "Alice" }"#,
+            );
+            jail.set_env(
+                "FOUNDRY_TRACING_LABELS",
+                r#"{ "0x0000000000000000000000000000000000000001" = "Bob" }"#,
+            );
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.labels,
+                AddressHashMap::from_iter([(
+                    address!("0x0000000000000000000000000000000000000001"),
+                    "Alice".to_string(),
+                )])
+            );
+            assert_eq!(
+                config.tracing.labels,
+                AddressHashMap::from_iter([(
+                    address!("0x0000000000000000000000000000000000000001"),
+                    "Bob".to_string(),
+                )])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_labels_warn_for_inactive_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.ci.labels]
+                0x0000000000000000000000000000000000000001 = "Alice"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "labels".to_string(),
+                    new: "tracing.labels".to_string(),
+                }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_tracing_serialization_keeps_global_verbosity() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
+        let config = Config {
+            tracing: TracingConfig { verbosity: 4, labels: labels.clone(), ..Default::default() },
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        let table = serialized.as_table().unwrap();
+        assert_eq!(table["verbosity"].as_integer(), Some(0));
+        assert!(!table.contains_key("labels"));
+        assert_eq!(table["tracing"]["verbosity"].as_integer(), Some(4));
+
+        let provided = Figment::from(&config).extract::<Config>().unwrap();
+        assert_eq!(provided.verbosity, 0);
+        assert!(provided.labels.is_empty());
+        assert_eq!(provided.tracing.labels, labels);
+
+        let merged = config.merge_inline_provider(("ffi", true)).unwrap();
+        assert_eq!(merged.tracing.verbosity, 4);
+        assert_eq!(merged.tracing.labels, config.tracing.labels);
+    }
+
+    #[test]
+    fn test_legacy_programmatic_labels_survive_serialization() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
+        let config = Config { labels: labels.clone(), ..Default::default() };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(
+            serialized["labels"].as_table().unwrap().values().next().and_then(|v| v.as_str()),
+            Some("Alice")
+        );
+
+        let provided = Config::from_provider(&config).unwrap();
+        assert_eq!(provided.labels, labels);
+        assert_eq!(provided.tracing.labels, labels);
+
+        let merged = config.merge_inline_provider(("ffi", true)).unwrap();
+        assert_eq!(merged.labels, labels);
+        assert_eq!(merged.tracing.labels, labels);
+    }
+
+    #[test]
+    fn test_parse_tracing_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                verbosity = 2
+
+                [tracing]
+                verbosity = 4
+                disable_labels = true
+                compact_labels = true
+                trace_depth = 3
+                decode_internal = true
+                external_identification_timeout = 9
+
+                [tracing.labels]
+                0x0000000000000000000000000000000000000002 = "Bob"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.verbosity, 2);
+            assert_eq!(config.tracing.verbosity, 4);
+            assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.trace_depth, Some(3));
+            assert!(config.tracing.decode_internal);
+            assert!(config.tracing.compact_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 9);
+            let labels = AddressHashMap::from_iter(vec![(
+                address!("0x0000000000000000000000000000000000000002"),
+                "Bob".to_string(),
+            )]);
+            assert!(config.labels.is_empty());
+            assert_eq!(config.tracing.labels, labels);
+            assert!(config.warnings.is_empty());
+
+            let serialized = config.to_string_pretty().unwrap();
+            assert!(!serialized.contains("[labels]"));
+            assert!(serialized.contains("[tracing.labels]"));
+
+            jail.create_file("foundry.toml", &serialized)?;
+            let reloaded = Config::load().unwrap();
+            assert!(reloaded.labels.is_empty());
+            assert_eq!(reloaded.tracing.labels, labels);
+            assert!(reloaded.warnings.is_empty());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_external_identification_timeout_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT", "0");
+
+            let config = Config::load().unwrap();
+
+            assert_eq!(config.tracing.external_identification_timeout, 0);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_global_and_tracing_verbosity_are_independent() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                verbosity = 4
+
+                [tracing]
+                disable_labels = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.verbosity, 4);
+            assert_eq!(config.tracing.verbosity, 0);
+            assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 5);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_label_aliases_preserve_provider_precedence() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = |label: &str| AddressHashMap::from_iter([(address, label.to_string())]);
+        let provider = |global: &str, local: &str| {
+            let figment = Config::merge_toml_provider(
+                Figment::from(Config::default()),
+                Toml::string(global).nested(),
+                Config::DEFAULT_PROFILE,
+            );
+            Config::merge_toml_provider(
+                figment,
+                Toml::string(local).nested(),
+                Config::DEFAULT_PROFILE,
+            )
+        };
+
+        let config = Config::from_provider(provider(
+            r#"[tracing.labels]
+            0x0000000000000000000000000000000000000001 = "global""#,
+            r#"[labels]
+            0x0000000000000000000000000000000000000001 = "local""#,
+        ))
+        .unwrap();
+        assert_eq!(config.tracing.labels, labels("local"));
+
+        let config = Config::from_provider(provider(
+            r#"[labels]
+            0x0000000000000000000000000000000000000001 = "global""#,
+            r#"[tracing.labels]
+            0x0000000000000000000000000000000000000001 = "local""#,
+        ))
+        .unwrap();
+        assert_eq!(config.tracing.labels, labels("local"));
+    }
+
+    #[test]
+    fn test_malformed_tracing_labels_are_not_replaced() {
+        let provider = Toml::string(
+            r#"
+            [profile.default.labels]
+            0x0000000000000000000000000000000000000001 = "legacy"
+
+            [profile.default.tracing]
+            labels = "invalid"
+            "#,
+        )
+        .nested();
+
+        assert!(Config::from_provider(provider).is_err());
     }
 
     #[test]
@@ -6021,6 +6642,253 @@ mod tests {
                 endpoints.get("mainnet").unwrap().url().unwrap().contains("https://test.xyz/rpc")
             );
             assert!(endpoints.get("optimism").unwrap().url().unwrap().contains("example-2.com"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_symbolic_sections_preserve_source_precedence() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.symbolic]
+                    max_paths = 10
+                    depth = 100
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [symbolic]
+                    max_paths = 20
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.symbolic.max_paths, 20);
+            assert_eq!(config.symbolic.depth, Some(100));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [symbolic]
+                    max_paths = 30
+                    depth = 200
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.symbolic]
+                    max_paths = 40
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.symbolic.max_paths, 40);
+            assert_eq!(config.symbolic.depth, Some(200));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_symbolic_sections_detect_effective_collisions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.symbolic]
+                    max_paths = 10
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+
+                    [symbolic]
+                    max_paths = 20
+                "#,
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("Key collision detected"), "unexpected error: {err}");
+            assert!(err.contains("symbolic"), "unexpected error: {err}");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_label_aliases_preserve_source_precedence() {
+        figment::Jail::expect_with(|jail| {
+            let address = address!("0x0000000000000000000000000000000000000001");
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "[labels]".to_string(),
+                    new: "[tracing.labels]".to_string(),
+                }]
+            );
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.tracing.labels.get(&address).map(String::as_str), Some("local"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_label_aliases_detect_effective_collisions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.tracing.labels]
+                    0x0000000000000000000000000000000000000001 = "base"
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "local"
+                "#,
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert_eq!(
+                err,
+                "failed to extract foundry config:\n\
+                 foundry config error: Key collision detected in profile 'default' when extending \
+                 'base.toml'. Conflicting keys: [\"tracing\"]. Use 'extends.strategy' or \
+                 'extends_strategy' to specify how to handle conflicts.\n"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_fuzz_section_remains_invariant_fallback() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [fuzz]
+                    include_storage = false
+                    dictionary_weight = 99
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [invariant]
+                    runs = 420
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.invariant.runs, 420);
+            assert!(!config.invariant.dictionary.include_storage);
+            assert_eq!(config.invariant.dictionary.dictionary_weight, 99);
 
             Ok(())
         });
@@ -7069,6 +7937,58 @@ mod tests {
     }
 
     #[test]
+    fn warns_on_deprecated_keys_in_inactive_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci]
+                deny_warnings = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "deny_warnings" && new == "deny = warnings"
+                )),
+                "Expected deprecated key warning for inactive profile, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_deprecated_profile_names() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.cancun]
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "cancun" && new == "evm_version = Cancun"
+                )),
+                "Expected deprecated profile-name warning, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn warns_on_unknown_keys_in_profile() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -7220,6 +8140,11 @@ mod tests {
                 runs = 256
                 unknown_invariant_key = "should_warn"
 
+                [symbolic]
+                enabled = true
+                depth = 128
+                unknown_symbolic_key = "should_warn"
+
                 [mutation]
                 unknown_mutation_key = "should_warn"
 
@@ -7250,6 +8175,10 @@ mod tests {
                 [profile.default.invariant]
                 runs = 512
                 unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.symbolic]
+                max_paths = 512
+                unknown_nested_symbolic_key = "should_warn"
 
                 [profile.default.mutation]
                 unknown_nested_mutation_key = "should_warn"
@@ -7292,6 +8221,7 @@ mod tests {
                 ("unknown_doc_key", "doc"),
                 ("unknown_fuzz_key", "fuzz"),
                 ("unknown_invariant_key", "invariant"),
+                ("unknown_symbolic_key", "symbolic"),
                 ("unknown_mutation_key", "mutation"),
                 ("unknown_vyper_key", "vyper"),
                 ("unknown_bind_json_key", "bind_json"),
@@ -7318,6 +8248,7 @@ mod tests {
                 ("unknown_nested_doc_key", "doc"),
                 ("unknown_nested_fuzz_key", "fuzz"),
                 ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_symbolic_key", "symbolic"),
                 ("unknown_nested_mutation_key", "mutation"),
                 ("unknown_nested_vyper_key", "vyper"),
                 ("unknown_nested_bind_json_key", "bind_json"),
@@ -7367,11 +8298,11 @@ mod tests {
                 })
                 .collect();
 
-            // 1 profile key + 8 standalone + 8 nested + 2 array = 19 total
+            // 1 profile key + 9 standalone + 9 nested + 2 array = 21 total
             assert_eq!(
                 unknown_key_warnings.len(),
-                19,
-                "Expected 19 unknown key warnings (1 profile + 8 standalone + 8 nested + 2 array), got {}: {:?}",
+                21,
+                "Expected 21 unknown key warnings (1 profile + 9 standalone + 9 nested + 2 array), got {}: {:?}",
                 unknown_key_warnings.len(),
                 unknown_key_warnings
             );
@@ -7807,6 +8738,26 @@ mod tests {
                 "profiles should contain 'default-venom', got: {:?}",
                 config.profiles
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn standalone_section_name_can_be_used_as_profile_name() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.symbolic]
+                eth-rpc-url = "https://example.com/"
+                "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "symbolic");
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.profile.as_str(), "symbolic");
+            assert_eq!(config.eth_rpc_url.as_deref(), Some("https://example.com/"));
 
             Ok(())
         });

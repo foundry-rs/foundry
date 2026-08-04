@@ -30,6 +30,14 @@ pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockH
     block
 }
 
+/// Applies chain-specific changes required to replay transactions accepted on-chain.
+pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut EvmEnv<SPEC, BLOCK>) {
+    if NamedChain::try_from(evm_env.cfg_env.chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
+        // Arbitrum does not enforce the EIP-1559 priority fee ordering constraint.
+        evm_env.cfg_env.disable_priority_fee_check = true;
+    }
+}
+
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// - checks for prevrandao mixhash after merge
@@ -165,6 +173,24 @@ pub fn get_function<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tx_replay_env_changes_disable_priority_fee_check_only_for_arbitrum() {
+        let mut evm_env = EvmEnv::new(
+            revm::context::CfgEnv::<SpecId>::default(),
+            revm::context::BlockEnv::default(),
+        );
+        evm_env.cfg_env.chain_id = NamedChain::Arbitrum as u64;
+
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(evm_env.cfg_env.disable_priority_fee_check);
+
+        evm_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
+        evm_env.cfg_env.disable_priority_fee_check = false;
+
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(!evm_env.cfg_env.disable_priority_fee_check);
+    }
 
     #[test]
     fn blob_params_by_spec_id_tracks_latest_known_blob_schedule() {

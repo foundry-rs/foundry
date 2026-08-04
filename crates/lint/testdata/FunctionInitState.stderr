@@ -1,0 +1,144 @@
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromSuperCall = super.maybePure();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromNonPure = set();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromView = read();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromStateRead = seed + 1;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromPureWithStateArg = double(seed);
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromPureWithStateGas = GasTarget(address(0x1234)).pureRead{gas: seed}();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     CreatedWithSalt public fromStateSalt = new CreatedWithSalt{salt: bytes32(seed)}();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromInherited = baseValue();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromQualifiedInherited = Base.baseValue();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromExternalGetter = Oracle(address(0x1234)).price();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromInheritedGetter = OracleChild(address(0x1234)).price();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromUsingView = uint256(5).stamp();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromViewOverload = mix(1, 2);
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromViewSameArityOverload = typed("s");
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromBaseTypedOverride = OverrideBase(address(0x1234)).maybePure();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     function() external view returns (uint256) internal refBaseTyped = OverrideBase(address(0x1234)).maybePure;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromPointerCall = fnPtr();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public immutable fromNonPureImmutable = set();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+

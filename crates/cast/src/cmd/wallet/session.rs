@@ -13,8 +13,7 @@ use foundry_common::{
     sh_println, shell,
     tempo::{
         GeneratedSessionKey, SessionAuthorizationRequest, SessionEntry, SessionSpendLimit,
-        SessionStatus, read_session_entry, update_session_status, update_session_status_if,
-        upsert_session_entry,
+        read_session_entry, retire_session_entry, upsert_session_entry,
     },
 };
 use foundry_wallets::{WalletOpts, WalletSigner};
@@ -42,6 +41,9 @@ use crate::{
 };
 
 use super::process_tree::ManagedChild;
+
+#[cfg(test)]
+use foundry_common::tempo::SessionStatus;
 
 const PRINT_SPONSOR_HASH_REVOKE_ERROR: &str = "--tempo.print-sponsor-hash only prints a sponsor hash and does not revoke the session on-chain";
 const SESSION_CHILD_SIGNER_ENV: &[&str] = &[
@@ -216,22 +218,17 @@ async fn run_for_command(
     upsert_session_entry(entry)?;
 
     let child_result = command.run(session_id).await;
-    let cleanup_result = cleanup_session_run(session_id, child_result.is_ok(), tx, send_tx).await;
+    let cleanup_result = cleanup_session_run(session_id, tx, send_tx).await;
 
     finish_session_run(session_id, child_result, cleanup_result)
 }
 
 async fn cleanup_session_run(
     session_id: B256,
-    child_succeeded: bool,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
-    let retire_result = if child_succeeded {
-        mark_session_run_revoking(session_id)
-    } else {
-        retire_session_run_locally(session_id)
-    };
+    let retire_result = retire_session_run_locally(session_id);
     let revoke_result =
         run_revoke_with_policy(session_id, false, tx, send_tx, UnprovisionedKeyPolicy::Fail).await;
 
@@ -246,22 +243,10 @@ async fn cleanup_session_run(
     }
 }
 
-fn mark_session_run_revoking(session_id: B256) -> Result<()> {
-    update_session_run_status(session_id, SessionStatus::Revoking)
-        .wrap_err_with(|| format!("failed to mark Tempo session {session_id:?} as revoking"))
-}
-
 fn retire_session_run_locally(session_id: B256) -> Result<()> {
-    update_session_run_status(session_id, SessionStatus::Failed)
+    retire_session_entry(session_id)
+        .map(|_| ())
         .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"))
-}
-
-fn update_session_run_status(session_id: B256, status: SessionStatus) -> Result<()> {
-    let Some(entry) = read_session_entry(session_id)? else {
-        return Ok(());
-    };
-    let status = if entry.status.is_terminal() { entry.status } else { status };
-    update_session_status(session_id, status).map(|_| ())
 }
 
 fn finish_session_run(
@@ -500,7 +485,7 @@ fn split_for_command(command: &str) -> Result<Vec<String>> {
     Ok(args)
 }
 
-/// Creates a signed session entry and stores it in the local registry.
+/// Creates a signed temporary access key in the Tempo Accounts store.
 async fn run_create(
     root_account: Address,
     chain_id: u64,
@@ -575,7 +560,7 @@ async fn run_revoke_with_policy(
     };
 
     if local {
-        update_session_status(session_id, SessionStatus::Revoked)?;
+        retire_session_entry(session_id)?;
         print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::Local)?;
         return Ok(());
     }
@@ -598,7 +583,7 @@ async fn run_revoke_with_policy(
 
     let info = provider.get_keychain_key(entry.root_account, entry.key_address).await?;
     if info.isRevoked {
-        update_session_status(session_id, SessionStatus::Revoked)?;
+        retire_session_entry(session_id)?;
         print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::AlreadyRevoked)?;
         return Ok(());
     }
@@ -611,16 +596,16 @@ async fn run_revoke_with_policy(
     let revoke_result = async {
         let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
         let before_submit = || {
-            if entry.status != SessionStatus::Revoked {
-                update_session_status_if(session_id, entry.status, SessionStatus::Revoking)?;
-            }
+            retire_session_entry(session_id)?;
             Ok(())
         };
         match send_keychain_tx_with_root_signer(calldata, tx, &send_tx, root_signer, before_submit)
             .await?
         {
             KeychainTxOutcome::Submitted => {}
-            KeychainTxOutcome::PrintedSponsorHash => eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR),
+            KeychainTxOutcome::PrintedSponsorHash => {
+                eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+            }
         }
         Ok(())
     }
@@ -630,7 +615,7 @@ async fn run_revoke_with_policy(
         return Err(err.wrap_err("failed to revoke Tempo session key on-chain"));
     }
 
-    update_session_status(session_id, SessionStatus::Revoked)?;
+    retire_session_entry(session_id)?;
 
     Ok(())
 }
@@ -642,7 +627,7 @@ fn handle_unprovisioned_revoke(
 ) -> Result<()> {
     match policy {
         UnprovisionedKeyPolicy::RevokeLocally => {
-            update_session_status(session_id, SessionStatus::Revoked)?;
+            retire_session_entry(session_id)?;
             print_revoke_status(session_id, Some(entry), SessionRevokeStatus::NotProvisioned)?;
             Ok(())
         }
@@ -651,7 +636,7 @@ fn handle_unprovisioned_revoke(
                 "session key is not provisioned on-chain yet; pending transactions from the \
                  wrapped command may still provision it. Wait for pending transactions to settle, \
                  then run `cast wallet session revoke {session_id}`."
-            )
+            );
         }
     }
 }
@@ -667,7 +652,7 @@ async fn handle_revoke_error(
         .map(|info| info.isRevoked)
         .unwrap_or(false)
     {
-        let _ = update_session_status(session_id, SessionStatus::Revoked);
+        let _ = retire_session_entry(session_id);
     }
 }
 
@@ -747,7 +732,7 @@ async fn build_session_entry(
         eyre::bail!("--from must match --root for cast wallet session create");
     }
 
-    let signer = resolve_root_signer(wallet, root_account).await?;
+    let signer = resolve_root_signer(wallet, root_account, chain_id).await?;
     let session_key = GeneratedSessionKey::random();
     let session_id = B256::random();
     let now = now_unix_timestamp()?;
@@ -773,8 +758,12 @@ async fn build_session_entry(
     prepared.into_active_entry(session_key, &signed_authorization)
 }
 
-async fn resolve_root_signer(wallet: WalletOpts, root_account: Address) -> Result<WalletSigner> {
-    let (signer, tempo_access_key) = wallet.maybe_signer().await?;
+async fn resolve_root_signer(
+    wallet: WalletOpts,
+    root_account: Address,
+    chain_id: u64,
+) -> Result<WalletSigner> {
+    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
     if tempo_access_key.is_some() {
         eyre::bail!(
             "Tempo access keys cannot authorize Tempo sessions; use a persistent root signer"
@@ -828,7 +817,6 @@ fn now_unix_timestamp() -> Result<u64> {
 mod tests {
     use super::*;
     use alloy_primitives::address;
-    use foundry_cli::opts::EthereumOpts;
     use std::{ffi::OsStr, sync::Mutex};
     use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
@@ -851,7 +839,7 @@ mod tests {
     fn session_revoke_is_idempotent_when_missing() {
         with_tempo_home(|| {
             let session_id = B256::from([0x42; 32]);
-            assert!(!update_session_status(session_id, SessionStatus::Revoked).unwrap());
+            assert!(!retire_session_entry(session_id).unwrap());
         });
     }
 
@@ -948,198 +936,6 @@ mod tests {
     }
 
     #[test]
-    fn explicit_revoke_preflight_error_preserves_local_key_material_for_retry() {
-        with_tempo_home(|| {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async {
-                let session_id = B256::from([0xd0; 32]);
-                let entry = sample_session_entry(session_id, SessionStatus::Active);
-                upsert_session_entry(entry).unwrap();
-
-                let mut send_tx = empty_send_tx_opts();
-                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
-                let err =
-                    run_revoke(session_id, false, TransactionOpts::parse_from(["cast"]), send_tx)
-                        .await
-                        .unwrap_err();
-
-                let session = read_session_entry(session_id).unwrap().unwrap();
-                assert_eq!(session.status, SessionStatus::Active, "{err:#}");
-                assert!(session.key.is_some());
-            });
-        });
-    }
-
-    #[test]
-    fn run_for_success_marks_session_revoking_before_revoke_preflight() {
-        with_tempo_home(|| {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async {
-                let session_id = B256::from([0xd7; 32]);
-                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Active))
-                    .unwrap();
-
-                let mut send_tx = empty_send_tx_opts();
-                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
-                let err = cleanup_session_run(
-                    session_id,
-                    true,
-                    TransactionOpts::parse_from(["cast"]),
-                    send_tx,
-                )
-                .await
-                .unwrap_err();
-
-                let session = read_session_entry(session_id).unwrap().unwrap();
-                assert_eq!(session.status, SessionStatus::Revoking, "{err:#}");
-                assert!(session.key.is_none());
-            });
-        });
-    }
-
-    #[test]
-    fn run_for_retire_local_session_before_revoke_preflight() {
-        with_tempo_home(|| {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async {
-                let session_id = B256::from([0xd4; 32]);
-                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Active))
-                    .unwrap();
-
-                retire_session_run_locally(session_id).unwrap();
-
-                let mut send_tx = empty_send_tx_opts();
-                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
-                let err =
-                    run_revoke(session_id, false, TransactionOpts::parse_from(["cast"]), send_tx)
-                        .await
-                        .unwrap_err();
-
-                let session = read_session_entry(session_id).unwrap().unwrap();
-                assert_eq!(session.status, SessionStatus::Failed, "{err:#}");
-                assert!(session.key.is_none());
-            });
-        });
-    }
-
-    #[test]
-    fn run_for_unprovisioned_cleanup_remains_retryable() {
-        with_tempo_home(|| {
-            let session_id = B256::from([0xd6; 32]);
-            upsert_session_entry(sample_session_entry(session_id, SessionStatus::Active)).unwrap();
-
-            retire_session_run_locally(session_id).unwrap();
-            let entry = read_session_entry(session_id).unwrap().unwrap();
-            let err = handle_unprovisioned_revoke(session_id, &entry, UnprovisionedKeyPolicy::Fail)
-                .unwrap_err();
-
-            assert!(err.to_string().contains("pending transactions"), "{err}");
-            let session = read_session_entry(session_id).unwrap().unwrap();
-            assert_eq!(session.status, SessionStatus::Failed);
-            assert!(session.key.is_none());
-        });
-    }
-
-    #[test]
-    fn run_for_retire_local_session_does_not_downgrade_revoked_status() {
-        with_tempo_home(|| {
-            let session_id = B256::from([0xd5; 32]);
-            upsert_session_entry(sample_session_entry(session_id, SessionStatus::Revoked)).unwrap();
-
-            retire_session_run_locally(session_id).unwrap();
-
-            let session = read_session_entry(session_id).unwrap().unwrap();
-            assert_eq!(session.status, SessionStatus::Revoked);
-            assert!(session.key.is_none());
-        });
-    }
-
-    #[test]
-    fn revoke_error_does_not_downgrade_existing_revoked_status() {
-        with_tempo_home(|| {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async {
-                let session_id = B256::from([0xd1; 32]);
-                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Revoking))
-                    .unwrap();
-                update_session_status(session_id, SessionStatus::Revoked).unwrap();
-
-                let mut send_tx = empty_send_tx_opts();
-                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
-                let config = send_tx.eth.load_config().unwrap();
-                let provider =
-                    ProviderBuilder::<TempoNetwork>::from_config(&config).unwrap().build().unwrap();
-                handle_revoke_error(
-                    &provider,
-                    session_id,
-                    &sample_session_entry(session_id, SessionStatus::Revoking),
-                )
-                .await;
-
-                assert_eq!(
-                    read_session_entry(session_id).unwrap().unwrap().status,
-                    SessionStatus::Revoked
-                );
-            });
-        });
-    }
-
-    #[test]
-    fn revoke_submit_error_keeps_revoking_session_retryable() {
-        with_tempo_home(|| {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async {
-                let session_id = B256::from([0xd3; 32]);
-                let entry = sample_session_entry(session_id, SessionStatus::Active);
-                upsert_session_entry(entry.clone()).unwrap();
-                assert!(
-                    update_session_status_if(
-                        session_id,
-                        SessionStatus::Active,
-                        SessionStatus::Revoking,
-                    )
-                    .unwrap()
-                );
-
-                let mut send_tx = empty_send_tx_opts();
-                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
-                let config = send_tx.eth.load_config().unwrap();
-                let provider =
-                    ProviderBuilder::<TempoNetwork>::from_config(&config).unwrap().build().unwrap();
-                handle_revoke_error(&provider, session_id, &entry).await;
-
-                let session = read_session_entry(session_id).unwrap().unwrap();
-                assert_eq!(session.status, SessionStatus::Revoking);
-                assert!(session.key.is_none());
-            });
-        });
-    }
-
-    #[test]
-    fn revoke_retry_preflight_error_does_not_downgrade_revoked_status() {
-        with_tempo_home(|| {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async {
-                let session_id = B256::from([0xd2; 32]);
-                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Revoked))
-                    .unwrap();
-
-                let mut send_tx = empty_send_tx_opts();
-                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
-                let _ =
-                    run_revoke(session_id, false, TransactionOpts::parse_from(["cast"]), send_tx)
-                        .await
-                        .unwrap_err();
-
-                assert_eq!(
-                    read_session_entry(session_id).unwrap().unwrap().status,
-                    SessionStatus::Revoked
-                );
-            });
-        });
-    }
-
-    #[test]
     fn create_and_local_revoke_session_entry_round_trips() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -1173,55 +969,15 @@ mod tests {
                 let session_id = entry.session_id;
                 let expiry = entry.expiry;
                 upsert_session_entry(entry).unwrap();
-                let record = foundry_common::tempo::read_session_record().unwrap();
-                assert_eq!(record.sessions.len(), 1);
-                assert_eq!(record.sessions[0].session_id, session_id);
-                assert!(record.sessions[0].has_live_key_at(expiry - 1));
+                let stored = read_session_entry(session_id).unwrap().unwrap();
+                assert_eq!(stored.session_id, session_id);
+                assert!(stored.has_live_key_at(expiry - 1));
 
-                assert!(update_session_status(session_id, SessionStatus::Revoked).unwrap());
-                let record = foundry_common::tempo::read_session_record().unwrap();
-                let session = record.get(session_id).unwrap();
+                assert!(retire_session_entry(session_id).unwrap());
+                let session = read_session_entry(session_id).unwrap().unwrap();
                 assert_eq!(session.status, SessionStatus::Revoked);
                 assert!(session.key.is_none());
             });
         });
-    }
-
-    fn empty_send_tx_opts() -> SendTxOpts {
-        SendTxOpts {
-            cast_async: false,
-            sync: false,
-            confirmations: 1,
-            timeout: None,
-            poll_interval: None,
-            eth: EthereumOpts::default(),
-            browser: Default::default(),
-        }
-    }
-
-    fn sample_session_entry(session_id: B256, status: SessionStatus) -> SessionEntry {
-        let key = match status {
-            SessionStatus::Revoking
-            | SessionStatus::Revoked
-            | SessionStatus::Expired
-            | SessionStatus::Failed => None,
-            _ => Some(foundry_common::tempo::SessionKeyMaterial {
-                key_type: foundry_common::tempo::KeyType::Secp256k1,
-                key: ROOT_PRIVATE_KEY.to_string(),
-                key_authorization: None,
-            }),
-        };
-
-        SessionEntry {
-            session_id,
-            root_account: address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-            chain_id: 4217,
-            key_address: address!("0x00000000000000000000000000000000000000bb"),
-            expiry: 200,
-            scope: None,
-            limits: None,
-            status,
-            key,
-        }
     }
 }

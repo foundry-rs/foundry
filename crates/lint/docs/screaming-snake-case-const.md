@@ -7,7 +7,8 @@ Flags `constant` state variables whose names do not follow `SCREAMING_SNAKE_CASE
 
 ## What it does
 
-Reports state variables declared `constant` whose identifier deviates from `SCREAMING_SNAKE_CASE`.
+Reports state variables declared `constant` whose identifier is longer than one character and
+deviates from `SCREAMING_SNAKE_CASE`. Leading and trailing underscores are preserved.
 
 ## Why is this bad?
 

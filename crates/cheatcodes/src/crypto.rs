@@ -290,7 +290,7 @@ fn create_wallet<FEN: FoundryEvmNetwork>(
 
 fn encode_full_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
-    let v = U256::from(sig.v() as u64 + 27);
+    let v = U256::from(sig.v_byte());
     let r = B256::from(sig.r());
     let s = B256::from(sig.s());
     (v, r, s).abi_encode()

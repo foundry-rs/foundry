@@ -3,15 +3,19 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
+    fs::File,
+    io::BufReader,
     path::Path,
 };
 
-use alloy_consensus::{BlockBody, Header};
+use alloy_consensus::BlockBody;
+#[cfg(test)]
+use alloy_consensus::Header;
 use alloy_eips::eip4895::Withdrawals;
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
-    map::{AddressMap, HashMap},
+    map::{AddressMap, HashMap, U256Map},
 };
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
@@ -20,15 +24,16 @@ use anvil_core::eth::{
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
-    BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
+    BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
+    StateSnapshot,
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
-    database::{CacheDB, DatabaseRef, DbAccount},
+    database::{AccountState, CacheDB, DatabaseRef, DbAccount},
     primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
     state::AccountInfo,
 };
@@ -40,10 +45,34 @@ use serde_json::Value;
 
 use crate::mem::storage::MinedTransaction;
 
+/// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
+pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
+
+/// Inserts a block hash, discards entries outside the EVM-visible cache, and returns its head.
+pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, hash: B256) -> U256 {
+    let head = block_hashes.keys().copied().max().map_or(number, |head| head.max(number));
+    let min_number = head.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+    block_hashes.retain(|cached, _| *cached >= min_number && *cached <= head);
+    if number >= min_number {
+        block_hashes.insert(number, hash);
+    }
+    head
+}
+
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
+    }
+
+    /// Returns an owned, recursively merged view of all available accounts.
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        self.maybe_as_full_db().cloned()
+    }
+
+    /// Returns whether snapshots of this database use structural sharing.
+    fn is_persistent(&self) -> bool {
+        false
     }
 
     /// Clear the state and move it into a new `StateSnapshot`.
@@ -69,6 +98,14 @@ where
         T::maybe_as_full_db(self)
     }
 
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        T::maybe_full_db(self)
+    }
+
+    fn is_persistent(&self) -> bool {
+        T::is_persistent(self)
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
@@ -80,6 +117,39 @@ where
     fn clear(&mut self) {}
 
     fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+}
+
+impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T>
+where
+    Self: DatabaseRef<Error = DatabaseError>,
+{
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        T::maybe_as_full_db(self)
+    }
+
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        T::maybe_full_db(self)
+    }
+
+    fn is_persistent(&self) -> bool {
+        T::is_persistent(self)
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        T::clear_into_state_snapshot(self)
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        T::read_as_state_snapshot(self)
+    }
+
+    fn clear(&mut self) {
+        T::clear(self)
+    }
+
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        T::init_from_state_snapshot(self, state_snapshot)
+    }
 }
 
 /// Helper trait to reset the DB if it's forked
@@ -214,6 +284,9 @@ pub trait Db:
     /// inserts a blockhash for the given number
     fn insert_block_hash(&mut self, number: U256, hash: B256);
 
+    /// Replaces all cached block hashes.
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>);
+
     /// Write all chain data to serialized bytes buffer
     fn dump_state(
         &self,
@@ -224,7 +297,7 @@ pub trait Db:
         historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>>;
 
-    /// Deserialize and add all chain data to the backend storage
+    /// Deserialize and add all accounts to the backend storage.
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts {
             let old_account_nonce = DatabaseRef::basic_ref(self, addr)
@@ -278,7 +351,10 @@ pub trait Db:
 /// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
 /// the `CacheDB` see also
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
-impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
+impl<T> Db for CacheDB<T>
+where
+    T: DatabaseRef<Error = DatabaseError> + MaybeFullDatabase + Send + Sync + Clone + fmt::Debug,
+{
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.insert_account_info(address, account)
     }
@@ -288,7 +364,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.cache.block_hashes.insert(number, hash);
+        cache_block_hash(&mut self.cache.block_hashes, number, hash);
+    }
+
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
+        self.cache.block_hashes = block_hashes.into_iter().collect();
     }
 
     fn dump_state(
@@ -310,14 +390,39 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         false
     }
 
+    fn maybe_state_root(&self) -> Option<B256> {
+        self.maybe_full_db().map(|accounts| crate::mem::state::state_root(&accounts))
+    }
+
     fn current_state(&self) -> StateDb {
         StateDb::new(MemDb::default())
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
+impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.cache.accounts)
+    }
+
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        let mut accounts = self.db.maybe_full_db()?;
+        for (address, overlay) in &self.cache.accounts {
+            if overlay.account_state == AccountState::NotExisting {
+                accounts.remove(address);
+                continue;
+            }
+            if overlay.account_state == AccountState::StorageCleared {
+                accounts.insert(*address, overlay.clone());
+                continue;
+            }
+
+            let mut account = accounts.remove(address).unwrap_or_default();
+            account.info = overlay.info.clone();
+            account.account_state = overlay.account_state.clone();
+            account.storage.extend(overlay.storage.clone());
+            accounts.insert(*address, account);
+        }
+        Some(accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
@@ -374,6 +479,20 @@ impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheD
     }
 }
 
+impl MaybeFullDatabase for EmptyDBWrapper {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        StateSnapshot::default()
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        StateSnapshot::default()
+    }
+
+    fn clear(&mut self) {}
+
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+}
+
 impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
     fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
         Err("not supported".to_string())
@@ -428,6 +547,14 @@ impl MaybeFullDatabase for StateDb {
         self.0.maybe_as_full_db()
     }
 
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        self.0.maybe_full_db()
+    }
+
+    fn is_persistent(&self) -> bool {
+        self.0.is_persistent()
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         self.0.clear_into_state_snapshot()
     }
@@ -464,7 +591,7 @@ pub struct LegacyBlockEnv {
 #[derive(Debug, Deserialize)]
 pub struct LegacyBlobExcessGasAndPrice {
     pub excess_blob_gas: u64,
-    pub blob_gasprice: u64,
+    pub blob_gasprice: u128,
 }
 
 /// Legacy string or u64 type from before v1.3.
@@ -507,7 +634,10 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             slot_num: 0,
             blob_excess_gas_and_price: legacy
                 .blob_excess_gas_and_price
-                .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
+                .map(|v| BlobExcessGasAndPrice {
+                    excess_blob_gas: v.excess_blob_gas,
+                    blob_gasprice: v.blob_gasprice,
+                })
                 .or_else(|| {
                     Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
                 }),
@@ -586,12 +716,19 @@ pub struct SerializableState {
 impl SerializableState {
     /// Loads the `Genesis` object from the given json file path
     pub fn load(path: impl AsRef<Path>) -> Result<Self, FsPathError> {
-        let path = path.as_ref();
+        let mut path = path.as_ref().to_path_buf();
         if path.is_dir() {
-            foundry_common::fs::read_json_file(&path.join("state.json"))
-        } else {
-            foundry_common::fs::read_json_file(path)
+            path = path.join("state.json");
         }
+
+        let file = File::open(&path).map_err(|err| FsPathError::read(err, &path))?;
+        serde_json::from_reader(BufReader::new(file)).map_err(|err| {
+            if err.is_io() {
+                FsPathError::read(err.into(), &path)
+            } else {
+                FsPathError::ReadJson { source: err, path }
+            }
+        })
     }
 
     /// This is used as the clap `value_parser` implementation
@@ -656,9 +793,9 @@ pub enum SerializableTransactionType {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableBlock {
-    pub header: Header,
+    pub header: FoundryHeader,
     pub transactions: Vec<SerializableTransactionType>,
-    pub ommers: Vec<Header>,
+    pub ommers: Vec<FoundryHeader>,
     #[serde(default)]
     pub withdrawals: Option<Withdrawals>,
 }
@@ -753,6 +890,79 @@ impl IntoIterator for SerializableHistoricalStates {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::fs;
+
+    #[test]
+    fn loads_state_from_file_or_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state_path = tmp.path().join("state.json");
+        fs::write(&state_path, serde_json::to_vec(&SerializableState::default()).unwrap()).unwrap();
+
+        assert!(SerializableState::load(&state_path).unwrap().accounts.is_empty());
+        assert!(SerializableState::load(tmp.path()).unwrap().accounts.is_empty());
+
+        fs::write(&state_path, b"not json").unwrap();
+        let Err(FsPathError::ReadJson { path, .. }) = SerializableState::load(tmp.path()) else {
+            panic!("expected invalid JSON error")
+        };
+        assert_eq!(path, state_path);
+
+        let missing_path = tmp.path().join("missing.json");
+        let Err(FsPathError::Read { path, .. }) = SerializableState::load(&missing_path) else {
+            panic!("expected file read error")
+        };
+        assert_eq!(path, missing_path);
+    }
+
+    #[test]
+    fn cache_db_full_state_merges_base_and_overlay() {
+        let preserved = Address::with_last_byte(1);
+        let updated = Address::with_last_byte(2);
+        let deleted = Address::with_last_byte(3);
+        let cleared = Address::with_last_byte(4);
+        let deleted_slot = U256::from(1);
+        let updated_slot = U256::from(2);
+
+        let mut base = MemDb::default();
+        base.insert_account(preserved, AccountInfo::from_balance(U256::from(1)));
+        base.insert_account(updated, AccountInfo::from_balance(U256::from(2)));
+        base.set_storage_at(updated, deleted_slot.into(), B256::from(U256::from(10))).unwrap();
+        base.set_storage_at(updated, updated_slot.into(), B256::from(U256::from(11))).unwrap();
+        base.insert_account(deleted, AccountInfo::from_balance(U256::from(3)));
+        base.insert_account(cleared, AccountInfo::from_balance(U256::from(4)));
+        base.set_storage_at(cleared, deleted_slot.into(), B256::from(U256::from(11))).unwrap();
+
+        let mut cache = CacheDB::new(base);
+        cache.insert_account_info(updated, AccountInfo::from_balance(U256::from(20)));
+        cache.insert_account_storage(updated, deleted_slot, U256::ZERO).unwrap();
+        cache.insert_account_storage(updated, updated_slot, U256::from(12)).unwrap();
+        cache.cache.accounts.insert(
+            deleted,
+            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
+        );
+        cache.cache.accounts.insert(
+            cleared,
+            DbAccount {
+                info: AccountInfo::from_balance(U256::from(40)),
+                account_state: AccountState::StorageCleared,
+                ..Default::default()
+            },
+        );
+
+        let accounts = cache.maybe_full_db().unwrap();
+        assert_eq!(accounts[&preserved].info.balance, U256::from(1));
+        assert_eq!(accounts[&updated].info.balance, U256::from(20));
+        assert_eq!(accounts[&updated].storage[&deleted_slot], U256::ZERO);
+        assert_eq!(accounts[&updated].storage[&updated_slot], U256::from(12));
+        assert!(!accounts.contains_key(&deleted));
+        assert!(accounts[&cleared].storage.is_empty());
+        let mut expected = accounts;
+        expected.get_mut(&updated).unwrap().storage.remove(&deleted_slot);
+        assert_eq!(
+            cache.maybe_full_db().map(|accounts| crate::mem::state::state_root(&accounts)),
+            Some(crate::mem::state::state_root(&expected))
+        );
+    }
 
     #[test]
     fn test_deser_block() {
@@ -820,7 +1030,7 @@ mod test {
             ommers: vec![],
             withdrawals: Some(vec![withdrawal].into()),
         };
-        let block = Block::new(header, body);
+        let block = Block::new(header.into(), body);
 
         // convert to SerializableBlock and back
         let serializable = SerializableBlock::from(block);

@@ -129,7 +129,7 @@ async fn test_basefee_empty_block() {
         .unwrap();
 
     // mine empty block
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let next_base_fee = provider
         .get_block(BlockId::latest())

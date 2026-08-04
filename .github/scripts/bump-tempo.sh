@@ -50,7 +50,7 @@ generate_changelog() {
   local commits
   # shellcheck disable=SC2016 # Single quotes intentional for jq expression
   commits=$(gh api "repos/tempoxyz/tempo/compare/${old_rev}...${new_rev}" \
-    --jq '.commits[] | "- [`\(.sha[0:7])`](https://github.com/tempoxyz/tempo/commit/\(.sha)) \(.commit.message | split("\n")[0])"')
+    --jq '.commits[] | "- [`\(.sha[0:7])`](https://github.com/tempoxyz/tempo/commit/\(.sha)) \(.commit.message | split("\n")[0] | gsub("#(?<number>[0-9]+)"; "[#\(.number)](https://github.com/tempoxyz/tempo/issues/\(.number))"))"')
 
   {
     echo "## Tempo Dependency Updates"

@@ -11,17 +11,22 @@ use alloy_eips::{
     eip7910::{EthConfig, SystemContract},
 };
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, uint};
-use alloy_provider::Provider;
+use alloy_primitives::{
+    Address, B256, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex, uint,
+};
+use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     AccountInfo, BlockId, BlockNumberOrTag, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
+    trace::parity::{Action, TraceResultsWithTransactionHash, TraceType},
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn};
+use anvil::{
+    EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn, try_spawn,
+};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
@@ -32,7 +37,6 @@ use revm::precompile::PrecompileStatus;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    thread::sleep,
     time::Duration,
 };
 
@@ -71,6 +75,360 @@ pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replays_before_startup() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+
+    let first = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let second = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(1),
+        ))
+        .await
+        .unwrap();
+    let reverted = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .with_input(hex!("60006000fd").to_vec())
+                .gas_limit(100_000)
+                .nonce(2),
+        ))
+        .await
+        .unwrap();
+    let expected_hashes = [*first.tx_hash(), *second.tx_hash(), *reverted.tx_hash()];
+    origin_api.mine_one().await.unwrap();
+    assert!(
+        !origin_provider
+            .get_transaction_receipt(expected_hashes[2])
+            .await
+            .unwrap()
+            .unwrap()
+            .status()
+    );
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[2]))
+            .with_no_mining(true),
+    )
+    .await;
+    let fork_provider = fork_handle.http_provider();
+
+    assert_eq!(fork_api.block_number().unwrap(), U256::from(1));
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    let replayed_hashes = replayed
+        .transactions
+        .as_transactions()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.tx_hash())
+        .collect::<Vec<_>>();
+    assert_eq!(replayed_hashes, expected_hashes);
+    assert_eq!(fork_provider.txpool_status().await.unwrap().pending, 0);
+    assert_eq!(fork_provider.txpool_status().await.unwrap().queued, 0);
+    let content = fork_provider.txpool_content().await.unwrap();
+    assert!(content.pending.is_empty());
+    assert!(content.queued.is_empty());
+    assert_eq!(fork_provider.get_transaction_count(sender).await.unwrap(), 3);
+    assert!(
+        !fork_provider.get_transaction_receipt(expected_hashes[2]).await.unwrap().unwrap().status()
+    );
+
+    let (prefix_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[1]))
+            .with_no_mining(true),
+    )
+    .await;
+    let prefix =
+        prefix_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        prefix
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        expected_hashes[..2]
+    );
+    assert!(prefix_api.backend.mined_transaction_by_hash(expected_hashes[2]).is_none());
+
+    let (pruned_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[0]))
+            .with_transaction_block_keeper(Some(0usize))
+            .with_no_mining(true),
+    )
+    .await;
+    assert!(pruned_api.backend.mined_transaction_by_hash(expected_hashes[0]).is_none());
+
+    let _pending = fork_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(3))
+                .nonce(3),
+        ))
+        .await
+        .unwrap();
+    let pool = fork_provider.txpool_status().await.unwrap();
+    assert_eq!(pool.pending, 1);
+    assert_eq!(pool.queued, 0);
+
+    let (auto_mining_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(expected_hashes[2])),
+    )
+    .await;
+    let replayed =
+        auto_mining_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        expected_hashes
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let genesis =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
+    let source_timestamp = genesis.header.timestamp + 100;
+    origin_api.evm_set_next_block_timestamp(source_timestamp).unwrap();
+
+    let first = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let second = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(1),
+        ))
+        .await
+        .unwrap();
+    origin_api.mine_one().await.unwrap();
+    let source =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(source.header.timestamp, source_timestamp);
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(*second.tx_hash()))
+            .with_no_mining(true),
+    )
+    .await;
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        [*first.tx_hash(), *second.tx_hash()]
+    );
+    assert_eq!(replayed.header.timestamp, source.header.timestamp);
+    assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
+
+    fork_api.mine_one().await.unwrap();
+    let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert!(next.header.timestamp > source.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
+    // Real chain ID so the hardfork can be resolved from chain + timestamp.
+    const MAINNET_CHAIN_ID: u64 = 1;
+    // Well before Cancun's 2024-03-13 activation.
+    const SHANGHAI_ERA_TIMESTAMP: u64 = 1_690_000_000u64;
+
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(Some(SHANGHAI_ERA_TIMESTAMP - 100)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(SHANGHAI_ERA_TIMESTAMP).unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+
+    let target = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+    let source =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(source.header.timestamp, SHANGHAI_ERA_TIMESTAMP);
+    assert!(source.header.parent_beacon_block_root.is_none());
+
+    // A newer explicit `--hardfork` used to wrongly require a `parentBeaconBlockRoot` on this
+    // pre-Cancun source block, failing startup.
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_no_mining(true),
+    )
+    .await;
+
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        [target_hash]
+    );
+    assert!(replayed.header.parent_beacon_block_root.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
+    // Real chain ID so the hardfork can be resolved from chain + timestamp.
+    const MAINNET_CHAIN_ID: u64 = 1;
+    // Past Cancun's 2024-03-13 activation.
+    const CANCUN_ERA_TIMESTAMP: u64 = 1_720_000_000u64;
+    const HISTORY_BUFFER_LENGTH: u64 = 8191;
+
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_genesis_timestamp(Some(CANCUN_ERA_TIMESTAMP - 100)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(CANCUN_ERA_TIMESTAMP).unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+
+    let target = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+    let source =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(source.header.timestamp, CANCUN_ERA_TIMESTAMP);
+    assert!(source.header.parent_beacon_block_root.is_some());
+
+    // An older explicit `--hardfork` used to silently skip the EIP-4788 beacon-root call on this
+    // Cancun-era source block.
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_no_mining(true),
+    )
+    .await;
+
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
+
+    let slot = U256::from(CANCUN_ERA_TIMESTAMP % HISTORY_BUFFER_LENGTH);
+    let stored_timestamp = fork_api
+        .storage_at(
+            alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+            slot,
+            Some(BlockId::Number(BlockNumberOrTag::Number(1))),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored_timestamp, B256::from(U256::from(CANCUN_ERA_TIMESTAMP)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_error_fails_startup() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let pending = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    let transaction_hash = *pending.tx_hash();
+    pending.get_receipt().await.unwrap();
+
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(transaction_hash))
+            .with_gas_limit(Some(20_000)),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected fork transaction replay to fail") };
+    let message = error.to_string();
+    assert!(message.contains("failed to replay fork transaction prefix"));
+    assert!(format!("{error:?}").contains(&transaction_hash.to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -138,6 +496,39 @@ async fn test_fork_debug_get_raw_receipts() {
     }
 }
 
+// `debug_getRawTransactions` must serve pre-fork blocks from the upstream provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_transactions() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // A pre-fork block known to contain transactions.
+    let block_number = BLOCK_NUMBER - 1;
+    let block = provider.get_block(BlockId::number(block_number)).full().await.unwrap().unwrap();
+    assert!(!block.transactions.is_empty());
+
+    let raw_by_number: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), block.transactions.len());
+
+    // Each entry matches the single-transaction raw encoding path for the same hash.
+    for (raw, hash) in raw_by_number.iter().zip(block.transactions.hashes()) {
+        let single: Bytes =
+            provider.client().request("debug_getRawTransaction", (hash,)).await.unwrap();
+        assert_eq!(*raw, single);
+    }
+}
+
 // `debug_accountInfoAt` must delegate pre-fork blocks to the upstream and resolve block tags
 // against the fork's frozen head, not the upstream's advancing head.
 #[tokio::test(flavor = "multi_thread")]
@@ -195,6 +586,57 @@ async fn test_fork_debug_account_info_at() {
     assert_eq!(by_tag_after.unwrap().balance, amount);
 }
 
+// Pre-fork `trace_replayBlockTransactions` must be forwarded to the upstream with the trace types
+// serialized as their camelCase JSON names (`trace`, `stateDiff`), not their Rust `Debug`
+// representation, otherwise the upstream rejects the request.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_trace_replay_block_transactions_forwards_trace_types() {
+    // Use a local anvil node as the upstream so the request path is fully exercised in-process.
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+
+    let account = origin_handle.dev_wallets().next().unwrap().address();
+    let to = Address::random();
+    let amount = U256::from(1_000u64);
+
+    // Mine two blocks on the upstream; the first strictly predates the fork head.
+    let mut first_block = None;
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().from(account).to(to).value(amount);
+        let tx = WithOtherFields::new(tx);
+        let receipt =
+            origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        first_block.get_or_insert(receipt.block_number.unwrap());
+    }
+    let pre_fork_block = first_block.unwrap();
+
+    // Fork from the upstream head so `pre_fork_block` is delegated upstream.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork_provider = fork_handle.http_provider();
+
+    let results: Vec<TraceResultsWithTransactionHash> = fork_provider
+        .client()
+        .request(
+            "trace_replayBlockTransactions",
+            (pre_fork_block, vec![TraceType::Trace, TraceType::StateDiff]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    let full_trace = &results[0].full_trace;
+    match &full_trace.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, account);
+            assert_eq!(call.to, to);
+        }
+        other => panic!("expected Call action, got {other:?}"),
+    }
+    // `StateDiff` was also requested, so it must be honored, not just `Trace`.
+    assert!(full_trace.state_diff.is_some());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_spawn_fork() {
     let (api, _handle) = spawn(fork_config()).await;
@@ -202,6 +644,43 @@ async fn test_spawn_fork() {
 
     let head = api.block_number().unwrap();
     assert_eq!(head, U256::from(BLOCK_NUMBER))
+}
+
+// <https://github.com/foundry-rs/foundry/issues/9743>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_set_storage_visible_to_call() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+
+    let target = Address::random();
+    let slot = uint!(0x9f19e10bccde41c24f53ff4dbf7bb5ee2063896e54351d7230ecd1f7e361cb74_U256);
+    let value = b256!("0000000000000000000000000000000000000000000000000000000000000001");
+
+    // Return the value at `slot`, matching the storage read performed by ENS.resolver(bytes32).
+    origin_api
+        .anvil_set_code(
+            target,
+            bytes!(
+                "7f9f19e10bccde41c24f53ff4dbf7bb5ee2063896e54351d7230ecd1f7e361cb74545f5260205ff3"
+            ),
+        )
+        .await
+        .unwrap();
+
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = fork_handle.http_provider();
+
+    let updated: bool =
+        provider.raw_request("anvil_setStorageAt".into(), (target, slot, value)).await.unwrap();
+    assert!(updated);
+    assert_eq!(provider.get_storage_at(target, slot - U256::ONE).await.unwrap(), U256::ZERO);
+
+    let tx = TransactionRequest::default().to(target);
+    for _ in 0..10 {
+        assert_eq!(provider.get_storage_at(target, slot).await.unwrap(), U256::ONE);
+        let output = provider.call(tx.clone().into()).await.unwrap();
+        assert_eq!(output.as_ref(), value.as_slice());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -309,16 +788,26 @@ async fn test_fork_optimism_with_transaction_hash() {
     let fork_tx_hash =
         TxHash::from_str("fcb864b5a50f0f0b111dbbf9e9167b2cb6179dfd6270e1ad53aac6049c0ec038")
             .unwrap();
-    let (api, _handle) = spawn(
+    let (api, handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(rpc::next_rpc_endpoint(NamedChain::Optimism)))
             .with_fork_transaction_hash(Some(fork_tx_hash)),
     )
     .await;
 
-    // Make sure the fork starts from previous block
+    // The prefix is replayed synchronously as the next local block.
     let block_number = api.block_number().unwrap().to::<u64>();
-    assert_eq!(block_number, 125777954 - 1);
+    assert_eq!(block_number, 125777954);
+    assert!(api.backend.mined_transaction_by_hash(fork_tx_hash).is_some());
+    assert!(
+        handle
+            .http_provider()
+            .get_transaction_receipt(fork_tx_hash)
+            .await
+            .unwrap()
+            .unwrap()
+            .status()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -973,7 +1462,7 @@ async fn test_fork_init_base_fee() {
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
     assert_eq!(init_base_fee, 63739886069);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1241,8 +1730,8 @@ async fn test_total_difficulty_fork() {
     assert_eq!(block.header.total_difficulty, Some(total_difficulty));
     assert_eq!(block.header.difficulty, difficulty);
 
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let next_total_difficulty = total_difficulty + difficulty;
 
@@ -1369,7 +1858,7 @@ async fn test_fork_reset_basefee() {
     // <https://etherscan.io/block/18835000>
     let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(18835000u64))).await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
@@ -1380,7 +1869,7 @@ async fn test_fork_reset_basefee() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
@@ -1419,7 +1908,7 @@ async fn flaky_test_arb_fork_mining() {
     let init_blk_num = api.block_number().unwrap().to::<u64>();
 
     // Mine one
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined_blk_num = api.block_number().unwrap().to::<u64>();
 
     assert_eq!(mined_blk_num, init_blk_num + 1);
@@ -1454,7 +1943,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let snapshot_state = api.evm_snapshot().await.unwrap();
 
     // mine new block and check block number returned by `eth_blockNumber`
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number + 1);
 
@@ -1488,6 +1977,11 @@ async fn test_base_fork_gas_limit() {
             .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Base))),
     )
     .await;
+
+    // The public Base RPC occasionally returns block zero when it is unhealthy.
+    if api.block_number().unwrap().is_zero() {
+        return;
+    }
 
     let provider = handle.http_provider();
     let block =
@@ -1541,15 +2035,9 @@ async fn test_immutable_fork_transaction_hash() {
 
     let fork_block_number = 21824325;
 
-    // Make sure the fork starts from previous block
-    let mut block_number = api.block_number().unwrap().to::<u64>();
-    assert_eq!(block_number, fork_block_number - 1);
-
-    // Wait for fork to pass the target block
-    while block_number < fork_block_number {
-        sleep(Duration::from_millis(250));
-        block_number = api.block_number().unwrap().to::<u64>();
-    }
+    // The prefix is installed before startup returns.
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, fork_block_number);
 
     let block = api
         .block_by_number(BlockNumberOrTag::Number(fork_block_number - 1))
@@ -1787,6 +2275,253 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     .unwrap();
 
     assert_eq!(BLOCK_NUMBER - 1_000_000, get_block_from_cache_path(&mut api).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_reuses_cached_remote_state() {
+    let address = Address::random();
+    let balance = U256::from(1337u64);
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    let origin_config = NodeConfig::test()
+        .with_chain_id(Some(chain_id))
+        .with_funded_accounts([(address, balance)].into_iter().collect());
+    let (_origin_api, origin_handle) = spawn(origin_config).await;
+    let fork_config = NodeConfig::test()
+        .with_chain_id(Some(chain_id))
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()));
+    let (api, handle) = spawn(fork_config).await;
+    let provider = handle.http_provider();
+    let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
+
+    assert_eq!(provider.get_balance(address).await.unwrap(), balance);
+    api.mine_one().await.unwrap();
+
+    for _ in 0..2 {
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
+            .await
+            .unwrap();
+
+        let db = api.backend.get_db().read().await;
+        assert!(db.maybe_inner().unwrap().accounts().read().contains_key(&address));
+    }
+
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_block_zero_does_not_reuse_cache_for_new_rpc_url() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(second_origin_handle.http_endpoint()),
+            block_number: Some(0u64),
+        }))
+        .await
+        .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        let second_fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(second_origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64));
+        let (_second_fork_api, second_fork_handle) = spawn(second_fork_config).await;
+        assert_eq!(
+            second_fork_handle.http_provider().get_balance(address).await.unwrap(),
+            second_balance
+        );
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_does_not_reuse_cache_for_new_rpc_url() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        first_origin_api.mine_one().await.unwrap();
+        first_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+        let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(2) })).await.unwrap();
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        let local_balance = U256::from(9001u64);
+        api.anvil_set_balance(address, local_balance).await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let unavailable_url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        assert!(
+            api.anvil_reset(Some(Forking {
+                json_rpc_url: Some(unavailable_url),
+                block_number: fork_block_number,
+            }))
+            .await
+            .is_err()
+        );
+        assert_eq!(provider.get_balance(address).await.unwrap(), local_balance);
+
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(second_origin_handle.http_endpoint()),
+            block_number: Some(2),
+        }))
+        .await
+        .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
+            .await
+            .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        let second_fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(second_origin_handle.http_endpoint()));
+        let (_second_fork_api, second_fork_handle) = spawn(second_fork_config).await;
+        let second_fork_provider = second_fork_handle.http_provider();
+        assert_eq!(second_fork_provider.get_balance(address).await.unwrap(), second_balance);
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_after_set_rpc_url_does_not_reuse_old_cache() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        api.anvil_set_rpc_url(second_origin_handle.http_endpoint()).await.unwrap();
+        api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_client_fork_reset_then_backend_reset_rebuilds_database() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        let fork = api.get_fork().unwrap();
+        fork.reset(vec![second_origin_handle.http_endpoint()], fork.block_number()).await.unwrap();
+        api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -223,6 +223,11 @@ impl ProjectPathsAwareFilter {
         self.rerun_failures = Some(failures);
     }
 
+    /// Returns exact contract/test pairs persisted by `forge test --rerun`.
+    pub fn rerun_failures(&self) -> Option<&[RerunFailure]> {
+        self.rerun_failures.as_deref()
+    }
+
     fn matches_rerun_contract(&self, failure_contract: &str, contract_id: &str) -> bool {
         if failure_contract == contract_id {
             return true;

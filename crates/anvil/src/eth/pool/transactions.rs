@@ -86,6 +86,8 @@ pub struct PoolTransaction<T> {
     pub provides: Vec<TxMarker>,
     /// priority of the transaction
     pub priority: TransactionPriority,
+    /// Whether this transaction is being replayed from chain history.
+    pub is_replay: bool,
 }
 
 // == impl PoolTransaction ==
@@ -97,7 +99,14 @@ impl<T> PoolTransaction<T> {
             requires: vec![],
             provides: vec![],
             priority: TransactionPriority(0),
+            is_replay: false,
         }
+    }
+
+    /// Marks this transaction as a historical replay.
+    pub const fn with_replay(mut self) -> Self {
+        self.is_replay = true;
+        self
     }
 
     /// Returns the hash of this transaction
@@ -147,6 +156,7 @@ where
             requires: vec![],
             provides: vec![],
             priority: TransactionPriority(0),
+            is_replay: false,
         })
     }
 }

@@ -59,7 +59,8 @@ pub struct SymbolicConfig {
     /// Solver names or exact commands to race in parallel. Ignored when `solver_command` is set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub solver_portfolio: Vec<String>,
-    /// Optional timeout in seconds for solver-backed symbolic execution.
+    /// Optional SMT solver timeout in seconds. Also bounds wall-clock symbolic invariant
+    /// exploration before falling back to invariant fuzzing.
     pub timeout: Option<u32>,
     /// Halmos-compatible loop bound accepted by config and annotations.
     #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]

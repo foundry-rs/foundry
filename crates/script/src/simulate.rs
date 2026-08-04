@@ -19,10 +19,13 @@ use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell};
+use foundry_common::{
+    ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell,
+    tempo::known_fee_token_symbol,
+};
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
-    traces::{decode_trace_arena, render_trace_arena},
+    traces::{decode_trace_arena, prune_trace_depth, render_trace_arena_inner},
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
@@ -170,7 +173,8 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             })
             .collect::<Vec<_>>();
 
-        if !shell::is_json() && self.script_config.evm_opts.verbosity > 3 {
+        let tracing = &self.script_config.config.tracing;
+        if !shell::is_json() && tracing.verbosity > 3 {
             sh_println!("==========================")?;
             sh_println!("Simulated On-chain Traces:\n")?;
         }
@@ -180,10 +184,16 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             let (tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
-            if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
+            if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
-                    sh_println!("{}", render_trace_arena(trace))?;
+                    if let Some(trace_depth) = tracing.trace_depth {
+                        prune_trace_depth(trace, trace_depth);
+                    }
+                    sh_println!(
+                        "{}",
+                        render_trace_arena_inner(trace, false, tracing.verbosity > 4)
+                    )?;
                 }
             }
 
@@ -212,7 +222,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         }
 
         if abort {
-            eyre::bail!("Simulated execution failed.")
+            eyre::bail!("Simulated execution failed.");
         }
 
         Ok(final_txs)
@@ -248,7 +258,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
             script_config.evm_opts.fork_url = Some(rpc.clone());
-            let runner = script_config.get_runner().await?;
+            let runner = script_config._get_runner(None, false, false).await?;
             Ok((rpc, runner))
         });
         try_join_all(futs).await
@@ -297,6 +307,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             let provider_info = manager
                 .get_or_init_provider(
                     &tx.rpc,
+                    self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
                     self.args.legacy,
                     self.script_config.config.eip1559_fee_estimate,
                 )
@@ -331,6 +342,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                             tx,
                             &provider_info.provider,
                             self.args.gas_estimate_multiplier,
+                            false,
                         )
                         .await
                         {
@@ -368,11 +380,22 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
 
-                // Get the native token symbol for the chain using NamedChain
-                let token_symbol = NamedChain::try_from(provider_info.chain)
-                    .unwrap_or_default()
-                    .native_currency_symbol()
-                    .unwrap_or("ETH");
+                let token_symbol = if self.script_config.evm_opts.networks.is_tempo() {
+                    self.args.tempo.fee_token.map_or_else(
+                        || "TIP-20".to_string(),
+                        |fee_token| {
+                            known_fee_token_symbol(fee_token)
+                                .map(str::to_string)
+                                .unwrap_or_else(|| fee_token.to_string())
+                        },
+                    )
+                } else {
+                    NamedChain::try_from(provider_info.chain)
+                        .unwrap_or_default()
+                        .native_currency_symbol()
+                        .unwrap_or("ETH")
+                        .to_string()
+                };
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
@@ -512,6 +535,14 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
 
         let commit = get_commit_hash(&self.script_config.config.root);
 
+        let local_addresses = match &self.build_data.predeploy_libraries {
+            crate::build::ScriptPredeployLibraries::Default { local, .. }
+            | crate::build::ScriptPredeployLibraries::Create2 { local, .. } => local.as_slice(),
+        };
+        let local_addresses = local_addresses
+            .iter()
+            .map(|library| library.address.to_checksum(None))
+            .collect::<Vec<_>>();
         let libraries = self
             .build_data
             .libraries
@@ -519,6 +550,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             .iter()
             .flat_map(|(file, libs)| {
                 libs.iter()
+                    .filter(|(_, address)| !local_addresses.contains(address))
                     .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
             })
             .collect();

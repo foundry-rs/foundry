@@ -8,8 +8,9 @@ instead of comparing against a cached local length.
 
 ## What it does
 
-Reports simple comparison expressions in `for` loop conditions when either side reads `.length`
-from a state dynamic array, such as `i < values.length` or `values.length > i`.
+Reports comparison expressions in `for` loop conditions when either side reads `.length` from a
+state dynamic array, such as `i < values.length` or `values.length > i`, including comparisons
+nested inside `&&` / `||` conditions.
 
 The lint does not report loops that already compare against a local cached length variable.
 It also skips loops that mutate an array length in the loop body, such as calling `push()` or

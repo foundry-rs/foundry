@@ -242,6 +242,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.active_fork_url()
     }
 
+    fn active_fork_block_number(&self) -> Option<u64> {
+        self.backend.active_fork_block_number()
+    }
+
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
         self.backend.ensure_fork(id)
     }

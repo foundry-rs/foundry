@@ -9,7 +9,7 @@ use crate::{
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::get_blob_base_fee_update_fraction,
+    utils::{apply_chain_specific_tx_replay_env_changes, get_blob_base_fee_update_fraction},
 };
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
@@ -21,6 +21,7 @@ use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, 
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
+use foundry_evm_networks::NetworkConfigs;
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
     Database, DatabaseCommit, JournalEntry,
@@ -237,6 +238,11 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns the Fork url that's currently used in the database, if fork mode is on
     fn active_fork_url(&self) -> Option<String>;
+
+    /// Returns the active fork's current fork block number, if any.
+    fn active_fork_block_number(&self) -> Option<u64> {
+        None
+    }
 
     /// Whether the database is currently in forked mode.
     fn is_forked_mode(&self) -> bool {
@@ -923,19 +929,36 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
     }
 
+    /// Applies replay changes using the targeted fork's chain rather than the active environment.
+    fn apply_fork_tx_replay_env_changes(
+        &self,
+        id: LocalForkId,
+        evm_env: &mut EvmEnvFor<FEN>,
+    ) -> eyre::Result<()> {
+        let fork_id = self.inner.ensure_fork_id(id).cloned()?;
+        let fork_evm_env = self
+            .forks
+            .get_evm_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{id}` does not exist"))?;
+        evm_env.cfg_env.chain_id = fork_evm_env.cfg_env.chain_id;
+        apply_chain_specific_tx_replay_env_changes(evm_env);
+        Ok(())
+    }
+
     /// Replays all the transactions at the forks current block that were mined before the `tx`
     ///
     /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
@@ -963,8 +986,15 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
             // Clone the fork's CacheDB once. The underlying SharedBackend is Arc-backed,
             // so only the local cache layer is actually duplicated.
+            let chain_id = evm_env.cfg_env.chain_id;
+            let timestamp = evm_env.block_env.timestamp().saturating_to();
             let replay_db = fork.db.clone();
             let mut evm = FEN::EvmFactory::default().create_evm(replay_db, evm_env);
+            NetworkConfigs::default().inject_chain_precompiles(
+                evm.precompiles_mut(),
+                chain_id,
+                timestamp,
+            );
 
             for tx in &txs_to_replay {
                 let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
@@ -1377,6 +1407,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         update_env_block(&mut evm_env, block.header());
+        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction::<FEN>(
@@ -1427,14 +1458,39 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         self.forks.get_fork_url(fork.clone()).ok()?
     }
 
+    fn active_fork_block_number(&self) -> Option<u64> {
+        let fork = self.inner.issued_local_fork_ids.get(&self.active_fork_id()?)?;
+        let fork_block = fork_block_number(fork);
+        let env_block = self
+            .forks
+            .get_evm_env(fork.clone())
+            .ok()
+            .flatten()
+            .map(|env| env.block_env.number().saturating_to::<u64>());
+
+        // On Arbitrum, `fork_block` is the L2 fork pin while `env_block` can be remapped to the
+        // lower L1 block number. For tx-level forks, the fork pin is the parent state block while
+        // the env is updated to the transaction's block. The larger value is the current L2 block.
+        match (fork_block, env_block) {
+            (Some(fork_block), Some(env_block)) => Some(fork_block.max(env_block)),
+            (Some(fork_block), None) => Some(fork_block),
+            (None, Some(env_block)) => Some(env_block),
+            (None, None) => None,
+        }
+    }
+
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
         if let Some(id) = id {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
                 return Ok(id);
             }
-            eyre::bail!("Requested fork `{}` does not exist", id)
+            eyre::bail!("Requested fork `{}` does not exist", id);
         }
-        if let Some(id) = self.active_fork_id() { Ok(id) } else { eyre::bail!("No fork active") }
+        if let Some(id) = self.active_fork_id() {
+            Ok(id)
+        } else {
+            eyre::bail!("No fork active");
+        }
     }
 
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
@@ -2193,24 +2249,133 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     fork: &mut Fork<N, B>,
     persistent_accounts: &HashSet<Address>,
 ) -> Result<(), BackendError> {
-    // commit the state and update the loaded accounts
-    fork.db.commit(state);
-    fork.refresh_journaled_states(journaled_state, persistent_accounts)
+    // Refresh cloned journals against a cloned database so a failed read cannot publish only part
+    // of the transaction state.
+    let mut staged_db = fork.db.clone();
+    let mut staged_journaled_state = journaled_state.clone();
+    let mut staged_fork_journaled_state = fork.journaled_state.clone();
+    staged_db.commit(state);
+    update_state(&mut staged_journaled_state.state, &mut staged_db, Some(persistent_accounts))?;
+    update_state(
+        &mut staged_fork_journaled_state.state,
+        &mut staged_db,
+        Some(persistent_accounts),
+    )?;
+
+    fork.db = staged_db;
+    *journaled_state = staged_journaled_state;
+    fork.journaled_state = staged_fork_journaled_state;
+    Ok(())
+}
+
+fn fork_block_number(fork: &ForkId) -> Option<u64> {
+    let (_, block) = fork.as_str().rsplit_once('@')?;
+    let block = block.split_once('-').map_or(block, |(block, _)| block);
+    let block = block.strip_prefix("0x")?;
+    u64::from_str_radix(block, 16).ok()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{backend::Backend, evm::EthEvmNetwork, opts::EvmOpts};
-    use alloy_primitives::{U256, address};
-    use alloy_provider::Provider;
+    use super::{Fork, apply_state_changeset};
+    use crate::{backend::Backend, evm::EthEvmNetwork, fork::ForkId, opts::EvmOpts};
+    use alloy_network::AnyNetwork;
+    use alloy_primitives::{Address, U256, address};
+    use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
-    use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
-    use revm::{
-        context::{BlockEnv, TxEnv},
-        database::DatabaseRef,
-        primitives::hardfork::SpecId,
+    use foundry_fork_db::{
+        SharedBackend,
+        cache::{BlockchainDb, BlockchainDbMeta},
     };
+    use revm::{
+        context::{BlockEnv, JournalInner, TxEnv},
+        database::{AccountState, CacheDB, DatabaseRef, DbAccount},
+        primitives::hardfork::SpecId,
+        state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
+    };
+    use std::collections::HashSet;
+
+    fn fork_with_closed_backend() -> Fork<AnyNetwork, BlockEnv> {
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(Asserter::new());
+        let db = BlockchainDb::new(
+            BlockchainDbMeta::new(BlockEnv::default(), "http://localhost".to_string()),
+            None,
+        );
+        let (backend, handler) = SharedBackend::new(provider, db, None);
+        drop(handler);
+        Fork { db: CacheDB::new(backend), journaled_state: JournalInner::new() }
+    }
+
+    #[test]
+    fn failed_fork_state_refresh_does_not_publish_transaction_changes() {
+        let mut fork = fork_with_closed_backend();
+        let externally_loaded = Address::with_last_byte(1);
+        let fork_loaded = Address::with_last_byte(2);
+        let committed = Address::with_last_byte(3);
+        let missing_slot = U256::from(1);
+
+        let cached_external = AccountInfo { balance: U256::from(11), ..Default::default() };
+        let cached_fork = AccountInfo { balance: U256::from(12), ..Default::default() };
+        fork.db.insert_account_info(externally_loaded, cached_external);
+        fork.db.insert_account_info(fork_loaded, cached_fork);
+
+        let mut journaled_state = JournalInner::new();
+        let external_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        journaled_state.state.insert(externally_loaded, external_account);
+
+        let mut fork_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(2), ..Default::default() });
+        fork_account
+            .storage
+            .insert(missing_slot, EvmStorageSlot::new(U256::ZERO, TransactionId::ZERO));
+        fork.journaled_state.state.insert(fork_loaded, fork_account);
+
+        let mut committed_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(13), ..Default::default() });
+        committed_account.mark_touch();
+        let mut state = EvmState::default();
+        state.insert(committed, committed_account);
+
+        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        assert!(result.is_err());
+        assert!(!fork.db.cache.accounts.contains_key(&committed));
+        assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
+        assert_eq!(fork.journaled_state.state[&fork_loaded].info.balance, U256::from(2));
+    }
+
+    #[test]
+    fn failed_fork_state_refresh_preserves_not_existing_account() {
+        let mut fork = fork_with_closed_backend();
+        let address = Address::with_last_byte(1);
+        let missing_slot = U256::from(1);
+        fork.db.cache.accounts.insert(address, DbAccount::new_not_existing());
+
+        let mut journaled_state = JournalInner::new();
+        let mut journaled_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        journaled_account
+            .storage
+            .insert(missing_slot, EvmStorageSlot::new(U256::from(7), TransactionId::ZERO));
+        journaled_state.state.insert(address, journaled_account);
+
+        let mut touched_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(13), ..Default::default() });
+        touched_account.mark_touch();
+        let mut state = EvmState::default();
+        state.insert(address, touched_account);
+
+        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        assert!(result.is_err());
+        assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
+        assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));
+        assert_eq!(
+            journaled_state.state[&address].storage[&missing_slot].present_value(),
+            U256::from(7)
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
@@ -2253,5 +2418,16 @@ mod tests {
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
+    }
+
+    #[test]
+    fn parses_fork_block_number_from_fork_id() {
+        let fork = ForkId::new("https://example.com/@rpc", Some(75_219_831));
+        assert_eq!(super::fork_block_number(&fork), Some(75_219_831));
+        assert_eq!(
+            super::fork_block_number(&format!("{}-1", fork.as_str()).into()),
+            Some(75_219_831)
+        );
+        assert_eq!(super::fork_block_number(&ForkId::new("https://example.com", None)), None);
     }
 }

@@ -4387,7 +4387,7 @@
     {
       "func": {
         "id": "dumpState",
-        "description": "Dump a genesis JSON file's `allocs` to disk.",
+        "description": "Dumps a genesis JSON file's `allocs` to disk. Accounts created in the current transaction\nare ordered by deployment, followed by the remaining accounts in ascending address order.",
         "declaration": "function dumpState(string calldata pathToStateJson) external;",
         "visibility": "external",
         "mutability": "",
@@ -6706,6 +6706,26 @@
     },
     {
       "func": {
+        "id": "getSelectors",
+        "description": "Gets all function selectors from a contract artifact. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getSelectors(string)",
+        "selector": "0x13d5a709",
+        "selectorBytes": [
+          19,
+          213,
+          167,
+          9
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
         "declaration": "function getStateDiff() external view returns (string memory diff);",
@@ -7602,6 +7622,26 @@
           206,
           120,
           131
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonArrayLength",
+        "description": "Returns the length of the JSON array at `key`.",
+        "declaration": "function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonArrayLength(string,string)",
+        "selector": "0xcdb6e4ac",
+        "selectorBytes": [
+          205,
+          182,
+          228,
+          172
         ]
       },
       "group": "json",
@@ -9107,6 +9147,46 @@
       "group": "evm",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "registerSloadHook",
+        "description": "Registers a callback invoked after each SLOAD against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a load at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the load.",
+        "declaration": "function registerSloadHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSloadHook(address,bytes4)",
+        "selector": "0x37c7cf5e",
+        "selectorBytes": [
+          55,
+          199,
+          207,
+          94
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSstoreHook",
+        "description": "Registers a callback invoked after each SSTORE against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a store at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the store.",
+        "declaration": "function registerSstoreHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSstoreHook(address,bytes4)",
+        "selector": "0xe0c3bdd9",
+        "selectorBytes": [
+          224,
+          195,
+          189,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
     },
     {
       "func": {

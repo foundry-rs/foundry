@@ -3,8 +3,8 @@
 use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
+use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
+use alloy_primitives::{Address, B256, Bytes, I256, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{
     Authorization, BlockNumberOrTag, Index, TransactionRequest, engine::JwtSecret,
@@ -24,9 +24,12 @@ use foundry_test_utils::{
     util::OutputExt,
 };
 use serde_json::json;
-use std::{fs, path::Path, process::Command, str::FromStr};
+use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
-use tempo_primitives::TempoTxEnvelope;
+use tempo_primitives::{
+    TempoTxEnvelope,
+    transaction::{KeychainVersion, TempoSignature},
+};
 
 #[macro_use]
 extern crate foundry_test_utils;
@@ -70,7 +73,10 @@ Options:
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
 ...
-          [aliases: --jobs]
+          [alias: --jobs]
+
+      --profile <PROFILE>
+          The configuration profile to use
 
   -V, --version
           Print version
@@ -111,6 +117,22 @@ Display options:
 Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
+});
+
+casttest!(browser_wallet_commands_expose_browser_option, |_prj, cmd| {
+    for (name, args) in [
+        ("call", &["call", "--help"][..]),
+        ("estimate", &["estimate", "--help"]),
+        ("access-list", &["access-list", "--help"]),
+        ("wallet address", &["wallet", "address", "--help"]),
+        ("wallet sign", &["wallet", "sign", "--help"]),
+    ] {
+        let output = cmd.cast_fuse().args(args).assert_success().get_output().stdout_lossy();
+        assert!(
+            output.contains("--browser"),
+            "expected {name} help to expose --browser:\n{output}"
+        );
+    }
 });
 
 // tests that the `cast block` command works correctly
@@ -1112,6 +1134,43 @@ casttest!(wallet_list_local_accounts_json, |prj, cmd| {
   "data": [
     {
       "address": "{...}",
+      "source": "Local"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
+
+"#]]
+            .is_json(),
+        );
+});
+
+// tests that `cast wallet list` preserves custom keystore names
+casttest!(wallet_list_named_local_account, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+    fs::write(keystore_path.join("my_account"), "{}").unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
+        [r#"
+my_account (Local)
+
+"#]
+    ]);
+
+    cmd.cast_fuse()
+        .args(["wallet", "list", "--json", "--dir", "keystore"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "my_account",
       "source": "Local"
     }
   ],
@@ -2274,6 +2333,99 @@ casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(create2_init_code_hash, |prj, cmd| {
+    prj.add_source(
+        "InitCodeHash",
+        r#"
+contract InitCodeHash {
+    int256 public immutable value;
+    address public immutable owner;
+
+    constructor(int256 value_, address owner_) {
+        value = value_;
+        owner = owner_;
+    }
+}
+"#,
+    );
+
+    let owner = address!("0x0000000000000000000000000000000000000001");
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "InitCodeHash", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let mut expected_init_code = hex::decode(bytecode.trim()).unwrap();
+    expected_init_code.extend((I256::unchecked_from(42), owner).abi_encode());
+    let expected = keccak256(expected_init_code);
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "42",
+            &owner.to_string(),
+        ])
+        .assert_success()
+        .stdout_eq(format!("{expected}\n"));
+
+    let mut expected_init_code = hex::decode(bytecode.trim()).unwrap();
+    expected_init_code.extend((I256::unchecked_from(-5), owner).abi_encode());
+    let expected = keccak256(expected_init_code);
+    let root = prj.root().to_str().unwrap();
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "-5",
+            &owner.to_string(),
+            "--root",
+            root,
+        ])
+        .assert_success()
+        .stdout_eq(format!("{expected}\n"));
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "--json",
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "-5",
+            &owner.to_string(),
+        ])
+        .assert_json_stdout(format!(
+            r#"{{"schema_version":1,"success":true,"data":"{expected}","errors":[],"warnings":[]}}"#
+        ));
+});
+
+casttest!(create2_init_code_hash_rejects_abstract_contract, |prj, cmd| {
+    prj.add_source(
+        "AbstractInitCodeHash",
+        r#"
+abstract contract AbstractInitCodeHash {
+    function value() public pure virtual returns (uint256);
+}
+"#,
+    );
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["create2", "init-code-hash", "src/AbstractInitCodeHash.sol:AbstractInitCodeHash"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: no bytecode found in bin object for AbstractInitCodeHash
+
+"#]]);
+});
+
 casttest!(mktx, |_prj, cmd| {
     cmd.args([
         "mktx",
@@ -2294,6 +2446,109 @@ casttest!(mktx, |_prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ]).assert_success().stdout_eq(str![[r#"
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
+
+"#]]);
+});
+
+casttest!(mktx_signature, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ec52eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a01",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
+
+"#]]);
+});
+
+casttest!(mktx_signature_requires_from, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ec52eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a01",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --from <ADDRESS>
+
+Usage: cast[..] mktx --from <ADDRESS> --signature <SIGNATURE> <TO> [SIG] [ARGS]...
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+casttest!(mktx_signature_normalizes_high_s, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ecad125fa586d97f21ce7e1b6454bf6caa9b392849907cbbf8b857282c08003fd700",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
+
+"#]]);
+});
+
+casttest!(mktx_signature_from_mismatch, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--signature",
+        "0x70d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0ec52eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a01",
+        "--from",
+        "0x0000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: The provided signature recovers to 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf, which does not match the specified sender 0x0000000000000000000000000000000000000001
 
 "#]]);
 });
@@ -2563,6 +2818,53 @@ casttest!(mktx_tempo_lane_resolves_nonce_key, |prj, cmd| {
     let envelope = TempoTxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode tempo tx");
     assert!(envelope.is_aa(), "expected Tempo AA transaction, got: {envelope:?}");
     assert_eq!(envelope.nonce_key(), Some(U256::from(42_u64)));
+});
+
+casttest!(mktx_tempo_access_key_uses_alloy_wallet, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let output = cmd
+        .args([
+            "mktx",
+            "0x0000000000000000000000000000000000000001",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--chain",
+            "31337",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "100000",
+            "--gas-price",
+            "20000000000",
+            "--priority-gas-price",
+            "1000000000",
+            "--tempo.fee-token",
+            "0x20C0000000000000000000000000000000000000",
+            "--tempo.access-key",
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            "--tempo.root-account",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw = hex::decode(stdout.trim().trim_start_matches("0x")).expect("decode raw transaction");
+    let TempoTxEnvelope::AA(signed) =
+        TempoTxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode Tempo AA transaction")
+    else {
+        panic!("expected a Tempo AA transaction");
+    };
+    let TempoSignature::Keychain(signature) = signed.signature() else {
+        panic!("expected an account access-key signature");
+    };
+    assert_eq!(signature.user_address, address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    assert_eq!(signature.version, KeychainVersion::V2);
+    assert_eq!(
+        signature.key_id(&signed.tx().signature_hash()).unwrap(),
+        address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+    );
 });
 
 // tests that the raw encoded transaction is returned
@@ -3940,6 +4242,180 @@ forgetest_async!(cast_run_prestate_tracer_matches_block_replay, |prj, cmd| {
     assert_eq!(replay, prestate, "prestate tracer traces must match block replay traces");
 });
 
+// https://github.com/foundry-rs/foundry/issues/12336
+// `cast run --debug-trace-transaction` fetches the transaction's trace from the node via
+// `debug_traceTransaction` (callTracer) and renders it with the same decoding/rendering machinery
+// as the local replay, skipping local execution entirely: the block replay message must be absent
+// from stderr.
+forgetest_async!(cast_run_debug_trace_transaction, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    let assert = cmd
+        .args([
+            "run",
+            "--debug-trace-transaction",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
+
+"#]]);
+    assert!(
+        !assert
+            .get_output()
+            .stderr_lossy()
+            .contains("Executing previous transactions from the block."),
+        "debug_traceTransaction path should not replay previous block transactions"
+    );
+    let receipt = api.transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert!(
+        assert.get_output().stdout_lossy().contains(&format!("Gas used: {}", receipt.gas_used())),
+        "debug_traceTransaction summary should report the receipt gas used"
+    );
+});
+
+// `cast run --debug-trace-transaction` must render a multi-node trace: the parent runtime emits a
+// LOG0 and then CALLs a child whose runtime reverts (the parent ignores the failure), exercising
+// the log/sub-call interleaving, nesting and revert rendering through the real pipeline.
+casttest!(cast_run_debug_trace_transaction_renders_nested_call_and_revert, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    // Parent runtime: LOG0(0,0); CALL(gas, 0x..bb, 0,0,0,0,0); POP; STOP.
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000aa"),
+        "0x60006000a0600060006000600060007300000000000000000000000000000000000000bb5af15000"
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    // Child runtime: PUSH1 0 PUSH1 0 REVERT.
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000bb"),
+        "0x60006000fd".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x00000000000000000000000000000000000000aa",
+            "run()",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    cmd.cast_fuse()
+        .args([
+            "run",
+            "--debug-trace-transaction",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x00000000000000000000000000000000000000AA::run()
+    ├─           data: 0x
+    ├─ [..] 0x00000000000000000000000000000000000000bb::fallback()
+    │   └─ ← [Revert] execution reverted
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `cast run --debug-trace-transaction --with-local-artifacts` labels the target contract by its
+// local artifact name (Counter::) instead of the raw address: the RPC path has no local executor,
+// so the bytecode for artifact matching must be fetched over RPC at the transaction's block.
+forgetest_async!(cast_run_debug_trace_transaction_with_local_artifacts, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "run",
+        "--debug-trace-transaction",
+        "--la",
+        format!("{tx_hash}").as_str(),
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Traces:
+  [..] Counter::setNumber(111)
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-transaction` fetches the trace from the node, so the local-execution-only flags
+// must be rejected by clap.
+casttest!(cast_run_debug_trace_transaction_conflicts_with_debug, |_prj, cmd| {
+    cmd.args([
+        "run",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "--debug-trace-transaction",
+        "--debug",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: the argument '--debug-trace-transaction' cannot be used with '--debug'
+...
+"#]]);
+});
+
 // tests cast can decode traces when running with verbosity level > 4
 forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -4114,6 +4590,67 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
+casttest!(cast_call_disables_external_identification, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    // Leave the listener unserved: correct flag propagation prevents a connection, while an
+    // enabled identifier connects before exhausting the configured timeout.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let etherscan_url = format!("http://{}", listener.local_addr().unwrap());
+    let target = Address::random().to_string();
+    let override_code = format!("{target}:0x60006000f3");
+    fs::write(
+        prj.root().join("foundry.toml"),
+        format!(
+            r#"[profile.default]
+etherscan_api_key = "local"
+eth_rpc_no_proxy = true
+offline = false
+
+[tracing]
+external_identification_timeout = 1
+
+[etherscan]
+local = {{ key = "test", url = "{etherscan_url}" }}
+"#,
+        ),
+    )
+    .unwrap();
+
+    for var in [
+        "ETHERSCAN_API_KEY",
+        "FOUNDRY_CONFIG",
+        "FOUNDRY_ETHERSCAN_API_KEY",
+        "FOUNDRY_OFFLINE",
+        "FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT",
+    ] {
+        cmd.unset_env(var);
+    }
+    let assert = cmd
+        .args([
+            "call",
+            &target,
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            &override_code,
+            "--trace",
+            "--disable-external-identification",
+        ])
+        .assert_success();
+    let stdout = assert.get_output().stdout_lossy().to_lowercase();
+    assert!(
+        stdout.contains("traces:") && stdout.contains(&target.to_lowercase()),
+        "expected trace for {target}, got:\n{stdout}"
+    );
+
+    match listener.accept() {
+        Err(err) if err.kind() == ErrorKind::WouldBlock => {}
+        Ok(_) => panic!("external identification made an Etherscan request"),
+        Err(err) => panic!("failed to inspect mock Etherscan listener: {err}"),
+    }
+});
+
 // https://github.com/foundry-rs/foundry/issues/10848
 forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -4220,10 +4757,23 @@ Transaction successfully executed.
 // `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
 // (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
 // targets the identity precompile so the test needs no deployed contract.
-casttest!(cast_call_debug_trace_call, async |_prj, cmd| {
+casttest!(cast_call_debug_trace_call, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    cmd.cast_fuse()
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[labels]
+        0x0000000000000000000000000000000000000001 = "unused"
+
+        [tracing]
+        decode_internal = true
+        "#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd
         .args([
             "call",
             "0x0000000000000000000000000000000000000004",
@@ -4242,6 +4792,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
 });
@@ -4525,6 +5079,102 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     serde_json::from_str::<serde_json::Value>(output.trim()).unwrap_or_else(|err| {
         panic!("expected stdout to be a single JSON document ({err}):\n{output}")
     });
+});
+
+// `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
+// populates, without requiring `--with-local-artifacts`.
+// <https://github.com/foundry-rs/foundry/issues/11085>
+forgetest_async!(flaky_cast_call_trace_decodes_error_from_signatures_cache, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "CustomErrorContract",
+        r#"
+contract CustomErrorContract {
+    error WTF273987(uint256 a, uint256 b);
+    error PrintableError18();
+
+    function wtf2890230(uint256 a, uint128 b) external pure {
+        revert WTF273987(a, b);
+    }
+
+    function printableError() external pure {
+        revert PrintableError18();
+    }
+}
+"#,
+    );
+
+    // `forge build` caches the project's signatures, including custom errors.
+    cmd.args(["build"]).assert_success();
+
+    // Deploy the contract.
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/CustomErrorContract.sol:CustomErrorContract",
+            "--broadcast",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    // The revert reason is decoded from the cached signatures, even offline and without
+    // `--with-local-artifacts`.
+    cmd.cast_fuse().env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "wtf2890230(uint256,uint128)",
+        "42",
+        "69",
+        "--trace",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::wtf2890230(42, 69)
+    └─ ← [Revert] WTF273987(42, 69)
+
+
+[GAS]
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: Transaction failed.
+
+"#]]);
+
+    // A custom error whose selector is valid ASCII must also be decoded from the cache rather than
+    // rendered as a raw string. `PrintableError18()` has selector `0x2e2c426f` (`.,Bo`).
+    cmd.cast_fuse().env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "printableError()",
+        "--trace",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::printableError()
+    └─ ← [Revert] PrintableError18()
+
+
+[GAS]
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: Transaction failed.
+
+"#]]);
 });
 
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
@@ -6122,6 +6772,19 @@ casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
     );
     assert!(output.contains("0x3039"), "expected the gas limit (12345) in params:\n{output}");
     assert!(output.contains("nonce"), "expected the nonce in params:\n{output}");
+});
+
+casttest!(curl_call_rejects_browser_wallet, |_prj, cmd| {
+    let stderr = cmd
+        .args(["call", "0xdead000000000000000000000000000000000000", "--browser", "--curl"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("--browser cannot be combined with --curl; use --from <ADDRESS>"),
+        "unexpected stderr:\n{stderr}"
+    );
 });
 
 // tests that `--labels` / `--disable-labels` are accepted with `--debug-trace-call`, which

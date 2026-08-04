@@ -234,7 +234,9 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | assertNotEq_25Call::SELECTOR
         | assertNotEq_26Call::SELECTOR
         | assertNotEq_27Call::SELECTOR
-        | randomUint_1Call::SELECTOR => Some(abi_static_input_size(2)),
+        | randomUint_1Call::SELECTOR
+        | registerSloadHookCall::SELECTOR
+        | registerSstoreHookCall::SELECTOR => Some(abi_static_input_size(2)),
         expectRevert_10Call::SELECTOR
         | deriveKey_1Call::SELECTOR
         | deriveKey_2Call::SELECTOR
@@ -963,7 +965,7 @@ pub(crate) fn sign_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.sign"))?;
     Ok(vec![
-        SymExpr::constant(cx, U256::from(sig.v() as u64 + 27)),
+        SymExpr::constant(cx, U256::from(sig.v_byte())),
         SymExpr::constant(cx, sig.r()),
         SymExpr::constant(cx, sig.s()),
     ])

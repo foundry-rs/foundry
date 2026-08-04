@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{LitKind, StrKind},
+    ast::{BinOpKind, LitKind, StrKind},
     sema::{
         Gcx,
         hir::{self, ElementaryType, ExprKind, TypeKind},
@@ -52,6 +52,10 @@ fn is_unsafe_typecast_hir<'hir>(
     source_expr: &hir::Expr<'hir>,
     target_type: &hir::ElementaryType,
 ) -> bool {
+    if is_bounded_by_mask(source_expr, target_type) {
+        return false;
+    }
+
     let mut source_types = Vec::<ElementaryType>::new();
     infer_source_types(Some(&mut source_types), gcx, source_expr);
 
@@ -60,6 +64,23 @@ fn is_unsafe_typecast_hir<'hir>(
     };
 
     source_types.iter().any(|source_ty| is_unsafe_elementary_typecast(source_ty, target_type))
+}
+
+/// Returns whether a bitmask bounds an unsigned integer expression to the target type's range.
+fn is_bounded_by_mask(source_expr: &hir::Expr<'_>, target_type: &ElementaryType) -> bool {
+    let ElementaryType::UInt(target_size) = target_type else { return false };
+    let ExprKind::Binary(lhs, op, rhs) = &source_expr.peel_parens().kind else { return false };
+    if op.kind != BinOpKind::BitAnd {
+        return false;
+    }
+
+    [lhs, rhs].into_iter().any(|expr| {
+        matches!(
+            expr.peel_parens().kind,
+            ExprKind::Lit(hir::Lit { kind: LitKind::Number(mask), .. })
+                if mask.bit_len() <= target_size.bits() as usize
+        )
+    })
 }
 
 /// Infers the elementary source type(s) of an expression.

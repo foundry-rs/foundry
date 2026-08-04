@@ -35,3 +35,14 @@ contract TokenA { /* ... */ }
 // File: TokenB.sol
 contract TokenB { /* ... */ }
 ```
+
+## Configuration
+
+Set `multi_contract_file_exceptions` under `[lint.lint_specific]` in `foundry.toml` to allow
+multiple interfaces, libraries, or abstract contracts in one file. Regular contracts cannot be
+exempted.
+
+```toml
+[lint.lint_specific]
+multi_contract_file_exceptions = ["interface", "library", "abstract_contract"]
+```

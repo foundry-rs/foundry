@@ -198,6 +198,8 @@ impl SymbolicExecutor {
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
             parent.inherit_branch_target_progress(&outcome.state);
+            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
+            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -577,6 +579,30 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::ContinueData(
                     self.accesses_return_data_for_target(state, target)?,
                 ));
+            }
+            registerSloadHookCall::SELECTOR | registerSstoreHookCall::SELECTOR => {
+                let target = read_abi_address_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic storage hook target",
+                )?;
+                let callback: [u8; 4] = state
+                    .memory
+                    .read_concrete(&mut self.cx, args_offset + 32, 4)?
+                    .try_into()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic storage hook callback"))?;
+                let hook = SymbolicStorageHook {
+                    callback_target: state.address,
+                    callback_selector: callback,
+                };
+                if selector == registerSloadHookCall::SELECTOR {
+                    state.storage_load_hooks.insert(target, hook);
+                } else {
+                    state.storage_store_hooks.insert(target, hook);
+                }
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getRecordedLogsCall::SELECTOR => {
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
@@ -3457,7 +3483,7 @@ impl SymbolicExecutor {
             SymbolicVmCheatcode::EnableSymbolicStorage => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                state.world.enable_arbitrary_storage(target);
+                state.world.enable_arbitrary_storage(target, false);
                 Ok(SymReturnData::empty(&mut self.cx))
             }
             SymbolicVmCheatcode::SnapshotStorage => {

@@ -1,21 +1,21 @@
-use super::run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc};
+use super::{
+    call_overrides::CallOverrideOpts,
+    run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc},
+};
 use crate::{
     Cast,
     debug::handle_traces,
-    rpc_trace::call_frame_to_arena,
+    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{
-    Address, B256, Bytes, TxKind, U256, hex,
-    map::{AddressHashMap, HashMap},
-};
+use alloy_primitives::{Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
-    state::{StateOverride, StateOverridesBuilder},
+    state::StateOverride,
     trace::geth::{
         CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
         GethDebugTracingOptions, GethTrace,
@@ -24,8 +24,8 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{LoadConfig, TraceResult, parse_ether_value},
+    opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
+    utils::{LoadConfig, TraceResult, load_config_from_provider, parse_ether_value},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -35,7 +35,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -52,14 +52,8 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
-use foundry_wallets::WalletOpts;
-use regex::Regex;
-use std::{str::FromStr, sync::LazyLock};
-
-// matches override pattern <address>:<slot>:<value>
-// e.g. 0x123:0x1:0x1234
-static OVERRIDE_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^([^:]+):([^:]+):([^:]+)$").unwrap());
+use foundry_wallets::{BrowserWalletOpts, WalletOpts};
+use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
 ///
@@ -95,7 +89,7 @@ pub struct CallArgs {
     #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
-    /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
+    /// Raw hex-encoded data for the transaction. Used instead of `SIG` and `ARGS`.
     #[arg(
         long,
         conflicts_with_all = &["sig", "args"]
@@ -121,29 +115,13 @@ pub struct CallArgs {
     )]
     debug_trace_call: bool,
 
-    /// Disables the labels in the traces.
-    /// Can only be set with `--trace` or `--debug-trace-call`.
-    #[arg(long, default_value_t = false, requires = "trace")]
-    disable_labels: bool,
-
     /// Opens an interactive debugger.
     /// Can only be used with `--trace`.
     #[arg(long, requires = "trace")]
     debug: bool,
 
-    /// Identify internal functions in traces.
-    ///
-    /// This will trace internal functions and decode stack parameters.
-    ///
-    /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
-    /// single function is matched, similarly to `--debug`, for performance reasons.
-    #[arg(long, requires = "trace")]
-    decode_internal: bool,
-
-    /// Labels to apply to the traces; format: `address:label`.
-    /// Can only be used with `--trace` or `--debug-trace-call`.
-    #[arg(long, requires = "trace")]
-    labels: Vec<String>,
+    #[command(flatten)]
+    tracing: TracingArgs,
 
     /// The EVM Version to use.
     /// Can only be used with `--trace`.
@@ -168,6 +146,9 @@ pub struct CallArgs {
     #[command(flatten)]
     wallet: WalletOpts,
 
+    #[command(flatten)]
+    browser: BrowserWalletOpts,
+
     #[arg(
         short,
         long,
@@ -181,38 +162,8 @@ pub struct CallArgs {
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
 
-    /// Override the accounts balance.
-    /// Format: "address:balance,address:balance"
-    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE", value_delimiter = ',')]
-    pub balance_overrides: Option<Vec<String>>,
-
-    /// Override the accounts nonce.
-    /// Format: "address:nonce,address:nonce"
-    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE", value_delimiter = ',')]
-    pub nonce_overrides: Option<Vec<String>>,
-
-    /// Override the accounts code.
-    /// Format: "address:code,address:code"
-    #[arg(long = "override-code", value_name = "ADDRESS:CODE", value_delimiter = ',')]
-    pub code_overrides: Option<Vec<String>>,
-
-    /// Override the accounts state and replace the current state entirely with the new one.
-    /// Format: "address:slot:value,address:slot:value"
-    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE", value_delimiter = ',')]
-    pub state_overrides: Option<Vec<String>>,
-
-    /// Override the accounts state specific slots and preserve the rest of the state.
-    /// Format: "address:slot:value,address:slot:value"
-    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE", value_delimiter = ',')]
-    pub state_diff_overrides: Option<Vec<String>>,
-
-    /// Override the block timestamp.
-    #[arg(long = "block.time", value_name = "TIME")]
-    pub block_time: Option<u64>,
-
-    /// Override the block number.
-    #[arg(long = "block.number", value_name = "NUMBER")]
-    pub block_number: Option<u64>,
+    #[command(flatten)]
+    pub overrides: CallOverrideOpts,
 }
 
 #[derive(Debug, Parser)]
@@ -241,9 +192,22 @@ pub enum CallSubcommands {
 }
 
 impl CallArgs {
-    pub async fn run(self) -> Result<()> {
+    fn resolve_tracing(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
+        if self.debug_trace_call {
+            self.tracing.resolve_call_tracer(config, verbosity)
+        } else {
+            self.tracing.resolve(config, verbosity)
+        }
+    }
+
+    pub async fn run(mut self) -> Result<()> {
+        self.validate_trace_args()?;
+
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
+            if self.browser.browser {
+                eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
+            }
             return self.run_curl().await;
         }
 
@@ -257,6 +221,9 @@ impl CallArgs {
             evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
         }
         evm_opts.infer_network_from_fork().await;
+        if self.chain.is_none() {
+            self.chain = evm_opts.env.chain_id.map(Chain::from_id);
+        }
 
         if evm_opts.networks.is_tempo() {
             return self.run_with_network::<TempoEvmNetwork>().await;
@@ -270,15 +237,35 @@ impl CallArgs {
         self.run_with_network::<EthEvmNetwork>().await
     }
 
+    fn validate_trace_args(&self) -> Result<()> {
+        if !self.trace
+            && !self.debug_trace_call
+            && (self.tracing.disable_labels
+                || self.tracing.compact_labels
+                || !self.tracing.labels.is_empty()
+                || self.tracing.trace_depth.is_some())
+        {
+            eyre::bail!("trace rendering options require `--trace` or `--debug-trace-call`");
+        }
+
+        if self.tracing.decode_internal && !self.trace {
+            eyre::bail!("`--decode-internal` requires `--trace`");
+        }
+
+        Ok(())
+    }
+
     pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>
     where
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::from_provider(figment)?.sanitized();
+        let mut config = load_config_from_provider(figment)?;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
+        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        let tracing = config.tracing.clone();
 
         let Self {
             to,
@@ -290,12 +277,10 @@ impl CallArgs {
             trace,
             evm_version,
             debug,
-            decode_internal,
-            labels,
             data,
             with_local_artifacts,
-            disable_labels,
             wallet,
+            browser,
             ..
         } = self;
 
@@ -304,7 +289,11 @@ impl CallArgs {
         }
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
-        let sender = SenderKind::from_wallet_opts(wallet).await?;
+        let sender = if let Some(browser) = browser.run::<FEN::Network>().await? {
+            browser.address().into()
+        } else {
+            SenderKind::from_wallet_opts(wallet).await?
+        };
         let from = sender.address();
 
         let code = if let Some(CallSubcommands::Create {
@@ -366,32 +355,14 @@ impl CallArgs {
                 .await
                 .map_err(|err| -> eyre::Report {
                     // Two RPC rejections deserve an actionable hint instead of the raw transport
-                    // error, and they need different fixes:
-                    // - `debug` namespace disabled: rejected with JSON-RPC -32601 (method not found).
-                    // - missing historical state: an archive-depth error, usually with a generic
-                    //   code (-32000) distinguishable only by message, hit whenever `--block`
-                    //   targets a block a full node has pruned.
-                    let is_method_not_found =
-                        err.as_error_resp().is_some_and(|resp| resp.code == -32601);
-                    let message = err
-                        .as_error_resp()
-                        .map(|resp| resp.message.to_ascii_lowercase())
-                        .unwrap_or_else(|| err.to_string().to_ascii_lowercase());
-                    let is_missing_state = [
-                        "missing trie node",
-                        "required historical state",
-                        "historical state",
-                        "header not found",
-                        "missing state",
-                    ]
-                    .iter()
-                    .any(|needle| message.contains(*needle));
-
-                    if is_method_not_found {
+                    // error, and they need different fixes: a disabled `debug` namespace, and
+                    // missing historical state, hit whenever `--block` targets a block a full
+                    // node has pruned.
+                    if is_method_not_found_error(&err) {
                         eyre::eyre!(
                             "the RPC endpoint does not support `debug_traceCall` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or drop `--debug-trace-call` to run the call locally with `--trace`"
                         )
-                    } else if is_missing_state {
+                    } else if is_missing_state_error(&err) {
                         eyre::eyre!(
                             "the RPC endpoint does not have the historical state for the requested block; use an archive endpoint, or target a more recent block with `--block`"
                         )
@@ -411,6 +382,7 @@ impl CallArgs {
             let arena = SparsedTraceArena {
                 arena: call_frame_to_arena(&frame),
                 ignored: Default::default(),
+                diagnostics: Default::default(),
             };
             let result = TraceResult {
                 success,
@@ -439,12 +411,9 @@ impl CallArgs {
                 &config,
                 chain,
                 &contracts_bytecode,
-                labels,
+                &tracing,
                 with_local_artifacts,
                 false,
-                false,
-                disable_labels,
-                None,
                 None,
             )
             .await?;
@@ -459,6 +428,7 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
+            let verbosity = tracing.verbosity;
             let (mut evm_env, tx_env, fork, chain, networks) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
 
@@ -480,12 +450,12 @@ impl CallArgs {
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
                 .with_debug(debug)
-                .with_decode_internal(if decode_internal {
+                .with_decode_internal(if tracing.decode_internal {
                     InternalTraceMode::Full
                 } else {
                     InternalTraceMode::None
                 })
-                .with_state_changes(shell::verbosity() > 4);
+                .with_state_changes(verbosity > 4);
             let mut executor = TracingExecutor::<FEN>::new(
                 (evm_env, tx_env),
                 fork,
@@ -558,12 +528,9 @@ impl CallArgs {
                 &config,
                 chain,
                 &contracts_bytecode,
-                labels,
+                &tracing,
                 with_local_artifacts,
                 debug,
-                decode_internal,
-                disable_labels,
-                None,
                 None,
             )
             .await?;
@@ -615,7 +582,7 @@ impl CallArgs {
         let to = self.to.as_ref().map(|n| match n {
             NameOrAddress::Address(addr) => Ok(*addr),
             NameOrAddress::Name(name) => {
-                eyre::bail!("ENS names are not supported with --curl. Please use a raw address instead of '{}'", name)
+                eyre::bail!("ENS names are not supported with --curl. Please use a raw address instead of '{}'", name);
             }
         }).transpose()?;
 
@@ -679,82 +646,14 @@ impl CallArgs {
         Ok(())
     }
 
-    /// Parse state overrides from command line arguments.
-    pub fn get_state_overrides(&self) -> eyre::Result<Option<StateOverride>> {
-        // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
-        if [
-            self.balance_overrides.as_ref(),
-            self.nonce_overrides.as_ref(),
-            self.code_overrides.as_ref(),
-            self.state_overrides.as_ref(),
-            self.state_diff_overrides.as_ref(),
-        ]
-        .iter()
-        .all(Option::is_none)
-        {
-            return Ok(None);
-        }
-
-        let mut state_overrides_builder = StateOverridesBuilder::default();
-
-        // Parse balance overrides
-        for override_str in self.balance_overrides.iter().flatten() {
-            let (addr, balance) = address_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_balance(addr.parse()?, balance.parse()?);
-        }
-
-        // Parse nonce overrides
-        for override_str in self.nonce_overrides.iter().flatten() {
-            let (addr, nonce) = address_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_nonce(addr.parse()?, nonce.parse()?);
-        }
-
-        // Parse code overrides
-        for override_str in self.code_overrides.iter().flatten() {
-            let (addr, code_str) = address_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_code(addr.parse()?, Bytes::from_str(code_str)?);
-        }
-
-        type StateOverrides = HashMap<Address, HashMap<B256, B256>>;
-        let parse_state_overrides =
-            |overrides: &Option<Vec<String>>| -> Result<StateOverrides, eyre::Report> {
-                let mut state_overrides: StateOverrides = StateOverrides::default();
-
-                overrides.iter().flatten().try_for_each(|s| -> Result<(), eyre::Report> {
-                    let (addr, slot, value) = address_slot_value_override(s)?;
-                    state_overrides.entry(addr).or_default().insert(slot.into(), value.into());
-                    Ok(())
-                })?;
-
-                Ok(state_overrides)
-            };
-
-        // Parse and apply state overrides
-        for (addr, entries) in parse_state_overrides(&self.state_overrides)? {
-            state_overrides_builder = state_overrides_builder.with_state(addr, entries);
-        }
-
-        // Parse and apply state diff overrides
-        for (addr, entries) in parse_state_overrides(&self.state_diff_overrides)? {
-            state_overrides_builder = state_overrides_builder.with_state_diff(addr, entries)
-        }
-
-        Ok(Some(state_overrides_builder.build()))
+    /// Parses state overrides from command line arguments.
+    pub fn get_state_overrides(&self) -> Result<Option<StateOverride>> {
+        self.overrides.get_state_overrides()
     }
 
-    /// Parse block overrides from command line arguments.
-    pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
-        let mut overrides = BlockOverrides::default();
-        if let Some(number) = self.block_number {
-            overrides = overrides.with_number(U256::from(number));
-        }
-        if let Some(time) = self.block_time {
-            overrides = overrides.with_time(time);
-        }
-        if overrides.is_empty() { Ok(None) } else { Ok(Some(overrides)) }
+    /// Parses block overrides from command line arguments.
+    pub fn get_block_overrides(&self) -> Result<Option<BlockOverrides>> {
+        self.overrides.get_block_overrides()
     }
 }
 
@@ -769,143 +668,18 @@ impl figment::Provider for CallArgs {
         if let Some(evm_version) = self.evm_version {
             map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);
         }
+        if let Some(chain) = self.chain {
+            map.insert("chain_id".into(), chain.id().into());
+        }
 
         Ok(Map::from([(Config::selected_profile(), map)]))
     }
 }
 
-/// Parse an override string in the format address:value.
-fn address_value_override(address_override: &str) -> Result<(&str, &str)> {
-    address_override.split_once(':').ok_or_else(|| {
-        eyre::eyre!("Invalid override {address_override}. Expected <address>:<value>")
-    })
-}
-
-/// Parse an override string in the format address:slot:value.
-fn address_slot_value_override(address_override: &str) -> Result<(Address, U256, U256)> {
-    let captures = OVERRIDE_PATTERN.captures(address_override).ok_or_else(|| {
-        eyre::eyre!("Invalid override {address_override}. Expected <address>:<slot>:<value>")
-    })?;
-
-    Ok((
-        captures[1].parse()?, // Address
-        captures[2].parse()?, // Slot (U256)
-        captures[3].parse()?, // Value (U256)
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U64, address, b256, fixed_bytes};
-
-    #[test]
-    fn test_get_state_overrides() {
-        let call_args = CallArgs::parse_from([
-            "foundry-cli",
-            "--override-balance",
-            "0x0000000000000000000000000000000000000001:2",
-            "--override-nonce",
-            "0x0000000000000000000000000000000000000001:3",
-            "--override-code",
-            "0x0000000000000000000000000000000000000001:0x04",
-            "--override-state",
-            "0x0000000000000000000000000000000000000001:5:6",
-            "--override-state-diff",
-            "0x0000000000000000000000000000000000000001:7:8",
-        ]);
-        let overrides = call_args.get_state_overrides().unwrap().unwrap();
-        let address = address!("0x0000000000000000000000000000000000000001");
-        if let Some(account_override) = overrides.get(&address) {
-            if let Some(balance) = account_override.balance {
-                assert_eq!(balance, U256::from(2));
-            }
-            if let Some(nonce) = account_override.nonce {
-                assert_eq!(nonce, 3);
-            }
-            if let Some(code) = &account_override.code {
-                assert_eq!(*code, Bytes::from([0x04]));
-            }
-            if let Some(state) = &account_override.state
-                && let Some(value) = state.get(&b256!(
-                    "0x0000000000000000000000000000000000000000000000000000000000000005"
-                ))
-            {
-                assert_eq!(
-                    *value,
-                    b256!("0x0000000000000000000000000000000000000000000000000000000000000006")
-                );
-            }
-            if let Some(state_diff) = &account_override.state_diff
-                && let Some(value) = state_diff.get(&b256!(
-                    "0x0000000000000000000000000000000000000000000000000000000000000007"
-                ))
-            {
-                assert_eq!(
-                    *value,
-                    b256!("0x0000000000000000000000000000000000000000000000000000000000000008")
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_get_state_overrides_empty() {
-        let call_args = CallArgs::parse_from([""]);
-        let overrides = call_args.get_state_overrides().unwrap();
-        assert_eq!(overrides, None);
-    }
-
-    #[test]
-    fn test_get_block_overrides() {
-        let mut call_args = CallArgs::parse_from([""]);
-        call_args.block_number = Some(1);
-        call_args.block_time = Some(2);
-        let overrides = call_args.get_block_overrides().unwrap().unwrap();
-        assert_eq!(overrides.number, Some(U256::from(1)));
-        assert_eq!(overrides.time, Some(2));
-    }
-
-    #[test]
-    fn test_get_block_overrides_empty() {
-        let call_args = CallArgs::parse_from([""]);
-        let overrides = call_args.get_block_overrides().unwrap();
-        assert_eq!(overrides, None);
-    }
-
-    #[test]
-    fn test_address_value_override_success() {
-        let text = "0x0000000000000000000000000000000000000001:2";
-        let (address, value) = address_value_override(text).unwrap();
-        assert_eq!(address, "0x0000000000000000000000000000000000000001");
-        assert_eq!(value, "2");
-    }
-
-    #[test]
-    fn test_address_value_override_error() {
-        let text = "invalid_value";
-        let error = address_value_override(text).unwrap_err();
-        assert_eq!(error.to_string(), "Invalid override invalid_value. Expected <address>:<value>");
-    }
-
-    #[test]
-    fn test_address_slot_value_override_success() {
-        let text = "0x0000000000000000000000000000000000000001:2:3";
-        let (address, slot, value) = address_slot_value_override(text).unwrap();
-        assert_eq!(*address, fixed_bytes!("0x0000000000000000000000000000000000000001"));
-        assert_eq!(slot, U256::from(2));
-        assert_eq!(value, U256::from(3));
-    }
-
-    #[test]
-    fn test_address_slot_value_override_error() {
-        let text = "invalid_value";
-        let error = address_slot_value_override(text).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "Invalid override invalid_value. Expected <address>:<slot>:<value>"
-        );
-    }
+    use alloy_primitives::U64;
 
     #[test]
     fn can_parse_call_data() {
@@ -916,6 +690,14 @@ mod tests {
         let data = hex::encode_prefixed("hello");
         let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
         assert_eq!(args.data, Some(data));
+    }
+
+    #[test]
+    fn chain_is_merged_into_config() {
+        let args = CallArgs::parse_from(["foundry-cli", "--chain", "1"]);
+        let config = Config::from_provider(Config::figment().merge(&args)).unwrap();
+
+        assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 
     #[test]
@@ -932,10 +714,10 @@ mod tests {
             "0x123:0x1:0x1234",
         ]);
 
-        assert_eq!(args.balance_overrides, Some(vec!["0x123:0x1234".to_string()]));
-        assert_eq!(args.nonce_overrides, Some(vec!["0x123:1".to_string()]));
-        assert_eq!(args.code_overrides, Some(vec!["0x123:0x1234".to_string()]));
-        assert_eq!(args.state_overrides, Some(vec!["0x123:0x1:0x1234".to_string()]));
+        assert_eq!(args.overrides.balance_overrides, Some(vec!["0x123:0x1234".to_string()]));
+        assert_eq!(args.overrides.nonce_overrides, Some(vec!["0x123:1".to_string()]));
+        assert_eq!(args.overrides.code_overrides, Some(vec!["0x123:0x1234".to_string()]));
+        assert_eq!(args.overrides.state_overrides, Some(vec!["0x123:0x1:0x1234".to_string()]));
     }
 
     #[test]
@@ -961,16 +743,19 @@ mod tests {
         ]);
 
         assert_eq!(
-            args.balance_overrides,
-            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
-        );
-        assert_eq!(args.nonce_overrides, Some(vec!["0x123:1".to_string(), "0x456:2".to_string()]));
-        assert_eq!(
-            args.code_overrides,
+            args.overrides.balance_overrides,
             Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
         );
         assert_eq!(
-            args.state_overrides,
+            args.overrides.nonce_overrides,
+            Some(vec!["0x123:1".to_string(), "0x456:2".to_string()])
+        );
+        assert_eq!(
+            args.overrides.code_overrides,
+            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
+        );
+        assert_eq!(
+            args.overrides.state_overrides,
             Some(vec!["0x123:0x1:0x1234".to_string(), "0x456:0x2:0x5678".to_string()])
         );
     }
@@ -1050,5 +835,13 @@ mod tests {
             "shanghai",
         ]);
         assert!(result.is_err(), "--debug-trace-call must reject --evm-version");
+    }
+
+    #[test]
+    fn debug_trace_call_ignores_configured_internal_decoding() {
+        let args = CallArgs::parse_from(["foundry-cli", "--debug-trace-call"]);
+        let config = TracingConfig { decode_internal: true, ..Default::default() };
+
+        assert!(!args.resolve_tracing(&config, 0).decode_internal);
     }
 }

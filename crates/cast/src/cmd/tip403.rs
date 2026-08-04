@@ -1,5 +1,6 @@
 use crate::{
     cmd::tip20::{resolve_tip20_signer, send_tip20_transaction},
+    tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -7,12 +8,10 @@ use alloy_primitives::Address;
 use clap::{Parser, ValueEnum};
 use eyre::Result;
 use foundry_cli::{
-    json::print_json_success,
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
-use foundry_common::shell;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::str::FromStr;
 use tempo_contracts::precompiles::{ITIP403Registry, TIP403_REGISTRY_ADDRESS};
 use tempo_primitives::TempoAddressExt;
@@ -176,9 +175,11 @@ async fn create(
     let (sig, args) = if members.is_empty() {
         ("createPolicy(address,uint8)", vec![admin.to_string(), type_arg])
     } else {
+        let members =
+            format!("[{}]", members.iter().map(Address::to_string).collect::<Vec<_>>().join(","));
         (
             "createPolicyWithAccounts(address,uint8,address[])",
-            vec![admin.to_string(), type_arg, address_array(&members)],
+            vec![admin.to_string(), type_arg, members],
         )
     };
     send_tip20_transaction(
@@ -299,22 +300,6 @@ fn warn_if_virtual(account: Address) -> Result<()> {
             "{account} looks like a TIP-1022 virtual address; on T3+ chains it is rejected as a \
              literal policy member. Resolve it to its master with `cast vaddr resolve {account}`."
         )?;
-    }
-    Ok(())
-}
-
-fn address_array(accounts: &[Address]) -> String {
-    format!("[{}]", accounts.iter().map(Address::to_string).collect::<Vec<_>>().join(","))
-}
-
-fn print_payload<F>(payload: Value, human: F) -> Result<()>
-where
-    F: FnOnce(&Value) -> Result<()>,
-{
-    if shell::is_json() {
-        print_json_success(payload)?;
-    } else {
-        human(&payload)?;
     }
     Ok(())
 }
