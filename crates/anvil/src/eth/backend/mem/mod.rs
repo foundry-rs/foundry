@@ -353,7 +353,7 @@ use revm::{
     interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
-    state::{AccountInfo, EvmState},
+    state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
@@ -3751,7 +3751,7 @@ where
     pub async fn mine_block(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
-    ) -> MinedBlockOutcome<FoundryTxEnvelope> {
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         self.do_mine_block(pool_transactions).await
     }
 
@@ -4042,7 +4042,7 @@ where
     async fn do_mine_block(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
-    ) -> MinedBlockOutcome<FoundryTxEnvelope> {
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
@@ -4079,22 +4079,18 @@ where
             // Use the `prevrandao` value set via `anvil_setNextBlockPrevRandao` for this block if
             // one was provided, otherwise derive it from the parent hash and block number. The
             // manual override is consumed here so it only applies to this single block.
+            let next_prevrandao = self.cheats.prepare_next_block_prevrandao();
             evm_env.block_env.prevrandao =
-                Some(self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(input)));
+                Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
 
-            if self.prune_state_history_config.is_state_history_supported() {
-                let db = self.db.read().await.current_state();
-                // store current state before executing all transactions
-                self.states.write().insert(best_hash, db);
-            }
-
-            let (block_info, included, invalid, not_yet_valid, block_hash) = {
+            let (block_info, included, invalid, not_yet_valid, block_hash, parent_state) = {
                 let mut db = self.db.write().await;
 
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
+                let pending_timestamp = self.time.prepare_next_timestamp();
+                evm_env.block_env.timestamp = U256::from(pending_timestamp.timestamp);
 
                 // Forced historical transactions bypass pool admission and are replayed while
                 // mining. Keep this exception local to the disposable mining environment.
@@ -4108,33 +4104,38 @@ where
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
-                let (pool_result, block_result) = self
-                    .execute_with_block_executor(
-                        &mut **db,
-                        &mining_evm_env,
-                        best_hash,
-                        spec_id,
-                        Some(B256::ZERO),
-                        BlockExecutionKind::Complete,
-                        &pool_transactions,
-                        &gas_config,
-                        &inspector_tx_config,
-                        &|pool_tx, account| {
-                            let validation_env =
-                                if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
-                            self.validate_pool_transaction_for(
-                                &pool_tx.pending_transaction,
-                                account,
-                                validation_env,
-                            )
-                        },
-                    )
-                    .expect("block execution failed");
+                let mut candidate_db = AnvilCacheDB::new(&**db);
+                let (pool_result, block_result) = self.execute_with_block_executor(
+                    &mut candidate_db,
+                    &mining_evm_env,
+                    best_hash,
+                    spec_id,
+                    Some(B256::ZERO),
+                    BlockExecutionKind::Complete,
+                    &pool_transactions,
+                    &gas_config,
+                    &inspector_tx_config,
+                    &|pool_tx, account| {
+                        let validation_env =
+                            if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
+                        self.validate_pool_transaction_for(
+                            &pool_tx.pending_transaction,
+                            account,
+                            validation_env,
+                        )
+                    },
+                )?;
 
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
+                let CacheDB { cache, db: _ } = candidate_db.0;
+                let parent_state = self
+                    .prune_state_history_config
+                    .is_state_history_supported()
+                    .then(|| db.current_state());
+                commit_cache(&mut **db, cache)?;
                 let state_root = db.maybe_state_root().unwrap_or_default();
                 let block_info = self.build_block_info(
                     &mining_evm_env,
@@ -4150,14 +4151,22 @@ where
                 // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
+                self.time.commit_next_timestamp(pending_timestamp);
+                if let Some(pending) = next_prevrandao {
+                    self.cheats.consume_next_block_prevrandao(pending);
+                }
 
-                (block_info, included, invalid, not_yet_valid, block_hash)
+                (block_info, included, invalid, not_yet_valid, block_hash, parent_state)
             };
 
             // create the new block with the current timestamp
             let BlockInfo { block, transactions, receipts } = block_info;
 
             let header = block.header.clone();
+
+            if let Some(parent_state) = parent_state {
+                self.states.write().insert(best_hash, parent_state);
+            }
 
             trace!(
                 target: "backend",
@@ -4253,7 +4262,7 @@ where
         // notify all listeners
         self.notify_on_new_block(header.into_inner(), block_hash);
 
-        outcome
+        Ok(outcome)
     }
 
     /// Reorg the chain to a common height and execute blocks to build new chain.
@@ -4272,7 +4281,7 @@ where
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await;
+            let outcome = self.do_mine_block(to_be_mined).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -7468,6 +7477,48 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
     false
 }
 
+/// Commits a fully executed candidate cache to the live database.
+fn commit_cache(db: &mut dyn Db, cache: revm::database::Cache) -> Result<(), BlockchainError> {
+    let revm::database::Cache { accounts, contracts, .. } = cache;
+    let mut changes = EvmState::default();
+    for (address, db_account) in accounts {
+        if db_account.account_state == AccountState::None {
+            continue;
+        }
+
+        let DbAccount { mut info, account_state, storage } = db_account;
+        // `CacheDB` also records absent-account reads as `NotExisting`. They are not state changes
+        // and must not become synthetic selfdestructs in the live database.
+        if account_state == AccountState::NotExisting && db.basic(address)?.is_none() {
+            continue;
+        }
+        if info.code.is_none() {
+            info.code = contracts.get(&info.code_hash).cloned();
+        }
+        let mut account = Account::from(info);
+        account.mark_touch();
+        match account_state {
+            AccountState::NotExisting => account.mark_selfdestruct(),
+            AccountState::StorageCleared => account.mark_created(),
+            AccountState::Touched => {}
+            AccountState::None => unreachable!(),
+        }
+        for (slot, value) in storage {
+            let original = if account_state == AccountState::StorageCleared {
+                U256::ZERO
+            } else {
+                db.storage(address, slot)?
+            };
+            account
+                .storage
+                .insert(slot, EvmStorageSlot::new_changed(original, value, TransactionId::ZERO));
+        }
+        changes.insert(address, account);
+    }
+    db.commit(changes);
+    Ok(())
+}
+
 fn simulate_rpc_error(code: i64, message: impl Into<String>) -> BlockchainError {
     BlockchainError::RpcError(RpcError {
         code: ErrorCode::from(code),
@@ -7630,8 +7681,8 @@ mod tests {
         let (api_b, _handle_b) = spawn(config_b).await;
 
         // Mine empty blocks (no transactions) on both backends
-        let outcome_a_1 = api_a.backend.mine_block(vec![]).await;
-        let outcome_b_1 = api_b.backend.mine_block(vec![]).await;
+        let outcome_a_1 = api_a.backend.mine_block(vec![]).await.unwrap();
+        let outcome_b_1 = api_b.backend.mine_block(vec![]).await.unwrap();
 
         // Both should mine the same block number
         assert_eq!(outcome_a_1.block_number, outcome_b_1.block_number);
@@ -7650,8 +7701,8 @@ mod tests {
         );
 
         // Mine another block to ensure it remains deterministic
-        let outcome_a_2 = api_a.backend.mine_block(vec![]).await;
-        let outcome_b_2 = api_b.backend.mine_block(vec![]).await;
+        let outcome_a_2 = api_a.backend.mine_block(vec![]).await.unwrap();
+        let outcome_b_2 = api_b.backend.mine_block(vec![]).await.unwrap();
 
         let block_a_2 =
             api_a.block_by_number(outcome_a_2.block_number.into()).await.unwrap().unwrap();

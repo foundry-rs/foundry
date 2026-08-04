@@ -292,11 +292,11 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     tx.set_nonce(1);
     let second_tx = provider.send_transaction(tx).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let first_receipt = first_tx.get_receipt().await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let second_receipt = second_tx.get_receipt().await.unwrap();
 
     let (first_block, second_block) = tokio::join!(
