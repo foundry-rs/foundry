@@ -3062,7 +3062,7 @@ async fn test_anvil_reset_rejects_zksync_source_atomically() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_from_local_node_rejects_zksync_source_atomically() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let original_block = handle.http_provider().get_block_number().await.unwrap();
     let original_chain_id = handle.http_provider().get_chain_id().await.unwrap();
     let original_instance_id = api.instance_id();
