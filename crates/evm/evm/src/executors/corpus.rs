@@ -224,6 +224,32 @@ fn same_tx_sequence(left: &[BasicTxDetails], right: &[BasicTxDetails]) -> bool {
         })
 }
 
+fn link_corpus_file(from: &Path, to: &Path) -> bool {
+    match std::fs::hard_link(from, to) {
+        Ok(()) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let entry = |path: &Path| CorpusDirEntry {
+                path: path.to_path_buf(),
+                uuid: Uuid::nil(),
+                timestamp: 0,
+            };
+            let matches = entry(from)
+                .read_tx_seq()
+                .ok()
+                .zip(entry(to).read_tx_seq().ok())
+                .is_some_and(|(from, to)| same_tx_sequence(&from, &to));
+            if !matches {
+                debug!(target: "corpus", from=?from, to=?to, "conflicting corpus file already exists");
+            }
+            matches
+        }
+        Err(err) => {
+            debug!(target: "corpus", %err, from=?from, to=?to, "failed to link corpus file");
+            false
+        }
+    }
+}
+
 fn accept_synced_corpus_file(
     entry: &CorpusDirEntry,
     tx_seq: &[BasicTxDetails],
@@ -1309,28 +1335,27 @@ impl WorkerCorpus {
         };
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-        let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
+            let mut history_map = self.history_map.clone();
+            let mut edge_indices = self.edge_indices.clone();
+            let mut sancov_history_map = self.sancov_history_map.clone();
+            let mut metrics = self.metrics.clone();
             let coverage = ReplayCoverage {
-                history_map: &mut self.history_map,
-                edge_indices: &mut self.edge_indices,
-                sancov_history_map: &mut self.sancov_history_map,
-                metrics: Some(&mut self.metrics),
+                history_map: &mut history_map,
+                edge_indices: &mut edge_indices,
+                sancov_history_map: &mut sancov_history_map,
+                metrics: Some(&mut metrics),
             };
+            let mut replay_executor = executor.clone();
             let ReplayOutcome { keep_entry, new_coverage, new_edge, cmp_seq, .. } =
                 replay_corpus_sequence_with_executor(
                     &tx_seq,
-                    &mut executor,
+                    &mut replay_executor,
                     target,
                     coverage,
                     true,
                     false,
                 )?;
-
-            // A synced edge is new to this worker's local map, so it advances the timer.
-            if new_edge {
-                self.last_new_edge_at = Some(Instant::now());
-            }
 
             let sync_path = &entry.path;
             if keep_entry && new_coverage {
@@ -1338,6 +1363,15 @@ impl WorkerCorpus {
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
                 if !accept_synced_corpus_file(&entry, &tx_seq, &corpus_path) {
                     continue;
+                }
+
+                self.history_map = history_map;
+                self.edge_indices = edge_indices;
+                self.sancov_history_map = sancov_history_map;
+                self.metrics = metrics;
+                // A synced edge is new to this worker's local map, so it advances the timer.
+                if new_edge {
+                    self.last_new_edge_at = Some(Instant::now());
                 }
 
                 debug!(
@@ -1367,7 +1401,7 @@ impl WorkerCorpus {
 
     /// Exports the new corpus entries to the master worker's sync dir.
     #[instrument(skip_all)]
-    fn export_to_master(&self) -> Result<()> {
+    fn export_to_master(&mut self) -> Result<()> {
         // Master doesn't export (it only receives from others).
         assert_ne!(self.id, 0, "non-master only");
 
@@ -1388,18 +1422,29 @@ impl WorkerCorpus {
 
         let mut exported = 0;
         let corpus_dir = worker_dir.join(CORPUS_DIR);
+        let mut delivered = HashSet::new();
 
         for &index in &self.new_entry_indices {
-            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
+            let Some(corpus) = self.in_memory_corpus.get(index) else {
+                delivered.insert(index);
+                continue;
+            };
             let file_name = corpus.file_name(self.config.corpus_gzip);
             let file_path = corpus_dir.join(&file_name);
+            if !file_path.is_file()
+                && let Err(err) = corpus.write_to_disk_in(&corpus_dir, self.config.corpus_gzip)
+            {
+                debug!(target: "corpus", %err, "failed to persist corpus {} for export", corpus.uuid);
+                continue;
+            }
             let sync_path = master_sync_dir.join(&file_name);
-            if let Err(err) = std::fs::hard_link(&file_path, &sync_path) {
-                debug!(target: "corpus", %err, "failed to export corpus {}", corpus.uuid);
+            if !link_corpus_file(&file_path, &sync_path) {
                 continue;
             }
             exported += 1;
+            delivered.insert(index);
         }
+        self.new_entry_indices.retain(|index| !delivered.contains(index));
 
         debug!(target: "corpus", "exported {exported} new corpus entries");
 
@@ -1416,19 +1461,33 @@ impl WorkerCorpus {
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
-        let entries = if let Some(replay_dirs) = &self.initial_export_dirs {
+        let startup_entries = if let Some(replay_dirs) = &self.initial_export_dirs {
             let mut seen_entries = HashSet::new();
             unique_corpus_entries(replay_dirs, &mut seen_entries)
                 .map(|entry| entry.path)
                 .collect::<Vec<_>>()
         } else {
-            self.new_entry_indices
-                .iter()
-                .filter_map(|&index| self.in_memory_corpus.get(index))
-                .map(|corpus| master_corpus_dir.join(corpus.file_name(self.config.corpus_gzip)))
-                .collect()
+            Vec::new()
         };
-        let mut any_distributed = false;
+        let mut pending_entries = Vec::new();
+        let mut delivered = HashSet::new();
+        for &index in &self.new_entry_indices {
+            let Some(corpus) = self.in_memory_corpus.get(index) else {
+                delivered.insert(index);
+                continue;
+            };
+            let path = master_corpus_dir.join(corpus.file_name(self.config.corpus_gzip));
+            if !path.is_file()
+                && let Err(err) =
+                    corpus.write_to_disk_in(&master_corpus_dir, self.config.corpus_gzip)
+            {
+                debug!(target: "corpus", %err, "failed to persist corpus {} for fan-out", corpus.uuid);
+                continue;
+            }
+            pending_entries.push((index, path));
+        }
+
+        let mut target_dirs = Vec::new();
         for target_worker in 1..num_workers {
             let target_dir = self
                 .config
@@ -1437,24 +1496,53 @@ impl WorkerCorpus {
                 .unwrap()
                 .join(format!("{WORKER}{target_worker}"))
                 .join(SYNC_DIR);
-
             if !target_dir.is_dir() {
                 foundry_common::fs::create_dir_all(&target_dir)?;
             }
+            target_dirs.push(target_dir);
+        }
 
-            for path in &entries {
-                let Some(name) = path.file_name() else { continue };
+        let mut any_distributed = false;
+        let mut startup_delivered = true;
+        for path in &startup_entries {
+            let Some(name) = path.file_name() else {
+                startup_delivered = false;
+                continue;
+            };
+            let mut delivered_to_all = true;
+            for target_dir in &target_dirs {
                 let sync_path = target_dir.join(name);
-                if let Err(err) = std::fs::hard_link(path, &sync_path) {
-                    debug!(target: "corpus", %err, from=?path, to=?sync_path, "failed to distribute corpus");
-                    continue;
+                if link_corpus_file(path, &sync_path) {
+                    any_distributed = true;
+                    trace!(target: "corpus", name=%name.to_string_lossy(), ?target_dir, "distributed corpus");
+                } else {
+                    delivered_to_all = false;
                 }
-                any_distributed = true;
-                trace!(target: "corpus", name=%name.to_string_lossy(), ?target_dir, "distributed corpus");
+            }
+            startup_delivered &= delivered_to_all;
+        }
+
+        for (index, path) in pending_entries {
+            let Some(name) = path.file_name() else { continue };
+            let mut delivered_to_all = true;
+            for target_dir in &target_dirs {
+                let sync_path = target_dir.join(name);
+                if link_corpus_file(&path, &sync_path) {
+                    any_distributed = true;
+                    trace!(target: "corpus", name=%name.to_string_lossy(), ?target_dir, "distributed corpus");
+                } else {
+                    delivered_to_all = false;
+                }
+            }
+            if delivered_to_all {
+                delivered.insert(index);
             }
         }
 
-        self.initial_export_dirs = None;
+        self.new_entry_indices.retain(|index| !delivered.contains(index));
+        if startup_delivered {
+            self.initial_export_dirs = None;
+        }
         debug!(target: "corpus", %any_distributed, "distributed master corpus to all workers");
 
         Ok(())
@@ -1532,8 +1620,6 @@ impl WorkerCorpus {
         } else {
             self.export_to_master()?;
         }
-
-        self.new_entry_indices.clear();
 
         debug!(target: "corpus", "synced");
 
@@ -1892,6 +1978,63 @@ mod tests {
 
         assert!(corpus_root.join("worker1").join(SYNC_DIR).join(&name).is_file());
         assert!(corpus_root.join("worker2").join(SYNC_DIR).join(name).is_file());
+        assert!(master.new_entry_indices.is_empty());
+    }
+
+    #[test]
+    fn worker_retries_failed_export() {
+        let corpus_root = temp_corpus_dir();
+        let mut worker = empty_worker_corpus(1, corpus_root.clone());
+        let corpus = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        let name = corpus.file_name(false);
+        worker.push_corpus_entry(corpus);
+
+        let master_sync = corpus_root.join("worker0").join(SYNC_DIR);
+        fs::create_dir_all(&master_sync).unwrap();
+        let destination = master_sync.join(&name);
+        foundry_common::fs::write_json_file(&destination, &vec![basic_tx_with_calldata([2])])
+            .unwrap();
+
+        worker.export_to_master().unwrap();
+        assert_eq!(worker.new_entry_indices, [0]);
+        assert!(corpus_root.join("worker1").join(CORPUS_DIR).join(&name).is_file());
+
+        fs::remove_file(&destination).unwrap();
+        worker.export_to_master().unwrap();
+
+        assert!(worker.new_entry_indices.is_empty());
+        let exported = read_corpus_dir(&master_sync).next().unwrap().read_tx_seq().unwrap();
+        assert!(same_tx_sequence(&exported, &[basic_tx_with_calldata([1])]));
+    }
+
+    #[test]
+    fn master_retries_partial_fanout() {
+        let corpus_root = temp_corpus_dir();
+        let mut master = empty_worker_corpus(0, corpus_root.clone());
+        master.initial_export_dirs = None;
+        let corpus = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        let name = corpus.file_name(false);
+        corpus.write_to_disk_in(&corpus_root.join("worker0").join(CORPUS_DIR), false).unwrap();
+        master.push_corpus_entry(corpus);
+
+        let worker2_sync = corpus_root.join("worker2").join(SYNC_DIR);
+        fs::create_dir_all(&worker2_sync).unwrap();
+        let worker2_destination = worker2_sync.join(&name);
+        foundry_common::fs::write_json_file(
+            &worker2_destination,
+            &vec![basic_tx_with_calldata([2])],
+        )
+        .unwrap();
+
+        master.export_to_workers(3).unwrap();
+        assert_eq!(master.new_entry_indices, [0]);
+        assert!(corpus_root.join("worker1").join(SYNC_DIR).join(&name).is_file());
+
+        fs::remove_file(&worker2_destination).unwrap();
+        master.export_to_workers(3).unwrap();
+
+        assert!(master.new_entry_indices.is_empty());
+        assert!(worker2_destination.is_file());
     }
 
     #[test]
@@ -1908,11 +2051,22 @@ mod tests {
         };
         let mut master = worker_corpus(0, corpus_root.clone(), seed);
 
+        let other_worker_sync_dir = corpus_root.join("worker2").join(SYNC_DIR);
+        fs::create_dir_all(&other_worker_sync_dir).unwrap();
+        let other_worker_sync = other_worker_sync_dir.join(&name);
+        foundry_common::fs::write_json_file(&other_worker_sync, &vec![basic_tx_with_calldata([1])])
+            .unwrap();
+
         master.export_to_workers(3).unwrap();
         let source_worker_sync = corpus_root.join("worker1").join(SYNC_DIR).join(&name);
-        let other_worker_sync = corpus_root.join("worker2").join(SYNC_DIR).join(&name);
         assert!(source_worker_sync.is_file());
         assert!(other_worker_sync.is_file());
+        assert!(master.initial_export_dirs.is_some());
+
+        fs::remove_file(&other_worker_sync).unwrap();
+        master.export_to_workers(3).unwrap();
+        assert!(other_worker_sync.is_file());
+        assert!(master.initial_export_dirs.is_none());
 
         let source_entry = read_corpus_dir(source_worker_sync.parent().unwrap()).next().unwrap();
         assert!(accept_synced_corpus_file(
@@ -1942,10 +2096,16 @@ mod tests {
         let generator =
             test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
         let mut flat_master = WorkerCorpus::from_seed(0, config, generator, seed).unwrap();
+        let pending = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        let pending_name = pending.file_name(false);
+        pending.write_to_disk_in(&flat_root.join("worker0").join(CORPUS_DIR), false).unwrap();
+        flat_master.push_corpus_entry(pending);
 
         flat_master.export_to_workers(2).unwrap();
 
         assert!(flat_root.join("worker1").join(SYNC_DIR).join(flat_name).is_file());
+        assert!(flat_root.join("worker1").join(SYNC_DIR).join(pending_name).is_file());
+        assert!(flat_master.new_entry_indices.is_empty());
     }
 
     #[test]
