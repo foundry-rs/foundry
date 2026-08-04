@@ -3670,10 +3670,14 @@ impl EthApi<FoundryNetwork> {
             // mine all the blocks
             for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
-                if let Some(interval) = interval {
-                    this.backend.time().increase_time(interval);
+                let pending_increase =
+                    interval.map(|interval| this.backend.time().apply_time_increase(interval));
+                if let Err(error) = this.mine_one().await {
+                    if let Some(pending) = pending_increase {
+                        this.backend.time().revert_time_increase(pending);
+                    }
+                    return Err(error);
                 }
-                this.mine_one().await;
             }
             Ok(())
         })
@@ -4198,7 +4202,7 @@ impl EthApi<FoundryNetwork> {
         self.on_blocking_task(|this| async move {
             // mine all the blocks
             for _ in 0..blocks_to_mine {
-                this.mine_one().await;
+                this.mine_one().await?;
             }
             Ok(())
         })
@@ -4376,12 +4380,13 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Mines exactly one block
-    pub async fn mine_one(&self) {
+    pub async fn mine_one(&self) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await;
+        let outcome = self.backend.mine_block(transactions).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);
+        Ok(())
     }
 
     /// Returns the pending block with tx hashes

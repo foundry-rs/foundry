@@ -715,7 +715,7 @@ forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd|
     let target_hash = *target_pending.tx_hash();
     let future_pending = provider.send_raw_transaction(&future_marker_raw).await.unwrap();
     let future_hash = *future_pending.tx_hash();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let target_receipt = target_pending.get_receipt().await.unwrap();
     let future_receipt = future_pending.get_receipt().await.unwrap();
     assert_eq!(target_receipt.block_number(), future_receipt.block_number());
@@ -918,7 +918,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let parent_block = provider.get_block_number().await.unwrap();
 
     let request = <Ethereum as Network>::TransactionRequest::default()
@@ -971,7 +971,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     failed_api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
     failed_api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
     failed_api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
-    failed_api.mine_one().await;
+    failed_api.mine_one().await.unwrap();
     let failed_parent_block = failed_provider.get_block_number().await.unwrap();
     let failed_request = <Ethereum as Network>::TransactionRequest::default()
         .with_from(SYSTEM_ADDRESS)

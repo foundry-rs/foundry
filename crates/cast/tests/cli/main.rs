@@ -6014,7 +6014,7 @@ casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
         .await
         .unwrap();
     api.anvil_set_balance(sender, mon(12)).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let _ = provider
@@ -6041,7 +6041,7 @@ casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
         )
         .await
         .unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let receipt = second.get_receipt().await.unwrap();
 
     let endpoint = handle.http_endpoint();

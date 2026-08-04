@@ -475,7 +475,7 @@ mod tests {
 
         let pending = signer_provider.send_transaction(tx).await.unwrap();
         let tx_hash = *pending.tx_hash();
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
 
         let provider = signer_provider.root().clone();
         let mut watcher =

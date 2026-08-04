@@ -120,7 +120,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         .await
         .unwrap();
     let expected_hashes = [*first.tx_hash(), *second.tx_hash(), *reverted.tx_hash()];
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     assert!(
         !origin_provider
             .get_transaction_receipt(expected_hashes[2])
@@ -257,7 +257,7 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
         ))
         .await
         .unwrap();
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, source_timestamp);
@@ -286,7 +286,7 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     assert_eq!(replayed.header.timestamp, source.header.timestamp);
     assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
 
-    fork_api.mine_one().await;
+    fork_api.mine_one().await.unwrap();
     let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
     assert!(next.header.timestamp > source.header.timestamp);
 }
@@ -317,7 +317,7 @@ async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
         .await
         .unwrap();
     let target_hash = *target.tx_hash();
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, SHANGHAI_ERA_TIMESTAMP);
@@ -376,7 +376,7 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
         .await
         .unwrap();
     let target_hash = *target.tx_hash();
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, CANCUN_ERA_TIMESTAMP);
@@ -1549,7 +1549,7 @@ async fn test_fork_init_base_fee() {
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
     assert_eq!(init_base_fee, 63739886069);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1817,8 +1817,8 @@ async fn test_total_difficulty_fork() {
     assert_eq!(block.header.total_difficulty, Some(total_difficulty));
     assert_eq!(block.header.difficulty, difficulty);
 
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let next_total_difficulty = total_difficulty + difficulty;
 
@@ -1945,7 +1945,7 @@ async fn test_fork_reset_basefee() {
     // <https://etherscan.io/block/18835000>
     let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(18835000u64))).await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
@@ -1956,7 +1956,7 @@ async fn test_fork_reset_basefee() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
@@ -1995,7 +1995,7 @@ async fn flaky_test_arb_fork_mining() {
     let init_blk_num = api.block_number().unwrap().to::<u64>();
 
     // Mine one
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined_blk_num = api.block_number().unwrap().to::<u64>();
 
     assert_eq!(mined_blk_num, init_blk_num + 1);
@@ -2030,7 +2030,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let snapshot_state = api.evm_snapshot().await.unwrap();
 
     // mine new block and check block number returned by `eth_blockNumber`
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number + 1);
 
@@ -2385,7 +2385,7 @@ async fn test_fork_reset_reuses_cached_remote_state() {
     let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
 
     assert_eq!(provider.get_balance(address).await.unwrap(), balance);
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     for _ in 0..2 {
         api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
@@ -2485,10 +2485,10 @@ async fn test_fork_reset_does_not_reuse_cache_for_new_rpc_url() {
             .with_genesis_timestamp(Some(timestamp))
             .with_funded_accounts([(address, second_balance)].into_iter().collect());
         let (second_origin_api, second_origin_handle) = spawn(second_origin).await;
-        first_origin_api.mine_one().await;
-        first_origin_api.mine_one().await;
-        second_origin_api.mine_one().await;
-        second_origin_api.mine_one().await;
+        first_origin_api.mine_one().await.unwrap();
+        first_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
         let fork_config = NodeConfig::test()
             .with_chain_id(Some(chain_id))
             .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()))
@@ -2606,7 +2606,7 @@ async fn test_fork_reset_invalidates_cache_for_same_url_anvil_identity_change() 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_failed_same_family_fork_reset_preserves_live_state() {
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let origin_url = origin_handle.http_endpoint();
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
     let provider = handle.http_provider();
@@ -2615,7 +2615,7 @@ async fn test_failed_same_family_fork_reset_preserves_live_state() {
     let marker_nonce = 17u64;
     api.anvil_set_balance(marker, marker_balance).await.unwrap();
     api.anvil_set_nonce(marker, U256::from(marker_nonce)).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let info_before = api.anvil_node_info().await.unwrap();
     let metadata_before = api.anvil_metadata().await.unwrap();
@@ -2651,7 +2651,7 @@ async fn test_failed_same_family_fork_reset_preserves_live_state() {
     assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
     assert_eq!(provider.get_transaction_count(marker).await.unwrap(), marker_nonce);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert_eq!(provider.get_block_number().await.unwrap(), block_before.header.number + 1);
     assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
     assert_eq!(provider.get_transaction_count(marker).await.unwrap(), marker_nonce);
@@ -2667,7 +2667,7 @@ async fn test_fork_resets_invalidate_state_snapshots_without_mutating_new_contex
 
     for reset in [Some(Forking::default()), None] {
         api.anvil_set_balance(marker, U256::from(123u64)).await.unwrap();
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
         let snapshot = api.evm_snapshot().await.unwrap();
         assert!(api.anvil_metadata().await.unwrap().snapshots.contains_key(&snapshot));
 
@@ -2784,8 +2784,8 @@ async fn test_fork_reset_updates_bpo_blob_schedule_in_both_directions() {
     };
     let (bpo1_api, bpo1_handle) = spawn(origin(EthereumHardfork::Bpo1, bpo1_params)).await;
     let (bpo2_api, bpo2_handle) = spawn(origin(EthereumHardfork::Bpo2, bpo2_params)).await;
-    bpo1_api.mine_one().await;
-    bpo2_api.mine_one().await;
+    bpo1_api.mine_one().await.unwrap();
+    bpo2_api.mine_one().await.unwrap();
     let (api, _) = spawn(
         NodeConfig::test()
             .with_no_storage_caching(true)
@@ -2810,7 +2810,7 @@ async fn test_fork_reset_updates_bpo_blob_schedule_in_both_directions() {
     .await
     .unwrap();
     assert_blob_schedule(bpo2_params);
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert_blob_schedule(bpo2_params);
 
     api.anvil_reset(Some(Forking {
@@ -2820,7 +2820,7 @@ async fn test_fork_reset_updates_bpo_blob_schedule_in_both_directions() {
     .await
     .unwrap();
     assert_blob_schedule(bpo1_params);
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert_blob_schedule(bpo1_params);
 }
 

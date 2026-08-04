@@ -273,7 +273,7 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
         provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(2)).await.unwrap(),
         U256::ZERO
     );
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     provider
         .send_transaction(reserve_probe_tx(grandparent_sender, 1, 3, second_value).into())
         .await
@@ -295,7 +295,7 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
         .send_transaction(reserve_probe_tx(current_sender, 1, 5, second_value).into())
         .await
         .unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let second_receipt = second_pending.get_receipt().await.unwrap();
     assert_eq!(
         provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(4)).await.unwrap(),
@@ -389,7 +389,7 @@ async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target()
         .await
         .unwrap();
 
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let parent_block = origin_provider.get_block_number().await.unwrap();
     origin_api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -421,7 +421,7 @@ async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target()
     let second_probe_hash = *second_probe.tx_hash();
     let target_reward = origin_provider.send_transaction(reward_tx(12).into()).await.unwrap();
     let target_reward_hash = *target_reward.tx_hash();
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
 
     let source_block = origin_api
         .block_by_number_full(BlockNumberOrTag::Number(parent_block + 1))
@@ -666,7 +666,7 @@ async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target()
         .unwrap();
     assert_eq!(loaded_opcode_gas.unwrap().transaction_hash, target_reward_hash);
 
-    loaded_api.mine_one().await;
+    loaded_api.mine_one().await.unwrap();
     let local_block_hash = loaded_provider
         .get_block_by_number(BlockNumberOrTag::Latest)
         .await
@@ -777,7 +777,8 @@ async fn monad_mining_tracks_eip7702_authorities() {
             Arc::new(PoolTransaction::new(authorization)),
             Arc::new(PoolTransaction::new(probe)),
         ])
-        .await;
+        .await
+        .unwrap();
     assert_eq!(outcome.included.len(), 2);
     assert!(outcome.invalid.is_empty());
 
@@ -1014,7 +1015,7 @@ async fn monad_rejects_eip4844_blob_transactions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_fork_uses_monad_execution() {
     let (origin_api, origin_handle) = spawn(monad_nine_config()).await;
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
 
     let config = monad_nine_config().with_eth_rpc_url(Some(origin_handle.http_endpoint()));
     let (fork_api, fork_handle) = spawn(config).await;
@@ -1214,7 +1215,7 @@ async fn monad_fork_preserves_explicit_network_selection() {
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_fork_reset_without_url_preserves_monad_execution() {
     let (origin_api, origin_handle) = spawn(monad_nine_config()).await;
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
 
     let config = monad_nine_config().with_eth_rpc_url(Some(origin_handle.http_endpoint()));
     let (fork_api, fork_handle) = spawn(config).await;
@@ -1384,7 +1385,7 @@ async fn monad_fork_resets_preserve_endpoint_hardfork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_reset_can_start_forking_with_monad_execution() {
     let (origin_api, origin_handle) = spawn(monad_nine_config()).await;
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
 
     let (api, handle) = spawn(monad_nine_config()).await;
 
@@ -1623,9 +1624,9 @@ async fn monad_boundary_origin() -> (NodeHandle, String) {
     let (api, handle) = spawn(config).await;
 
     api.evm_set_next_block_timestamp(activation - 1).unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     api.evm_set_next_block_timestamp(activation).unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let endpoint = handle.http_endpoint();
     (handle, endpoint)
