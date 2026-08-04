@@ -1374,6 +1374,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     let gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
         &tx_env,
         evm_env.cfg_env.spec.into(),
+        None,
     );
 
     let result = match &out {

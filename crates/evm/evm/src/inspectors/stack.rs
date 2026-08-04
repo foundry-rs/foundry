@@ -1350,6 +1350,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         gas: Gas::new(gas_limit),
                     },
                     address: None,
+                    charged_create_state_gas: false,
                 });
                 return None;
             } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
@@ -1360,6 +1361,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         gas: Gas::new(gas_limit),
                     },
                     address: None,
+                    charged_create_state_gas: false,
                 });
                 return None;
             }
@@ -1409,7 +1411,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             _ => None,
         };
 
-        *frame_result = FrameResult::Create(CreateOutcome { result: call.result.clone(), address });
+        *frame_result = FrameResult::Create(CreateOutcome {
+            result: call.result.clone(),
+            address,
+            charged_create_state_gas: false,
+        });
     }
 
     fn call(
@@ -1692,7 +1698,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             );
             let address =
                 address.or_else(|| if result.is_revert() { precomputed_address } else { None });
-            return Some(CreateOutcome { result, address });
+            return Some(CreateOutcome { result, address, charged_create_state_gas: false });
         }
 
         None

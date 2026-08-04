@@ -2614,6 +2614,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return Some(CreateOutcome {
                 result: InterpreterResult { result: InstructionResult::Revert, output, gas },
                 address: None,
+                charged_create_state_gas: false,
             });
         }
 
@@ -2662,6 +2663,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         gas,
                     },
                     address: None,
+                    charged_create_state_gas: false,
                 });
             }
 

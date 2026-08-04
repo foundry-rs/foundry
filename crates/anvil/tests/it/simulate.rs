@@ -257,6 +257,7 @@ impl PrecompileFactory for LookupOnlyPrecompileFactory {
                         gas_used: 0,
                         gas_refunded: 0,
                         state_gas_used: 0,
+                        state_gas_spilled: 0,
                         reservoir: input.reservoir,
                     })
                 })
@@ -1001,6 +1002,7 @@ impl PrecompileFactory for RequestOutputPrecompileFactory {
                         gas_used: 0,
                         gas_refunded: 0,
                         state_gas_used: 0,
+                        state_gas_spilled: 0,
                         reservoir: input.reservoir,
                     })
                 }),
@@ -1014,6 +1016,7 @@ impl PrecompileFactory for RequestOutputPrecompileFactory {
                         gas_used: 0,
                         gas_refunded: 0,
                         state_gas_used: 0,
+                        state_gas_spilled: 0,
                         reservoir: input.reservoir,
                     })
                 }),
@@ -1038,6 +1041,7 @@ impl PrecompileFactory for PerBlockRequestPrecompileFactory {
                     gas_used: 0,
                     gas_refunded: 0,
                     state_gas_used: 0,
+                    state_gas_spilled: 0,
                     reservoir: input.reservoir,
                 })
             }),

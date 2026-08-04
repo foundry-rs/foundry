@@ -2780,6 +2780,7 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
                             gas_refunded: 0,
                             status: PrecompileStatus::Success,
                             state_gas_used: 0,
+                            state_gas_spilled: 0,
                             reservoir: input.reservoir,
                         })
                     },
