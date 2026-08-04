@@ -24,9 +24,8 @@ use foundry_config::{Config, InlineConfig};
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
-    core::{
-        evm::{BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
-        fork::ResolvedFork,
+    core::evm::{
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     opts::EvmOpts,
 };
@@ -172,7 +171,6 @@ pub fn run_mutations_parallel_with_progress(
     original_source: Arc<String>,
     config: Arc<Config>,
     evm_opts: EvmOpts,
-    resolved_fork: Option<ResolvedFork>,
     create2_deployer_available: bool,
     num_workers: usize,
     progress: Option<MutationProgress>,
@@ -263,7 +261,6 @@ pub fn run_mutations_parallel_with_progress(
                     &original_source,
                     &config,
                     &evm_opts,
-                    resolved_fork.as_ref(),
                     create2_deployer_available,
                     &shared_state,
                     &temp_root,
@@ -344,7 +341,6 @@ fn test_single_mutant_isolated(
     original_source: &Arc<String>,
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&ResolvedFork>,
     create2_deployer_available: bool,
     shared_state: &Arc<SharedMutationState>,
     temp_root: &Path,
@@ -424,7 +420,6 @@ fn test_single_mutant_isolated(
         Some(budget) => run_compile_and_test_with_timeout(
             temp_config,
             evm_opts,
-            resolved_fork,
             create2_deployer_available,
             budget,
             temp_dir,
@@ -438,7 +433,6 @@ fn test_single_mutant_isolated(
             let res = match compile_and_test(
                 &temp_config,
                 evm_opts,
-                resolved_fork,
                 create2_deployer_available,
                 filter_args,
                 rerun_failures.as_ref().as_deref(),
@@ -480,7 +474,6 @@ fn test_single_mutant_isolated(
 fn run_compile_and_test_with_timeout(
     config: Arc<Config>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&ResolvedFork>,
     create2_deployer_available: bool,
     budget: Duration,
     temp_dir: TempDir,
@@ -492,7 +485,6 @@ fn run_compile_and_test_with_timeout(
 ) -> MutationResult {
     let (tx, rx) = mpsc::channel::<Result<bool>>();
     let opts = evm_opts.clone();
-    let resolved_fork = resolved_fork.cloned();
     // Move `temp_dir` into the worker so its `Drop` only runs after the worker
     // thread exits. Do NOT capture by reference — the worker may outlive this
     // function on timeout.
@@ -509,7 +501,6 @@ fn run_compile_and_test_with_timeout(
                 compile_and_test(
                     &cfg,
                     &opts,
-                    resolved_fork.as_ref(),
                     create2_deployer_available,
                     &filter_for_worker,
                     rerun_for_worker.as_ref().as_deref(),
@@ -626,7 +617,6 @@ fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
 fn compile_and_test(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&ResolvedFork>,
     create2_deployer_available: bool,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
@@ -637,7 +627,6 @@ fn compile_and_test(
         compile_and_test_inner::<TempoEvmNetwork>(
             config,
             evm_opts,
-            resolved_fork,
             create2_deployer_available,
             filter_args,
             rerun_failures,
@@ -650,7 +639,6 @@ fn compile_and_test(
             return compile_and_test_inner::<OpEvmNetwork>(
                 config,
                 evm_opts,
-                resolved_fork,
                 create2_deployer_available,
                 filter_args,
                 rerun_failures,
@@ -661,7 +649,6 @@ fn compile_and_test(
         compile_and_test_inner::<EthEvmNetwork>(
             config,
             evm_opts,
-            resolved_fork,
             create2_deployer_available,
             filter_args,
             rerun_failures,
@@ -674,7 +661,6 @@ fn compile_and_test(
 fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&ResolvedFork>,
     create2_deployer_available: bool,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
@@ -714,10 +700,8 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env) = evm_opts
-            .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(resolved_fork)
-            .await?;
-        let fork_block_number = resolved_fork.map(ResolvedFork::number);
+        let (evm_env, tx_env, fork_block) =
+            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         // Build test runner mirroring the canonical `forge test` runner: same
         // isolation flag, same fail-fast semantics for mutation, and same
@@ -727,7 +711,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block_number))
+            .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
             .enable_isolation(isolate)
             .fail_fast(true)
             .with_create2_deployer_available(create2_deployer_available)

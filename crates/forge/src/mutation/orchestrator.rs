@@ -16,7 +16,7 @@ use std::{
     time::Instant,
 };
 
-use alloy_primitives::{B256, BlockNumber, keccak256};
+use alloy_primitives::keccak256;
 use eyre::{Result, WrapErr};
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::{compile::ProjectCompiler, sh_println};
@@ -26,7 +26,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{Config, filter::GlobMatcher};
-use foundry_evm::{core::fork::ResolvedFork, opts::EvmOpts};
+use foundry_evm::opts::EvmOpts;
 
 use crate::{
     cmd::test::{FilterArgs, RerunFailure},
@@ -52,7 +52,6 @@ struct ExecutionCacheFingerprint<'a> {
     schema: &'static str,
     config: &'a Config,
     evm_opts: &'a EvmOpts,
-    resolved_fork: Option<(BlockNumber, B256)>,
     filter_args: FilterArgsFingerprint<'a>,
     rerun_failures: Option<&'a [RerunFailure]>,
     num_workers: usize,
@@ -132,12 +131,11 @@ pub struct MutationRunResult {
 pub async fn run_mutation_testing(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
-    evm_opts: EvmOpts,
+    mut evm_opts: EvmOpts,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
-    let resolved_fork = evm_opts.resolve_fork().await?;
-    let create2_deployer_available =
-        evm_opts.can_use_create2_deployer_resolved(resolved_fork.as_ref()).await?;
+    let fork_block = evm_opts.pin_fork_block().await?;
+    let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
     let artifact_link_references = output.artifact_ids().filter_map(|(id, artifact)| {
@@ -171,7 +169,6 @@ pub async fn run_mutation_testing(
         &config,
         &execution_cache_output,
         &evm_opts,
-        resolved_fork.as_ref(),
         &mutation_config.filter_args,
         mutation_config.rerun_failures.as_deref(),
         num_workers,
@@ -305,7 +302,6 @@ pub async fn run_mutation_testing(
             handler.src.clone(),
             config.clone(),
             evm_opts.clone(),
-            resolved_fork.clone(),
             create2_deployer_available,
             num_workers,
             progress.clone(),
@@ -406,7 +402,6 @@ fn mutation_execution_cache_key(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&ResolvedFork>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
@@ -424,7 +419,6 @@ fn mutation_execution_cache_key(
     mutation_execution_cache_key_from_parts_with_rerun_failures(
         config,
         evm_opts,
-        resolved_fork.map(|fork| (fork.number(), fork.hash())),
         filter_args,
         rerun_failures,
         num_workers,
@@ -443,7 +437,6 @@ fn mutation_execution_cache_key_from_parts(
     mutation_execution_cache_key_from_parts_with_rerun_failures(
         config,
         evm_opts,
-        None,
         filter_args,
         None,
         num_workers,
@@ -454,7 +447,6 @@ fn mutation_execution_cache_key_from_parts(
 fn mutation_execution_cache_key_from_parts_with_rerun_failures(
     config: &Config,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<(BlockNumber, B256)>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
@@ -465,7 +457,6 @@ fn mutation_execution_cache_key_from_parts_with_rerun_failures(
         schema: "mutation-results-v1",
         config,
         evm_opts,
-        resolved_fork,
         filter_args: filter_args_fingerprint(filter_args),
         rerun_failures,
         num_workers,
@@ -724,37 +715,6 @@ mod tests {
     }
 
     #[test]
-    fn execution_cache_key_changes_when_resolved_fork_changes() {
-        let config = Config::default();
-        let evm_opts = EvmOpts::default();
-        let filter_args = filter_args();
-        let artifacts = vec![artifact("build-a")];
-
-        let first_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
-            &config,
-            &evm_opts,
-            Some((1, B256::with_last_byte(1))),
-            &filter_args,
-            None,
-            1,
-            artifacts.clone(),
-        )
-        .unwrap();
-        let second_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
-            &config,
-            &evm_opts,
-            Some((1, B256::with_last_byte(2))),
-            &filter_args,
-            None,
-            1,
-            artifacts,
-        )
-        .unwrap();
-
-        assert_ne!(first_key, second_key);
-    }
-
-    #[test]
     fn execution_cache_key_changes_when_compiled_artifacts_change() {
         let config = Config::default();
         let evm_opts = EvmOpts::default();
@@ -899,7 +859,6 @@ mod tests {
         let first_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
             &config,
             &evm_opts,
-            None,
             &filter_args,
             Some(&first_failures),
             1,
@@ -909,7 +868,6 @@ mod tests {
         let second_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
             &config,
             &evm_opts,
-            None,
             &filter_args,
             Some(&second_failures),
             1,
