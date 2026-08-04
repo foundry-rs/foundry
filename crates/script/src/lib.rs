@@ -52,7 +52,7 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -88,6 +88,8 @@ pub use wallet_session::ScriptWalletSessionArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
+
+const DEFAULT_CONFIRMATIONS: u64 = 1;
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
@@ -218,6 +220,14 @@ pub struct ScriptArgs {
     /// only after its previous one has been confirmed and succeeded.
     #[arg(long)]
     pub slow: bool,
+
+    /// The number of confirmations to wait for after broadcasting.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_CONFIRMATIONS,
+        value_parser = RangedU64ValueParser::<u64>::new().range(1..),
+    )]
+    pub confirmations: u64,
 
     /// Disables interactive prompts that might appear when deploying big contracts.
     ///
@@ -477,7 +487,10 @@ impl ScriptArgs {
                 .code_size_limit
                 .or(pre_simulation.script_config.config.code_size_limit)
                 .map(ContractSizeLimits::with_runtime_limit)
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    let spec_id: SpecFor<FEN> = pre_simulation.script_config.config.evm_spec_id();
+                    ContractSizeLimits::for_spec_id(spec_id.into())
+                });
             pre_simulation.args.check_contract_sizes(
                 size_limits,
                 &pre_simulation.execution_result,
@@ -592,8 +605,8 @@ impl ScriptArgs {
         Ok((func.clone(), data.into()))
     }
 
-    /// Checks if the transaction is a deployment with either a size above the default contract size
-    /// limit or specified `code_size_limit`.
+    /// Checks if the transaction is a deployment with a size above the active EVM specification's
+    /// contract size limit or the specified `code_size_limit`.
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.
@@ -1201,6 +1214,20 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn parses_confirmations() {
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
+        assert_eq!(args.confirmations, DEFAULT_CONFIRMATIONS);
+
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--confirmations", "6"]);
+        assert_eq!(args.confirmations, 6);
+
+        let err =
+            ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--confirmations", "0"])
+                .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[test]

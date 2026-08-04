@@ -12,7 +12,7 @@ use alloy_eips::{
 };
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
-    Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex, uint,
+    Address, B256, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex, uint,
 };
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
@@ -115,7 +115,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         .await
         .unwrap();
     let expected_hashes = [*first.tx_hash(), *second.tx_hash(), *reverted.tx_hash()];
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     assert!(
         !origin_provider
             .get_transaction_receipt(expected_hashes[2])
@@ -218,6 +218,190 @@ async fn test_fork_transaction_hash_replays_before_startup() {
             .collect::<Vec<_>>(),
         expected_hashes
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let genesis =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
+    let source_timestamp = genesis.header.timestamp + 100;
+    origin_api.evm_set_next_block_timestamp(source_timestamp).unwrap();
+
+    let first = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let second = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(1),
+        ))
+        .await
+        .unwrap();
+    origin_api.mine_one().await.unwrap();
+    let source =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(source.header.timestamp, source_timestamp);
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(*second.tx_hash()))
+            .with_no_mining(true),
+    )
+    .await;
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        [*first.tx_hash(), *second.tx_hash()]
+    );
+    assert_eq!(replayed.header.timestamp, source.header.timestamp);
+    assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
+
+    fork_api.mine_one().await.unwrap();
+    let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert!(next.header.timestamp > source.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
+    // Real chain ID so the hardfork can be resolved from chain + timestamp.
+    const MAINNET_CHAIN_ID: u64 = 1;
+    // Well before Cancun's 2024-03-13 activation.
+    const SHANGHAI_ERA_TIMESTAMP: u64 = 1_690_000_000u64;
+
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(Some(SHANGHAI_ERA_TIMESTAMP - 100)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(SHANGHAI_ERA_TIMESTAMP).unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+
+    let target = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+    let source =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(source.header.timestamp, SHANGHAI_ERA_TIMESTAMP);
+    assert!(source.header.parent_beacon_block_root.is_none());
+
+    // A newer explicit `--hardfork` used to wrongly require a `parentBeaconBlockRoot` on this
+    // pre-Cancun source block, failing startup.
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_no_mining(true),
+    )
+    .await;
+
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        [target_hash]
+    );
+    assert!(replayed.header.parent_beacon_block_root.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
+    // Real chain ID so the hardfork can be resolved from chain + timestamp.
+    const MAINNET_CHAIN_ID: u64 = 1;
+    // Past Cancun's 2024-03-13 activation.
+    const CANCUN_ERA_TIMESTAMP: u64 = 1_720_000_000u64;
+    const HISTORY_BUFFER_LENGTH: u64 = 8191;
+
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_genesis_timestamp(Some(CANCUN_ERA_TIMESTAMP - 100)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(CANCUN_ERA_TIMESTAMP).unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+
+    let target = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+    let source =
+        origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(source.header.timestamp, CANCUN_ERA_TIMESTAMP);
+    assert!(source.header.parent_beacon_block_root.is_some());
+
+    // An older explicit `--hardfork` used to silently skip the EIP-4788 beacon-root call on this
+    // Cancun-era source block.
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_no_mining(true),
+    )
+    .await;
+
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
+
+    let slot = U256::from(CANCUN_ERA_TIMESTAMP % HISTORY_BUFFER_LENGTH);
+    let stored_timestamp = fork_api
+        .storage_at(
+            alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+            slot,
+            Some(BlockId::Number(BlockNumberOrTag::Number(1))),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored_timestamp, B256::from(U256::from(CANCUN_ERA_TIMESTAMP)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1230,7 +1414,7 @@ async fn test_fork_init_base_fee() {
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
     assert_eq!(init_base_fee, 63739886069);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1498,8 +1682,8 @@ async fn test_total_difficulty_fork() {
     assert_eq!(block.header.total_difficulty, Some(total_difficulty));
     assert_eq!(block.header.difficulty, difficulty);
 
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let next_total_difficulty = total_difficulty + difficulty;
 
@@ -1626,7 +1810,7 @@ async fn test_fork_reset_basefee() {
     // <https://etherscan.io/block/18835000>
     let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(18835000u64))).await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
@@ -1637,7 +1821,7 @@ async fn test_fork_reset_basefee() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
@@ -1676,7 +1860,7 @@ async fn flaky_test_arb_fork_mining() {
     let init_blk_num = api.block_number().unwrap().to::<u64>();
 
     // Mine one
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined_blk_num = api.block_number().unwrap().to::<u64>();
 
     assert_eq!(mined_blk_num, init_blk_num + 1);
@@ -1711,7 +1895,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let snapshot_state = api.evm_snapshot().await.unwrap();
 
     // mine new block and check block number returned by `eth_blockNumber`
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number + 1);
 
@@ -2066,7 +2250,7 @@ async fn test_fork_reset_reuses_cached_remote_state() {
     let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
 
     assert_eq!(provider.get_balance(address).await.unwrap(), balance);
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     for _ in 0..2 {
         api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
@@ -2156,10 +2340,10 @@ async fn test_fork_reset_does_not_reuse_cache_for_new_rpc_url() {
             .with_genesis_timestamp(Some(timestamp))
             .with_funded_accounts([(address, second_balance)].into_iter().collect());
         let (second_origin_api, second_origin_handle) = spawn(second_origin).await;
-        first_origin_api.mine_one().await;
-        first_origin_api.mine_one().await;
-        second_origin_api.mine_one().await;
-        second_origin_api.mine_one().await;
+        first_origin_api.mine_one().await.unwrap();
+        first_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
         let fork_config = NodeConfig::test()
             .with_chain_id(Some(chain_id))
             .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()))

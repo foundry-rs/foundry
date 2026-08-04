@@ -38,7 +38,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 
-use foundry_linking::{LinkOutput, Linker, LinkerError};
+use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
@@ -801,7 +801,7 @@ impl MultiContractRunnerBuilder {
         let configured_libraries = self.config.libraries_with_remappings()?;
         let create2_deployer_available = self.create2_deployer_available(&evm_opts);
         let create2 = if create2_deployer_available {
-            match linker.link_with_create2(
+            match linker.link_with_create2_detailed(
                 configured_libraries.clone(),
                 evm_opts.create2_deployer,
                 self.config.create2_library_salt,
@@ -814,30 +814,37 @@ impl MultiContractRunnerBuilder {
         } else {
             None
         };
-        let (LinkOutput { libraries, library_addresses, libs_to_deploy }, library_deployment) =
-            if let Some(output) = create2 {
-                let deployment = if output.libs_to_deploy.is_empty() {
-                    LibraryDeployment::Nonce
-                } else {
-                    LibraryDeployment::Create2 {
-                        deployer: evm_opts.create2_deployer,
-                        salt: self.config.create2_library_salt,
-                    }
-                };
-                (output, deployment)
+        let (
+            DetailedLinkOutput {
+                output: LinkOutput { libraries, library_addresses, libs_to_deploy },
+                artifact_libraries,
+                ..
+            },
+            library_deployment,
+        ) = if let Some(output) = create2 {
+            let deployment = if output.output.libs_to_deploy.is_empty() {
+                LibraryDeployment::Nonce
             } else {
-                (
-                    linker.link_with_nonce_or_address(
-                        configured_libraries,
-                        LIBRARY_DEPLOYER,
-                        0,
-                        linker.contracts.keys(),
-                    )?,
-                    LibraryDeployment::Nonce,
-                )
+                LibraryDeployment::Create2 {
+                    deployer: evm_opts.create2_deployer,
+                    salt: self.config.create2_library_salt,
+                }
             };
+            (output, deployment)
+        } else {
+            (
+                linker.link_with_nonce_or_address_detailed(
+                    configured_libraries,
+                    LIBRARY_DEPLOYER,
+                    0,
+                    linker.contracts.keys(),
+                )?,
+                LibraryDeployment::Nonce,
+            )
+        };
 
-        let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
+        let linked_contracts = linker
+            .get_linked_artifacts_cow_with_artifact_libraries(&libraries, &artifact_libraries)?;
         let inline_config = self.inline_config;
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
@@ -864,7 +871,8 @@ impl MultiContractRunnerBuilder {
                     continue;
                 };
 
-                let library_addresses = linker.linked_library_addresses(id, &libraries)?;
+                let artifact_libraries = artifact_libraries.get(id).unwrap_or(&libraries);
+                let library_addresses = linker.linked_library_addresses(id, artifact_libraries)?;
 
                 deployable_contracts.insert(
                     id.clone(),

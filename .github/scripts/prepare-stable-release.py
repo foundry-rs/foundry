@@ -51,7 +51,10 @@ def run_preserving_lockfile(
 def parse_version(value: str) -> tuple[int, int, int]:
     if not VERSION.fullmatch(value):
         raise ReleaseError(f"expected a stable X.Y.Z version, got {value!r}")
-    return tuple(int(part) for part in value.split("."))
+    version = tuple(int(part) for part in value.split("."))
+    if ".".join(map(str, version)) != value:
+        raise ReleaseError(f"expected a canonical stable X.Y.Z version, got {value!r}")
+    return version
 
 
 def latest_stable_tag(tags: str) -> tuple[str, tuple[int, int, int]]:
@@ -59,7 +62,9 @@ def latest_stable_tag(tags: str) -> tuple[str, tuple[int, int, int]]:
     for tag in tags.splitlines():
         match = STABLE_TAG.fullmatch(tag.strip())
         if match:
-            stable.append((tuple(int(part) for part in match.groups()), tag.strip()))
+            version = tuple(int(part) for part in match.groups())
+            if f"v{'.'.join(map(str, version))}" == tag.strip():
+                stable.append((version, tag.strip()))
     if not stable:
         raise ReleaseError("no stable vX.Y.Z tag found")
     version, tag = max(stable)
@@ -80,6 +85,10 @@ def set_workspace_version(manifest: Path, version: str) -> None:
 
 
 def release_plan(output: str) -> dict[str, str]:
+    warnings = re.findall(r"^\s*!\s+(.+?)\s*$", output, re.MULTILINE)
+    if warnings:
+        raise ReleaseError(f"changelogs release plan reported warnings: {'; '.join(warnings)}")
+
     releases = {}
     for package, version in re.findall(
         r"^\s*✓\s+(\S+)\s+\S+\s+→\s+(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\s*$",
@@ -191,48 +200,102 @@ def set_output(name: str, value: str) -> None:
             file.write(f"{name}={value}\n")
 
 
-def require_changes(root: Path) -> None:
-    result = subprocess.run(["git", "diff", "--quiet", "--exit-code"], cwd=root)
-    if result.returncode == 0:
-        raise ReleaseError("release preparation did not change any tracked files")
-    if result.returncode != 1:
-        raise ReleaseError(f"git diff failed with exit code {result.returncode}")
+def name_status(command: list[str], root: Path) -> dict[str, str]:
+    output = run(command, root, capture_output=True).stdout
+    entries = [line.split("\t") for line in output.splitlines()]
+    if any(len(entry) != 2 or entry[0] not in {"A", "M", "D"} for entry in entries):
+        raise ReleaseError("release diff contains a rename, copy, or malformed status")
+    statuses = {path: status for status, path in entries}
+    if len(statuses) != len(entries):
+        raise ReleaseError("release diff contains duplicate paths")
+    return statuses
 
 
-def changed_paths(root: Path) -> set[str]:
-    tracked = subprocess.run(
-        ["git", "diff", "--name-only", "-z"],
-        cwd=root,
-        check=True,
-        stdout=subprocess.PIPE,
-    ).stdout.decode().split("\0")
-    untracked = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-        cwd=root,
-        check=True,
-        stdout=subprocess.PIPE,
-    ).stdout.decode().split("\0")
-    return {path for path in tracked + untracked if path}
+def verify_stable_diff(statuses: dict[str, str], fragment_count: int) -> None:
+    fragments = {
+        path: status
+        for path, status in statuses.items()
+        if re.fullmatch(r"\.changelog/[^/]+\.md", path)
+        and path != ".changelog/README.md"
+    }
+    if (
+        statuses.get("CHANGELOG.md") != "M"
+        or len(fragments) != fragment_count
+        or fragment_count < 1
+        or any(status != "D" for status in fragments.values())
+        or set(statuses) != {"CHANGELOG.md", *fragments}
+    ):
+        raise ReleaseError("stable release diff must modify CHANGELOG.md and delete every fragment")
 
 
 def verify_changed_paths(root: Path, fragments: list[Path]) -> None:
-    allowed = {"Cargo.toml", "CHANGELOG.md"}
-    allowed.update(str(path.relative_to(root)) for path in fragments)
-    unexpected = sorted(changed_paths(root) - allowed)
-    if unexpected:
-        raise ReleaseError(f"release preparation changed unexpected paths: {', '.join(unexpected)}")
+    statuses = name_status(["git", "diff", "--name-status", "--no-renames"], root)
+    untracked = run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        root,
+        capture_output=True,
+    ).stdout.splitlines()
+    statuses.update({path: "A" for path in untracked})
+    verify_stable_diff(statuses, len(fragments))
+
+
+def git_bytes(root: Path, revision: str, path: str) -> bytes:
+    return subprocess.run(
+        ["git", "show", f"{revision}:{path}"],
+        cwd=root,
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+
+
+def verify_ancestor(root: Path, ancestor: str, descendant: str) -> None:
+    try:
+        run(["git", "merge-base", "--is-ancestor", ancestor, descendant], root)
+    except subprocess.CalledProcessError as error:
+        raise ReleaseError(f"{ancestor} is not an ancestor of {descendant}") from error
+
+
+def verify_target_tag(root: Path, target_tag: str, expected_sha: str) -> None:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{target_tag}^{{commit}}"],
+        cwd=root,
+        check=False,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode == 1:
+        return
+    if result.returncode != 0:
+        raise ReleaseError(f"could not resolve target tag {target_tag}")
+    actual_sha = result.stdout.strip()
+    if actual_sha != expected_sha:
+        raise ReleaseError(
+            f"target tag {target_tag} resolves to {actual_sha}, expected {expected_sha}"
+        )
 
 
 def validate_merged(
     root: Path,
     expected_sha: str,
+    source_sha: str,
     expected_version: str,
     expected_tag: str,
+    expected_fragment_count: int,
     expected_package_count: int,
 ) -> None:
     head = run(["git", "rev-parse", "HEAD"], root, capture_output=True).stdout.strip()
     if head != expected_sha:
         raise ReleaseError(f"checked out commit {head} does not match merged commit {expected_sha}")
+    verify_target_tag(root, expected_tag, expected_sha)
+    verify_ancestor(root, source_sha, expected_sha)
+    statuses = name_status(
+        ["git", "diff", "--name-status", "--no-renames", source_sha, expected_sha], root
+    )
+    verify_stable_diff(statuses, expected_fragment_count)
+    if (root / "Cargo.toml").read_bytes() != git_bytes(root, source_sha, "Cargo.toml"):
+        raise ReleaseError("stable release changed Cargo.toml")
+    if (root / "Cargo.lock").read_bytes() != git_bytes(root, source_sha, "Cargo.lock"):
+        raise ReleaseError("stable release changed Cargo.lock")
 
     candidate = workspace_version(root / "Cargo.toml")
     parse_version(candidate)
@@ -349,12 +412,14 @@ def prepare(root: Path, changelogs: Path) -> None:
     package_count = verify_workspace_versions(metadata, candidate)
 
     verify_changed_paths(root, fragments)
-    require_changes(root)
 
     expected_tag = f"v{candidate}"
+    source_sha = run(["git", "rev-parse", "HEAD"], root, capture_output=True).stdout.strip()
     set_output("changed", "true")
+    set_output("source_sha", source_sha)
     set_output("expected_version", candidate)
     set_output("expected_tag", expected_tag)
+    set_output("fragment_count", str(len(fragments)))
     set_output("package_count", str(package_count))
     print(
         f"Prepared {expected_tag} from {len(fragments)} fragment(s); "
@@ -367,8 +432,10 @@ def main() -> int:
     parser.add_argument("--changelogs", type=Path, help="Pinned changelogs binary")
     parser.add_argument("--validate-merged", action="store_true")
     parser.add_argument("--expected-sha")
+    parser.add_argument("--expected-source-sha")
     parser.add_argument("--expected-version")
     parser.add_argument("--expected-tag")
+    parser.add_argument("--expected-fragment-count", type=int)
     parser.add_argument("--expected-package-count", type=int)
     parser.add_argument("--root", type=Path, default=Path.cwd())
     args = parser.parse_args()
@@ -378,8 +445,10 @@ def main() -> int:
         if args.validate_merged:
             expected = {
                 "--expected-sha": args.expected_sha,
+                "--expected-source-sha": args.expected_source_sha,
                 "--expected-version": args.expected_version,
                 "--expected-tag": args.expected_tag,
+                "--expected-fragment-count": args.expected_fragment_count,
                 "--expected-package-count": args.expected_package_count,
             }
             missing = [name for name, value in expected.items() if value is None]
@@ -388,15 +457,25 @@ def main() -> int:
             validate_merged(
                 root,
                 args.expected_sha,
+                args.expected_source_sha,
                 args.expected_version,
                 args.expected_tag,
+                args.expected_fragment_count,
                 args.expected_package_count,
             )
         else:
             if args.changelogs is None:
                 parser.error("--changelogs is required unless --validate-merged is used")
             prepare(root, args.changelogs.resolve())
-    except (OSError, KeyError, subprocess.CalledProcessError, tomllib.TOMLDecodeError, ReleaseError) as error:
+    except subprocess.CalledProcessError as error:
+        output = error.stdout
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        if output:
+            print(output, file=sys.stderr, end="" if output.endswith("\n") else "\n")
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except (OSError, KeyError, tomllib.TOMLDecodeError, ReleaseError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     return 0
