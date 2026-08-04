@@ -6730,6 +6730,8 @@ impl Backend<FoundryNetwork> {
                     Default::default()
                 };
 
+                // TODO: Assess restoring fork-backed simulations by deriving a canonical
+                // post-state root.
                 let accounts = cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
                 let state_root = state_root(&accounts);
                 let header = Header {
