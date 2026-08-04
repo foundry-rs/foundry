@@ -462,7 +462,7 @@ impl EvmOpts {
         eyre::bail!(
             "fork endpoint {} changed while its identity was being resolved",
             fork_endpoint_description(fork_url)
-        )
+        );
     }
 
     /// Resolves the chain ID and network family exposed by the configured fork endpoint.
@@ -630,9 +630,8 @@ impl EvmOpts {
                  were being resolved",
                 fork_endpoint_description(fork_url)
             );
-        } else {
-            Ok((self.local_evm_env(), self.local_tx_env(), None))
         }
+        Ok((self.local_evm_env(), self.local_tx_env(), None))
     }
 
     /// Returns the [`EvmEnv`] (cfg + block) and [`BlockNumber`] fetched from the fork endpoint via

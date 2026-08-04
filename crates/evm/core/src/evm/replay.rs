@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use revm::{
-    context::journaled_state::account::JournaledAccountTr,
-    context_interface::result::ResultAndState, inspector::Inspector,
-};
+#[cfg(any(feature = "monad", test))]
+use revm::context::journaled_state::account::JournaledAccountTr;
+use revm::{context_interface::result::ResultAndState, inspector::Inspector};
 
 use super::FoundryEvmFactory;
+#[cfg(any(feature = "monad", test))]
 use crate::backend::JournaledState;
 
 /// A protocol system transaction that must bypass ordinary transaction validation.
@@ -26,6 +26,7 @@ pub struct ProtocolSystemCall {
 }
 
 impl ProtocolSystemCall {
+    #[cfg(feature = "monad")]
     pub(crate) fn validate_chain_id(&self, chain_id: u64) -> Result<()> {
         if let Some(envelope_chain_id) = self.chain_id
             && envelope_chain_id != chain_id
@@ -38,6 +39,7 @@ impl ProtocolSystemCall {
         Ok(())
     }
 
+    #[cfg(any(feature = "monad", test))]
     pub(crate) fn apply_prestate<DB: alloy_evm::Database>(
         &self,
         db: &mut DB,
@@ -92,6 +94,7 @@ where
     factory.transact_replay(evm, tx)
 }
 
+#[cfg(feature = "monad")]
 pub(crate) fn finish_protocol_system_call<H>(
     mut result: ResultAndState<H>,
 ) -> Result<ResultAndState<H>> {

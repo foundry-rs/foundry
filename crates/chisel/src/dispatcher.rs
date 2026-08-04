@@ -678,9 +678,12 @@ mod tests {
     use super::*;
     #[cfg(feature = "monad")]
     use foundry_config::SolcReq;
-    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
     #[cfg(feature = "monad")]
-    use foundry_evm::{core::evm::MonadEvmNetwork, opts::Env};
+    use foundry_evm::core::evm::MonadEvmNetwork;
+    use foundry_evm::{
+        core::evm::EthEvmNetwork,
+        opts::{Env, EvmOpts},
+    };
     #[cfg(feature = "monad")]
     use semver::Version;
 

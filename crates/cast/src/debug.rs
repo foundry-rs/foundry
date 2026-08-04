@@ -6,7 +6,7 @@ use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
-#[cfg(test)]
+#[cfg(all(test, feature = "monad"))]
 use foundry_evm::hardforks::EthereumHardfork;
 #[cfg(feature = "monad")]
 use foundry_evm::hardforks::MonadHardfork;

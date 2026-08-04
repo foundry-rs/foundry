@@ -54,12 +54,11 @@ pub mod txpool;
 pub mod vaddr;
 pub mod wallet;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "monad"))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "monad")]
     fn normalized_hardfork_network_is_applied_to_evm_opts() {
         let figment = Config::figment().merge(("hardfork", "monad:MonadNine"));
         let (config, evm_opts) = load_cast_config_and_evm_opts(figment).unwrap();
