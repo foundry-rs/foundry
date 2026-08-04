@@ -18,7 +18,7 @@ use foundry_cli::{
 };
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
-use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
 use serde_json::json;
 use std::path::Path;
@@ -103,6 +103,9 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// Derive accounts from a mnemonic
@@ -162,6 +165,9 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// EIP-7702 sign authorization.
@@ -568,16 +574,20 @@ impl WalletSubcommands {
             Self::Vanity(cmd) => {
                 cmd.run()?;
             }
-            Self::Address { wallet, private_key_override } => {
-                let wallet = private_key_override
-                    .map(|pk| WalletOpts {
+            Self::Address { wallet, browser, private_key_override } => {
+                let addr = if let Some(pk) = private_key_override {
+                    WalletOpts {
                         raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
-                    })
-                    .unwrap_or(wallet)
+                    }
                     .signer()
-                    .await?;
-                let addr = wallet.address();
+                    .await?
+                    .address()
+                } else if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                    browser.address()
+                } else {
+                    wallet.signer().await?.address()
+                };
                 print_scalar(addr.to_checksum(None))?;
             }
             Self::Derive { mnemonic, accounts, insecure } => {
@@ -649,9 +659,12 @@ impl WalletSubcommands {
 
                 print_scalar(format!("0x{}", hex::encode(public_key)))?;
             }
-            Self::Sign { message, data, from_file, no_hash, wallet } => {
-                let wallet = wallet.signer().await?;
-                let sig = if data {
+            Self::Sign { message, data, from_file, no_hash, wallet, browser } => {
+                if browser.browser && no_hash {
+                    eyre::bail!("Raw hash signing is not supported with a browser wallet");
+                }
+
+                let typed_data = if data {
                     let typed_data: TypedData = if from_file {
                         // data is a file name, read json from file
                         foundry_common::fs::read_json_file(message.as_ref())?
@@ -659,24 +672,42 @@ impl WalletSubcommands {
                         // data is a json string
                         serde_json::from_str(&message)?
                     };
-                    wallet.sign_dynamic_typed_data(&typed_data).await?
-                } else if no_hash {
-                    wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
+                    Some(typed_data)
                 } else {
-                    wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
+                    None
                 };
+
+                let (sig, address) =
+                    if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                        let sig = if let Some(typed_data) = &typed_data {
+                            browser.sign_dynamic_typed_data(typed_data).await?
+                        } else {
+                            browser.sign_message(&Self::hex_str_to_bytes(&message)?).await?
+                        };
+                        (sig, browser.address())
+                    } else {
+                        let wallet = wallet.signer().await?;
+                        let sig = if let Some(typed_data) = &typed_data {
+                            wallet.sign_dynamic_typed_data(typed_data).await?
+                        } else if no_hash {
+                            wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
+                        } else {
+                            wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
+                        };
+                        (sig, wallet.address())
+                    };
 
                 if shell::verbosity() > 0 {
                     if shell::is_json() {
                         print_json_success(json!({
                             "message": message,
-                            "address": wallet.address(),
+                            "address": address,
                             "signature": hex::encode(sig.as_bytes()),
                         }))?;
                     } else {
                         sh_status!("Successfully signed!")?;
                         sh_status!("   Message: {message}")?;
-                        sh_status!("   Address: {}", wallet.address())?;
+                        sh_status!("   Address: {address}")?;
                         sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
                     }
                 } else {

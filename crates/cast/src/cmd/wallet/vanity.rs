@@ -343,6 +343,17 @@ impl VanityMatcher for RegexMatcher {
 }
 
 fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>> {
+    let pattern =
+        pattern.strip_prefix("0x").or_else(|| pattern.strip_prefix("0X")).unwrap_or(pattern);
+    if pattern.is_empty() {
+        return Err(eyre::eyre!("Vanity pattern cannot be empty"));
+    }
+
+    let is_hex = pattern.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if is_hex && pattern.len() > 40 {
+        return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
+    }
+
     if let Ok(decoded) = hex::decode(pattern) {
         if decoded.len() > 20 {
             return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
@@ -350,6 +361,7 @@ fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>
         Ok(Either::Left(decoded))
     } else {
         let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
+        let pattern = if is_hex { pattern.to_ascii_lowercase() } else { pattern.to_string() };
         Ok(Either::Right(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
     }
 }
@@ -412,5 +424,57 @@ mod tests {
 
         assert!(err.to_string().contains("failed to parse wallet file"));
         assert_eq!(fs::read_to_string(tmp.path()).unwrap(), original);
+    }
+
+    #[test]
+    fn parse_odd_length_hex_case_insensitively() {
+        let mut starts_with = [0; 20];
+        starts_with[0] = 0xa0;
+        let Either::Right(pattern) = parse_pattern("A", true).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        assert!(SingleRegexMatcher { re: pattern }.is_match(&Address::from(starts_with)));
+
+        let mut ends_with = [0; 20];
+        ends_with[19] = 0x0a;
+        let Either::Right(pattern) = parse_pattern("A", false).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        assert!(SingleRegexMatcher { re: pattern }.is_match(&Address::from(ends_with)));
+    }
+
+    #[test]
+    fn reject_overlong_odd_length_hex_pattern() {
+        let err = parse_pattern(&"1".repeat(41), true).unwrap_err();
+        assert_eq!(err.to_string(), "Hex pattern must be less than 20 bytes");
+    }
+
+    #[test]
+    fn parse_prefixed_vanity_patterns() {
+        let Either::Left(lowercase) = parse_pattern("0xdead", true).unwrap() else {
+            panic!("expected an exact hex pattern");
+        };
+        assert_eq!(lowercase, hex::decode("dead").unwrap());
+        let mut matching = [0; 20];
+        matching[..2].copy_from_slice(&lowercase);
+        assert!(LeftHexMatcher { left: lowercase }.is_match(&Address::from(matching)));
+
+        let Either::Left(uppercase) = parse_pattern("0Xdead", true).unwrap() else {
+            panic!("expected an exact hex pattern");
+        };
+        assert_eq!(uppercase, hex::decode("dead").unwrap());
+
+        let Either::Right(odd_nibble) = parse_pattern("0x9", true).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        let mut matching = [0; 20];
+        matching[0] = 0x90;
+        assert!(SingleRegexMatcher { re: odd_nibble }.is_match(&Address::from(matching)));
+    }
+
+    #[test]
+    fn reject_empty_prefixed_vanity_pattern() {
+        let err = parse_pattern("0x", true).unwrap_err();
+        assert_eq!(err.to_string(), "Vanity pattern cannot be empty");
     }
 }

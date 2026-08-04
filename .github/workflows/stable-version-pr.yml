@@ -33,7 +33,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout master
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -72,7 +72,7 @@ jobs:
       - name: Create repository-scoped App token
         id: app-token
         if: env.STABLE_VERSION_PRS_ENABLED == 'true'
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.FOUNDRY_RELEASE_APP_ID }}
           private-key: ${{ secrets.FOUNDRY_RELEASE_APP_PRIVATE_KEY }}

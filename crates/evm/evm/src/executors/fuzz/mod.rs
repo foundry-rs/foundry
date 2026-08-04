@@ -505,11 +505,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
         result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
         let (_, last_run_worker_idx) = last_run_worker.expect("at least one worker");
+        let mut output_worker_idx = last_run_worker_idx;
 
         if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
             result.success = false;
 
             let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
+            output_worker_idx = failed_worker_idx;
             let failed_worker = &mut workers[failed_worker_idx];
 
             let counterexample = failed_worker.counterexample.take();
@@ -555,7 +557,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
 
         if !self.config.show_logs {
-            result.logs = workers[last_run_worker_idx].logs.clone();
+            result.logs = workers[output_worker_idx].logs.clone();
         }
 
         for mut worker in workers {
@@ -625,9 +627,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.corpus.payable_value_weight,
         );
         let fuzz_state = fuzz_seed.stateless_worker();
-        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::stateless(
+        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::stateless_with_fixtures(
             generator,
             fuzz_state.clone(),
+            fuzz_fixtures.clone(),
             func.clone(),
             &self.config.corpus,
         )?;
@@ -700,7 +703,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // 2. Worker hasn't reached its specific run limit
         'stop: while shared_state.should_continue() && worker.runs < worker_runs {
             // If counterexample recorded, replay it first, without incrementing runs.
-            let (input, fuzz_run) = if worker_id == 0
+            let (input, fuzz_run, is_persisted_replay) = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
                 && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
@@ -729,6 +732,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         failure.fuzz.run,
                         Some(failure.fuzz.worker.unwrap_or(worker_id as u32)),
                     )),
+                    true,
                 )
             } else {
                 runs_since_sync += 1;
@@ -770,6 +774,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         Some(fuzz_run),
                         Some(worker_id as u32),
                     )),
+                    false,
                 )
             };
 
@@ -799,6 +804,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             ) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
+                        if is_persisted_replay {
+                            continue 'stop;
+                        }
                         let total_runs = inc_runs();
 
                         if worker_id == 0 && self.config.corpus.collect_edge_coverage() {
@@ -855,7 +863,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         counterexample: outcome,
                         ..
                     }) => {
-                        inc_runs();
+                        if !is_persisted_replay {
+                            inc_runs();
+                        }
                         worker.failure_run = fuzz_run;
 
                         // Only classify magic skip payloads when the revert originates from the
@@ -867,7 +877,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         } else {
                             rd.maybe_decode(&outcome.1.result, status)
                         };
-                        worker.logs.extend(outcome.1.logs.clone());
+                        if self.config.show_logs {
+                            worker.logs.extend(outcome.1.logs.clone());
+                        } else {
+                            worker.logs.clone_from(&outcome.1.logs);
+                        }
                         worker.counterexample = Some(outcome);
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         shared_state.try_claim_failure(worker_id);

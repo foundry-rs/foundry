@@ -182,7 +182,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     }
 
     if matches!(chain, BinanceSmartChainTestnet) {
-        return "https://bsc-testnet-rpc.publicnode.com".to_string();
+        return "https://bsc-testnet.bnbchain.org".to_string();
     }
 
     if matches!(chain, Celo) {
