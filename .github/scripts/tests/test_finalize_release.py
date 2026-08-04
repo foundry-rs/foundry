@@ -104,7 +104,7 @@ class StableTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.ReleaseError, "expected"):
             MODULE.verify_exact(FakeCommands({command: f'"{DIGEST}"'}), "image", "v1.2.3", OTHER_DIGEST)
 
-    def test_release_run_requirement_selects_latest_matching_run(self):
+    def test_release_run_requirement_uses_latest_matching_run(self):
         command = (
             "gh", "api", "--paginate", "--slurp",
             "repos/r/actions/workflows/release.yml/runs?event=push&head_sha=abc&per_page=100",
@@ -114,6 +114,9 @@ class StableTests(unittest.TestCase):
             {"id": 2, "conclusion": "success", "head_sha": "abc", "head_branch": "v1.0.0"},
         ]}
         self.assertEqual(MODULE.require_release_run(FakeCommands({command: json.dumps([runs])}), "r", "v1.0.0", "abc"), 2)
+        runs["workflow_runs"][1]["conclusion"] = "failure"
+        with self.assertRaisesRegex(MODULE.ReleaseError, "latest .* was not successful"):
+            MODULE.require_release_run(FakeCommands({command: json.dumps([runs])}), "r", "v1.0.0", "abc")
 
     def test_rc_draft_is_published_without_aliases(self):
         tag = "v1.2.3-rc1"
@@ -219,6 +222,22 @@ class NightlyTests(unittest.TestCase):
         })
         MODULE.finalize_nightly(commands, "r", "image", tag, DIGEST)
         self.assertLess(commands.calls.index(publish), commands.calls.index(promote))
+
+    def test_published_nightly_retry_still_promotes_alias(self):
+        candidate = "b" * 40
+        tag = f"nightly-{candidate}"
+        promote = ("docker", "buildx", "imagetools", "create", "--tag", "image:nightly", f"image@{DIGEST}")
+        commands = FakeCommands({
+            digest_command(f"image:{tag}"): f'"{DIGEST}"',
+            RELEASES_COMMAND: release_pages(release(tag, prerelease=True)),
+            ("git", "rev-parse", f"{tag}^{{commit}}"): candidate,
+            self.inspect_command(): completed(self.inspect_command(), stdout=self.image_data(candidate, candidate)),
+            promote: 0,
+            digest_command("image:nightly"): f'"{DIGEST}"',
+        })
+        MODULE.finalize_nightly(commands, "r", "image", tag, DIGEST)
+        self.assertFalse(any(call[:3] == ("gh", "release", "edit") for call in commands.calls))
+        self.assertIn(promote, commands.calls)
 
 
 if __name__ == "__main__":
