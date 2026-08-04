@@ -677,6 +677,41 @@ async fn validates_fork_source_chain_instead_of_local_chain_id() {
     assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::ZkSync as u64);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn validates_every_fork_url_uses_the_same_supported_network() {
+    let (_mainnet_api, mainnet_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_fork_urls(vec![mainnet_handle.http_endpoint(), zksync_handle.http_endpoint()]),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected zkSync fallback URL to be rejected") };
+    assert!(format!("{error:?}").contains("cannot execute native EraVM bytecode"));
+
+    let (_sepolia_api, sepolia_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_fork_urls(vec![mainnet_handle.http_endpoint(), sepolia_handle.http_endpoint()]),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected mixed fork networks to be rejected") };
+    assert!(format!("{error:?}").contains("fork endpoints must use the same chain ID"));
+
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_fork_urls(vec![mainnet_handle.http_endpoint(), sepolia_handle.http_endpoint()])
+            .with_fork_chain_id(Some(U256::from(NamedChain::Mainnet as u64))),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected unverifiable offline fallbacks to fail") };
+    assert!(format!("{error:?}").contains("multiple fork URLs cannot be validated"));
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9743>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_set_storage_visible_to_call() {
@@ -2952,6 +2987,50 @@ async fn test_anvil_reset_with_url_updates_fork_urls() {
         vec![new_url.clone()],
         "ClientForkConfig.fork_urls should reflect the new URL after anvil_reset"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_updates_inferred_chain_id() {
+    let (_mainnet_api, mainnet_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(mainnet_handle.http_endpoint()))).await;
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::Mainnet as u64);
+
+    let (_sepolia_api, sepolia_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(sepolia_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::Sepolia as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_replaces_offline_fork_chain_id() {
+    let (_mainnet_api, mainnet_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(mainnet_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64))
+            .with_fork_chain_id(Some(U256::from(NamedChain::Mainnet as u64))),
+    )
+    .await;
+
+    let (_sepolia_api, sepolia_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(sepolia_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::Sepolia as u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -465,9 +465,8 @@ impl<N: Network> ClientFork<N> {
         let (provider, source_chain_id) = if urls.is_empty() {
             (self.provider(), None)
         } else {
-            let provider = self.config.read().provider_for_urls(&urls)?;
-            let source_chain_id = provider.get_chain_id().await?;
-            ensure_fork_network_supported(source_chain_id)?;
+            let config = self.config.read().clone();
+            let (provider, source_chain_id) = config.validated_provider_for_urls(&urls).await?;
             (provider, Some(source_chain_id))
         };
         let block =
@@ -939,6 +938,33 @@ impl<N: Network> ClientForkConfig<N> {
             builder.build().map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
         };
         Ok(Arc::new(provider))
+    }
+
+    /// Builds a provider after validating that every URL belongs to the same supported network.
+    pub(crate) async fn validated_provider_for_urls(
+        &self,
+        urls: &[String],
+    ) -> Result<(Arc<RetryProvider<N>>, u64), BlockchainError> {
+        let mut source_chain_id = None;
+        for url in urls {
+            let provider = self.provider_for_urls(std::slice::from_ref(url))?;
+            let chain_id = provider.get_chain_id().await?;
+            ensure_fork_network_supported(chain_id)?;
+            if let Some(source_chain_id) = source_chain_id
+                && chain_id != source_chain_id
+            {
+                return Err(BlockchainError::UnsupportedForkNetwork {
+                    chain_id,
+                    reason: "fork endpoints must use the same chain ID",
+                });
+            }
+            source_chain_id = Some(chain_id);
+        }
+
+        let source_chain_id = source_chain_id.ok_or_else(|| {
+            BlockchainError::InvalidUrl("at least one fork URL required".to_string())
+        })?;
+        Ok((self.provider_for_urls(urls)?, source_chain_id))
     }
 
     /// Updates the block forked off `(block number, block hash, timestamp)`

@@ -1386,6 +1386,7 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
+        let override_chain_id = self.chain_id;
 
         // Always bootstrap with the primary URL only to avoid race conditions
         // where discovery calls (get_chain_id, find_latest_fork_block, get_block)
@@ -1402,9 +1403,42 @@ impl NodeConfig {
         );
 
         let source_chain_id = if let Some(chain_id) = self.fork_chain_id {
+            eyre::ensure!(
+                self.fork_urls.len() == 1,
+                "multiple fork URLs cannot be validated with --fork-chain-id; remove \
+                 --fork-chain-id to validate every endpoint"
+            );
             chain_id.to()
         } else {
-            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+            let chain_id = provider
+                .get_chain_id()
+                .await
+                .wrap_err_with(|| format!("failed to fetch network chain ID from {eth_rpc_url}"))?;
+            ensure_fork_network_supported(chain_id)?;
+
+            for url in self.fork_urls.iter().skip(1) {
+                let endpoint_provider = ProviderBuilder::<AnyNetwork>::new(url)
+                    .timeout(self.fork_request_timeout)
+                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                    .compute_units_per_second(self.compute_units_per_second)
+                    .max_retry(self.fork_request_retries)
+                    .headers(self.fork_headers.clone())
+                    .build()
+                    .wrap_err_with(|| format!("failed to establish provider to fork url {url}"))?;
+                let endpoint_chain_id = endpoint_provider
+                    .get_chain_id()
+                    .await
+                    .wrap_err_with(|| format!("failed to fetch network chain ID from {url}"))?;
+                ensure_fork_network_supported(endpoint_chain_id)?;
+                if endpoint_chain_id != chain_id {
+                    eyre::bail!(
+                        "fork endpoints must use the same chain ID: expected {chain_id}, got \
+                         {endpoint_chain_id} from {url}"
+                    );
+                }
+            }
+
+            chain_id
         };
         ensure_fork_network_supported(source_chain_id)?;
 
@@ -1558,7 +1592,6 @@ latest block number: {latest_block}"
 
         let block_hash = block.header.hash;
 
-        let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
         apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
             evm_env,

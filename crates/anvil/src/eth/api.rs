@@ -47,7 +47,6 @@ use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
     map::{HashMap, HashSet},
 };
-use alloy_provider::Provider;
 use alloy_rpc_types::{
     AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
@@ -565,9 +564,8 @@ impl<N: Network> EthApi<N> {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
             let urls = vec![url.clone()];
-            let new_provider = fork.config.read().provider_for_urls(&urls)?;
-            let source_chain_id = new_provider.get_chain_id().await?;
-            backend::fork::ensure_fork_network_supported(source_chain_id)?;
+            let config = fork.config.read().clone();
+            let (new_provider, _) = config.validated_provider_for_urls(&urls).await?;
 
             let mut config = fork.config.write();
             config.provider = new_provider;
@@ -575,7 +573,9 @@ impl<N: Network> EthApi<N> {
             config.fork_urls = urls;
         }
         // Keep node_config in sync so anvil_reset(None) uses the updated URL
-        self.backend.node_config.write().await.fork_urls = vec![url];
+        let mut node_config = self.backend.node_config.write().await;
+        node_config.fork_urls = vec![url];
+        node_config.fork_chain_id = None;
         Ok(())
     }
 

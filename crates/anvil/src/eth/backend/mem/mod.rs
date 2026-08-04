@@ -3343,12 +3343,12 @@ impl<N: Network> Backend<N> {
             // update all settings related to the forked block
             {
                 if let Some(fork_url) = forking.json_rpc_url {
-                    self.reset_block_number(fork_url, fork_block_number).await?;
+                    self.reset_block_number(fork_url, fork_block_number, true).await?;
                 } else {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     if let Some(fork_url) = target_rpc_url.clone() {
-                        self.reset_block_number(fork_url, fork_block_number).await?;
+                        self.reset_block_number(fork_url, fork_block_number, false).await?;
                     }
 
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
@@ -3478,9 +3478,16 @@ impl<N: Network> Backend<N> {
         &self,
         fork_url: String,
         fork_block_number: u64,
+        validated_url: bool,
     ) -> Result<(), BlockchainError> {
-        let mut node_config = self.node_config.write().await;
+        let mut node_config = self.node_config.read().await.clone();
         node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
+        let override_chain_id =
+            self.get_fork().and_then(|fork| fork.config.read().override_chain_id);
+        node_config.set_chain_id(override_chain_id);
+        if validated_url {
+            node_config.fork_chain_id = None;
+        }
         // Update fork_urls so setup_fork_db_config uses the correct URL set
         node_config.fork_urls = vec![fork_url.clone()];
 
@@ -3490,6 +3497,7 @@ impl<N: Network> Backend<N> {
 
         *self.db.write().await = Box::new(forked_db);
         let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+        *self.node_config.write().await = node_config;
         *self.fork.write() = Some(fork);
         *self.evm_env.write() = evm_env;
 
