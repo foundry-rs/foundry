@@ -5803,8 +5803,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     }
 
     /// Apply [SerializableState] data to the backend storage.
-    pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        let mut block_env = state.block.clone();
+    pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
+        let mut block_env = state.block.take();
         let mut selected_head = None;
         let mut selected_header = None;
         let mut checkpoint = None;
@@ -5902,8 +5902,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         // without their transactions or a partially updated head.
         {
             let mut storage = self.blockchain.storage.write();
-            storage.load_blocks(state.blocks.clone());
-            storage.load_transactions(state.transactions.clone());
+            storage.load_blocks(std::mem::take(&mut state.blocks));
+            storage.load_transactions(std::mem::take(&mut state.transactions));
             if let Some(checkpoint) = checkpoint {
                 storage.insert_block(checkpoint);
             }
@@ -5950,7 +5950,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             ));
         }
 
-        if !self.db.write().await.load_state(state.clone())? {
+        let historical_states = state.historical_states.take();
+        if !self.db.write().await.load_state(state)? {
             return Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
@@ -5973,7 +5974,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         };
         self.db.write().await.set_block_hashes(block_hashes);
 
-        if let Some(historical_states) = state.historical_states {
+        if let Some(historical_states) = historical_states {
             self.states.write().load_states(historical_states);
         }
 
