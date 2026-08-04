@@ -16,7 +16,10 @@ use foundry_common::{
     ignore_metadata_hash, shell,
 };
 use foundry_compilers::{
+    Graph,
     artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
+    compilers::ParsedSource,
+    multi::{MultiCompilerLanguage, MultiCompilerParser},
     utils::canonicalize,
 };
 use foundry_config::Config;
@@ -99,7 +102,22 @@ pub fn build_project(
 
     let target_path = match args.contract.path() {
         Some(path) => Some(canonicalize(project.root().join(path))?),
-        None => project.find_contract_path(&args.contract.name).ok(),
+        None => Graph::<MultiCompilerParser>::resolve(&project.paths).ok().and_then(|graph| {
+            if graph
+                .nodes
+                .iter()
+                .any(|node| matches!(node.data.language(), MultiCompilerLanguage::Vyper(_)))
+            {
+                return None;
+            }
+            let mut matches = graph.nodes.iter().filter(|node| {
+                node.data.contract_names().iter().any(|name| name == &args.contract.name)
+            });
+            let target = matches.next()?;
+            (matches.next().is_none()
+                && graph.input_nodes().any(|input| input.path() == target.path()))
+            .then(|| target.path().to_path_buf())
+        }),
     };
     if let Some(target_path) = target_path {
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
