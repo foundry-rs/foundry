@@ -55,6 +55,9 @@ pub struct TestOutcome {
     ///
     /// Essentially `identifier => signature => result`.
     pub results: BTreeMap<String, SuiteResult>,
+    /// Complete results for JSON file output, including suites hidden from fail-fast console
+    /// output.
+    pub(crate) json_file_results: Option<BTreeMap<String, SuiteResult>>,
     /// Whether to allow test failures without failing the entire test run.
     pub allow_failure: bool,
     /// The decoder used to decode traces and logs.
@@ -81,6 +84,7 @@ impl TestOutcome {
     ) -> Self {
         Self {
             results,
+            json_file_results: None,
             allow_failure,
             last_run_decoder: None,
             gas_report: None,
