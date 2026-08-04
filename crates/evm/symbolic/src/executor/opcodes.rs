@@ -1,11 +1,17 @@
 use super::*;
 
+enum MappingStorageProvenance {
+    None,
+    Exact(SymbolicMappingProvenance),
+    Fork { equality: Vec<SymBoolExpr>, inequality: Vec<SymBoolExpr> },
+}
+
 impl SymbolicExecutor {
     fn mapping_storage_provenance(
         &mut self,
         state: &PathState,
         key: &SymExpr,
-    ) -> Result<Option<SymbolicMappingProvenance>, SymbolicError> {
+    ) -> Result<MappingStorageProvenance, SymbolicError> {
         let account = state.storage_address;
         let observed = |hash: &SymExpr| {
             state.mapping_hook_keccak_preimages.get(&(account, hash.clone())).cloned()
@@ -13,7 +19,7 @@ impl SymbolicExecutor {
         if let Some(provenance) =
             key.storage_mapping_provenance_observed_with(&mut self.cx, observed)
         {
-            return Ok(Some(provenance));
+            return Ok(MappingStorageProvenance::Exact(provenance));
         }
 
         let hashes = state
@@ -23,22 +29,35 @@ impl SymbolicExecutor {
             .map(|(_, hash)| hash.clone())
             .collect::<Vec<_>>();
         for hash in hashes {
+            let Some(provenance) =
+                hash.storage_mapping_provenance_observed_with(&mut self.cx, |candidate| {
+                    state.mapping_hook_keccak_preimages.get(&(account, candidate.clone())).cloned()
+                })
+            else {
+                continue;
+            };
+            if !state.mapping_storage_store_hooks.contains_key(&(account, provenance.root_slot)) {
+                continue;
+            }
+            if key.as_const().is_some()
+                || key.contains_keccak() && !key.visit_bool(|candidate| candidate == &hash)
+            {
+                continue;
+            }
+
             let equality = SymBoolExpr::eq(&mut self.cx, key.clone(), hash.clone());
-            let inequality = equality.not(&mut self.cx);
-            let (_, inequality_is_sat) = self.constraints_with_condition(state, inequality)?;
+            let inequality = equality.clone().not(&mut self.cx);
+            let (inequality, inequality_is_sat) =
+                self.constraints_with_condition(state, inequality)?;
             if !inequality_is_sat {
-                return Ok(hash.storage_mapping_provenance_observed_with(
-                    &mut self.cx,
-                    |candidate| {
-                        state
-                            .mapping_hook_keccak_preimages
-                            .get(&(account, candidate.clone()))
-                            .cloned()
-                    },
-                ));
+                return Ok(MappingStorageProvenance::Exact(provenance));
+            }
+            let (equality, equality_is_sat) = self.constraints_with_condition(state, equality)?;
+            if equality_is_sat {
+                return Ok(MappingStorageProvenance::Fork { equality, inequality });
             }
         }
-        Ok(None)
+        Ok(MappingStorageProvenance::None)
     }
 
     fn storage_hook_calldata(
@@ -643,6 +662,7 @@ impl SymbolicExecutor {
                 }
             }
             opcode::SSTORE => {
+                let pre_store_state = state.clone();
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::Revert);
@@ -654,17 +674,30 @@ impl SymbolicExecutor {
                     .then(|| state.storage_store_hooks.get(&state.storage_address).copied())
                     .flatten();
                 let mapping = if state.storage_hook_active {
-                    None
+                    MappingStorageProvenance::None
                 } else {
                     self.mapping_storage_provenance(state, &key)?
-                }
-                .and_then(|p| {
-                    state
+                };
+                let mapping = match mapping {
+                    MappingStorageProvenance::None => None,
+                    MappingStorageProvenance::Exact(provenance) => state
                         .mapping_storage_store_hooks
-                        .get(&(state.storage_address, p.root_slot))
+                        .get(&(state.storage_address, provenance.root_slot))
                         .copied()
-                        .map(|hook| (hook, p))
-                });
+                        .map(|hook| (hook, provenance)),
+                    MappingStorageProvenance::Fork { equality, inequality } => {
+                        let store_pc = state.pc - 1;
+                        let mut equality_state = pre_store_state.clone();
+                        equality_state.pc = store_pc;
+                        equality_state.constraints = equality;
+                        let mut inequality_state = pre_store_state;
+                        inequality_state.pc = store_pc;
+                        inequality_state.constraints = inequality;
+                        worklist.push_back(equality_state);
+                        worklist.push_back(inequality_state);
+                        return Ok(StepOutcome::Forked);
+                    }
+                };
                 let old_value = if hook.is_some() || mapping.is_some() {
                     let concrete_key = state.constrained_word(&mut self.cx, &key);
                     Some(state.world.sload(

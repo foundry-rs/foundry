@@ -5209,6 +5209,10 @@ contract MappingTarget {
             sstore(slot, value)
         }
     }
+    function conditionalStore(uint256 key, uint256 value, uint256 control) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(0)));
+        assembly { sstore(add(slot, and(control, 1)), value) }
+    }
     function offsetStore(uint256 key, uint256 value) external {
         bytes32 slot = bytes32(uint256(keccak256(abi.encode(key, uint256(0)))) + 1);
         assembly { sstore(slot, value) }
@@ -5472,6 +5476,16 @@ contract SymbolicMappingStorageHooks is Test {
         assertEq(calls, 1);
         assertEq(seenKey, key);
         assertEq(seenSlot, keccak256(abi.encode(key, uint256(0))));
+    }
+
+    function checkConditionalProvenance(uint256 key, uint256 value, uint256 control) public {
+        target.conditionalStore(key, value, control);
+        if (control & 1 == 0) {
+            assertEq(calls, 1);
+            assertEq(seenKey, key);
+        } else {
+            assertEq(calls, 0);
+        }
     }
 
     function checkCallbackSubtreeSuppression(uint256 key, uint256 value) public {
