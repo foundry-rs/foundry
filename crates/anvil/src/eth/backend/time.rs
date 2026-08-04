@@ -190,11 +190,11 @@ impl TimeManager {
         }) {
             state.next_exact_timestamp = None;
         }
-        if let Some(next_offset) = pending.next_offset {
-            if state.offset_reset_generation == pending.offset_reset_generation {
-                let concurrent_offset = state.offset.saturating_sub(pending.prepared_offset);
-                state.offset = next_offset.saturating_add(concurrent_offset);
-            }
+        if let Some(next_offset) = pending.next_offset
+            && state.offset_reset_generation == pending.offset_reset_generation
+        {
+            let concurrent_offset = state.offset.saturating_sub(pending.prepared_offset);
+            state.offset = next_offset.saturating_add(concurrent_offset);
         }
         state.last_timestamp = pending.timestamp;
     }
