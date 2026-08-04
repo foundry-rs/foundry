@@ -6333,6 +6333,7 @@ impl Backend<FoundryNetwork> {
                 }
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
+                let spec_id = *simulation_evm_env.spec_id();
                 let ethereum_transitions = self
                     .ethereum_block_transitions(self.hardfork(), None, BlockExecutionKind::Complete)
                     .map(|mut transitions| {
@@ -6590,6 +6591,13 @@ impl Backend<FoundryNetwork> {
                     // commit the transaction
                     cache_db.commit(state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
+                    let post_state = if spec_id < SpecId::BYZANTIUM {
+                        let accounts =
+                            cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                        Some(state_root(&accounts))
+                    } else {
+                        None
+                    };
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used
@@ -6635,6 +6643,7 @@ impl Backend<FoundryNetwork> {
                         &result,
                         canonical_logs.clone(),
                         cumulative_gas_used,
+                        post_state,
                         deposit_nonce,
                         deposit_receipt_version,
                     ));
@@ -6651,7 +6660,9 @@ impl Backend<FoundryNetwork> {
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
-                        max_used_gas: None,
+                        max_used_gas: Some(
+                            result.gas().total_gas_spent().max(result.gas().floor_gas()),
+                        ),
                         status: result.is_success(),
                         error: match &result {
                             ExecutionResult::Success { .. } => None,
@@ -6666,16 +6677,13 @@ impl Backend<FoundryNetwork> {
                                     data: Some(output.clone()),
                                 })
                             }
-                            ExecutionResult::Halt { reason: HaltReason::OutOfGas(_), .. } => {
-                                Some(SimulateError {
-                                    code: SimulateError::VM_EXECUTION_ERROR_CODE,
-                                    message: "out of gas".to_string(),
-                                    data: None,
-                                })
-                            }
-                            _ => Some(SimulateError {
-                                code: -3200,
-                                message: "execution failed".to_string(),
+                            ExecutionResult::Halt { reason, .. } => Some(SimulateError {
+                                code: SimulateError::VM_EXECUTION_ERROR_CODE,
+                                message: if matches!(reason, HaltReason::OutOfGas(_)) {
+                                    "out of gas".to_string()
+                                } else {
+                                    format!("vm execution error: {reason}")
+                                },
                                 data: None,
                             }),
                         },
@@ -6722,10 +6730,8 @@ impl Backend<FoundryNetwork> {
                     Default::default()
                 };
 
-                let state_root = cache_db
-                    .maybe_full_db()
-                    .map(|accounts| state_root(&accounts))
-                    .unwrap_or_default();
+                let accounts = cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                let state_root = state_root(&accounts);
                 let header = Header {
                     logs_bloom: receipts.iter().fold(Bloom::ZERO, |mut bloom, receipt| {
                         bloom.accrue_bloom(receipt.logs_bloom());
@@ -6736,7 +6742,7 @@ impl Backend<FoundryNetwork> {
                     parent_hash,
                     beneficiary: block_env.beneficiary,
                     state_root,
-                    difficulty: Default::default(),
+                    difficulty: block_env.difficulty,
                     number: block_env.number.saturating_to(),
                     gas_limit: block_env.gas_limit,
                     gas_used,
@@ -6744,8 +6750,8 @@ impl Backend<FoundryNetwork> {
                     extra_data: Default::default(),
                     mix_hash: block_env.prevrandao.unwrap_or_default(),
                     nonce: Default::default(),
-                    base_fee_per_gas: Some(block_env.basefee),
-                    withdrawals_root: None,
+                    base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block_env.basefee),
+                    withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
                     blob_gas_used: is_cancun.then_some(block_blob_gas_used),
                     excess_blob_gas: if is_cancun { block_env.blob_excess_gas() } else { None },
                     parent_beacon_block_root: ethereum_transitions.and_then(|transitions| {
@@ -6759,6 +6765,12 @@ impl Backend<FoundryNetwork> {
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
+                for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
+                    transaction.block_hash = Some(block_hash);
+                    transaction.block_number = Some(header.number);
+                    transaction.transaction_index = Some(transaction_index as u64);
+                    transaction.block_timestamp = Some(header.timestamp);
+                }
                 let mut block = alloy_rpc_types::Block {
                     header: AnyRpcHeader {
                         hash: block_hash,
@@ -6768,7 +6780,7 @@ impl Backend<FoundryNetwork> {
                     },
                     uncles: vec![],
                     transactions: BlockTransactions::Full(transactions),
-                    withdrawals: None,
+                    withdrawals: (spec_id >= SpecId::SHANGHAI).then_some(Default::default()),
                 };
 
                 if !return_full_transactions {
