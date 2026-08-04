@@ -84,6 +84,7 @@ pub struct FuzzDictionaryConfig {
     pub max_fuzz_dictionary_addresses: usize,
     /// How many values to record at most.
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    /// The dictionary always retains a zero seed, so the effective minimum is one.
     #[serde(
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"

@@ -103,6 +103,9 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// Derive accounts from a mnemonic
@@ -571,16 +574,20 @@ impl WalletSubcommands {
             Self::Vanity(cmd) => {
                 cmd.run()?;
             }
-            Self::Address { wallet, private_key_override } => {
-                let wallet = private_key_override
-                    .map(|pk| WalletOpts {
+            Self::Address { wallet, browser, private_key_override } => {
+                let addr = if let Some(pk) = private_key_override {
+                    WalletOpts {
                         raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
-                    })
-                    .unwrap_or(wallet)
+                    }
                     .signer()
-                    .await?;
-                let addr = wallet.address();
+                    .await?
+                    .address()
+                } else if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                    browser.address()
+                } else {
+                    wallet.signer().await?.address()
+                };
                 print_scalar(addr.to_checksum(None))?;
             }
             Self::Derive { mnemonic, accounts, insecure } => {

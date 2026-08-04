@@ -542,9 +542,15 @@ mod tests {
         FuzzFixtures,
         strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
-    use alloy_primitives::B256;
+    use alloy_dyn_abi::{DynSolType, DynSolValue};
+    use alloy_primitives::{B256, U256};
     use foundry_common::abi::get_func;
-    use proptest::strategy::{Strategy, ValueTree};
+    use foundry_config::FuzzDictionaryConfig;
+    use proptest::{
+        strategy::{Strategy, ValueTree},
+        test_runner::TestRunner,
+    };
+    use revm::database::{CacheDB, EmptyDB};
     use std::collections::HashSet;
 
     #[test]
@@ -573,6 +579,23 @@ mod tests {
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
         let _ = runner.run(&strategy, |_| Ok(()));
+    }
+
+    #[test]
+    fn can_fuzz_from_zero_capacity_dictionary() {
+        let state = EvmFuzzState::new(
+            &[],
+            &CacheDB::<EmptyDB>::default(),
+            FuzzDictionaryConfig { max_fuzz_dictionary_values: 0, ..Default::default() },
+            None,
+        );
+        let strategy = super::fuzz_param_from_state(&DynSolType::Uint(256), &state);
+        let mut runner = TestRunner::default();
+
+        assert_eq!(
+            strategy.new_tree(&mut runner).unwrap().current(),
+            DynSolValue::Uint(U256::ZERO, 256)
+        );
     }
 
     #[test]
