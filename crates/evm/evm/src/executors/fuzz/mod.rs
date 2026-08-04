@@ -505,11 +505,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
         result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
         let (_, last_run_worker_idx) = last_run_worker.expect("at least one worker");
+        let mut output_worker_idx = last_run_worker_idx;
 
         if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
             result.success = false;
 
             let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
+            output_worker_idx = failed_worker_idx;
             let failed_worker = &mut workers[failed_worker_idx];
 
             let counterexample = failed_worker.counterexample.take();
@@ -555,7 +557,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
 
         if !self.config.show_logs {
-            result.logs = workers[last_run_worker_idx].logs.clone();
+            result.logs = workers[output_worker_idx].logs.clone();
         }
 
         for mut worker in workers {
@@ -875,7 +877,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         } else {
                             rd.maybe_decode(&outcome.1.result, status)
                         };
-                        worker.logs.extend(outcome.1.logs.clone());
+                        if self.config.show_logs {
+                            worker.logs.extend(outcome.1.logs.clone());
+                        } else {
+                            worker.logs.clone_from(&outcome.1.logs);
+                        }
                         worker.counterexample = Some(outcome);
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         shared_state.try_claim_failure(worker_id);
