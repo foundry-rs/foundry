@@ -2857,12 +2857,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[cfg(feature = "monad")]
     async fn fork_factory_boundary_preserves_explicit_execution_overrides() {
-        async fn inferred_opts(endpoint: String, networks: Option<NetworkConfigs>) -> EvmOpts {
+        async fn pinned_opts(endpoint: String, networks: Option<NetworkConfigs>) -> EvmOpts {
             let mut opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
             if let Some(networks) = networks {
                 opts.networks = networks;
             }
             opts.infer_network_from_fork().await.unwrap();
+            let identity = opts.fork_endpoint.clone().unwrap();
+            let network_is_inferred = opts.fork_network_is_inferred;
+            opts.expect_fork_endpoint(identity, network_is_inferred);
+            opts.pin_fork_block().await.unwrap();
             opts
         }
 
@@ -2870,14 +2874,18 @@ mod tests {
             CreateFork { url, enable_caching: false, evm_opts: opts, expected_context: None }
         }
 
-        let (_ethereum_api, ethereum) = spawn(NodeConfig::test()).await;
-        let (_monad_api, monad) = spawn(NodeConfig::test_monad()).await;
+        let (ethereum_base_api, ethereum_base) = spawn(NodeConfig::test()).await;
+        let (_ethereum_target_api, ethereum_target) = spawn(NodeConfig::test()).await;
+        let (monad_base_api, monad_base) = spawn(NodeConfig::test_monad()).await;
+        let (_monad_target_api, monad_target) = spawn(NodeConfig::test_monad()).await;
+        ethereum_base_api.mine_one().await.unwrap();
+        monad_base_api.mine_one().await.unwrap();
 
-        let inferred_ethereum = inferred_opts(ethereum.http_endpoint(), None).await;
+        let inferred_ethereum = pinned_opts(ethereum_base.http_endpoint(), None).await;
         assert!(inferred_ethereum.fork_network_is_inferred);
         let error = Backend::<EthEvmNetwork>::spawn(Some(target_fork(
             inferred_ethereum,
-            monad.http_endpoint(),
+            monad_target.http_endpoint(),
         )))
         .unwrap_err();
         assert!(
@@ -2887,11 +2895,11 @@ mod tests {
             "{error}"
         );
 
-        let inferred_monad = inferred_opts(monad.http_endpoint(), None).await;
+        let inferred_monad = pinned_opts(monad_base.http_endpoint(), None).await;
         assert!(inferred_monad.fork_network_is_inferred);
         let error = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
             inferred_monad,
-            ethereum.http_endpoint(),
+            ethereum_target.http_endpoint(),
         )))
         .unwrap_err();
         assert!(
@@ -2902,20 +2910,20 @@ mod tests {
         );
 
         let explicit_ethereum =
-            inferred_opts(ethereum.http_endpoint(), Some(NetworkConfigs::with_ethereum())).await;
+            pinned_opts(ethereum_base.http_endpoint(), Some(NetworkConfigs::with_ethereum())).await;
         assert!(!explicit_ethereum.fork_network_is_inferred);
         let _backend = Backend::<EthEvmNetwork>::spawn(Some(target_fork(
             explicit_ethereum,
-            monad.http_endpoint(),
+            monad_target.http_endpoint(),
         )))
         .unwrap();
 
         let explicit_monad =
-            inferred_opts(monad.http_endpoint(), Some(NetworkConfigs::with_monad())).await;
+            pinned_opts(monad_base.http_endpoint(), Some(NetworkConfigs::with_monad())).await;
         assert!(!explicit_monad.fork_network_is_inferred);
         let _backend = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
             explicit_monad,
-            ethereum.http_endpoint(),
+            ethereum_target.http_endpoint(),
         )))
         .unwrap();
     }

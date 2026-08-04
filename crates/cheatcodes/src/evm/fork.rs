@@ -401,6 +401,7 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
     let url = rpc_endpoint.url()?;
     let mut evm_opts = ccx.state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
+    evm_opts.fork_block_number_is_inferred = false;
     evm_opts.fork_retries = rpc_endpoint.config.retries;
     evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
     if let Some(Ok(auth)) = rpc_endpoint.auth {

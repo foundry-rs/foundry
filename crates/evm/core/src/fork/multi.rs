@@ -425,6 +425,7 @@ impl<
                     trace!(target: "fork::multi", "rolling {} to {}", fork_id, block);
                     let mut opts = fork.opts.clone();
                     opts.evm_opts.fork_block_number = Some(block);
+                    opts.evm_opts.fork_block_number_is_inferred = false;
                     opts.expected_context = None;
                     let expected_identity = fork.opts.expected_context;
                     self.create_fork_with_identity(opts, expected_identity, sender);
@@ -641,16 +642,26 @@ async fn create_fork<
     let require_endpoint_family_match =
         fork.evm_opts.fork_network_is_inferred || !execution_networks.has_network_selection();
     let targets_new_endpoint =
-        fork.evm_opts.fork_endpoint.as_ref().is_some_and(|identity| identity.endpoint != fork.url);
+        fork.evm_opts.fork_url.as_ref().is_some_and(|endpoint| endpoint != &fork.url)
+            || fork
+                .evm_opts
+                .fork_endpoint
+                .as_ref()
+                .is_some_and(|identity| identity.endpoint != fork.url);
     if targets_new_endpoint {
         // The EVM implementation is already fixed, so use its family as the fallback for a custom
         // endpoint without metadata. Clear identity and chain values inferred from the old URL;
         // authoritative metadata from the new endpoint is still checked below.
         fork.evm_opts.fork_endpoint = None;
+        fork.evm_opts.expected_fork_endpoint = None;
         fork.evm_opts.fork_network_is_inferred = false;
         if fork.evm_opts.fork_chain_id_is_inferred {
             fork.evm_opts.env.chain_id = None;
             fork.evm_opts.fork_chain_id_is_inferred = false;
+        }
+        if fork.evm_opts.fork_block_number_is_inferred {
+            fork.evm_opts.fork_block_number = None;
+            fork.evm_opts.fork_block_number_is_inferred = false;
         }
     }
     fork.evm_opts.fork_url = Some(fork.url.clone());

@@ -877,6 +877,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         tempo: TempoOpts,
         sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
+        if let Some(identity) = evm_opts.fork_endpoint.clone() {
+            let network_is_inferred = evm_opts.fork_network_is_inferred;
+            evm_opts.expect_fork_endpoint(identity, network_is_inferred);
+        }
         // Linking happens before runner construction, so pin now to ensure its CREATE2 factory
         // lookup and all later environment/backend construction use the same fork block.
         evm_opts.pin_fork_block().await?;
@@ -900,6 +904,26 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             batch,
             tempo,
         })
+    }
+
+    async fn select_fork_url(&mut self, fork_url: String) -> Result<()> {
+        if self.evm_opts.fork_url.as_ref() == Some(&fork_url) {
+            return Ok(());
+        }
+        self.evm_opts.set_fork_url(fork_url);
+        self.evm_opts.infer_network_from_fork().await?;
+        eyre::ensure!(
+            FEN::supports_network(self.evm_opts.networks.execution_network()),
+            "fork network `{}` is incompatible with the active EVM",
+            self.evm_opts.networks.execution_network()
+        );
+        self.config.networks = self.evm_opts.networks;
+        self.evm_opts.pin_fork_block().await?;
+        if let Some(identity) = self.evm_opts.fork_endpoint.clone() {
+            let network_is_inferred = self.evm_opts.fork_network_is_inferred;
+            self.evm_opts.expect_fork_endpoint(identity, network_is_inferred);
+        }
+        Ok(())
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -950,6 +974,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
         if self.evm_opts.fork_url.is_some() && self.evm_opts.fork_block_number.is_none() {
             self.evm_opts.fork_block_number = fork_context.map(|context| context.block_number);
+            self.evm_opts.fork_block_number_is_inferred = self.evm_opts.fork_block_number.is_some();
         }
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);

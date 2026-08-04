@@ -403,6 +403,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let mut fork_opts = self.source().config.evm_opts.clone();
         fork_opts.fork_url = Some(fork_url.clone());
         fork_opts.fork_block_number = None;
+        fork_opts.fork_block_number_is_inferred = false;
         let explicit_network =
             fork_opts.networks.has_network_selection() && !fork_opts.fork_network_is_inferred;
         let identity = fork_opts.discover_fork_endpoint().await?;
@@ -452,6 +453,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let source = self.source_mut();
         source.config.evm_opts.fork_url = None;
         source.config.evm_opts.fork_block_number = None;
+        source.config.evm_opts.fork_block_number_is_inferred = false;
         source.config.evm_opts.networks = local_networks;
         source.config.evm_opts.env.chain_id = source.config.local_chain_id;
         source.config.evm_opts.fork_network_is_inferred = false;

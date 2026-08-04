@@ -263,10 +263,13 @@ impl RpcData {
 
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
     async fn check_shanghai_support(&mut self) -> Result<()> {
-        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
-            Some((rpc.clone(), provider.get_chain_id().await.ok()?))
-        });
+        let chain_ids =
+            self.total_rpcs.iter().filter(|rpc| !self.chain_ids.contains_key(*rpc)).map(
+                |rpc| async move {
+                    let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
+                    Some((rpc.clone(), provider.get_chain_id().await.ok()?))
+                },
+            );
 
         self.chain_ids.extend(join_all(chain_ids).await.into_iter().flatten());
         let iter = self
@@ -340,6 +343,11 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             }
         }
         let mut rpc_data = RpcData::from_transactions(&txs);
+        if let Some(identity) = &self.script_config.evm_opts.fork_endpoint
+            && rpc_data.total_rpcs.contains(&identity.endpoint)
+        {
+            rpc_data.chain_ids.insert(identity.endpoint.clone(), identity.execution_chain_id);
+        }
 
         if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
