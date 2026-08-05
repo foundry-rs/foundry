@@ -1,7 +1,166 @@
 use crate::utils::generate_large_init_contract;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
 use std::fs;
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_physical_and_symlinked_dependency_configs,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let physical = prj.root().join("lib/linked");
+        let linked = external.path().join("cache/actual-package");
+        let write_dependency = |dependency: &std::path::Path| {
+            fs::create_dir_all(dependency.join("custom-source")).unwrap();
+            fs::create_dir_all(dependency.join("vendor/inner/src")).unwrap();
+            fs::create_dir_all(dependency.join("vendor/file/src")).unwrap();
+            fs::write(
+                dependency.join("foundry.toml"),
+                r#"
+[profile.default]
+src = "custom-source"
+remappings = ["special-alias/=vendor/inner/src/"]
+"#,
+            )
+            .unwrap();
+            fs::write(dependency.join("remappings.txt"), "file-alias/=vendor/file/src/\n").unwrap();
+            fs::write(
+                dependency.join("custom-source/Dep.sol"),
+                r#"
+pragma solidity >=0.8.0;
+
+import {Thing} from "special-alias/Thing.sol";
+import {FromFile} from "file-alias/FromFile.sol";
+
+contract Dep is Thing, FromFile {}
+"#,
+            )
+            .unwrap();
+            fs::write(
+                dependency.join("vendor/inner/src/Thing.sol"),
+                r#"
+pragma solidity >=0.8.0;
+
+contract Thing {}
+"#,
+            )
+            .unwrap();
+            fs::write(
+                dependency.join("vendor/file/src/FromFile.sol"),
+                r#"
+pragma solidity >=0.8.0;
+
+contract FromFile {}
+"#,
+            )
+            .unwrap();
+        };
+
+        write_dependency(&physical);
+        write_dependency(&linked);
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep} from "linked/Dep.sol";
+
+contract Root is Dep {}
+"#,
+        );
+
+        let remappings = str![[r#"
+file-alias/=lib/linked/vendor/file/src/
+linked/=lib/linked/custom-source/
+special-alias/=lib/linked/vendor/inner/src/
+
+"#]];
+        cmd.arg("remappings").assert_success().stdout_eq(remappings.clone());
+        cmd.forge_fuse().arg("build").assert_success();
+
+        fs::remove_dir_all(&physical).unwrap();
+        symlink(&linked, &physical).unwrap();
+        cmd.forge_fuse().arg("clean").assert_success();
+        cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(remappings);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_symlinked_dependency_with_existing_standard_source,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let dependency = external.path().join("dependency");
+        fs::create_dir_all(dependency.join("src")).unwrap();
+        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"src\"\n").unwrap();
+        fs::write(dependency.join("src/Dep.sol"), "pragma solidity >=0.8.0; contract Dep {}\n")
+            .unwrap();
+        prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+        fs::create_dir_all(prj.root().join("node_modules")).unwrap();
+        symlink(&dependency, prj.root().join("node_modules/linked")).unwrap();
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep} from "linked/src/Dep.sol";
+
+contract Root is Dep {}
+"#,
+        );
+
+        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+linked/=node_modules/linked/
+
+"#]]);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_multiple_aliases_to_symlinked_dependency_config,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let dependency = external.path().join("dependency");
+        fs::create_dir_all(dependency.join("custom-source")).unwrap();
+        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n")
+            .unwrap();
+        fs::write(
+            dependency.join("custom-source/Dep.sol"),
+            "pragma solidity >=0.8.0; contract Dep {}\n",
+        )
+        .unwrap();
+        symlink(&dependency, prj.root().join("lib/a-alias")).unwrap();
+        symlink(&dependency, prj.root().join("lib/z-alias")).unwrap();
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep as ADep} from "a-alias/Dep.sol";
+import {Dep as ZDep} from "z-alias/Dep.sol";
+
+contract Root {
+    ADep private a;
+    ZDep private z;
+}
+"#,
+        );
+
+        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+a-alias/=lib/a-alias/custom-source/
+z-alias/=lib/z-alias/custom-source/
+
+"#]]);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
@@ -182,6 +341,27 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
     "init_size": 50125,
     "runtime_margin": 63938,
     "init_margin": 77875
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+forgetest!(build_sizes_respects_amsterdam_code_size_limits, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Amsterdam;
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 65474,
+    "init_margin": 80947
   }
 }
 "#]]
