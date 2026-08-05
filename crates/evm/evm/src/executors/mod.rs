@@ -45,8 +45,9 @@ use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
-    context::{Block, Transaction},
+    context::{Block, Cfg, Transaction},
     context_interface::{
+        cfg::gas_params::Eip2780TxInfo,
         result::{ExecutionResult, Output, ResultAndState},
         transaction::SignedAuthorization,
     },
@@ -1350,7 +1351,16 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
     }
 }
 
-/// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
+fn calculate_stipend(tx_env: &impl Transaction, spec: SpecId, eip2780_enabled: bool) -> u64 {
+    let eip2780 = eip2780_enabled.then(|| Eip2780TxInfo {
+        value: tx_env.value(),
+        is_self_transfer: matches!(tx_env.kind(), TxKind::Call(to) if to == tx_env.caller()),
+    });
+    revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, spec, eip2780)
+        .initial_total_gas()
+}
+
+/// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
 fn convert_executed_result<FEN: FoundryEvmNetwork>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
@@ -1371,10 +1381,10 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
             (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
+    let stipend = calculate_stipend(
         &tx_env,
         evm_env.cfg_env.spec.into(),
-        None,
+        evm_env.cfg_env.is_amsterdam_eip2780_enabled(),
     );
 
     let result = match &out {
@@ -1418,7 +1428,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         result,
         gas_used,
         gas_refunded,
-        stipend: gas.initial_total_gas(),
+        stipend,
         logs,
         labels,
         traces,
@@ -1584,7 +1594,7 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
-    use revm::context::{Cfg, TxEnv};
+    use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
@@ -1700,6 +1710,29 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn calculate_stipend_uses_eip2780_transaction_context() {
+        let caller = Address::repeat_byte(0x11);
+        let recipient = Address::repeat_byte(0x22);
+        let mut tx = TxEnv { caller, kind: TxKind::Call(recipient), ..Default::default() };
+
+        assert_eq!(
+            calculate_stipend(&tx, SpecId::AMSTERDAM, true),
+            revm::primitives::eip2780::TX_BASE_COST
+                + revm::primitives::eip8038::COLD_ACCOUNT_ACCESS
+        );
+        assert_eq!(
+            calculate_stipend(&tx, SpecId::AMSTERDAM, false),
+            revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM).tx_base_stipend()
+        );
+
+        tx.kind = TxKind::Call(caller);
+        assert_eq!(
+            calculate_stipend(&tx, SpecId::AMSTERDAM, true),
+            revm::primitives::eip2780::TX_BASE_COST
+        );
     }
 
     #[test]
