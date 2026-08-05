@@ -363,7 +363,7 @@ impl From<ChainId> for NetworkVariant {
     }
 }
 
-#[derive(Clone, Debug, Default, Parser, Deserialize, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Parser, Deserialize, Copy, PartialEq, Eq, Hash)]
 pub struct NetworkConfigs {
     /// Enable a specific network family.
     #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "tempo"])]

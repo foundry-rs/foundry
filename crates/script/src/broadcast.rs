@@ -14,7 +14,7 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_eips::{BlockId, eip2718::Encodable2718};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
     EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
 };
@@ -35,7 +35,6 @@ use foundry_common::{
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
-        try_get_http_provider,
     },
     shell,
     tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
@@ -44,6 +43,8 @@ use foundry_config::Config;
 use foundry_evm::core::{
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvmNetwork, TempoEvmNetwork},
+    fork::ResolvedFork,
+    opts::EvmOpts,
 };
 use foundry_wallets::{TempoAccountsWallet, wallet_browser::signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
@@ -75,16 +76,13 @@ where
     Ok(())
 }
 
-pub async fn next_nonce(
+/// Returns `caller`'s nonce at an already resolved fork block.
+pub(super) async fn next_nonce_resolved(
     caller: Address,
-    provider_url: &str,
-    block_number: Option<u64>,
+    evm_opts: &EvmOpts,
+    fork: &ResolvedFork,
 ) -> eyre::Result<u64> {
-    let provider = try_get_http_provider(provider_url)
-        .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-
-    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
-    Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
+    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
 }
 
 fn reject_access_key_create<N: Network>(
@@ -1377,6 +1375,7 @@ async fn wait_for_batch_receipt<N: Network>(
 mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::{Bloom, address};
     use alloy_rpc_types::TransactionReceipt;
@@ -1387,6 +1386,55 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const ACCESS_KEY_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn next_nonce_uses_exact_fork_hash() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let recipient = Address::with_last_byte(1);
+
+        let receipt = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .from(sender)
+                    .to(recipient)
+                    .value(U256::from(1))
+                    .into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let block_number = receipt.block_number.unwrap();
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(block_number),
+            ..Default::default()
+        };
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
+        assert_eq!(next_nonce_resolved(sender, &evm_opts, &fork).await.unwrap(), 1);
+
+        provider
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        assert_eq!(
+            provider
+                .get_transaction_count(sender)
+                .block_id(BlockId::number(block_number))
+                .await
+                .unwrap(),
+            0
+        );
+
+        match next_nonce_resolved(sender, &evm_opts, &fork).await {
+            Ok(0) => panic!("the exact lookup fell back to the replacement block"),
+            Ok(1) | Err(_) => {}
+            Ok(nonce) => panic!("unexpected nonce: {nonce}"),
+        }
+    }
 
     #[test]
     fn access_key_signer_takes_precedence_over_same_sender_wallet() {

@@ -23,7 +23,7 @@ pub use alloy_op_hardforks::OpHardfork;
 pub use monad_revm::MonadHardfork;
 pub use tempo_hardfork::TempoHardfork;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(into = "String")]
 pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),

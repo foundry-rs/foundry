@@ -258,7 +258,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
-            script_config.select_fork_url(rpc.clone()).await?;
+            script_config.set_fork_url(rpc.clone());
             let mut runner = script_config._get_runner(None, false, false).await?;
             runner.executor.enable_block_context_progression()?;
             Ok((rpc, runner))

@@ -20,11 +20,11 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use alloy_signer::Signer;
-use broadcast::next_nonce;
+use broadcast::next_nonce_resolved;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
-use eyre::{ContextCompat, OptionExt, Result};
+use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
@@ -55,6 +55,7 @@ use foundry_evm::{
     core::{
         Breakpoints, FoundryTransaction,
         evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        fork::ResolvedFork,
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -861,33 +862,54 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub source_chain_id: Option<u64>,
     pub sender_nonce: u64,
     sender_nonce_override: Option<u64>,
-    /// Maps a rpc url to a backend
-    pub backends: HashMap<String, Backend<FEN>>,
+    resolved_fork: Option<ResolvedFork>,
+    /// Backends keyed by their complete resolved fork context.
+    backends: HashMap<ResolvedFork, Backend<FEN>>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
     pub batch: bool,
     /// Tempo transaction options applied to broadcast transactions.
     pub tempo: TempoOpts,
 }
 
+async fn resolve_script_fork<FEN: FoundryEvmNetwork>(
+    config: &mut Config,
+    evm_opts: &mut EvmOpts,
+) -> Result<Option<ResolvedFork>> {
+    if evm_opts.fork_url.is_none() {
+        return Ok(None);
+    }
+    if evm_opts.fork_endpoint.is_none() {
+        evm_opts.infer_network_from_fork().await?;
+    }
+    eyre::ensure!(
+        FEN::supports_network(evm_opts.networks.execution_network()),
+        "fork network `{}` is incompatible with the active EVM",
+        evm_opts.networks.execution_network()
+    );
+    config.networks = evm_opts.networks;
+    if let Some(identity) = evm_opts.fork_endpoint.clone() {
+        let network_is_inferred = evm_opts.fork_network_is_inferred;
+        evm_opts.expect_fork_endpoint(identity, network_is_inferred);
+    }
+    evm_opts.resolve_fork().await
+}
+
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     pub async fn new(
-        config: Config,
+        mut config: Config,
         mut evm_opts: EvmOpts,
         batch: bool,
         tempo: TempoOpts,
         sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
-        if let Some(identity) = evm_opts.fork_endpoint.clone() {
-            let network_is_inferred = evm_opts.fork_network_is_inferred;
-            evm_opts.expect_fork_endpoint(identity, network_is_inferred);
-        }
-        // Linking happens before runner construction, so pin now to ensure its CREATE2 factory
-        // lookup and all later environment/backend construction use the same fork block.
-        evm_opts.pin_fork_block().await?;
+        // Linking happens before runner construction, so resolve the fork context now and reuse it
+        // for all preflight reads and environment construction.
+        let resolved_fork = resolve_script_fork::<FEN>(&mut config, &mut evm_opts).await?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
-        } else if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
+        } else if evm_opts.fork_url.is_some() {
+            let fork = resolved_fork.as_ref().context("fork must be resolved")?;
+            next_nonce_resolved(evm_opts.sender, &evm_opts, fork).await?
         } else {
             // dapptools compatibility
             1
@@ -900,43 +922,60 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             source_chain_id: None,
             sender_nonce,
             sender_nonce_override,
+            resolved_fork,
             backends: HashMap::default(),
             batch,
             tempo,
         })
     }
 
-    async fn select_fork_url(&mut self, fork_url: String) -> Result<()> {
-        if self.evm_opts.fork_url.as_ref() == Some(&fork_url) {
-            return Ok(());
-        }
-        self.evm_opts.set_fork_url(fork_url);
-        self.evm_opts.infer_network_from_fork().await?;
-        eyre::ensure!(
-            FEN::supports_network(self.evm_opts.networks.execution_network()),
-            "fork network `{}` is incompatible with the active EVM",
-            self.evm_opts.networks.execution_network()
-        );
-        self.config.networks = self.evm_opts.networks;
-        self.evm_opts.pin_fork_block().await?;
-        if let Some(identity) = self.evm_opts.fork_endpoint.clone() {
-            let network_is_inferred = self.evm_opts.fork_network_is_inferred;
-            self.evm_opts.expect_fork_endpoint(identity, network_is_inferred);
-        }
-        Ok(())
-    }
-
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(sender_nonce) = self.sender_nonce_override {
             sender_nonce
-        } else if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, self.evm_opts.fork_block_number).await?
+        } else if self.evm_opts.fork_url.is_some() {
+            let fork = self.ensure_resolved_fork().await?.context("fork must be resolved")?;
+            next_nonce_resolved(sender, &self.evm_opts, &fork).await?
         } else {
             // dapptools compatibility
             1
         };
         self.evm_opts.sender = sender;
         Ok(())
+    }
+
+    /// Returns the resolved fork when it still matches the configured source and selector.
+    pub fn resolved_fork(&self) -> Result<Option<&ResolvedFork>> {
+        match (&self.evm_opts.fork_url, &self.resolved_fork) {
+            (None, None) => Ok(None),
+            (None, Some(_)) => Err(eyre::eyre!("resolved fork exists without a configured fork")),
+            (Some(_), Some(fork)) if self.evm_opts.resolved_fork_matches(fork) => Ok(Some(fork)),
+            (Some(_), Some(_)) => {
+                Err(eyre::eyre!("resolved fork does not match the configured source and selector"))
+            }
+            (Some(_), None) => Err(eyre::eyre!("fork must be resolved")),
+        }
+    }
+
+    fn set_fork_url(&mut self, fork_url: String) {
+        self.evm_opts.set_fork_url(fork_url);
+    }
+
+    async fn ensure_resolved_fork(&mut self) -> Result<Option<ResolvedFork>> {
+        if self.evm_opts.fork_url.is_none() {
+            if self.resolved_fork.take().is_some() {
+                self.backends.clear();
+            }
+            return Ok(None);
+        }
+        if let Some(fork) = &self.resolved_fork
+            && self.evm_opts.resolved_fork_matches(fork)
+        {
+            return Ok(Some(fork.clone()));
+        }
+
+        let fork = resolve_script_fork::<FEN>(&mut self.config, &mut self.evm_opts).await?;
+        self.resolved_fork = fork.clone();
+        Ok(fork)
     }
 
     pub(crate) async fn update_tempo_session_sender(
@@ -970,12 +1009,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (mut evm_env, mut tx_env, fork_context) =
-            self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
-        if self.evm_opts.fork_url.is_some() && self.evm_opts.fork_block_number.is_none() {
-            self.evm_opts.fork_block_number = fork_context.map(|context| context.block_number);
-            self.evm_opts.fork_block_number_is_inferred = self.evm_opts.fork_block_number.is_some();
-        }
+        let resolved = self.ensure_resolved_fork().await?;
+        let (mut evm_env, mut tx_env) =
+            self.evm_opts.env_with_resolved_fork::<_, _, TxEnvFor<FEN>>(resolved.as_ref()).await?;
+        let fork_context = resolved.as_ref().map(ResolvedFork::context);
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
@@ -988,17 +1025,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             None,
         );
 
-        let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            let fork_context =
-                fork_context.ok_or_eyre("fork context is unavailable for configured fork URL")?;
-            match self.backends.get(fork_url) {
-                Some(db) => db.clone(),
-                None => {
-                    let fork = self.evm_opts.get_fork_with_context(&self.config, fork_context);
-                    let backend = Backend::spawn(fork)?;
-                    self.backends.insert(fork_url.clone(), backend.clone());
-                    backend
-                }
+        let db = if self.evm_opts.fork_url.is_some() {
+            let resolved = resolved.context("fork must be resolved")?;
+            if let Some(backend) = self.backends.get(&resolved) {
+                backend.clone()
+            } else {
+                let fork = self.evm_opts.get_fork_with_context(&self.config, resolved.context());
+                let backend = Backend::spawn(fork)?;
+                self.backends.insert(resolved, backend.clone());
+                backend
             }
         } else {
             // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
@@ -1072,6 +1107,7 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
 mod tests {
     use super::*;
     use alloy_chains::NamedChain;
+    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
     use alloy_provider::Provider as _;
@@ -1086,8 +1122,11 @@ mod tests {
     use foundry_config::UnresolvedEnvVarError;
     #[cfg(feature = "monad")]
     use foundry_evm::hardforks::MonadHardfork;
-    use foundry_evm::traces::{
-        CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
+    use foundry_evm::{
+        revm::context::Block as _,
+        traces::{
+            CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
+        },
     };
     use std::{fs, num::NonZeroU64, sync::LazyLock};
     use tempfile::tempdir;
@@ -1101,6 +1140,319 @@ mod tests {
         "0x1111111111111111111111111111111111111111111111111111111111111111";
     const SESSION_ROOT_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn assert_missing_orphaned_block(error: &eyre::Report) {
+        let message = format!("{error:#}").to_ascii_lowercase();
+        assert!(
+            message.contains("failed to get block hash")
+                || message.contains("not found")
+                || message.contains("unknown block"),
+            "unexpected orphaned block lookup error: {error:#}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_fork_context_is_re_resolved_for_a_new_rpc() {
+        let (api_a, handle_a) = spawn(NodeConfig::test()).await;
+        let (api_b, handle_b) = spawn(NodeConfig::test()).await;
+        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_b.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle_a.http_endpoint()),
+            sender: handle_a.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        let first = config.resolved_fork.clone().unwrap();
+        assert_eq!(first.number(), 1);
+        assert_eq!(config.evm_opts.fork_block_number, None);
+        assert!(config.evm_opts.resolved_fork_matches(&first));
+
+        config._get_runner(None, false, false).await.unwrap();
+
+        config.set_fork_url(handle_b.http_endpoint());
+        let second = config.ensure_resolved_fork().await.unwrap().unwrap();
+
+        assert_eq!(second.number(), 3);
+        assert_eq!(config.evm_opts.fork_block_number, None);
+        assert!(config.evm_opts.resolved_fork_matches(&second));
+        assert_ne!(first, second);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_explicit_fork_block_is_preserved_for_a_new_rpc() {
+        let (api_a, handle_a) = spawn(NodeConfig::test()).await;
+        let (api_b, handle_b) = spawn(NodeConfig::test()).await;
+        api_a.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+        api_b.anvil_mine(Some(U256::from(4)), None).await.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle_a.http_endpoint()),
+            fork_block_number: Some(1),
+            sender: handle_a.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        config._get_runner(None, false, false).await.unwrap();
+
+        config.set_fork_url(handle_b.http_endpoint());
+        let context = config.ensure_resolved_fork().await.unwrap().unwrap();
+
+        assert_eq!(context.number(), 1);
+        assert_eq!(config.evm_opts.fork_block_number, Some(1));
+        assert!(config.evm_opts.resolved_fork_matches(&context));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_explicit_fork_block_can_equal_previous_latest() {
+        let (api_a, handle_a) = spawn(NodeConfig::test()).await;
+        let (api_b, handle_b) = spawn(NodeConfig::test()).await;
+        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_b.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle_a.http_endpoint()),
+            sender: handle_a.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        let latest = config.resolved_fork.clone().unwrap();
+        assert_eq!(config.evm_opts.fork_block_number, None);
+        config._get_runner(None, false, false).await.unwrap();
+        assert!(config.backends.contains_key(&latest));
+
+        config.set_fork_url(handle_b.http_endpoint());
+        config.evm_opts.fork_block_number = Some(1);
+        let explicit = config.ensure_resolved_fork().await.unwrap().unwrap();
+
+        assert_eq!(explicit.number(), 1);
+        assert_eq!(config.evm_opts.fork_block_number, Some(1));
+        assert!(config.evm_opts.resolved_fork_matches(&explicit));
+        assert_ne!(latest, explicit);
+        assert!(config.backends.contains_key(&latest));
+        assert!(!config.backends.contains_key(&explicit));
+
+        config._get_runner(None, false, false).await.unwrap();
+        assert!(config.backends.contains_key(&latest));
+        assert!(config.backends.contains_key(&explicit));
+        assert_eq!(config.backends.len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_fork_cache_distinguishes_same_height_contexts() {
+        let (api_a, handle_a) = spawn(NodeConfig::test()).await;
+        let (api_b, handle_b) = spawn(NodeConfig::test()).await;
+        let state_address = address!("0000000000000000000000000000000000001337");
+        let balance_a = U256::from(1);
+        let balance_b = U256::from(2);
+        api_a.anvil_set_balance(state_address, balance_a).await.unwrap();
+        api_b.anvil_set_balance(state_address, balance_b).await.unwrap();
+        let original_prevrandao = B256::with_last_byte(0x42);
+        api_a.anvil_set_next_block_prevrandao(original_prevrandao).await.unwrap();
+        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_b.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        let url_a = handle_a.http_endpoint();
+        let url_b = handle_b.http_endpoint();
+        let sender = handle_a.dev_accounts().next().unwrap();
+
+        let evm_opts = EvmOpts { fork_url: Some(url_a.clone()), sender, ..Default::default() };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        let runner_a = config._get_runner(None, false, false).await.unwrap();
+        assert_eq!(runner_a.executor.get_balance(state_address).unwrap(), balance_a);
+        let first_a = config.resolved_fork().unwrap().unwrap().clone();
+        assert!(config.backends.contains_key(&first_a));
+
+        config.set_fork_url(url_b.clone());
+        let runner_b = config._get_runner(None, false, false).await.unwrap();
+        assert_eq!(runner_b.executor.get_balance(state_address).unwrap(), balance_b);
+        let context_b = config.resolved_fork().unwrap().unwrap().clone();
+        assert_eq!(context_b.number(), 1);
+        assert!(config.backends.contains_key(&first_a));
+        assert!(config.backends.contains_key(&context_b));
+        assert_eq!(config.backends.len(), 2);
+
+        let provider_a = handle_a.http_provider();
+        provider_a
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        let replacement = provider_a.get_block_by_number(1.into()).await.unwrap().unwrap();
+        assert_eq!(replacement.header.number, first_a.number());
+        assert_ne!(replacement.header.hash, first_a.hash());
+        assert_ne!(replacement.header.mix_hash, Some(original_prevrandao));
+
+        config.set_fork_url(url_a.clone());
+        let second_a = config.ensure_resolved_fork().await.unwrap().unwrap();
+        assert_eq!(second_a.number(), first_a.number());
+        assert_eq!(second_a.hash(), replacement.header.hash);
+        assert_ne!(second_a.hash(), first_a.hash());
+        assert!(config.backends.contains_key(&first_a));
+        assert!(config.backends.contains_key(&context_b));
+        assert!(!config.backends.contains_key(&second_a));
+        assert_eq!(config.backends.len(), 2);
+
+        let runner = config._get_runner(None, false, false).await.unwrap();
+        assert!(config.backends.contains_key(&second_a));
+        assert_eq!(config.backends.len(), 3);
+        assert_eq!(runner.executor.get_balance(state_address).unwrap(), balance_a);
+        assert_eq!(runner.executor.evm_env().block_env.prevrandao(), replacement.header.mix_hash);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_same_endpoint_does_not_advance_resolved_fork() {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        let url = handle.http_endpoint();
+        let evm_opts = EvmOpts {
+            fork_url: Some(url.clone()),
+            sender: handle.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        let resolved = config.resolved_fork.clone().unwrap();
+        config._get_runner(None, false, false).await.unwrap();
+
+        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        config.set_fork_url(url.clone());
+        let runner = config._get_runner(None, false, false).await.unwrap();
+
+        assert_eq!(config.resolved_fork.as_ref(), Some(&resolved));
+        assert!(config.backends.contains_key(&resolved));
+        assert_eq!(config.backends.len(), 1);
+        assert_eq!(runner.executor.evm_env().block_env.number(), U256::from(1));
+        assert_eq!(config.evm_opts.fork_block_number, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_fork_changed_headers_replace_cached_backend() {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        let url = handle.http_endpoint();
+        let evm_opts = EvmOpts {
+            fork_url: Some(url.clone()),
+            sender: handle.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        config._get_runner(None, false, false).await.unwrap();
+        let without_headers = config.resolved_fork().unwrap().unwrap().clone();
+        assert!(config.backends.contains_key(&without_headers));
+
+        config.evm_opts.fork_headers = Some(vec!["x-foundry-test: resolved-fork".to_string()]);
+        let with_headers = config.ensure_resolved_fork().await.unwrap().unwrap();
+        assert!(config.backends.contains_key(&without_headers));
+        assert!(!config.backends.contains_key(&with_headers));
+        assert_eq!(config.backends.len(), 1);
+        config._get_runner(None, false, false).await.unwrap();
+
+        assert_ne!(without_headers, with_headers);
+        assert!(config.evm_opts.resolved_fork_matches(&with_headers));
+        assert!(config.backends.contains_key(&without_headers));
+        assert!(config.backends.contains_key(&with_headers));
+        assert_eq!(config.backends.len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_runner_env_revalidates_resolved_fork_hash() {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        let prevrandao = B256::with_last_byte(0x42);
+        api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            sender: handle.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            config
+                .evm_opts
+                .can_use_create2_deployer_resolved(config.resolved_fork().unwrap())
+                .await
+                .unwrap()
+        );
+        config._get_runner(None, false, false).await.unwrap();
+        assert_eq!(config.backends.len(), 1);
+
+        let provider = handle.http_provider();
+        let pinned = config.resolved_fork.clone().unwrap();
+        provider
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        let replacement = provider.get_block_by_number(1.into()).await.unwrap().unwrap();
+        assert_ne!(replacement.header.hash, pinned.hash());
+        assert_ne!(replacement.header.mix_hash, Some(prevrandao));
+
+        // The environment is hash-revalidated here. The fork database remains number-pinned;
+        // full state and ancestry exactness is tracked in #15897.
+        config.set_fork_url(handle.http_endpoint());
+        match config._get_runner(None, false, false).await {
+            Ok(runner) => {
+                assert_eq!(runner.executor.evm_env().block_env.prevrandao(), Some(prevrandao));
+            }
+            Err(error) => assert_missing_orphaned_block(&error),
+        }
+        assert_eq!(config.resolved_fork.as_ref(), Some(&pinned));
+    }
 
     #[test]
     fn script_trace_requirements_honor_tracing_verbosity() {
@@ -1356,11 +1708,18 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn update_sender_uses_pinned_fork_nonce() {
+    async fn update_sender_fork_does_not_read_nonce_from_replacement_block() {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let accounts = handle.dev_wallets().collect::<Vec<_>>();
         let original_sender = accounts[0].address();
         let replacement_sender = accounts[1].address();
+        let provider = handle.http_provider();
+        let tx = TransactionRequest::default()
+            .from(replacement_sender)
+            .to(original_sender)
+            .value(U256::from(1));
+        provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
         let evm_opts = EvmOpts {
             fork_url: Some(handle.http_endpoint()),
             sender: original_sender,
@@ -1375,18 +1734,49 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(config.evm_opts.fork_block_number, Some(0));
-
-        let provider = handle.http_provider();
-        let tx = TransactionRequest::default()
-            .from(replacement_sender)
-            .to(original_sender)
-            .value(U256::from(1));
-        provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
-        assert_eq!(provider.get_transaction_count(replacement_sender).await.unwrap(), 1);
-
-        config.update_sender(replacement_sender).await.unwrap();
+        let resolved = config.resolved_fork.clone().unwrap();
+        assert_eq!(config.evm_opts.fork_block_number, None);
         assert_eq!(config.sender_nonce, 0);
+
+        provider
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        assert_eq!(
+            provider
+                .get_transaction_count(replacement_sender)
+                .block_id(BlockId::number(1))
+                .await
+                .unwrap(),
+            0
+        );
+
+        match config.update_sender(replacement_sender).await {
+            Ok(()) => assert_eq!(config.sender_nonce, 1),
+            Err(error) => assert_missing_orphaned_block(&error),
+        }
+        assert_eq!(config.resolved_fork.as_ref(), Some(&resolved));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sender_nonce_override_does_not_refresh_fork() {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let sender = handle.dev_accounts().next().unwrap();
+        let evm_opts =
+            EvmOpts { fork_url: Some(handle.http_endpoint()), sender, ..Default::default() };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            Some(7),
+        )
+        .await
+        .unwrap();
+
+        config.set_fork_url("http://127.0.0.1:1".to_string());
+        config.update_sender(Address::with_last_byte(0x42)).await.unwrap();
+        assert_eq!(config.sender_nonce, 7);
     }
 
     #[tokio::test(flavor = "multi_thread")]

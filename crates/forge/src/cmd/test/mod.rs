@@ -2529,13 +2529,13 @@ impl TestArgs {
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
-        let (evm_env, tx_env, fork_context) = evm_opts
-            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
-            .await?;
-        let fork_block = fork_context.map(|context| context.block_number);
+        let (evm_env, tx_env, fork) =
+            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let fork_context = fork.as_ref().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
-        let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
+        let create2_deployer_available =
+            evm_opts.can_use_create2_deployer_resolved(fork.as_ref()).await?;
 
         let config = Arc::new(config);
         let showmap = self.showmap_config()?;
@@ -2573,13 +2573,13 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         options: FuzzMinimizeNetworkPassOptions,
     ) -> eyre::Result<MultiContractRunner<FEN>> {
-        let (evm_env, tx_env, fork_context) = evm_opts
-            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
-            .await?;
-        let fork_block = fork_context.map(|context| context.block_number);
+        let (evm_env, tx_env, fork) =
+            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let fork_context = fork.as_ref().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
-        let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
+        let create2_deployer_available =
+            evm_opts.can_use_create2_deployer_resolved(fork.as_ref()).await?;
 
         let config = Arc::new(config);
         MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
