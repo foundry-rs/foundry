@@ -3,6 +3,8 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
+    fs::File,
+    io::BufReader,
     path::Path,
 };
 
@@ -295,7 +297,7 @@ pub trait Db:
         historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>>;
 
-    /// Deserialize and add all chain data to the backend storage
+    /// Deserialize and add all accounts to the backend storage.
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts {
             let old_account_nonce = DatabaseRef::basic_ref(self, addr)
@@ -714,12 +716,19 @@ pub struct SerializableState {
 impl SerializableState {
     /// Loads the `Genesis` object from the given json file path
     pub fn load(path: impl AsRef<Path>) -> Result<Self, FsPathError> {
-        let path = path.as_ref();
+        let mut path = path.as_ref().to_path_buf();
         if path.is_dir() {
-            foundry_common::fs::read_json_file(&path.join("state.json"))
-        } else {
-            foundry_common::fs::read_json_file(path)
+            path = path.join("state.json");
         }
+
+        let file = File::open(&path).map_err(|err| FsPathError::read(err, &path))?;
+        serde_json::from_reader(BufReader::new(file)).map_err(|err| {
+            if err.is_io() {
+                FsPathError::read(err.into(), &path)
+            } else {
+                FsPathError::ReadJson { source: err, path }
+            }
+        })
     }
 
     /// This is used as the clap `value_parser` implementation
@@ -881,6 +890,29 @@ impl IntoIterator for SerializableHistoricalStates {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::fs;
+
+    #[test]
+    fn loads_state_from_file_or_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state_path = tmp.path().join("state.json");
+        fs::write(&state_path, serde_json::to_vec(&SerializableState::default()).unwrap()).unwrap();
+
+        assert!(SerializableState::load(&state_path).unwrap().accounts.is_empty());
+        assert!(SerializableState::load(tmp.path()).unwrap().accounts.is_empty());
+
+        fs::write(&state_path, b"not json").unwrap();
+        let Err(FsPathError::ReadJson { path, .. }) = SerializableState::load(tmp.path()) else {
+            panic!("expected invalid JSON error")
+        };
+        assert_eq!(path, state_path);
+
+        let missing_path = tmp.path().join("missing.json");
+        let Err(FsPathError::Read { path, .. }) = SerializableState::load(&missing_path) else {
+            panic!("expected file read error")
+        };
+        assert_eq!(path, missing_path);
+    }
 
     #[test]
     fn cache_db_full_state_merges_base_and_overlay() {
