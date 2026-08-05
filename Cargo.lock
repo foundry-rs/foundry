@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.4.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm.git?rev=efe250baeee0366f4a2a03cbf6b34ce3bb2165d9#efe250baeee0366f4a2a03cbf6b34ce3bb2165d9"
+source = "git+https://github.com/category-labs/alloy-monad-evm.git?rev=64c54591edae05224728ed562603936d22a9a9a6#64c54591edae05224728ed562603936d22a9a9a6"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -7775,7 +7775,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.3.0"
-source = "git+https://github.com/category-labs/monad-revm.git?rev=f906bd4ed0568b8192c2d335dd405da0714d986f#f906bd4ed0568b8192c2d335dd405da0714d986f"
+source = "git+https://github.com/category-labs/monad-revm.git?rev=704889928d3e0d8b75111a81676ff2b9fcf33df6#704889928d3e0d8b75111a81676ff2b9fcf33df6"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
