@@ -104,7 +104,7 @@ async fn get_all_events() {
     let tx = contract.setValue("hi".to_string()).from(account);
     for _ in 0..num_tx {
         let tx = tx.send().await.unwrap();
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
         tx.get_receipt().await.unwrap();
     }
 

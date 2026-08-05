@@ -324,8 +324,8 @@ async fn test_simulate_v1_rejects_precompile_moves_on_optimism_rpc() {
 async fn test_fork_simulate_normalizes_delegated_block_sequence_rpc() {
     let (origin_api, origin_handle) =
         spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
-    origin_api.mine_one().await;
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
+    origin_api.mine_one().await.unwrap();
 
     let (api, handle) = spawn(
         NodeConfig::test()
@@ -390,8 +390,8 @@ async fn test_fork_simulate_preserves_delegated_base_selector_rpc() {
     let (hash_api, hash_handle) =
         spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
     hash_api.evm_set_block_timestamp_interval(1).unwrap();
-    hash_api.mine_one().await;
-    hash_api.mine_one().await;
+    hash_api.mine_one().await.unwrap();
+    hash_api.mine_one().await.unwrap();
     let hash_endpoint = hash_handle.http_endpoint();
     let hash_base =
         rpc_request(&hash_endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
@@ -400,8 +400,8 @@ async fn test_fork_simulate_preserves_delegated_base_selector_rpc() {
     let (canonical_api, canonical_handle) =
         spawn(NodeConfig::test().with_genesis_timestamp(Some(2_000u64))).await;
     canonical_api.evm_set_block_timestamp_interval(1).unwrap();
-    canonical_api.mine_one().await;
-    canonical_api.mine_one().await;
+    canonical_api.mine_one().await.unwrap();
+    canonical_api.mine_one().await.unwrap();
     let canonical_endpoint = canonical_handle.http_endpoint();
     let canonical_base =
         rpc_request(&canonical_endpoint, "eth_getBlockByNumber", json!(["0x1", false])).await;
@@ -867,7 +867,7 @@ async fn test_simulate_pre_london_blocks_keep_base_fee_disabled_rpc() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_derives_from_historical_base_rpc() {
     let (api, handle) = spawn(NodeConfig::test().with_genesis_timestamp(Some(1_000u64))).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let endpoint = handle.http_endpoint();
     let genesis = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["0x0", false])).await;
     let response =
@@ -924,7 +924,7 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
             .remove(0);
 
         api.evm_set_next_block_timestamp(next_timestamp).unwrap();
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
         let mined = provider
             .get_block_by_number(BlockNumberOrTag::Number(1))
             .await
@@ -1123,7 +1123,7 @@ async fn test_simulated_and_mined_prague_request_hashes_match_rpc() {
         .remove(0);
 
     api.evm_set_next_block_timestamp(genesis.header.timestamp + 12).unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined = provider
         .get_block_by_number(BlockNumberOrTag::Number(1))
         .await
@@ -1202,7 +1202,7 @@ async fn test_prague_requests_use_genesis_deposit_contract_and_consensus_order_r
 
     let _pending =
         handle.http_provider().send_transaction(WithOtherFields::new(request)).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Number(1))
@@ -1303,7 +1303,7 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
     api.anvil_set_code(contract, code.into()).await.unwrap();
     api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
     api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
         "from": sender,
@@ -1399,7 +1399,7 @@ async fn test_simulate_state_override_preserves_selfdestructed_storage_rpc() {
     api.anvil_set_code(contract, selfdestruct_code.into()).await.unwrap();
     api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
     api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
         "from": sender,
@@ -1474,7 +1474,7 @@ async fn test_simulate_historical_tombstone_matches_latest_rpc() {
 
     api.anvil_set_code(contract, code.into()).await.unwrap();
     api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     handle
         .http_provider()
         .send_transaction(WithOtherFields::new(TransactionRequest {
@@ -1491,7 +1491,7 @@ async fn test_simulate_historical_tombstone_matches_latest_rpc() {
         .unwrap();
     let historical_base =
         rpc_request(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_base =
         rpc_request(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
     assert_eq!(historical_base["result"]["stateRoot"], latest_base["result"]["stateRoot"]);

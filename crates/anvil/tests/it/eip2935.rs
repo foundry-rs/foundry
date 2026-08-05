@@ -103,7 +103,7 @@ async fn ethereum_block_start_transitions_use_consensus_order() {
         .with_precompile_factory(OrderedBlockStartPrecompiles(Arc::clone(&order)));
     let (api, _) = spawn(node_config).await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     assert_eq!(order.load(Ordering::SeqCst), 2);
 }
@@ -124,7 +124,7 @@ async fn tempo_spec_id_does_not_enable_ethereum_block_transitions() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     assert_eq!(order.load(Ordering::SeqCst), 0);
 }
@@ -147,7 +147,7 @@ async fn optimism_spec_id_does_not_enable_ethereum_block_transitions() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     assert_eq!(order.load(Ordering::SeqCst), 0);
 }
@@ -197,7 +197,7 @@ async fn complete_block_paths_run_post_transitions_once() {
     .unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 4);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 6);
 }
 
@@ -251,9 +251,9 @@ async fn eip2935_stores_parent_block_hash() {
     let provider = http_provider(&handle.http_endpoint());
 
     // Mine a few blocks so there are parent hashes to store
-    api.mine_one().await;
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     // Block 1's hash should be stored when block 2 was mined
     let block1 = provider
@@ -313,7 +313,7 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
     )
     .await
     .unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let parent = provider
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -334,7 +334,7 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
         ))
         .await
         .unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let receipt = pending.get_receipt().await.unwrap();
     let block_number = receipt.block_number.unwrap();
 
@@ -384,7 +384,7 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
         .await
         .unwrap();
     let block_number = receipt.block_number.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let empty_block_number = provider.get_block_number().await.unwrap();
     assert_eq!(empty_block_number, block_number + 1);
 

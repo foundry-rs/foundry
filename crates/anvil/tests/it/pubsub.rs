@@ -377,7 +377,7 @@ async fn test_sub_transaction_receipts() {
         ws_provider.get_subscription(filtered_id).await.unwrap();
     let mut filtered_stream = filtered_stream.into_stream();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let all_receipts = tokio::time::timeout(Duration::from_secs(5), all_stream.next())
         .await
@@ -414,8 +414,8 @@ async fn test_sub_transaction_receipts_cleanup_on_unsubscribe() {
 
     // Let the task observe the closed channel, then mine to trigger listener pruning.
     tokio::time::sleep(Duration::from_millis(200)).await;
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     assert_eq!(
         api.backend.new_block_listeners_count(),
@@ -438,7 +438,7 @@ async fn test_sub_new_heads_fast() {
 
     let mut block_numbers = Vec::new();
     for _ in 0..num {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
         let block_number = blocks.next().await.unwrap().number;
         block_numbers.push(block_number);
     }

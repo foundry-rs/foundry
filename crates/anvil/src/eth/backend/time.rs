@@ -13,26 +13,46 @@ pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
 /// Manages block time
 #[derive(Clone, Debug)]
 pub struct TimeManager {
-    /// tracks the overall applied timestamp offset
-    offset: Arc<RwLock<i128>>,
-    /// The timestamp of the last block header
-    last_timestamp: Arc<RwLock<u64>>,
-    /// Contains the next timestamp to use
-    /// if this is set then the next time `[TimeManager::current_timestamp()]` is called this value
-    /// will be taken and returned. After which the `offset` will be updated accordingly
-    next_exact_timestamp: Arc<RwLock<Option<u64>>>,
-    /// The interval to use when determining the next block's timestamp
-    interval: Arc<RwLock<Option<u64>>>,
+    state: Arc<RwLock<TimeState>>,
+}
+
+/// Timestamp controls that must be read and committed atomically.
+#[derive(Debug, Default)]
+struct TimeState {
+    offset: i128,
+    offset_reset_generation: u64,
+    last_timestamp: u64,
+    next_exact_timestamp: Option<TimestampOverride>,
+    interval: Option<u64>,
+    next_override_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TimestampOverride {
+    timestamp: u64,
+    generation: u64,
+}
+
+/// A timestamp prepared for a candidate block but not yet committed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingBlockTimestamp {
+    pub(crate) timestamp: u64,
+    exact_generation: Option<u64>,
+    prepared_offset: i128,
+    offset_reset_generation: u64,
+    next_offset: Option<i128>,
+}
+
+/// A temporary additive time increase that can be rolled back after failed manual mining.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingTimeIncrease {
+    seconds: u64,
+    offset_reset_generation: u64,
 }
 
 impl TimeManager {
     pub fn new(start_timestamp: u64) -> Self {
-        let time_manager = Self {
-            last_timestamp: Default::default(),
-            offset: Default::default(),
-            next_exact_timestamp: Default::default(),
-            interval: Default::default(),
-        };
+        let time_manager = Self { state: Default::default() };
         time_manager.reset(start_timestamp);
         time_manager
     }
@@ -41,21 +61,24 @@ impl TimeManager {
     /// next block timestamp option
     pub fn reset(&self, start_timestamp: u64) {
         let current = duration_since_unix_epoch().as_secs() as i128;
-        *self.last_timestamp.write() = start_timestamp;
-        *self.offset.write() = (start_timestamp as i128) - current;
-        self.next_exact_timestamp.write().take();
+        let mut state = self.state.write();
+        state.last_timestamp = start_timestamp;
+        state.offset = (start_timestamp as i128) - current;
+        state.offset_reset_generation = state.offset_reset_generation.wrapping_add(1);
+        state.next_exact_timestamp = None;
+        state.next_override_generation = state.next_override_generation.wrapping_add(1);
     }
 
     pub fn offset(&self) -> i128 {
-        *self.offset.read()
+        self.state.read().offset
     }
 
     /// Adds the given `offset` to the already tracked offset and returns the result
     fn add_offset(&self, offset: i128) -> i128 {
-        let mut current = self.offset.write();
-        let next = current.saturating_add(offset);
+        let mut state = self.state.write();
+        let next = state.offset.saturating_add(offset);
         trace!(target: "time", "adding timestamp offset={}, total={}", offset, next);
-        *current = next;
+        state.offset = next;
         next
     }
 
@@ -66,16 +89,34 @@ impl TimeManager {
         self.add_offset(seconds as i128)
     }
 
+    /// Applies a temporary increase that can be rolled back if mining fails.
+    pub(crate) fn apply_time_increase(&self, seconds: u64) -> PendingTimeIncrease {
+        let mut state = self.state.write();
+        state.offset = state.offset.saturating_add(seconds as i128);
+        PendingTimeIncrease { seconds, offset_reset_generation: state.offset_reset_generation }
+    }
+
+    /// Reverts a temporary increase unless an absolute time reset superseded it.
+    pub(crate) fn revert_time_increase(&self, pending: PendingTimeIncrease) {
+        let mut state = self.state.write();
+        if state.offset_reset_generation == pending.offset_reset_generation {
+            state.offset = state.offset.saturating_sub(pending.seconds as i128);
+        }
+    }
+
     /// Sets the exact timestamp to use in the next block
     /// Fails if it's before (or at the same time) the last timestamp
     pub fn set_next_block_timestamp(&self, timestamp: u64) -> Result<(), BlockchainError> {
         trace!(target: "time", "override next timestamp {}", timestamp);
-        if timestamp < *self.last_timestamp.read() {
+        let mut state = self.state.write();
+        if timestamp < state.last_timestamp {
             return Err(BlockchainError::TimestampError(format!(
                 "{timestamp} is lower than previous block's timestamp"
             )));
         }
-        self.next_exact_timestamp.write().replace(timestamp);
+        state.next_override_generation = state.next_override_generation.wrapping_add(1);
+        state.next_exact_timestamp =
+            Some(TimestampOverride { timestamp, generation: state.next_override_generation });
         Ok(())
     }
 
@@ -85,17 +126,17 @@ impl TimeManager {
     /// be set starting with the current timestamp.
     pub fn set_block_timestamp_interval(&self, interval: u64) {
         trace!(target: "time", "set interval {}", interval);
-        self.interval.write().replace(interval);
+        self.state.write().interval = Some(interval);
     }
 
     /// Returns the configured block timestamp interval.
     pub(crate) fn block_timestamp_interval(&self) -> Option<u64> {
-        *self.interval.read()
+        self.state.read().interval
     }
 
     /// Removes the interval if it exists
     pub fn remove_block_timestamp_interval(&self) -> bool {
-        if self.interval.write().take().is_some() {
+        if self.state.write().interval.take().is_some() {
             trace!(target: "time", "removed interval");
             true
         } else {
@@ -104,42 +145,70 @@ impl TimeManager {
     }
 
     /// Computes the next timestamp without updating internals
-    fn compute_next_timestamp(&self) -> (u64, Option<i128>) {
-        let current = duration_since_unix_epoch().as_secs() as i128;
-        let last_timestamp = *self.last_timestamp.read();
+    fn compute_next_timestamp(
+        state: &TimeState,
+        current: i128,
+    ) -> (u64, Option<u64>, Option<i128>) {
+        let exact_timestamp = state.next_exact_timestamp;
+        let last_timestamp = state.last_timestamp;
 
-        let (mut next_timestamp, update_offset) =
-            if let Some(next) = *self.next_exact_timestamp.read() {
-                (next, true)
-            } else if let Some(interval) = *self.interval.read() {
-                (last_timestamp.saturating_add(interval), false)
-            } else {
-                (current.saturating_add(self.offset()) as u64, false)
-            };
+        let (mut next_timestamp, update_offset) = if let Some(next) = exact_timestamp {
+            (next.timestamp, true)
+        } else if let Some(interval) = state.interval {
+            (last_timestamp.saturating_add(interval), false)
+        } else {
+            (current.saturating_add(state.offset) as u64, false)
+        };
         // Ensures that the timestamp is always increasing
         if next_timestamp < last_timestamp {
             next_timestamp = last_timestamp + 1;
         }
         let next_offset = update_offset.then_some((next_timestamp as i128) - current);
-        (next_timestamp, next_offset)
+        (next_timestamp, exact_timestamp.map(|exact| exact.generation), next_offset)
+    }
+
+    /// Prepares the next timestamp without consuming a one-shot override.
+    pub(crate) fn prepare_next_timestamp(&self) -> PendingBlockTimestamp {
+        let current = duration_since_unix_epoch().as_secs() as i128;
+        let state = self.state.read();
+        let (timestamp, exact_generation, next_offset) =
+            Self::compute_next_timestamp(&state, current);
+        PendingBlockTimestamp {
+            timestamp,
+            exact_generation,
+            prepared_offset: state.offset,
+            offset_reset_generation: state.offset_reset_generation,
+            next_offset,
+        }
+    }
+
+    /// Commits a timestamp after its candidate block finalized successfully.
+    pub(crate) fn commit_next_timestamp(&self, pending: PendingBlockTimestamp) {
+        let mut state = self.state.write();
+        if pending.exact_generation.is_some_and(|generation| {
+            state.next_exact_timestamp.is_some_and(|exact| exact.generation == generation)
+        }) {
+            state.next_exact_timestamp = None;
+        }
+        if let Some(next_offset) = pending.next_offset
+            && state.offset_reset_generation == pending.offset_reset_generation
+        {
+            let concurrent_offset = state.offset.saturating_sub(pending.prepared_offset);
+            state.offset = next_offset.saturating_add(concurrent_offset);
+        }
+        state.last_timestamp = pending.timestamp;
     }
 
     /// Returns the current timestamp and updates the underlying offset and interval accordingly
     pub fn next_timestamp(&self) -> u64 {
-        let (next_timestamp, next_offset) = self.compute_next_timestamp();
-        // Make sure we reset the `next_exact_timestamp`
-        self.next_exact_timestamp.write().take();
-        if let Some(next_offset) = next_offset {
-            *self.offset.write() = next_offset;
-        }
-        *self.last_timestamp.write() = next_timestamp;
-        next_timestamp
+        let pending = self.prepare_next_timestamp();
+        self.commit_next_timestamp(pending);
+        pending.timestamp
     }
 
     /// Returns the current timestamp for a call that does _not_ update the value
     pub fn current_call_timestamp(&self) -> u64 {
-        let (next_timestamp, _) = self.compute_next_timestamp();
-        next_timestamp
+        self.prepare_next_timestamp().timestamp
     }
 }
 
@@ -149,4 +218,64 @@ pub fn duration_since_unix_epoch() -> Duration {
     let now = SystemTime::now();
     now.duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_else(|err| panic!("Current time {now:?} is invalid: {err:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_consumes_only_its_timestamp_override() {
+        let time = TimeManager::new(1);
+        time.set_next_block_timestamp(100).unwrap();
+        let pending = time.prepare_next_timestamp();
+
+        time.set_next_block_timestamp(100).unwrap();
+        time.commit_next_timestamp(pending);
+
+        let state = time.state.read();
+        assert_eq!(state.last_timestamp, 100);
+        assert_eq!(state.next_exact_timestamp.unwrap().timestamp, 100);
+    }
+
+    #[test]
+    fn candidate_commit_preserves_concurrent_time_increase() {
+        let time = TimeManager::new(1);
+        time.set_next_block_timestamp(100).unwrap();
+        let pending = time.prepare_next_timestamp();
+
+        time.increase_time(10);
+        time.commit_next_timestamp(pending);
+
+        let state = time.state.read();
+        assert_eq!(state.last_timestamp, 100);
+        assert_eq!(state.offset, pending.next_offset.unwrap() + 10);
+    }
+
+    #[test]
+    fn candidate_commit_preserves_concurrent_time_reset() {
+        let time = TimeManager::new(1);
+        time.set_next_block_timestamp(100).unwrap();
+        let pending = time.prepare_next_timestamp();
+
+        time.reset(1_000);
+        let reset_offset = time.offset();
+        time.commit_next_timestamp(pending);
+
+        let state = time.state.read();
+        assert_eq!(state.last_timestamp, 100);
+        assert_eq!(state.offset, reset_offset);
+    }
+
+    #[test]
+    fn failed_temporary_increase_preserves_concurrent_time_reset() {
+        let time = TimeManager::new(1);
+        let pending = time.apply_time_increase(60);
+
+        time.reset(1_000);
+        let reset_offset = time.offset();
+        time.revert_time_increase(pending);
+
+        assert_eq!(time.offset(), reset_offset);
+    }
 }
