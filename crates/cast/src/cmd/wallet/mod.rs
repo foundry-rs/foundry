@@ -1083,6 +1083,11 @@ flag to set your key via:
 
                 let touch_id_enrolled = is_touch_id_sidecar(&touch_id_sidecar_path(&keypath));
 
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                let touch_id_policy = touch_id_enrolled
+                    .then(|| foundry_wallets::touch_id::policy(&keypath))
+                    .transpose()?;
+
                 let current_password = if let Some(password) = unsafe_password {
                     password
                 } else {
@@ -1117,12 +1122,9 @@ flag to set your key via:
                 )?;
 
                 #[cfg(all(target_os = "macos", feature = "touch-id"))]
-                if touch_id_enrolled
-                    && let Err(enrollment_error) = foundry_wallets::touch_id::enroll(
-                        &keypath,
-                        &new_password,
-                        foundry_wallets::touch_id::Policy::default(),
-                    )
+                if let Some(policy) = touch_id_policy
+                    && let Err(enrollment_error) =
+                        foundry_wallets::touch_id::enroll(&keypath, &new_password, policy)
                 {
                     match remove_touch_id_sidecar(&keypath) {
                         Ok(true) => eyre::bail!(
