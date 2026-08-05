@@ -224,6 +224,10 @@ impl SymExpr {
         Some(StorageMappingKey { key, key_bytes: preserve_key_bytes, slot })
     }
 
+    pub(crate) fn is_storage_mapping_key(&self, cx: &mut SymCx) -> bool {
+        self.storage_mapping_key(cx).is_some()
+    }
+
     pub(crate) fn storage_mapping_provenance_observed_with(
         &self,
         cx: &mut SymCx,

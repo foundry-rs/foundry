@@ -1223,6 +1223,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             );
         }
 
+        if let Some(fuzzer) = &mut self.fuzzer
+            && fuzzer.mapping_slots.is_some()
+        {
+            fuzzer.step_end(interpreter, ecx);
+        }
+
         if let Some(cheats) = self.cheatcodes.as_mut()
             && cheats.has_step_end_hooks()
         {

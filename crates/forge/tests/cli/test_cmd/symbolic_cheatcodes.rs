@@ -5213,6 +5213,29 @@ contract MappingTarget {
         bytes32 slot = keccak256(abi.encode(key, uint256(0)));
         assembly { sstore(add(slot, and(control, 1)), value) }
     }
+    function constrainedConstantStore(uint256 key, uint256 value) external {
+        bytes32 observed = keccak256(abi.encode(key, uint256(0)));
+        require(key == 1);
+        bytes32 slot = keccak256(abi.encode(uint256(1), uint256(0)));
+        assembly { sstore(slot, value) }
+        require(observed == slot);
+    }
+    function constrainedRootStore(uint256 key, uint256 root, uint256 value) external {
+        require(root == 0);
+        bytes32 slot = keccak256(abi.encode(key, root));
+        assembly { sstore(slot, value) }
+    }
+    function constrainedNestedRootStore(
+        uint256 outer,
+        uint256 inner,
+        uint256 root,
+        uint256 value
+    ) external {
+        require(root == 1);
+        bytes32 parent = keccak256(abi.encode(outer, root));
+        bytes32 slot = keccak256(abi.encode(inner, parent));
+        assembly { sstore(slot, value) }
+    }
     function symbolicSizeStore(uint256 key, uint256 value, uint256 size) external {
         require(size <= 64);
         assembly {
@@ -5232,6 +5255,12 @@ contract MappingTarget {
     function setThenRevert(uint256 key, uint256 value) external {
         values[key] = value;
         revert("target rollback");
+    }
+}
+
+contract MappingHashHelper {
+    function computedSlot(uint256 key) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, uint256(0)));
     }
 }
 
@@ -5494,6 +5523,45 @@ contract SymbolicMappingStorageHooks is Test {
         } else {
             assertEq(calls, 0);
         }
+    }
+
+    function checkConstraintEquivalentConstantSlot(uint256 key, uint256 value) public {
+        target.constrainedConstantStore(key, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, 1);
+    }
+
+    function checkConstraintEquivalentKeccakShape(
+        uint256 key,
+        uint256 equivalentKey,
+        uint256 value
+    ) public {
+        MappingHashHelper helper = new MappingHashHelper();
+        bytes32 slot = target.computedSlot(key);
+        bytes32 equivalentSlot = helper.computedSlot(equivalentKey);
+        vm.assume(key == equivalentKey);
+        target.directStore(equivalentSlot, value);
+        assertEq(slot, equivalentSlot);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+    }
+
+    function checkConstraintEquivalentRoot(uint256 key, uint256 root, uint256 value) public {
+        target.constrainedRootStore(key, root, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+    }
+
+    function checkConstraintEquivalentNestedRoot(
+        uint256 outer,
+        uint256 inner,
+        uint256 root,
+        uint256 value
+    ) public {
+        target.constrainedNestedRootStore(outer, inner, root, value);
+        assertEq(nestedCalls, 1);
+        assertEq(seenOuterKey, outer);
+        assertEq(seenInnerKey, inner);
     }
 
     function checkCallbackSubtreeSuppression(uint256 key, uint256 value) public {
