@@ -11,12 +11,14 @@ use crate::{
     },
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
-
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, Network, ReceiptResponse, TransactionResponse};
+
+use alloy_network::{
+    AnyNetwork, AnyTransactionReceipt, BlockResponse, Network, ReceiptResponse, TransactionResponse,
+};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
-    map::{AddressHashMap, AddressSet},
+    map::{AddressHashMap, AddressSet, B256HashSet},
 };
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
@@ -44,7 +46,7 @@ use foundry_config::{
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, FoundryTransaction, FromAnyRpcTransaction,
         evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
@@ -53,7 +55,178 @@ use foundry_evm::{
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
 use futures::{StreamExt, TryFutureExt};
-use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
+use revm::{
+    DatabaseRef,
+    context::{Block, Transaction as RevmTransaction},
+    primitives::{TxKind, hardfork::SpecId},
+};
+
+/// A source transaction together with the chain-specific data required for historical replay.
+#[derive(Clone, Debug)]
+struct PreparedReplayTransaction<TX> {
+    transaction: TX,
+    l1_gas_used: u64,
+}
+
+impl<TX: TransactionResponse> PreparedReplayTransaction<TX> {
+    fn new(transaction: TX, nitro_receipt: Option<&AnyTransactionReceipt>) -> Result<Self> {
+        let l1_gas_used = if let Some(receipt) = nitro_receipt {
+            let tx_hash = *transaction.tx_hash();
+            if receipt.transaction_hash() != tx_hash {
+                eyre::bail!(
+                    "Nitro receipt transaction hash {:?} does not match transaction {tx_hash:?}",
+                    receipt.transaction_hash()
+                );
+            }
+            let value = receipt
+                .other_fields()
+                .get_deserialized::<U256>("gasUsedForL1")
+                .ok_or_else(|| {
+                    eyre::eyre!("missing `gasUsedForL1` for Nitro transaction {tx_hash:?}")
+                })?
+                .wrap_err_with(|| {
+                    format!("malformed `gasUsedForL1` for Nitro transaction {tx_hash:?}")
+                })?;
+            u64::try_from(value).wrap_err_with(|| {
+                format!("`gasUsedForL1` value {value} exceeds u64::MAX for transaction {tx_hash:?}")
+            })?
+        } else {
+            0
+        };
+        if let Some(receipt) = nitro_receipt {
+            let receipt_gas_used = receipt.gas_used();
+            if l1_gas_used > receipt_gas_used {
+                eyre::bail!(
+                    "Nitro poster gas {l1_gas_used} exceeds receipt gas used {receipt_gas_used} for transaction {:?}",
+                    transaction.tx_hash()
+                );
+            }
+            if receipt_gas_used > transaction.gas_limit() {
+                eyre::bail!(
+                    "receipt gas used {receipt_gas_used} exceeds gas limit {} for transaction {:?}",
+                    transaction.gas_limit(),
+                    transaction.tx_hash()
+                );
+            }
+        }
+        Ok(Self { transaction, l1_gas_used })
+    }
+
+    fn tx_env<FEN: FoundryEvmNetwork>(
+        &self,
+        convert: impl FnOnce(&TX) -> Result<TxEnvFor<FEN>>,
+    ) -> Result<TxEnvFor<FEN>> {
+        let mut tx_env = convert(&self.transaction)?;
+        let gas_limit = self.transaction.gas_limit();
+        let execution_gas_limit = gas_limit.checked_sub(self.l1_gas_used).ok_or_else(|| {
+            eyre::eyre!(
+                "Nitro poster gas {} exceeds gas limit {gas_limit} for transaction {:?}",
+                self.l1_gas_used,
+                self.transaction.tx_hash()
+            )
+        })?;
+        tx_env.set_gas_limit(execution_gas_limit);
+        Ok(tx_env)
+    }
+
+    fn total_gas_used(&self, execution_gas_used: u64) -> Result<u64> {
+        execution_gas_used.checked_add(self.l1_gas_used).ok_or_else(|| {
+            eyre::eyre!(
+                "gas used overflow for transaction {:?}: execution gas {execution_gas_used}, Nitro poster gas {}",
+                self.transaction.tx_hash(),
+                self.l1_gas_used
+            )
+        })
+    }
+}
+
+const ARBITRUM_ONE_CHAIN_ID: u64 = 42_161;
+const ARBITRUM_ONE_NITRO_ACTIVATION_BLOCK: u64 = 22_207_818;
+const ARBITRUM_NOVA_CHAIN_ID: u64 = 42_170;
+const ARBITRUM_RINKEBY_CHAIN_ID: u64 = 421_611;
+const ARBITRUM_RINKEBY_NITRO_ACTIVATION_BLOCK: u64 = 13_919_178;
+const ARBITRUM_GOERLI_CHAIN_ID: u64 = 421_613;
+const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421_614;
+
+const fn is_nitro_block(chain_id: u64, block_number: u64) -> bool {
+    match chain_id {
+        ARBITRUM_ONE_CHAIN_ID => block_number >= ARBITRUM_ONE_NITRO_ACTIVATION_BLOCK,
+        ARBITRUM_RINKEBY_CHAIN_ID => block_number >= ARBITRUM_RINKEBY_NITRO_ACTIVATION_BLOCK,
+        ARBITRUM_NOVA_CHAIN_ID | ARBITRUM_GOERLI_CHAIN_ID | ARBITRUM_SEPOLIA_CHAIN_ID => true,
+        _ => false,
+    }
+}
+
+fn validate_nitro_block<TX: TransactionResponse>(
+    txs: &[TX],
+    block_hash: B256,
+    block_number: u64,
+    receipts: &[AnyTransactionReceipt],
+    target: &TX,
+) -> Result<()> {
+    if txs.len() != receipts.len() {
+        eyre::bail!(
+            "Nitro block {block_hash:?} returned {} transactions but {} receipts",
+            txs.len(),
+            receipts.len()
+        );
+    }
+    let mut tx_hashes = B256HashSet::default();
+    let mut receipt_hashes = B256HashSet::default();
+    let mut target_count = 0;
+    for (index, (tx, receipt)) in txs.iter().zip(receipts).enumerate() {
+        let index = index as u64;
+        let tx_hash = tx.tx_hash();
+        if !tx_hashes.insert(tx_hash) {
+            eyre::bail!("duplicate transaction hash {tx_hash:?} in Nitro block {block_hash:?}");
+        }
+        let receipt_hash = receipt.transaction_hash();
+        if !receipt_hashes.insert(receipt_hash) {
+            eyre::bail!("duplicate receipt hash {receipt_hash:?} in Nitro block {block_hash:?}");
+        }
+        if *tx_hash != receipt_hash {
+            eyre::bail!(
+                "Nitro transaction/receipt hash mismatch at index {index}: {tx_hash:?} != {receipt_hash:?}"
+            );
+        }
+        if tx.block_hash() != Some(block_hash)
+            || tx.block_number() != Some(block_number)
+            || tx.transaction_index() != Some(index)
+        {
+            eyre::bail!(
+                "invalid Nitro transaction block metadata for {tx_hash:?} at index {index}"
+            );
+        }
+        if receipt.block_hash() != Some(block_hash)
+            || receipt.block_number() != Some(block_number)
+            || receipt.transaction_index() != Some(index)
+        {
+            eyre::bail!(
+                "invalid Nitro receipt block metadata for {receipt_hash:?} at index {index}"
+            );
+        }
+        if tx_hash == target.tx_hash() {
+            target_count += 1;
+        }
+    }
+    let target_index = target
+        .transaction_index()
+        .ok_or_else(|| eyre::eyre!("target Nitro transaction is missing its transaction index"))?;
+    if target.block_hash() != Some(block_hash) || target.block_number() != Some(block_number) {
+        eyre::bail!(
+            "target Nitro transaction block metadata does not match fetched block {block_hash:?}"
+        );
+    }
+    if target_count != 1
+        || txs.get(target_index as usize).is_none_or(|tx| tx.tx_hash() != target.tx_hash())
+    {
+        eyre::bail!(
+            "target Nitro transaction {:?} was not found exactly once at declared index {target_index}",
+            target.tx_hash()
+        );
+    }
+    Ok(())
+}
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -178,7 +351,6 @@ impl RunArgs {
         let tracing = config.tracing.clone();
 
         let with_local_artifacts = self.with_local_artifacts;
-        let debug = self.debug;
         let compute_units_per_second = if self.rpc.common.no_rpc_rate_limit {
             Some(u64::MAX)
         } else {
@@ -305,17 +477,129 @@ impl RunArgs {
         let tx_block_number = tx
             .block_number()
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+        let tx_block_hash =
+            tx.block_hash().ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+        let source_chain_id = provider.get_chain_id().await?;
+        let is_nitro = is_nitro_block(source_chain_id, tx_block_number);
+
+        if is_nitro {
+            let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?
+                .compute_units_per_second_opt(compute_units_per_second)
+                .build()?;
+            let tx = provider
+                .get_transaction_by_hash(tx_hash)
+                .await
+                .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
+                .ok_or_else(|| eyre::eyre!("tx not found: {tx_hash:?}"))?;
+            return self
+                .replay_local::<FEN, AnyNetwork, _, _, _>(
+                    config,
+                    evm_opts,
+                    tracing,
+                    provider,
+                    tx,
+                    tx_hash,
+                    tx_block_number,
+                    tx_block_hash,
+                    true,
+                    TxEnvFor::<FEN>::from_any_rpc_transaction,
+                    |tx| {
+                        let from = tx.from();
+                        tx.as_envelope().is_some_and(|tx| {
+                            tx.recover_signer().is_ok_and(|signer| signer != from)
+                        })
+                    },
+                )
+                .await;
+        }
+
+        self.replay_local::<FEN, FEN::Network, _, _, _>(
+            config,
+            evm_opts,
+            tracing,
+            provider,
+            tx,
+            tx_hash,
+            tx_block_number,
+            tx_block_hash,
+            false,
+            |tx| Ok(TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from())),
+            |tx| tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn replay_local<FEN, SN, P, C, B>(
+        self,
+        mut config: Config,
+        evm_opts: EvmOpts,
+        tracing: TracingConfig,
+        provider: P,
+        tx: SN::TransactionResponse,
+        tx_hash: B256,
+        tx_block_number: u64,
+        tx_block_hash: B256,
+        is_nitro: bool,
+        convert: C,
+        has_signer_mismatch: B,
+    ) -> Result<()>
+    where
+        FEN: FoundryEvmNetwork,
+        SN: Network,
+        P: Provider<SN>,
+        C: Copy + Fn(&SN::TransactionResponse) -> Result<TxEnvFor<FEN>>,
+        B: Copy + Fn(&SN::TransactionResponse) -> bool,
+    {
+        let with_local_artifacts = self.with_local_artifacts;
+        let debug = self.debug;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
         let verbosity = tracing.verbosity;
-        let (block, (mut evm_env, tx_env, fork, chain, networks)) = tokio::try_join!(
+        let (block, receipts, (mut evm_env, tx_env, fork, chain, networks)) = tokio::try_join!(
             // fetch the block the transaction was mined in
-            provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
+            provider.get_block_by_hash(tx_block_hash).full().into_future().map_err(Into::into),
+            async {
+                if is_nitro {
+                    let receipts = provider
+                        .raw_request::<_, Option<Vec<AnyTransactionReceipt>>>(
+                            "eth_getBlockReceipts".into(),
+                            (BlockId::Hash(tx_block_hash.into()),),
+                        )
+                        .await?
+                        .ok_or_else(|| {
+                            eyre::eyre!("receipts not found for Nitro block {tx_block_number}")
+                        })?;
+                    Ok(Some(receipts))
+                } else {
+                    Ok(None)
+                }
+            },
             TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts)
         )?;
+        if is_nitro {
+            let block = block
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("Nitro block {tx_block_hash:?} not found"))?;
+            if block.header().number() != tx_block_number {
+                eyre::bail!(
+                    "fetched Nitro block metadata does not match requested block {tx_block_hash:?} at number {tx_block_number}"
+                );
+            }
+            let BlockTransactions::Full(txs) = block.transactions() else {
+                eyre::bail!("Nitro block {tx_block_hash:?} did not contain full transactions");
+            };
+            validate_nitro_block(
+                txs,
+                tx_block_hash,
+                tx_block_number,
+                receipts.as_deref().unwrap_or_default(),
+                &tx,
+            )?;
+        }
 
         let mut evm_version = self.evm_version;
         let mut resolved_tempo_hardfork = config
@@ -364,7 +648,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
+            apply_chain_and_block_specific_env_changes::<SN, _, _>(
                 &mut evm_env,
                 block,
                 config.networks,
@@ -396,7 +680,7 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
         if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root)?
+            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root, is_nitro)?
         {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
@@ -460,37 +744,42 @@ impl RunArgs {
                         break;
                     }
 
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let receipt = receipts.as_ref().and_then(|receipts| receipts.get(index));
+                    let prepared = PreparedReplayTransaction::new(tx.clone(), receipt)?;
+                    let tx_env = prepared.tx_env::<FEN>(convert)?;
 
                     evm_env.cfg_env.disable_balance_check = true;
 
-                    if let Some(to) = Transaction::to(tx) {
-                        trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor.transact_with_env(evm_env.clone(), tx_env.clone()).wrap_err_with(
-                            || {
-                                format!(
-                                    "Failed to execute transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    evm_env.block_env.number()
-                                )
-                            },
-                        )?;
-                    } else {
-                        trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) =
-                            executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
-                        {
-                            match error {
-                                // Reverted transactions should be skipped
-                                EvmError::Execution(_) => (),
-                                error => {
-                                    return Err(error).wrap_err_with(|| {
-                                        format!(
-                                            "Failed to deploy transaction: {:?} in block {}",
-                                            tx.tx_hash(),
-                                            evm_env.block_env.number()
-                                        )
-                                    });
+                    match tx_env.kind() {
+                        TxKind::Call(to) => {
+                            trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
+                            executor
+                                .transact_with_env(evm_env.clone(), tx_env.clone())
+                                .wrap_err_with(|| {
+                                    format!(
+                                        "Failed to execute transaction: {:?} in block {}",
+                                        tx.tx_hash(),
+                                        evm_env.block_env.number()
+                                    )
+                                })?;
+                        }
+                        TxKind::Create => {
+                            trace!(tx=?tx.tx_hash(), "executing previous create transaction");
+                            if let Err(error) =
+                                executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
+                            {
+                                match error {
+                                    // Reverted transactions should be skipped
+                                    EvmError::Execution(_) => (),
+                                    error => {
+                                        return Err(error).wrap_err_with(|| {
+                                            format!(
+                                                "Failed to deploy transaction: {:?} in block {}",
+                                                tx.tx_hash(),
+                                                evm_env.block_env.number()
+                                            )
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -505,19 +794,28 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+            let receipt = receipts.as_ref().and_then(|receipts| {
+                tx.transaction_index().and_then(|index| receipts.get(index as usize))
+            });
+            let prepared = PreparedReplayTransaction::new(tx.clone(), receipt)?;
+            let tx_env = prepared.tx_env::<FEN>(convert)?;
 
-            if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
+            if has_signer_mismatch(&tx) {
                 evm_env.cfg_env.disable_balance_check = true;
             }
 
-            if let Some(to) = Transaction::to(&tx) {
-                trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
-            } else {
-                trace!(tx=?tx.tx_hash(), "executing create transaction");
-                TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
-            }
+            let mut result = match tx_env.kind() {
+                TxKind::Call(to) => {
+                    trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
+                    TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
+                }
+                TxKind::Create => {
+                    trace!(tx=?tx.tx_hash(), "executing create transaction");
+                    TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
+                }
+            };
+            result.gas_used = prepared.total_gas_used(result.gas_used)?;
+            result
         };
 
         let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &result)?;
@@ -540,8 +838,12 @@ impl RunArgs {
 fn parent_beacon_block_root_for_spec(
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
+    allow_missing: bool,
 ) -> Result<Option<B256>> {
     if !spec_id.is_enabled_in(SpecId::CANCUN) {
+        return Ok(None);
+    }
+    if allow_missing && parent_beacon_block_root.is_none() {
         return Ok(None);
     }
 
@@ -707,7 +1009,251 @@ impl figment::Provider for RunArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
+    use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
+    use alloy_network::AnyRpcTransaction;
+    use alloy_primitives::{Signature, address};
+    use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
+
+    fn replay_transaction(gas_limit: u64) -> AnyRpcTransaction {
+        replay_transaction_with_metadata(gas_limit, B256::ZERO, B256::ZERO, 1, 0)
+    }
+
+    fn replay_transaction_with_metadata(
+        gas_limit: u64,
+        tx_hash: B256,
+        block_hash: B256,
+        block_number: u64,
+        transaction_index: u64,
+    ) -> AnyRpcTransaction {
+        let signed = Signed::new_unchecked(
+            TxEip1559 { chain_id: 42161, gas_limit, ..Default::default() },
+            Signature::new(U256::ZERO, U256::ZERO, false),
+            tx_hash,
+        );
+        RpcTransaction::from_transaction(
+            Recovered::new_unchecked(signed.into(), Address::ZERO),
+            TransactionInfo {
+                hash: Some(tx_hash),
+                index: Some(transaction_index),
+                block_hash: Some(block_hash),
+                block_number: Some(block_number),
+                ..Default::default()
+            },
+        )
+        .into()
+    }
+
+    fn nitro_receipt(gas_used_for_l1: &str) -> AnyTransactionReceipt {
+        nitro_receipt_with_metadata(gas_used_for_l1, 2_728_986, B256::ZERO, B256::ZERO, 1, 0)
+    }
+
+    fn nitro_receipt_with_metadata(
+        gas_used_for_l1: &str,
+        gas_used: u64,
+        tx_hash: B256,
+        block_hash: B256,
+        block_number: u64,
+        transaction_index: u64,
+    ) -> AnyTransactionReceipt {
+        serde_json::from_value(serde_json::json!({
+            "status": "0x0",
+            "cumulativeGasUsed": format!("0x{gas_used:x}"),
+            "logs": [],
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "type": "0x2",
+            "transactionHash": tx_hash,
+            "transactionIndex": format!("0x{transaction_index:x}"),
+            "blockHash": block_hash,
+            "blockNumber": format!("0x{block_number:x}"),
+            "gasUsed": format!("0x{gas_used:x}"),
+            "effectiveGasPrice": "0x1",
+            "from": Address::ZERO,
+            "to": Address::ZERO,
+            "contractAddress": null,
+            "gasUsedForL1": gas_used_for_l1,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn replays_issue_7514_with_nitro_gas_accounting() {
+        let transaction = replay_transaction(2_733_748);
+        let receipt = nitro_receipt("0x26ed52");
+        let prepared = PreparedReplayTransaction::new(transaction, Some(&receipt)).unwrap();
+
+        let tx_env = prepared
+            .tx_env::<EthEvmNetwork>(TxEnvFor::<EthEvmNetwork>::from_any_rpc_transaction)
+            .unwrap();
+        assert_eq!(tx_env.gas_limit, 182_626);
+        assert_eq!(prepared.total_gas_used(177_864).unwrap(), 2_728_986);
+    }
+
+    #[test]
+    fn rejects_invalid_nitro_replay_metadata() {
+        let receipt = nitro_receipt_with_metadata("0x33", 50, B256::ZERO, B256::ZERO, 1, 0);
+        let err =
+            PreparedReplayTransaction::new(replay_transaction(100), Some(&receipt)).unwrap_err();
+        assert!(err.to_string().contains("poster gas 51 exceeds receipt gas used 50"));
+
+        let receipt = nitro_receipt_with_metadata("0x1", 50, B256::ZERO, B256::ZERO, 1, 0);
+        let err =
+            PreparedReplayTransaction::new(replay_transaction(49), Some(&receipt)).unwrap_err();
+        assert!(err.to_string().contains("receipt gas used 50 exceeds gas limit 49"));
+
+        let receipt = nitro_receipt_with_metadata("0x0", 0, B256::repeat_byte(1), B256::ZERO, 1, 0);
+        let err =
+            PreparedReplayTransaction::new(replay_transaction(1), Some(&receipt)).unwrap_err();
+        assert!(err.to_string().contains("does not match transaction"));
+
+        let receipt = nitro_receipt("0x1");
+        let prepared =
+            PreparedReplayTransaction::new(replay_transaction(u64::MAX), Some(&receipt)).unwrap();
+        let err = prepared.total_gas_used(u64::MAX).unwrap_err();
+        assert!(err.to_string().contains("gas used overflow"));
+    }
+
+    #[test]
+    fn rejects_inconsistent_nitro_block_receipts() {
+        let block_hash = B256::repeat_byte(0xaa);
+        let first_hash = B256::repeat_byte(1);
+        let target_hash = B256::repeat_byte(2);
+        let block_number = 42;
+        let first = replay_transaction_with_metadata(100, first_hash, block_hash, block_number, 0);
+        let target =
+            replay_transaction_with_metadata(100, target_hash, block_hash, block_number, 1);
+        let first_receipt =
+            nitro_receipt_with_metadata("0x1", 50, first_hash, block_hash, block_number, 0);
+        let target_receipt =
+            nitro_receipt_with_metadata("0x1", 50, target_hash, block_hash, block_number, 1);
+        let txs = vec![first.clone(), target.clone()];
+        let receipts = vec![first_receipt.clone(), target_receipt.clone()];
+
+        validate_nitro_block(&txs, block_hash, block_number, &receipts, &target).unwrap();
+
+        let err = validate_nitro_block(&txs, block_hash, block_number, &receipts[..1], &target)
+            .unwrap_err();
+        assert!(err.to_string().contains("2 transactions but 1 receipts"));
+
+        let err = validate_nitro_block(
+            &txs,
+            block_hash,
+            block_number,
+            &[target_receipt.clone(), first_receipt.clone()],
+            &target,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("hash mismatch at index 0"));
+
+        let duplicate_receipt =
+            nitro_receipt_with_metadata("0x1", 50, first_hash, block_hash, block_number, 1);
+        let err = validate_nitro_block(
+            &txs,
+            block_hash,
+            block_number,
+            &[first_receipt.clone(), duplicate_receipt],
+            &target,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("duplicate receipt hash"));
+
+        let wrong_block_receipt = nitro_receipt_with_metadata(
+            "0x1",
+            50,
+            target_hash,
+            B256::repeat_byte(0xbb),
+            block_number,
+            1,
+        );
+        let err = validate_nitro_block(
+            &txs,
+            block_hash,
+            block_number,
+            &[first_receipt, wrong_block_receipt],
+            &target,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid Nitro receipt block metadata"));
+
+        let wrong_target_index =
+            replay_transaction_with_metadata(100, target_hash, block_hash, block_number, 0);
+        let err =
+            validate_nitro_block(&txs, block_hash, block_number, &receipts, &wrong_target_index)
+                .unwrap_err();
+        assert!(err.to_string().contains("not found exactly once at declared index 0"));
+    }
+
+    #[test]
+    fn prepares_preceding_and_target_nitro_transactions() {
+        let block_hash = B256::repeat_byte(0xaa);
+        let block_number = 42;
+        let preceding_hash = B256::repeat_byte(1);
+        let target_hash = B256::repeat_byte(2);
+        let preceding =
+            replay_transaction_with_metadata(1_000, preceding_hash, block_hash, block_number, 0);
+        let target =
+            replay_transaction_with_metadata(500, target_hash, block_hash, block_number, 1);
+        let preceding_receipt =
+            nitro_receipt_with_metadata("0x64", 900, preceding_hash, block_hash, block_number, 0);
+        let target_receipt =
+            nitro_receipt_with_metadata("0x12c", 480, target_hash, block_hash, block_number, 1);
+        let txs = [preceding.clone(), target.clone()];
+        let receipts = [preceding_receipt, target_receipt];
+        validate_nitro_block(&txs, block_hash, block_number, &receipts, &target).unwrap();
+
+        let preceding = PreparedReplayTransaction::new(preceding, Some(&receipts[0])).unwrap();
+        let preceding_env = preceding
+            .tx_env::<EthEvmNetwork>(TxEnvFor::<EthEvmNetwork>::from_any_rpc_transaction)
+            .unwrap();
+        assert_eq!(preceding_env.gas_limit, 900);
+
+        let target = PreparedReplayTransaction::new(target, Some(&receipts[1])).unwrap();
+        let target_env = target
+            .tx_env::<EthEvmNetwork>(TxEnvFor::<EthEvmNetwork>::from_any_rpc_transaction)
+            .unwrap();
+        assert_eq!(target_env.gas_limit, 200);
+        assert_eq!(target.total_gas_used(180).unwrap(), 480);
+    }
+
+    #[test]
+    fn gates_nitro_by_chain_and_block() {
+        assert!(!is_nitro_block(ARBITRUM_ONE_CHAIN_ID, ARBITRUM_ONE_NITRO_ACTIVATION_BLOCK - 1));
+        assert!(is_nitro_block(ARBITRUM_ONE_CHAIN_ID, ARBITRUM_ONE_NITRO_ACTIVATION_BLOCK));
+        assert!(!is_nitro_block(
+            ARBITRUM_RINKEBY_CHAIN_ID,
+            ARBITRUM_RINKEBY_NITRO_ACTIVATION_BLOCK - 1
+        ));
+        assert!(is_nitro_block(ARBITRUM_RINKEBY_CHAIN_ID, ARBITRUM_RINKEBY_NITRO_ACTIVATION_BLOCK));
+        assert!(is_nitro_block(ARBITRUM_NOVA_CHAIN_ID, 0));
+        assert!(is_nitro_block(ARBITRUM_GOERLI_CHAIN_ID, 0));
+        assert!(is_nitro_block(ARBITRUM_SEPOLIA_CHAIN_ID, 0));
+        assert!(!is_nitro_block(1, ARBITRUM_ONE_NITRO_ACTIVATION_BLOCK));
+        assert!(!is_nitro_block(412_346, u64::MAX));
+    }
+
+    #[test]
+    fn rejects_invalid_nitro_poster_gas() {
+        let transaction = replay_transaction(u64::MAX);
+        for (value, expected) in [
+            (None, "missing `gasUsedForL1`"),
+            (Some("bogus"), "malformed `gasUsedForL1`"),
+            (Some("0x10000000000000000"), "exceeds u64::MAX"),
+        ] {
+            let mut receipt = nitro_receipt("0x0");
+            match value {
+                Some(value) => {
+                    receipt
+                        .other_fields_mut()
+                        .insert("gasUsedForL1".into(), serde_json::json!(value));
+                }
+                None => {
+                    receipt.other_fields_mut().remove("gasUsedForL1");
+                }
+            }
+            let err =
+                PreparedReplayTransaction::new(transaction.clone(), Some(&receipt)).unwrap_err();
+            assert!(err.to_string().contains(expected), "{err}");
+        }
+    }
 
     #[test]
     fn parses_legacy_short_label_alias() {
@@ -760,16 +1306,20 @@ mod tests {
 
     #[test]
     fn parent_beacon_block_root_is_required_for_cancun() {
-        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None).unwrap_err();
+        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None, false).unwrap_err();
         assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
-            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root)).unwrap(),
+            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root), false).unwrap(),
             Some(root),
         );
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
+        assert_eq!(
+            parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root), false).unwrap(),
+            None
+        );
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None, false).unwrap(), None);
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::CANCUN, None, true).unwrap(), None);
     }
 
     #[test]
