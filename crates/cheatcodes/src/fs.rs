@@ -572,6 +572,27 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
     let parsed =
         parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
     let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
+    let file = file.map(|file| {
+        let cwd = state
+            .config
+            .running_artifact
+            .as_ref()
+            .and_then(|artifact| artifact.source.parent())
+            .unwrap_or(&state.config.paths.root);
+        let relative_cwd = cwd.strip_prefix(&state.config.paths.root).unwrap_or(cwd);
+        let has_matching_remapping = state.config.paths.remappings.iter().any(|remapping| {
+            remapping.context.as_ref().is_none_or(|context| relative_cwd.starts_with(context))
+                && file.strip_prefix(&remapping.name).is_ok()
+        });
+
+        if has_matching_remapping {
+            state.config.paths.resolve_library_import(cwd, &file).map_or(file, |resolved| {
+                resolved.strip_prefix(&state.config.paths.root).unwrap_or(&resolved).to_path_buf()
+            })
+        } else {
+            file
+        }
+    });
 
     // Use available artifacts list if present
     if let Some(artifacts) = &state.config.available_artifacts {
@@ -1080,10 +1101,13 @@ mod tests {
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
         ArtifactId,
-        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+        artifacts::{
+            BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
+        },
     };
     use foundry_evm_core::evm::TempoEvmNetwork;
-    use std::{env, fs as stdfs, sync::Arc};
+    use std::{env, fs as stdfs, str::FromStr, sync::Arc};
+    use tempfile::TempDir;
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -1284,6 +1308,62 @@ mod tests {
             super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
 
         assert_eq!(bytecode, contract_bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_resolves_remapping() {
+        let bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let artifacts = ContractsByArtifact::new([test_artifact(
+            "src/Something.sol",
+            "Something",
+            "default",
+            bytecode.clone(),
+        )]);
+        let root = PathBuf::from(&env!("CARGO_MANIFEST_DIR"));
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remapping(Remapping::from_str("@example/=src/").unwrap())
+            .build_with_root(&root);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root,
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved =
+            super::get_artifact_code(&cheats, "@example/Something.sol:Something", false).unwrap();
+
+        assert_eq!(resolved, bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_preserves_project_path_on_library_collision() {
+        let root_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let library_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let artifacts = ContractsByArtifact::new([
+            test_artifact("src/Thing.sol", "RootThing", "default", root_bytecode.clone()),
+            test_artifact("lib/src/Thing.sol", "LibThing", "default", library_bytecode),
+        ]);
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("lib");
+        stdfs::create_dir_all(library.join("src")).unwrap();
+        stdfs::write(library.join("src/Thing.sol"), "").unwrap();
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remappings([])
+            .lib(library)
+            .build_with_root(temp.path());
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: temp.path().to_path_buf(),
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved = super::get_artifact_code(&cheats, "src/Thing.sol:RootThing", false).unwrap();
+
+        assert_eq!(resolved, root_bytecode);
     }
 
     #[test]
