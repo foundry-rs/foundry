@@ -9150,6 +9150,26 @@
     },
     {
       "func": {
+        "id": "registerMappingSstoreHook",
+        "description": "Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.\nThe callback signature is `function(address account, bytes32 computedSlot, bytes32 rootSlot,\nbytes32[] keys, bytes32 oldValue, bytes32 newValue) external`; keys are raw words in\nroot-to-leaf order. Only complete 64-byte Keccak chains observed after the latest mapping\nhook registration for `target` in the current top-level execution match; provenance is\ncleared between top-level executions. Resolution follows the complete chain to its terminal\nroot and ignores registered intermediate hashes. Offsets, incomplete or unknown chains,\nhashes computed before registration or in an earlier top-level execution, and source layouts\ndo not match. The contract that calls this cheatcode receives the callback. Registration\npersists across reverts and replaces the same target/root callback; callback state rolls back\nwith its enclosing context, callback reverts propagate, and hooks are suppressed throughout\ncallback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent\nexternal spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping\nroots may be registered.",
+        "declaration": "function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerMappingSstoreHook(address,bytes32,bytes4)",
+        "selector": "0x12d14123",
+        "selectorBytes": [
+          18,
+          209,
+          65,
+          35
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "registerSloadHook",
         "description": "Registers a callback invoked after each SLOAD against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a load at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the load.",
         "declaration": "function registerSloadHook(address target, bytes4 callback) external;",
@@ -11101,7 +11121,7 @@
     {
       "func": {
         "id": "startMappingRecording",
-        "description": "Starts recording all map SSTOREs for later retrieval.",
+        "description": "Starts recording mapping SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",
         "visibility": "external",
         "mutability": "",
@@ -11341,7 +11361,7 @@
     {
       "func": {
         "id": "stopMappingRecording",
-        "description": "Stops recording all map SSTOREs for later retrieval and clears the recorded data.",
+        "description": "Stops recording mapping SSTOREs and clears the recorded data.",
         "declaration": "function stopMappingRecording() external;",
         "visibility": "external",
         "mutability": "",

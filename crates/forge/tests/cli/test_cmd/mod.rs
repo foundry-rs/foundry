@@ -2831,7 +2831,7 @@ Traces:
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [558957] PauseTracingTest::test()
+  [558945] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
     ├─ [48460] TraceGenerator::generate()

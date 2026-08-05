@@ -1,6 +1,9 @@
 use crate::invariant::RandomCallGenerator;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-use foundry_common::mapping_slots::{MappingSlots, step as mapping_step};
+use foundry_common::mapping_slots::{
+    MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
+    record_hash as record_mapping_hash, step as mapping_step,
+};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use revm::{
     Inspector,
@@ -35,6 +38,8 @@ pub struct Fuzzer {
     pub max_collected_values: usize,
     /// Mapping accesses observed during execution, used for storage slot sampling.
     pub mapping_slots: Option<AddressMap<MappingSlots>>,
+    /// A 64-byte Keccak operation waiting to be recorded after execution.
+    pending_mapping_hash: Option<PendingMappingHash>,
     /// Whether sub-calls should be buffered for later corpus seeding.
     record_calls: bool,
     /// Sub-calls observed since the last drain.
@@ -46,13 +51,16 @@ pub struct Fuzzer {
 impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
+        self.capture_mapping_hash(interp);
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interp);
-            if let Some(mapping_slots) = &mut self.mapping_slots {
-                mapping_step(mapping_slots, interp);
-            }
         }
+    }
+
+    #[inline]
+    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
+        self.record_mapping_hash(interp);
     }
 
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
@@ -96,6 +104,22 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
 }
 
 impl Fuzzer {
+    fn capture_mapping_hash(&mut self, interpreter: &Interpreter) {
+        if let Some(mapping_slots) = &mut self.mapping_slots {
+            mapping_step(mapping_slots, interpreter);
+            self.pending_mapping_hash = capture_mapping_hash(interpreter);
+        }
+    }
+
+    fn record_mapping_hash(&mut self, interpreter: &Interpreter) {
+        if let Some(pending) = self.pending_mapping_hash.take()
+            && interpreter.bytecode.action.is_none()
+            && let Some(mapping_slots) = &mut self.mapping_slots
+        {
+            record_mapping_hash(mapping_slots, interpreter, pending);
+        }
+    }
+
     /// Constructs a new `Fuzzer` inspector.
     pub const fn new(
         max_collected_values: usize,
@@ -107,6 +131,7 @@ impl Fuzzer {
             collected_values: Vec::new(),
             max_collected_values,
             mapping_slots,
+            pending_mapping_hash: None,
             record_calls: false,
             observed_calls: Vec::new(),
             call_depth: 0,
@@ -252,9 +277,39 @@ impl Fuzzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::keccak256;
+    use revm::bytecode::Bytecode;
 
     fn fuzzer(record_calls: bool) -> Fuzzer {
         Fuzzer::new(16, None).with_call_recording(record_calls)
+    }
+
+    #[test]
+    fn mapping_hashes_are_recorded_outside_dictionary_collection() {
+        let key = B256::with_last_byte(1);
+        let parent = B256::with_last_byte(2);
+        let preimage = [key.as_slice(), parent.as_slice()].concat();
+        let result = keccak256(&preimage);
+        let mut interpreter =
+            Interpreter::default().with_bytecode(Bytecode::new_raw(Bytes::from_static(&[
+                revm::bytecode::opcode::KECCAK256,
+            ])));
+        interpreter.memory.resize(64);
+        interpreter.memory.set(0, &preimage);
+        assert!(interpreter.stack.push(U256::from(64)));
+        assert!(interpreter.stack.push(U256::ZERO));
+
+        let mut fuzzer = Fuzzer::new(16, Some(AddressMap::default()));
+        fuzzer.collect = false;
+        fuzzer.capture_mapping_hash(&interpreter);
+
+        interpreter.stack.pop().unwrap();
+        interpreter.stack.pop().unwrap();
+        assert!(interpreter.stack.push(result.into()));
+        fuzzer.record_mapping_hash(&interpreter);
+
+        let slots = fuzzer.mapping_slots.unwrap();
+        assert_eq!(slots[&Address::ZERO].seen_sha3.get(&result), Some(&(key, parent)));
     }
 
     #[test]
