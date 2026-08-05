@@ -2052,9 +2052,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         let account = interpreter.input.target_address;
-        let mapping_hook_active =
-            self.mapping_storage_store_hooks.get(&account).is_some_and(|hooks| !hooks.is_empty())
-                && self.active_storage_hook.is_none();
+        let mapping_hook_active = self.active_storage_hook.is_none()
+            && !self.mapping_storage_store_hooks.is_empty()
+            && self
+                .mapping_storage_store_hooks
+                .get(&account)
+                .is_some_and(|hooks| !hooks.is_empty());
         if mapping_hook_active {
             mapping_step(&mut self.storage_hook_mapping_slots, interpreter);
         }

@@ -763,14 +763,12 @@ impl SymbolicExecutor {
                 }
             }
             opcode::SSTORE => {
-                let pre_store_state = state.clone();
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::Revert);
                 }
-                let key = state.stack.pop()?;
-                let value = state.stack.pop()?;
-                state.record_sstore(state.storage_address, key.clone());
+                let key = state.stack.peek(0)?.clone();
+                state.stack.peek(1)?;
                 let hook = (!state.storage_hook_active)
                     .then(|| state.storage_store_hooks.get(&state.storage_address).copied())
                     .flatten();
@@ -788,10 +786,10 @@ impl SymbolicExecutor {
                         .map(|hook| (hook, provenance)),
                     MappingStorageProvenance::Fork { equality, inequality } => {
                         let store_pc = state.pc - 1;
-                        let mut equality_state = pre_store_state.clone();
+                        let mut equality_state = state.clone();
                         equality_state.pc = store_pc;
                         equality_state.constraints = equality;
-                        let mut inequality_state = pre_store_state;
+                        let mut inequality_state = state.clone();
                         inequality_state.pc = store_pc;
                         inequality_state.constraints = inequality;
                         worklist.push_back(equality_state);
@@ -799,6 +797,9 @@ impl SymbolicExecutor {
                         return Ok(StepOutcome::Forked);
                     }
                 };
+                state.stack.pop()?;
+                let value = state.stack.pop()?;
+                state.record_sstore(state.storage_address, key.clone());
                 let old_value = if hook.is_some() || mapping.is_some() {
                     let concrete_key = state.constrained_word(&mut self.cx, &key);
                     Some(state.world.sload(
