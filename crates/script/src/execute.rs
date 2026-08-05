@@ -29,6 +29,7 @@ use foundry_evm::{
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
+        debug::ContractSources,
         decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
@@ -361,7 +362,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             rpc_data.check_shanghai_support().await?;
         }
 
-        let decoder = self.build_trace_decoder(&self.build_data.known_contracts, &rpc_data).await?;
+        let decoder = self.build_trace_decoder(&rpc_data).await?;
 
         Ok(PreSimulationState {
             args: self.args,
@@ -376,11 +377,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     }
 
     /// Builds [CallTraceDecoder] from the execution result and known contracts.
-    async fn build_trace_decoder(
-        &self,
-        known_contracts: &ContractsByArtifact,
-        rpc_data: &RpcData,
-    ) -> Result<CallTraceDecoder> {
+    async fn build_trace_decoder(&self, rpc_data: &RpcData) -> Result<CallTraceDecoder> {
         let chain_id = self.script_config.source_chain_id.map(Chain::from).or_else(|| {
             self.script_config
                 .evm_opts
@@ -393,55 +390,14 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             Some(chain_id) => Some(chain_id),
             None => self.script_config.evm_opts.get_remote_chain_id().await,
         };
-        let resolved_hardfork = self.script_config.hardfork;
-        let mut tracing = self.script_config.config.tracing.clone();
-        tracing.labels.extend(self.execution_result.labeled_addresses.clone());
-
-        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
-        let mut builder = CallTraceDecoderBuilder::new()
-            .with_tracing_config(&tracing)
-            .with_known_contracts(known_contracts)
-            .with_signature_identifier(SignaturesIdentifier::from_config(
-                &self.script_config.config,
-            )?)
-            .with_networks(self.script_config.config.networks)
-            .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
-                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-                _ => None,
-            }));
-        #[cfg(feature = "monad")]
-        {
-            builder =
-                builder.with_monad_hardfork(resolved_hardfork.and_then(
-                    |hardfork| match hardfork {
-                        FoundryHardfork::Monad(hardfork) => Some(hardfork),
-                        _ => None,
-                    },
-                ));
-        }
-        let mut decoder = builder.build();
-
-        if tracing.decode_internal {
-            decoder.debug_identifier =
-                Some(DebugTraceIdentifier::new(self.build_data.sources.clone()));
-        }
-
-        let use_debug_bytecodes =
-            self.args.debug && !self.execution_result.debug_bytecodes.is_empty();
-        let mut identifier = if use_debug_bytecodes {
-            TraceIdentifiers::new()
-                .with_local_and_bytecodes(known_contracts, &self.execution_result.debug_bytecodes)
-        } else {
-            TraceIdentifiers::new().with_local(known_contracts)
-        }
-        .with_external(&self.script_config.config, chain_id)?;
-
-        for (_, trace) in &self.execution_result.traces {
-            decoder.identify(trace, &mut identifier);
-        }
-
-        Ok(decoder)
+        build_trace_decoder_for_context(
+            &self.args,
+            &self.script_config,
+            &self.build_data.known_contracts,
+            &self.build_data.sources,
+            &self.execution_result,
+            chain_id,
+        )
     }
 
     /// Collects the return values from the execution result.
@@ -481,6 +437,60 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 
         Ok(returns)
     }
+}
+
+/// Builds a trace decoder for the exact execution context of a script runner.
+pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
+    args: &ScriptArgs,
+    script_config: &ScriptConfig<FEN>,
+    known_contracts: &ContractsByArtifact,
+    sources: &ContractSources,
+    execution_result: &ScriptResult<FEN::Network>,
+    chain_id: Option<Chain>,
+) -> Result<CallTraceDecoder> {
+    let resolved_hardfork = script_config.hardfork;
+    let mut tracing = script_config.config.tracing.clone();
+    tracing.labels.extend(execution_result.labeled_addresses.clone());
+
+    #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+    let mut builder = CallTraceDecoderBuilder::new()
+        .with_tracing_config(&tracing)
+        .with_known_contracts(known_contracts)
+        .with_signature_identifier(SignaturesIdentifier::from_config(&script_config.config)?)
+        .with_networks(script_config.config.networks)
+        .with_chain_id(chain_id.map(|chain| chain.id()))
+        .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+            FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+            _ => None,
+        }));
+    #[cfg(feature = "monad")]
+    {
+        builder =
+            builder.with_monad_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Monad(hardfork) => Some(hardfork),
+                _ => None,
+            }));
+    }
+    let mut decoder = builder.build();
+
+    if tracing.decode_internal {
+        decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources.clone()));
+    }
+
+    let use_debug_bytecodes = args.debug && !execution_result.debug_bytecodes.is_empty();
+    let mut identifier = if use_debug_bytecodes {
+        TraceIdentifiers::new()
+            .with_local_and_bytecodes(known_contracts, &execution_result.debug_bytecodes)
+    } else {
+        TraceIdentifiers::new().with_local(known_contracts)
+    }
+    .with_external(&script_config.config, chain_id)?;
+
+    for (_, trace) in &execution_result.traces {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    Ok(decoder)
 }
 
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
