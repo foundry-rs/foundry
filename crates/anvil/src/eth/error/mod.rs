@@ -451,9 +451,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
                 }
-                BlockchainError::TransactionConfirmationTimeout { .. } => {
-                    RpcError::internal_error_with("Transaction confirmation timeout")
-                }
+                BlockchainError::TransactionConfirmationTimeout { hash, .. } => RpcError {
+                    code: ErrorCode::ServerError(4),
+                    message: "Transaction confirmation timeout".into(),
+                    data: serde_json::to_value(hash).ok(),
+                },
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error

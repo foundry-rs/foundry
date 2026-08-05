@@ -758,6 +758,44 @@ async fn can_parse_raw_tx_sync_timeout() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_send_raw_tx_sync_timeout_error() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = handle.http_provider();
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+
+    let mut tx = TxEip1559 {
+        max_fee_per_gas: eip1559_est.max_fee_per_gas,
+        max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
+        gas_limit: 21_000,
+        chain_id: 31337,
+        nonce: 1,
+        to: alloy_primitives::TxKind::Call(wallets[0].address()),
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let tx_hash = *tx.hash();
+    let mut encoded = Vec::new();
+    tx.eip2718_encode(&mut encoded);
+
+    let result: Result<serde_json::Value, _> = provider
+        .client()
+        .request("eth_sendRawTransactionSync", (alloy_primitives::Bytes::from(encoded), 100u64))
+        .await;
+    let error = result.unwrap_err();
+    let response = error.as_error_resp().expect("should return a JSON-RPC error");
+
+    assert_eq!(response.code, 4);
+    assert_eq!(response.message, "Transaction confirmation timeout");
+    let data = response.data.as_ref().expect("data should contain transaction hash");
+    let response_hash: B256 = serde_json::from_str(data.get()).unwrap();
+    assert_eq!(response_hash, tx_hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_send_raw_transaction_conditional() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (_api, handle) = spawn(node_config).await;
