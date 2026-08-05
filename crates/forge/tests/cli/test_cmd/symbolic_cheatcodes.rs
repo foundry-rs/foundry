@@ -5213,6 +5213,14 @@ contract MappingTarget {
         bytes32 slot = keccak256(abi.encode(key, uint256(0)));
         assembly { sstore(add(slot, and(control, 1)), value) }
     }
+    function symbolicSizeStore(uint256 key, uint256 value, uint256 size) external {
+        require(size <= 64);
+        assembly {
+            mstore(0, key)
+            mstore(32, 0)
+            sstore(keccak256(0, size), value)
+        }
+    }
     function offsetStore(uint256 key, uint256 value) external {
         bytes32 slot = bytes32(uint256(keccak256(abi.encode(key, uint256(0)))) + 1);
         assembly { sstore(slot, value) }
@@ -5690,6 +5698,32 @@ contract SymbolicMappingStorageHooksStale is Test {
         calls++;
     }
 }
+
+contract SymbolicMappingStorageHooksSymbolicSize is Test {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    MappingTarget target;
+    uint256 calls;
+
+    function setUp() public {
+        target = new MappingTarget();
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onStore.selector);
+    }
+
+    function checkSymbolicKeccakSize(uint256 key, uint256 value, uint256 size) public {
+        target.symbolicSizeStore(key, value, size);
+        assertEq(calls, 0);
+    }
+
+    function testConcreteKeccakSize() public {
+        target.symbolicSizeStore(1, 2, 64);
+        assertEq(calls, 1);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        calls++;
+    }
+}
 "#,
     );
     cmd.args(["test", "--symbolic", "--match-contract", "^SymbolicMappingStorageHooks$"])
@@ -5712,4 +5746,36 @@ contract SymbolicMappingStorageHooksStale is Test {
         .clone();
     let result = json_test_result(&output, "invariant_staleProvenanceNeverDispatches()");
     assert_eq!(result["symbolic"]["status"], "pass", "{}", result["symbolic"]);
+
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--match-contract",
+        "^SymbolicMappingStorageHooksSymbolicSize$",
+        "--match-test",
+        "testConcreteKeccakSize",
+    ])
+    .assert_success();
+
+    cmd.forge_fuse();
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-contract",
+            "^SymbolicMappingStorageHooksSymbolicSize$",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSymbolicKeccakSize(uint256,uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete", "{}", result["symbolic"]);
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"],
+        "unsupported symbolic execution feature: symbolic KECCAK256 size may conceal mapping provenance",
+        "{}",
+        result["symbolic"]
+    );
 });

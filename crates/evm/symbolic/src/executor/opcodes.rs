@@ -359,6 +359,22 @@ impl SymbolicExecutor {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
+                        let has_mapping_hook = state
+                            .mapping_storage_store_hooks
+                            .keys()
+                            .any(|(address, _)| *address == state.storage_address);
+                        if has_mapping_hook && !state.storage_hook_active {
+                            let mapping_size = SymExpr::constant(&mut self.cx, U256::from(64));
+                            let mapping_size_feasible =
+                                SymBoolExpr::eq(&mut self.cx, size.clone(), mapping_size);
+                            let (_, mapping_size_feasible) =
+                                self.constraints_with_condition(state, mapping_size_feasible)?;
+                            if mapping_size_feasible {
+                                self.defer_incomplete(
+                                    "symbolic KECCAK256 size may conceal mapping provenance",
+                                );
+                            }
+                        }
                         let max_limit = self.config.max_calldata_bytes as usize;
                         let max_size = state
                             .upper_bound_usize(&mut self.cx, &size)
