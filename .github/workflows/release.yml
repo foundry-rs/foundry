@@ -10,6 +10,10 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
@@ -30,8 +34,16 @@ jobs:
       tag_name: ${{ steps.release_info.outputs.tag_name }}
       release_name: ${{ steps.release_info.outputs.release_name }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
-      skip_release: ${{ steps.existing_release.outputs.skip_release || 'false' }}
+      skip_assets: ${{ steps.existing_release.outputs.skip_assets || 'false' }}
     steps:
+      - name: Validate manual release ref
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master' }}
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Manual nightly releases must run from refs/heads/master, not $REF."
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -127,23 +139,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          skip_release=false
+          skip_assets=false
           if is_draft="$(gh release view "$TAG_NAME" --json isDraft --jq .isDraft 2>/dev/null)"; then
             if [[ "$is_draft" == "true" ]]; then
               echo "Draft nightly release $TAG_NAME already exists; continuing so assets can be uploaded."
             else
-              echo "Published nightly release $TAG_NAME already exists; skipping duplicate nightly release."
-              skip_release=true
+              echo "Published nightly release $TAG_NAME already exists; skipping assets and retrying finalization."
+              skip_assets=true
             fi
           fi
-          printf 'skip_release=%s\n' "$skip_release" >> "$GITHUB_OUTPUT"
+          printf 'skip_assets=%s\n' "$skip_assets" >> "$GITHUB_OUTPUT"
 
       # Creates a `nightly-SHA` tag for this specific nightly
       # This tag is used for this specific nightly version's release
       # which allows users to roll back. It is also used to build
       # the changelog.
       - name: Create build-specific nightly tag
-        if: ${{ env.IS_NIGHTLY == 'true' && steps.existing_release.outputs.skip_release != 'true' }}
+        if: ${{ env.IS_NIGHTLY == 'true' && steps.existing_release.outputs.skip_assets != 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
@@ -154,7 +166,7 @@ jobs:
 
       - name: Build changelog
         id: build_changelog
-        if: ${{ steps.existing_release.outputs.skip_release != 'true' }}
+        if: ${{ steps.existing_release.outputs.skip_assets != 'true' }}
         uses: mikepenz/release-changelog-builder-action@c9bcd8238b6f41e05561348339429d360b1c0247 # v6.2.3
         with:
           configuration: "./.github/changelog.json"
@@ -167,25 +179,25 @@ jobs:
       # only upload assets to an existing draft. With immutable releases
       # enabled, an immutable release is sealed when it is published, so all
       # assets must be attached before that. Tagged releases are then left as
-      # a draft for a maintainer to publish manually; nightlies are auto-
-      # published by the `publish-nightly` job at the end of the workflow.
+      # a draft for the protected `finalize release` workflow; nightlies are
+      # published by the `publish-nightly` job at the end of this workflow.
       - name: Create draft release
-        if: ${{ steps.existing_release.outputs.skip_release != 'true' }}
+        if: ${{ steps.existing_release.outputs.skip_assets != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
           RELEASE_NAME: ${{ steps.release_info.outputs.release_name }}
           CHANGELOG: ${{ steps.build_changelog.outputs.changelog }}
-          IS_PRERELEASE: ${{ steps.release_info.outputs.is_prerelease }}
+          EXPECTED_PRERELEASE: ${{ steps.release_info.outputs.is_prerelease }}
         shell: bash
         run: |
           set -euo pipefail
           if release_state="$(gh release view "$TAG_NAME" --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | @tsv' 2>/dev/null)"; then
             read -r is_draft is_prerelease <<< "$release_state"
             if [[ "$is_draft" == "true" ]]; then
-              if [[ "$is_prerelease" != "$IS_PRERELEASE" ]]; then
-                echo "::error::Draft release $TAG_NAME has prerelease=$is_prerelease; expected $IS_PRERELEASE."
+              if [[ "$is_prerelease" != "$EXPECTED_PRERELEASE" ]]; then
+                echo "::error::Draft release $TAG_NAME has prerelease=$is_prerelease; expected $EXPECTED_PRERELEASE."
                 exit 1
               fi
               echo "Draft release $TAG_NAME already exists; reusing it."
@@ -197,7 +209,7 @@ jobs:
           notes_file="$(mktemp)"
           printf '%s' "$CHANGELOG" > "$notes_file"
           flags=(--draft --verify-tag --title "$RELEASE_NAME" --notes-file "$notes_file")
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
+          if [[ "$EXPECTED_PRERELEASE" == "true" ]]; then
             flags+=(--prerelease)
           fi
           gh release create "$TAG_NAME" "${flags[@]}"
@@ -205,9 +217,9 @@ jobs:
   release-docker:
     name: Release Docker
     needs: prepare
-    if: ${{ needs.prepare.outputs.skip_release != 'true' }}
     uses: ./.github/workflows/docker-publish.yml
     permissions:
+      actions: read
       attestations: write
       artifact-metadata: write
       contents: read
@@ -216,8 +228,32 @@ jobs:
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
 
+  release-docker-metadata:
+    name: Record Docker digest
+    runs-on: ubuntu-latest
+    needs: [prepare, release-docker]
+    permissions:
+      contents: read
+    steps:
+      - name: Record release Docker digest
+        env:
+          DIGEST: ${{ needs.release-docker.outputs.digest }}
+        run: |
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Invalid Docker digest: $DIGEST"
+            exit 1
+          fi
+          printf '%s\n' "$DIGEST" > release-docker-digest.txt
+      - name: Upload release Docker digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-docker-digest
+          path: release-docker-digest.txt
+          retention-days: 90
+          if-no-files-found: error
+
   # This job uploads assets to the draft release created in `prepare`.
-  # Tagged releases stay as drafts for a maintainer to publish manually;
+  # Tagged releases stay as drafts for the protected finalization workflow;
   # nightlies are auto-published by the `publish-nightly` job below. Either
   # way, GitHub's immutable-releases setting seals the release at publish.
   release:
@@ -230,7 +266,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     needs: prepare
-    if: ${{ needs.prepare.outputs.skip_release != 'true' }}
+    if: ${{ needs.prepare.outputs.skip_assets != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -468,8 +504,8 @@ jobs:
           printf '%s\n' "$ATTESTATION_URL" > "$FOUNDRY_ATTESTATION"
 
       # Upload assets to the draft release created in `prepare`. Tagged releases
-      # stay as drafts after this workflow finishes; a maintainer
-      # publishes them manually. Nightlies are auto-published below.
+      # stay as drafts after this workflow finishes; a maintainer runs the
+      # protected finalization workflow. Nightlies are auto-published below.
       - name: Upload assets to draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -498,28 +534,48 @@ jobs:
 
   # Auto-publish nightly releases once all assets have been uploaded so that
   # foundryup and other consumers see them immediately. Tagged releases are
-  # left as drafts for a maintainer to publish manually.
+  # left as drafts for the protected finalization workflow.
   publish-nightly:
     name: Publish nightly release
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release]
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.outputs.skip_release != 'true' }}
+    needs: [prepare, release-docker, release-docker-metadata, release]
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.result == 'success' && needs.release-docker.result == 'success' && needs.release-docker-metadata.result == 'success' && (needs.release.result == 'success' || (needs.prepare.outputs.skip_assets == 'true' && needs.release.result == 'skipped')) }}
+    concurrency:
+      group: release-nightly-promotion
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
+      packages: write
     steps:
-      - name: Publish release
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish release and promote nightly image
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          DIGEST: ${{ needs.release-docker.outputs.digest }}
         shell: bash
-        run: gh release edit "$TAG_NAME" --draft=false
+        run: python3 .github/scripts/finalize-release.py nightly --tag "$TAG_NAME" --digest "$DIGEST"
 
   # If any of the jobs fail, this will create a high-priority issue to signal so.
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release, publish-nightly]
+    needs: [
+      prepare,
+      release-docker,
+      release-docker-metadata,
+      release,
+      publish-nightly,
+    ]
     if: failure()
     permissions:
       contents: read
