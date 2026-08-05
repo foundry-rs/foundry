@@ -1236,25 +1236,7 @@ impl<N: Network> EthApi<N> {
                     .fee_history(count_pre, BlockNumber::Number(fork_block), &reward_percentiles)
                     .await
                     .map_err(BlockchainError::AlloyForkProvider)?;
-                // These per-block arrays cover [lowest..=fork_block]; drop the trailing next-block
-                // base-fee entry since the first post-fork block is computed locally below.
-                let take = count_pre as usize;
-                response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(take));
-                response.gas_used_ratio.extend(pre.gas_used_ratio);
-                if let Some(reward) = pre.reward {
-                    rewards.extend(reward);
-                }
-                // The blob-fee arrays are EIP-4844 fields a fork provider may omit (return empty)
-                // for pre-Cancun blocks. These response arrays are still empty here, so extend then
-                // pad to `count_pre` to keep the pre-fork segment aligned with the gas arrays;
-                // otherwise the merged response would come back short and misaligned, the exact
-                // failure this fixes.
-                response
-                    .base_fee_per_blob_gas
-                    .extend(pre.base_fee_per_blob_gas.into_iter().take(take));
-                response.base_fee_per_blob_gas.resize(take, 0);
-                response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(take));
-                response.blob_gas_used_ratio.resize(take, 0.0);
+                merge_pre_fork_fee_history(&mut response, &mut rewards, pre, fork_block);
                 // Compute only post-fork blocks locally; the pre-fork portion is served above.
                 fork_block + 1
             } else {
@@ -4913,6 +4895,32 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
     }
 }
 
+/// Appends the upstream part of a fee-history range that crosses the fork boundary.
+fn merge_pre_fork_fee_history(
+    response: &mut FeeHistory,
+    rewards: &mut Vec<Vec<u128>>,
+    pre: FeeHistory,
+    fork_block: u64,
+) {
+    // Upstream may return fewer blocks than requested when its available history starts later.
+    response.oldest_block = pre.oldest_block;
+    let count = fork_block.checked_sub(pre.oldest_block).map_or(0, |count| count.saturating_add(1))
+        as usize;
+
+    // Base-fee arrays include a trailing next-block entry. The caller computes that block locally.
+    response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(count));
+    response.gas_used_ratio.extend(pre.gas_used_ratio.into_iter().take(count));
+    if let Some(reward) = pre.reward {
+        rewards.extend(reward.into_iter().take(count));
+    }
+
+    // EIP-4844 fields may be omitted for pre-Cancun blocks. Pad to the actual returned count.
+    response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(count));
+    response.base_fee_per_blob_gas.resize(count, 0);
+    response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(count));
+    response.blob_gas_used_ratio.resize(count, 0.0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4951,5 +4959,31 @@ mod tests {
         let rewards = fee_history.reward.unwrap();
         assert_eq!(rewards.len(), count as usize);
         assert!(rewards.iter().all(|reward| reward.len() == 1));
+    }
+
+    #[test]
+    fn shortened_pre_fork_fee_history_uses_upstream_start() {
+        let requested_lowest = 4;
+        let fork_block = 10;
+        let pre = FeeHistory {
+            oldest_block: 5,
+            base_fee_per_gas: vec![1; 7],
+            gas_used_ratio: vec![0.0; 6],
+            reward: Some(vec![vec![]; 6]),
+            base_fee_per_blob_gas: vec![],
+            blob_gas_used_ratio: vec![],
+        };
+
+        let mut response = FeeHistory { oldest_block: requested_lowest, ..Default::default() };
+        let mut rewards = Vec::new();
+
+        merge_pre_fork_fee_history(&mut response, &mut rewards, pre, fork_block);
+
+        assert_eq!(response.oldest_block, 5);
+        assert_eq!(response.gas_used_ratio.len(), 6);
+        assert_eq!(response.base_fee_per_gas.len(), 6);
+        assert_eq!(response.blob_gas_used_ratio.len(), 6);
+        assert_eq!(response.base_fee_per_blob_gas.len(), 6);
+        assert_eq!(rewards.len(), 6);
     }
 }
