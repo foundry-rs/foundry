@@ -173,7 +173,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             return Ok(None);
         }
         let Some(rpc) = self.script_config.evm_opts.fork_url.clone() else { return Ok(None) };
-        if self.script_config.evm_opts.fork_block_number.is_none()
+        if self.script_config.resolved_fork()?.is_none()
             || self.execution_artifacts.rpc_data.total_rpcs.len() != 1
             || !self.execution_artifacts.rpc_data.total_rpcs.contains(&rpc)
         {
