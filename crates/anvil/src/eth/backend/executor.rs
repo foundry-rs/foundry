@@ -167,12 +167,14 @@ impl FoundryReceiptBuilder {
         result: &ExecutionResult,
         logs: Vec<Log>,
         cumulative_gas_used: u64,
+        post_state: Option<B256>,
         deposit_nonce: Option<u64>,
         deposit_receipt_version: Option<u64>,
     ) -> FoundryReceiptEnvelope {
-        let receipt =
-            Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
-                .with_bloom();
+        let status = post_state
+            .map(Eip658Value::PostState)
+            .unwrap_or_else(|| Eip658Value::Eip658(result.is_success()));
+        let receipt = Receipt { status, cumulative_gas_used, logs }.with_bloom();
         #[cfg(feature = "optimism")]
         if tx_type == FoundryTxType::Deposit {
             return FoundryReceiptEnvelope::Deposit(

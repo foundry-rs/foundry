@@ -72,7 +72,6 @@ use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction,
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
-use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         EthRequest,
@@ -86,7 +85,6 @@ use anvil_rpc::{
     response::ResponseResult,
 };
 use foundry_common::{
-    provider::ProviderBuilder,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
@@ -565,24 +563,19 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
+            let urls = vec![url.clone()];
+            let config = fork.config.read().clone();
+            let (new_provider, _) = config.validated_provider_for_urls(&urls).await?;
+
             let mut config = fork.config.write();
-            // let interval = config.provider.get_interval();
-            let new_provider = Arc::new(
-                ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000).build().map_err(
-                    |_| {
-                        TransportErrorKind::custom_str(
-                            format!("Failed to parse invalid url {url}").as_str(),
-                        )
-                    },
-                    // TODO: Add interval
-                )?, // .interval(interval),
-            );
             config.provider = new_provider;
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().unwrap_or("none"), url);
-            config.fork_urls = vec![url.clone()];
+            config.fork_urls = urls;
         }
         // Keep node_config in sync so anvil_reset(None) uses the updated URL
-        self.backend.node_config.write().await.fork_urls = vec![url];
+        let mut node_config = self.backend.node_config.write().await;
+        node_config.fork_urls = vec![url];
+        node_config.fork_chain_id = None;
         Ok(())
     }
 
@@ -705,15 +698,14 @@ impl<N: Network> EthApi<N> {
     ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
-        self.reset_instance_id();
         node_info!("anvil_reset");
         if let Some(forking) = forking {
-            // if we're resetting the fork we need to reset the instance id
             self.backend.reset_fork(forking).await?;
         } else {
             // Reset to a fresh in-memory state
             self.backend.reset_to_in_mem().await?;
         }
+        self.reset_instance_id();
         // Clear pending transactions since they reference the old chain state.
         self.pool.clear();
         Ok(())
