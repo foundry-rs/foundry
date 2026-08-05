@@ -2608,6 +2608,38 @@ contract InvariantOptimizeTest is Test {
 "#]]);
 });
 
+forgetest_init!(invariant_zero_delays_are_disabled, |prj, cmd| {
+    prj.add_test(
+        "InvariantZeroDelay.t.sol",
+        r#"
+contract InvariantZeroDelay {
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 1
+    /// forge-config: default.invariant.max_time_delay = 0
+    function invariant_zeroTimeDelay() public pure {}
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 1
+    /// forge-config: default.invariant.max_block_delay = 0
+    function invariant_zeroBlockDelay() public pure {}
+}
+
+contract Target {
+    function touch() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_zeroTimeDelay"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mt", "invariant_zeroBlockDelay"]).assert_success();
+});
+
 // Test optimization mode with time-dependent logic using warp and fixed seed for reproducibility.
 // This test ensures warp values are correctly accumulated during shrinking.
 forgetest_init!(invariant_optimization_with_warp, |prj, cmd| {
