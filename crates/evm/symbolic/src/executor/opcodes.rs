@@ -7,6 +7,22 @@ enum MappingStorageProvenance {
 }
 
 impl SymbolicExecutor {
+    fn classify_mapping_match(
+        &mut self,
+        state: &PathState,
+        matches: SymBoolExpr,
+        provenance: SymbolicMappingProvenance,
+    ) -> Result<Option<MappingStorageProvenance>, SymbolicError> {
+        let does_not_match = matches.clone().not(&mut self.cx);
+        let (inequality, inequality_is_sat) =
+            self.constraints_with_condition(state, does_not_match)?;
+        if !inequality_is_sat {
+            return Ok(Some(MappingStorageProvenance::Exact(provenance)));
+        }
+        let (equality, equality_is_sat) = self.constraints_with_condition(state, matches)?;
+        Ok(equality_is_sat.then_some(MappingStorageProvenance::Fork { equality, inequality }))
+    }
+
     fn observed_mapping_chain(
         &mut self,
         state: &PathState,
@@ -57,14 +73,23 @@ impl SymbolicExecutor {
             .collect::<Vec<_>>();
         let contains_observed_hash =
             hashes.iter().any(|hash| key.visit_bool(|candidate| candidate == hash));
+        let key_is_const = key.as_const().is_some();
+        let key_contains_keccak = key.contains_keccak();
+        let key_is_storage_mapping_key = key.storage_mapping_key(&mut self.cx).is_some();
+        let roots = state
+            .mapping_storage_store_hooks
+            .keys()
+            .filter(|(address, _)| *address == account)
+            .map(|(_, root)| *root)
+            .collect::<Vec<_>>();
         hashes.sort_by_key(|hash| hash != key);
         for hash in hashes {
             if contains_observed_hash && !key.visit_bool(|candidate| candidate == &hash) {
                 continue;
             }
             let use_legacy_match = contains_observed_hash
-                || !key.contains_keccak() && key.as_const().is_none()
-                || key.as_const().is_some() && key.is_storage_mapping_key(&mut self.cx);
+                || !key_contains_keccak && !key_is_const
+                || key_is_const && key_is_storage_mapping_key;
             if use_legacy_match
                 && let Some(provenance) =
                     hash.storage_mapping_provenance_observed_with(&mut self.cx, |candidate| {
@@ -79,40 +104,26 @@ impl SymbolicExecutor {
                     continue;
                 }
                 let equality = SymBoolExpr::eq(&mut self.cx, key.clone(), hash.clone());
-                let inequality = equality.clone().not(&mut self.cx);
-                let (inequality, inequality_is_sat) =
-                    self.constraints_with_condition(state, inequality)?;
-                if !inequality_is_sat {
-                    return Ok(MappingStorageProvenance::Exact(provenance));
-                }
-                let (equality, equality_is_sat) =
-                    self.constraints_with_condition(state, equality)?;
-                if equality_is_sat {
-                    return Ok(MappingStorageProvenance::Fork { equality, inequality });
+                if let Some(provenance) =
+                    self.classify_mapping_match(state, equality, provenance)?
+                {
+                    return Ok(provenance);
                 }
                 continue;
             }
-            if (key.as_const().is_some() || key.contains_keccak())
-                && !key.is_storage_mapping_key(&mut self.cx)
-            {
+            if (key_is_const || key_contains_keccak) && !key_is_storage_mapping_key {
                 continue;
             }
             let Some((root, keys)) = self.observed_mapping_chain(state, &hash) else {
                 continue;
             };
-            let roots = state
-                .mapping_storage_store_hooks
-                .keys()
-                .filter(|(address, _)| *address == account)
-                .map(|(_, root)| *root)
-                .collect::<Vec<_>>();
-            for root_slot in roots {
-                let slot_matches =
-                    if key.as_const().is_some() || key.visit_bool(|candidate| candidate == &hash) {
-                        SymBoolExpr::eq(&mut self.cx, key.clone(), hash.clone())
-                    } else {
-                        key.storage_key_eq(&mut self.cx, &hash)
-                    };
+            for &root_slot in &roots {
+                let slot_matches = if key_is_const || key.visit_bool(|candidate| candidate == &hash)
+                {
+                    SymBoolExpr::eq(&mut self.cx, key.clone(), hash.clone())
+                } else {
+                    key.storage_key_eq(&mut self.cx, &hash)
+                };
                 let matches = if let Some(constrained_root) =
                     state.constrained_word(&mut self.cx, &root)
                 {
@@ -125,17 +136,9 @@ impl SymbolicExecutor {
                     let root_matches = SymBoolExpr::eq(&mut self.cx, root.clone(), root_slot_expr);
                     SymBoolExpr::and(&mut self.cx, vec![slot_matches, root_matches])
                 };
-                let does_not_match = matches.clone().not(&mut self.cx);
                 let provenance = SymbolicMappingProvenance { root_slot, keys: keys.clone() };
-                let (inequality, inequality_is_sat) =
-                    self.constraints_with_condition(state, does_not_match)?;
-                if !inequality_is_sat {
-                    return Ok(MappingStorageProvenance::Exact(provenance));
-                }
-                let (equality, equality_is_sat) =
-                    self.constraints_with_condition(state, matches)?;
-                if equality_is_sat {
-                    return Ok(MappingStorageProvenance::Fork { equality, inequality });
+                if let Some(provenance) = self.classify_mapping_match(state, matches, provenance)? {
+                    return Ok(provenance);
                 }
             }
         }

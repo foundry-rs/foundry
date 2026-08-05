@@ -214,7 +214,7 @@ impl SymExpr {
         Some(SymBoolExpr::and(cx, vec![key_eq, slot_eq]))
     }
 
-    fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<StorageMappingKey> {
+    pub(crate) fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<StorageMappingKey> {
         let bytes = self.storage_mapping_key_bytes(cx)?;
         let key_bytes = &bytes[..32];
         let preserve_key_bytes =
@@ -222,10 +222,6 @@ impl SymExpr {
         let key = Self::from_bytes(cx, key_bytes.iter().cloned());
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         Some(StorageMappingKey { key, key_bytes: preserve_key_bytes, slot })
-    }
-
-    pub(crate) fn is_storage_mapping_key(&self, cx: &mut SymCx) -> bool {
-        self.storage_mapping_key(cx).is_some()
     }
 
     pub(crate) fn storage_mapping_provenance_observed_with(
@@ -310,7 +306,7 @@ impl SymExpr {
     }
 }
 
-struct StorageMappingKey {
+pub(crate) struct StorageMappingKey {
     key: SymExpr,
     key_bytes: Option<Vec<SymExpr>>,
     slot: SymExpr,
