@@ -408,6 +408,11 @@ impl ScriptArgs {
             .await;
         }
 
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            eyre::bail!("Base script execution is not supported yet");
+        }
+
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return Box::pin(self.run_generic_script::<MonadEvmNetwork>(config, evm_opts)).await;

@@ -258,6 +258,10 @@ impl VerifyBytecodeArgs {
                 )
                 .await
             }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                eyre::bail!("Base verify-bytecode execution is not supported yet")
+            }
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
                 self.run_with_network_and_config::<OpEvmNetwork>(

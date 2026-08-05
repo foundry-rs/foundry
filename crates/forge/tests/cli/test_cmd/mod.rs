@@ -15,6 +15,8 @@ use similar_asserts::assert_eq;
 use std::fs;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
+#[cfg(feature = "base")]
+mod base;
 mod brutalize;
 mod core;
 mod fuzz;
