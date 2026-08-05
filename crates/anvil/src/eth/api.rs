@@ -5,6 +5,8 @@ use super::{
     },
     preserve_simulation_request_fields,
 };
+#[cfg(feature = "monad")]
+use crate::eth::backend::executor::build_tx_env_for_pending;
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
@@ -41,6 +43,8 @@ use alloy_eips::{
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
+#[cfg(feature = "monad")]
+use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, BlockResponse, Network,
     NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
@@ -93,6 +97,8 @@ use foundry_common::{
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::FoundryEvmFactory;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -102,7 +108,11 @@ use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
 };
+#[cfg(feature = "monad")]
+use monad_revm::staking::constants::SYSTEM_ADDRESS as MONAD_SYSTEM_ADDRESS;
 use parking_lot::RwLock;
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 use revm::{
     context::BlockEnv,
     context_interface::{
@@ -3849,6 +3859,28 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
+    /// Recognizes a canonical Monad protocol envelope without requiring its reserved sender to be
+    /// globally impersonated or recoverable from the envelope signature.
+    #[cfg(feature = "monad")]
+    fn monad_protocol_reorg_transaction(
+        &self,
+        transaction: FoundryTxEnvelope,
+    ) -> Option<PendingTransaction<FoundryTxEnvelope>> {
+        if !self.backend.is_monad() {
+            return None;
+        }
+
+        let pending = PendingTransaction::with_sender(
+            MaybeImpersonatedTransaction::new(transaction),
+            MONAD_SYSTEM_ADDRESS,
+        );
+        let tx_env: TxEnv = build_tx_env_for_pending(&pending, self.backend.cheats());
+        MonadEvmFactory::default()
+            .protocol_system_call(&tx_env)
+            .is_ok_and(|call| call.is_some())
+            .then_some(pending)
+    }
+
     /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
     ///
     /// e.g depth = 3
@@ -3911,7 +3943,21 @@ impl EthApi<FoundryNetwork> {
                         let mut data = bytes.as_ref();
                         let decoded = FoundryTxEnvelope::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
-                        PendingTransaction::new(decoded)?
+                        let protocol_pending = {
+                            #[cfg(feature = "monad")]
+                            {
+                                self.monad_protocol_reorg_transaction(decoded.clone())
+                            }
+                            #[cfg(not(feature = "monad"))]
+                            {
+                                None
+                            }
+                        };
+                        if let Some(pending) = protocol_pending {
+                            pending
+                        } else {
+                            PendingTransaction::new(decoded)?
+                        }
                     }
 
                     TransactionData::JSON(request) => {
@@ -3937,8 +3983,25 @@ impl EthApi<FoundryNetwork> {
                         // Increment nonce
                         *curr_nonce += 1;
 
-                        // Handle signer and convert to pending transaction
-                        if self.is_impersonated(from) {
+                        let protocol_pending = {
+                            #[cfg(feature = "monad")]
+                            {
+                                if from == MONAD_SYSTEM_ADDRESS {
+                                    self.monad_protocol_reorg_transaction(
+                                        typed_tx.clone().into_impersonated(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            }
+                            #[cfg(not(feature = "monad"))]
+                            {
+                                None
+                            }
+                        };
+                        if let Some(pending) = protocol_pending {
+                            pending
+                        } else if self.is_impersonated(from) {
                             let transaction = typed_tx.into_impersonated();
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)

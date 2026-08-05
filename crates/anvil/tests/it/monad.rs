@@ -1,13 +1,16 @@
 use alloy_consensus::{
-    SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559,
+    SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559, TxLegacy,
     transaction::TxEip7702,
 };
-use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{
     ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse, TxSignerSync,
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address, hex};
-use alloy_provider::{Provider, ext::DebugApi};
+use alloy_provider::{
+    Provider,
+    ext::{DebugApi, TraceApi},
+};
 use alloy_rpc_types::{
     Authorization, BlockId, BlockNumberOrTag, Index, TransactionRequest,
     anvil::Forking,
@@ -16,18 +19,25 @@ use alloy_rpc_types::{
     trace::{
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
-        parity::{TraceResults, TraceType},
+        parity::{Action, TraceResults, TraceType},
     },
 };
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::SolCall;
+use alloy_signer::Signer;
+use alloy_sol_types::{SolCall, SolEvent};
 use anvil::{
     NodeConfig, NodeHandle,
-    eth::pool::transactions::{PoolTransaction, TransactionOrder},
+    eth::{
+        error::BlockchainError,
+        pool::transactions::{PoolTransaction, TransactionOrder},
+    },
     spawn,
 };
-use anvil_core::eth::transaction::PendingTransaction;
+use anvil_core::{
+    eth::transaction::PendingTransaction,
+    types::{ReorgOptions, TransactionData},
+};
 use foundry_evm::hardfork::{FoundryHardfork, MonadHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
@@ -36,7 +46,10 @@ use monad_revm::{
     MONAD_TESTNET_CHAIN_ID,
     staking::{
         constants::SYSTEM_ADDRESS,
-        interface::IMonadStaking::syscallRewardCall,
+        interface::IMonadStaking::{
+            EpochChanged, ValidatorRewarded, syscallOnEpochChangeCall, syscallRewardCall,
+            syscallSnapshotCall,
+        },
         storage::{
             consensus_view_key, global_slots, val_id_secp_key, validator_key, validator_offsets,
         },
@@ -320,6 +333,500 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
     let replayed_value =
         delta.as_added().copied().or_else(|| delta.as_changed().map(|change| change.to)).unwrap();
     assert_eq!(replayed_value, B256::from(U256::ONE.to_be_bytes::<32>()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_reorg_replays_protocol_system_envelopes() {
+    const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
+    const VALIDATOR_AUTH: Address = address!("0x2222222222222222222222222222222222222222");
+    const VALIDATOR_ID: u64 = 7;
+    const SYSTEM_NONCE: u64 = 11;
+
+    let config = monad_nine_config().with_transaction_order(TransactionOrder::Fifo);
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let participant = accounts[0];
+    let recipient = accounts[1];
+    let transfer = U256::from(123u64);
+    let reward = mon(25);
+    let initial_system_balance = mon(100);
+    let initial_staking_balance = mon(3);
+    let initial_recipient_balance = provider.get_balance(recipient).await.unwrap();
+
+    api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(SYSTEM_NONCE)).await.unwrap();
+    api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
+    api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
+    api.anvil_set_storage_at(
+        STAKING_ADDRESS,
+        val_id_secp_key(&BLOCK_AUTHOR),
+        storage_value(left_aligned_u64(VALIDATOR_ID)),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_storage_at(
+        STAKING_ADDRESS,
+        consensus_view_key(VALIDATOR_ID, 0),
+        storage_value(mon(100)),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_storage_at(
+        STAKING_ADDRESS,
+        validator_key(VALIDATOR_ID, validator_offsets::ADDRESS_FLAGS),
+        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+    )
+    .await
+    .unwrap();
+
+    // Keep the configured staking state below the common ancestor of the one-block reorg.
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    let original_height = provider.get_block_number().await.unwrap();
+
+    let reward_tx = monad_protocol_transaction(
+        SYSTEM_NONCE,
+        reward,
+        syscallRewardCall { blockAuthor: BLOCK_AUTHOR }.abi_encode().into(),
+    );
+    let ordinary_tx = TransactionRequest::default()
+        .with_from(participant)
+        .with_to(recipient)
+        .with_nonce(0)
+        .with_value(transfer)
+        .with_gas_limit(21_000)
+        .with_gas_price(2_000_000_000);
+    let snapshot_tx = monad_protocol_transaction(
+        SYSTEM_NONCE + 1,
+        U256::ZERO,
+        syscallSnapshotCall {}.abi_encode().into(),
+    );
+    let epoch_tx = monad_protocol_transaction(
+        SYSTEM_NONCE + 2,
+        U256::ZERO,
+        syscallOnEpochChangeCall { epoch: 1 }.abi_encode().into(),
+    );
+
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![
+            (TransactionData::JSON(reward_tx), 0),
+            (TransactionData::JSON(ordinary_tx), 0),
+            (TransactionData::JSON(snapshot_tx), 0),
+            (TransactionData::JSON(epoch_tx), 0),
+        ],
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(provider.get_block_number().await.unwrap(), original_height);
+    let block =
+        provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
+    let transactions = block.transactions.as_transactions().unwrap();
+    assert_eq!(transactions.len(), 4);
+    assert_eq!(transactions[0].from(), SYSTEM_ADDRESS);
+    assert_eq!(transactions[1].from(), participant);
+    assert_eq!(transactions[2].from(), SYSTEM_ADDRESS);
+    assert_eq!(transactions[3].from(), SYSTEM_ADDRESS);
+    assert_eq!(transactions[0].to(), Some(STAKING_ADDRESS));
+    assert_eq!(transactions[1].to(), Some(recipient));
+    assert_eq!(transactions[2].to(), Some(STAKING_ADDRESS));
+    assert_eq!(transactions[3].to(), Some(STAKING_ADDRESS));
+    assert_eq!(&transactions[0].input()[..4], syscallRewardCall::SELECTOR);
+    assert_eq!(&transactions[2].input()[..4], syscallSnapshotCall::SELECTOR);
+    assert_eq!(&transactions[3].input()[..4], syscallOnEpochChangeCall::SELECTOR);
+
+    let hashes = transactions.iter().map(TransactionResponse::tx_hash).collect::<Vec<_>>();
+    let mut receipts = Vec::with_capacity(hashes.len());
+    for hash in hashes {
+        receipts.push(provider.get_transaction_receipt(hash).await.unwrap().unwrap());
+    }
+    for receipt in &receipts {
+        assert!(receipt.status());
+    }
+    for receipt in [&receipts[0], &receipts[2], &receipts[3]] {
+        assert_eq!(receipt.gas_used, 0);
+        assert_eq!(receipt.effective_gas_price, 0);
+    }
+    assert_eq!(block.header.gas_used, receipts[1].gas_used);
+    assert_eq!(receipts[0].inner.inner.logs().len(), 1);
+    assert_eq!(receipts[0].inner.inner.logs()[0].topics()[0], ValidatorRewarded::SIGNATURE_HASH);
+    assert!(receipts[2].inner.inner.logs().is_empty());
+    assert_eq!(receipts[3].inner.inner.logs().len(), 1);
+    assert_eq!(receipts[3].inner.inner.logs()[0].topics()[0], EpochChanged::SIGNATURE_HASH);
+
+    assert_eq!(provider.get_transaction_count(SYSTEM_ADDRESS).await.unwrap(), SYSTEM_NONCE + 3);
+    assert_eq!(provider.get_balance(SYSTEM_ADDRESS).await.unwrap(), initial_system_balance);
+    assert_eq!(
+        provider.get_balance(STAKING_ADDRESS).await.unwrap(),
+        initial_staking_balance + reward
+    );
+    assert_eq!(
+        provider.get_balance(recipient).await.unwrap(),
+        initial_recipient_balance + transfer
+    );
+    assert_eq!(
+        provider.get_storage_at(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).await.unwrap(),
+        left_aligned_u64(VALIDATOR_ID)
+    );
+    assert_eq!(
+        provider
+            .get_storage_at(
+                STAKING_ADDRESS,
+                validator_key(VALIDATOR_ID, validator_offsets::UNCLAIMED_REWARDS),
+            )
+            .await
+            .unwrap(),
+        reward
+    );
+    assert_eq!(
+        provider.get_storage_at(STAKING_ADDRESS, global_slots::IN_BOUNDARY).await.unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(
+        provider.get_storage_at(STAKING_ADDRESS, global_slots::EPOCH).await.unwrap(),
+        left_aligned_u64(1)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_reorg_replays_raw_protocol_envelope_with_non_system_signature() {
+    const SYSTEM_NONCE: u64 = 4;
+
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().with_chain_id(Some(chain_id));
+
+    api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(SYSTEM_NONCE)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let mut transaction = TxLegacy {
+        chain_id: Some(chain_id),
+        nonce: SYSTEM_NONCE,
+        gas_price: 0,
+        gas_limit: 0,
+        to: TxKind::Call(STAKING_ADDRESS),
+        value: U256::ZERO,
+        input: syscallSnapshotCall {}.abi_encode().into(),
+    };
+    let signature = wallet.sign_transaction_sync(&mut transaction).unwrap();
+    let transaction = transaction.into_signed(signature);
+    let mut encoded = Vec::new();
+    transaction.eip2718_encode(&mut encoded);
+
+    let decoded = FoundryTxEnvelope::decode_2718(&mut encoded.as_slice()).unwrap();
+    let normally_recovered = PendingTransaction::new(decoded).unwrap();
+    let recovered_sender = *normally_recovered.sender();
+    assert_ne!(recovered_sender, SYSTEM_ADDRESS);
+    let transaction_hash = *normally_recovered.hash();
+
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::Raw(encoded.clone().into()), 0)],
+    })
+    .await
+    .unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider
+        .get_block_by_number(BlockNumberOrTag::Number(block_number))
+        .full()
+        .await
+        .unwrap()
+        .unwrap();
+    let block_hash = block.header.hash;
+    let transactions = block.transactions.as_transactions().unwrap();
+    assert_eq!(transactions.len(), 1);
+    assert_eq!(transactions[0].tx_hash(), transaction_hash);
+    assert_eq!(transactions[0].from(), SYSTEM_ADDRESS);
+
+    let receipt = provider.get_transaction_receipt(transaction_hash).await.unwrap().unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.gas_used, 0);
+    assert_eq!(receipt.effective_gas_price, 0);
+    assert_eq!(provider.get_transaction_count(SYSTEM_ADDRESS).await.unwrap(), SYSTEM_NONCE + 1);
+
+    let local_block = api.backend.get_block(block_number).unwrap();
+    let mut round_trip = Vec::new();
+    local_block.body.transactions[0].encode_2718(&mut round_trip);
+    assert_eq!(round_trip, encoded);
+
+    let state = api.serialized_state(false).await.unwrap();
+    let participants = &state.monad_block_participants[&block_hash];
+    assert!(participants.contains(&SYSTEM_ADDRESS));
+    assert!(!participants.contains(&recovered_sender));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_reorg_replays_raw_protocol_envelope_with_unrecoverable_signature() {
+    const SYSTEM_NONCE: u64 = 4;
+
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+
+    api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(SYSTEM_NONCE)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let transaction = TxLegacy {
+        chain_id: Some(chain_id),
+        nonce: SYSTEM_NONCE,
+        gas_price: 0,
+        gas_limit: 0,
+        to: TxKind::Call(STAKING_ADDRESS),
+        value: U256::ZERO,
+        input: syscallSnapshotCall {}.abi_encode().into(),
+    }
+    .into_signed(Signature::new(U256::ZERO, U256::ZERO, false));
+    let transaction_hash = *transaction.hash();
+    let mut encoded = Vec::new();
+    transaction.eip2718_encode(&mut encoded);
+
+    let decoded = FoundryTxEnvelope::decode_2718(&mut encoded.as_slice()).unwrap();
+    assert!(PendingTransaction::new(decoded).is_err());
+
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::Raw(encoded.clone().into()), 0)],
+    })
+    .await
+    .unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider
+        .get_block_by_number(BlockNumberOrTag::Number(block_number))
+        .full()
+        .await
+        .unwrap()
+        .unwrap();
+    let block_hash = block.header.hash;
+    let transactions = block.transactions.as_transactions().unwrap();
+    assert_eq!(transactions.len(), 1);
+    assert_eq!(transactions[0].tx_hash(), transaction_hash);
+    assert_eq!(transactions[0].from(), SYSTEM_ADDRESS);
+
+    let receipt = provider.get_transaction_receipt(transaction_hash).await.unwrap().unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.gas_used, 0);
+    assert_eq!(receipt.effective_gas_price, 0);
+    assert_eq!(provider.get_transaction_count(SYSTEM_ADDRESS).await.unwrap(), SYSTEM_NONCE + 1);
+
+    let local_block = api.backend.get_block(block_number).unwrap();
+    let mut round_trip = Vec::new();
+    local_block.body.transactions[0].encode_2718(&mut round_trip);
+    assert_eq!(round_trip, encoded);
+
+    let state = api.serialized_state(false).await.unwrap();
+    let participants = &state.monad_block_participants[&block_hash];
+    assert_eq!(participants.len(), 1);
+    assert!(participants.contains(&SYSTEM_ADDRESS));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_reorg_rolls_back_failed_protocol_prestate() {
+    const UNKNOWN_AUTHOR: Address = address!("0x3333333333333333333333333333333333333333");
+    const SYSTEM_NONCE: u64 = 7;
+
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let participant = accounts[0];
+    let recipient = accounts[1];
+    let reward = mon(25);
+    let initial_staking_balance = mon(3);
+    let initial_recipient_balance = provider.get_balance(recipient).await.unwrap();
+
+    api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(SYSTEM_NONCE)).await.unwrap();
+    api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let failed_reward = monad_protocol_transaction(
+        SYSTEM_NONCE,
+        reward,
+        syscallRewardCall { blockAuthor: UNKNOWN_AUTHOR }.abi_encode().into(),
+    );
+    let ordinary_tx = TransactionRequest::default()
+        .with_from(participant)
+        .with_to(recipient)
+        .with_nonce(0)
+        .with_value(U256::ONE)
+        .with_gas_limit(21_000)
+        .with_gas_price(2_000_000_000);
+    // Reuse the failed envelope's nonce. This can only succeed if replay restores the protocol
+    // nonce and mint before the next candidate is validated and executed.
+    let snapshot_tx = monad_protocol_transaction(
+        SYSTEM_NONCE,
+        U256::ZERO,
+        syscallSnapshotCall {}.abi_encode().into(),
+    );
+    let epoch_tx = monad_protocol_transaction(
+        SYSTEM_NONCE + 1,
+        U256::ZERO,
+        syscallOnEpochChangeCall { epoch: 1 }.abi_encode().into(),
+    );
+
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![
+            (TransactionData::JSON(failed_reward), 0),
+            (TransactionData::JSON(ordinary_tx), 0),
+            (TransactionData::JSON(snapshot_tx), 0),
+            (TransactionData::JSON(epoch_tx), 0),
+        ],
+    })
+    .await
+    .unwrap();
+
+    let block =
+        provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
+    let transactions = block.transactions.as_transactions().unwrap();
+    assert_eq!(transactions.len(), 3);
+    assert_eq!(transactions[0].from(), participant);
+    assert_eq!(transactions[1].from(), SYSTEM_ADDRESS);
+    assert_eq!(transactions[2].from(), SYSTEM_ADDRESS);
+    assert_eq!(&transactions[1].input()[..4], syscallSnapshotCall::SELECTOR);
+    assert_eq!(&transactions[2].input()[..4], syscallOnEpochChangeCall::SELECTOR);
+
+    let ordinary_hash = transactions[0].tx_hash();
+    let parity_traces = provider.trace_transaction(ordinary_hash).await.unwrap();
+    assert_eq!(parity_traces.len(), 1);
+    let Action::Call(call) = &parity_traces[0].trace.action else {
+        panic!("expected ordinary transfer call trace")
+    };
+    assert_eq!(call.from, participant);
+    assert_eq!(call.to, recipient);
+    assert_eq!(call.value, U256::ONE);
+
+    let debug_trace = provider
+        .debug_trace_transaction(ordinary_hash, GethDebugTracingOptions::default())
+        .await
+        .unwrap();
+    let GethTrace::Default(debug_trace) = debug_trace else {
+        panic!("expected default transaction trace")
+    };
+    assert!(debug_trace.struct_logs.is_empty());
+
+    assert_eq!(provider.get_transaction_count(SYSTEM_ADDRESS).await.unwrap(), SYSTEM_NONCE + 2);
+    assert_eq!(provider.get_balance(STAKING_ADDRESS).await.unwrap(), initial_staking_balance);
+    assert_eq!(
+        provider.get_balance(recipient).await.unwrap(),
+        initial_recipient_balance + U256::ONE
+    );
+    assert_eq!(
+        provider.get_storage_at(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).await.unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(
+        provider.get_storage_at(STAKING_ADDRESS, global_slots::EPOCH).await.unwrap(),
+        left_aligned_u64(1)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_reorg_rejects_malformed_and_non_replay_system_envelopes() {
+    const SYSTEM_NONCE: u64 = 5;
+
+    let (api, handle) = spawn(monad_nine_config()).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let participant = accounts[0];
+    let recipient = accounts[1];
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let initial_recipient_balance = provider.get_balance(recipient).await.unwrap();
+    let initial_staking_balance = provider.get_balance(STAKING_ADDRESS).await.unwrap();
+
+    api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(SYSTEM_NONCE)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    let original_height = provider.get_block_number().await.unwrap();
+
+    let malformed_json = TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(BALANCE_PROBE_ADDRESS)
+        .with_nonce(SYSTEM_NONCE)
+        .with_input(Bytes::from(syscallSnapshotCall {}.abi_encode()))
+        .with_gas_limit(0)
+        .with_gas_price(0);
+    let error = api
+        .anvil_reorg(ReorgOptions {
+            depth: 1,
+            tx_block_pairs: vec![(TransactionData::JSON(malformed_json), 0)],
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, BlockchainError::NoSignerAvailable));
+    assert_eq!(provider.get_block_number().await.unwrap(), original_height);
+
+    let mut malformed_raw = TxLegacy {
+        chain_id: Some(chain_id),
+        nonce: 0,
+        gas_price: 0,
+        gas_limit: 0,
+        to: TxKind::Call(BALANCE_PROBE_ADDRESS),
+        value: U256::ZERO,
+        input: syscallSnapshotCall {}.abi_encode().into(),
+    };
+    let wallet = handle.dev_wallets().next().unwrap().with_chain_id(Some(chain_id));
+    let signature = wallet.sign_transaction_sync(&mut malformed_raw).unwrap();
+    let mut malformed_raw_encoded = Vec::new();
+    malformed_raw.into_signed(signature).eip2718_encode(&mut malformed_raw_encoded);
+
+    let ordinary_tx = TransactionRequest::default()
+        .with_from(participant)
+        .with_to(recipient)
+        .with_nonce(0)
+        .with_value(U256::ONE)
+        .with_gas_limit(21_000)
+        .with_gas_price(2_000_000_000);
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![
+            (TransactionData::Raw(malformed_raw_encoded.into()), 0),
+            (TransactionData::JSON(ordinary_tx), 0),
+        ],
+    })
+    .await
+    .unwrap();
+
+    let block =
+        provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
+    let transactions = block.transactions.as_transactions().unwrap();
+    assert_eq!(transactions.len(), 1);
+    assert_eq!(transactions[0].from(), participant);
+    assert_eq!(transactions[0].to(), Some(recipient));
+    assert_eq!(provider.get_transaction_count(SYSTEM_ADDRESS).await.unwrap(), SYSTEM_NONCE);
+    assert_eq!(provider.get_balance(STAKING_ADDRESS).await.unwrap(), initial_staking_balance);
+    assert_eq!(
+        provider.get_balance(recipient).await.unwrap(),
+        initial_recipient_balance + U256::ONE
+    );
+
+    api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
+    let error = provider
+        .send_transaction(
+            monad_protocol_transaction(
+                SYSTEM_NONCE,
+                U256::ZERO,
+                syscallSnapshotCall {}.abi_encode().into(),
+            )
+            .into(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("intrinsic gas too low") || error.contains("max fee per gas less"),
+        "unexpected non-replay validation error: {error}"
+    );
+    assert_eq!(provider.get_transaction_count(SYSTEM_ADDRESS).await.unwrap(), SYSTEM_NONCE);
+    assert_eq!(
+        provider.get_storage_at(STAKING_ADDRESS, global_slots::IN_BOUNDARY).await.unwrap(),
+        U256::ZERO
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1557,6 +2064,17 @@ fn monad_nine_config() -> NodeConfig {
 
 fn monad_eight_config() -> NodeConfig {
     NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadEight.into()))
+}
+
+fn monad_protocol_transaction(nonce: u64, value: U256, input: Bytes) -> TransactionRequest {
+    TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(STAKING_ADDRESS)
+        .with_nonce(nonce)
+        .with_value(value)
+        .with_input(input)
+        .with_gas_limit(0)
+        .with_gas_price(0)
 }
 
 fn mon(value: u64) -> U256 {

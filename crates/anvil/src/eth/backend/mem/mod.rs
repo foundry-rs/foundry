@@ -17,7 +17,7 @@ use crate::{
                 ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTransactionHooks,
                 PoolTxGasConfig, apply_ethereum_post_execution_changes,
                 apply_ethereum_pre_execution_changes, build_tx_env_for_pending,
-                execute_pool_transactions,
+                execute_pool_transaction, execute_pool_transactions,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -195,7 +195,8 @@ use revm::{
 };
 #[cfg(feature = "monad")]
 use revm::{
-    context::Transaction as RevmTransaction, context_interface::transaction::AuthorizationTr,
+    context::Transaction as RevmTransaction,
+    context_interface::{result::InvalidTransaction, transaction::AuthorizationTr},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
@@ -1374,21 +1375,6 @@ impl<N: Network> Backend<N> {
             );
         }
         Ok(PendingTransaction::from_maybe_impersonated(transaction)?)
-    }
-
-    /// Converts locally stored Monad transactions into execution environments.
-    #[cfg(feature = "monad")]
-    fn monad_tx_envs(
-        &self,
-        transactions: &[MaybeImpersonatedTransaction<FoundryTxEnvelope>],
-    ) -> Result<Vec<TxEnv>, BlockchainError> {
-        transactions
-            .iter()
-            .map(|transaction| {
-                let pending = PendingTransaction::from_maybe_impersonated(transaction.clone())?;
-                Ok(build_tx_env_for_pending::<FoundryTxEnvelope, TxEnv>(&pending, self.cheats()))
-            })
-            .collect()
     }
 
     /// Converts retained local Monad transactions using their authoritative mined senders.
@@ -2953,7 +2939,12 @@ impl<N: Network> Backend<N> {
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
 
         macro_rules! run {
-            ($evm:expr, $before_transaction:expr, $on_execution_error:expr) => {{
+            (
+                $evm:expr,
+                $before_transaction:expr,
+                $execute_transaction:expr,
+                $on_execution_error:expr
+            ) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor =
@@ -2963,6 +2954,7 @@ impl<N: Network> Backend<N> {
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
                 let mut hooks = PoolTransactionHooks {
                     before_transaction: $before_transaction,
+                    execute_transaction: $execute_transaction,
                     on_execution_error: $on_execution_error,
                 };
                 let pool_result = execute_pool_transactions(
@@ -2989,14 +2981,24 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            return run!(evm, noop_before_transaction, noop_on_execution_error);
+            return run!(
+                evm,
+                noop_before_transaction,
+                execute_pool_transaction,
+                noop_on_execution_error
+            );
         }
 
         if self.is_tempo() {
             let tempo_env = self.build_tempo_evm_env(evm_env);
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run!(evm, noop_before_transaction, noop_on_execution_error);
+            return run!(
+                evm,
+                noop_before_transaction,
+                execute_pool_transaction,
+                noop_on_execution_error
+            );
         }
         #[cfg(feature = "monad")]
         if self.is_monad() {
@@ -3014,11 +3016,42 @@ impl<N: Network> Backend<N> {
                 .monad_context_for_child_of(parent_hash)
                 .expect("Monad ancestor context must be available before block execution");
             evm.ctx_mut().set_aux_state(context_aux);
-            return run!(evm, prepare_monad_transaction, rollback_monad_transaction);
+            return run!(
+                evm,
+                prepare_monad_transaction,
+                |executor: &mut AnvilBlockExecutor<_>,
+                 tx_env: TxEnv,
+                 recovered: Recovered<FoundryTxEnvelope>,
+                 is_replay: bool| {
+                    if !is_replay {
+                        return executor.execute_transaction_without_commit((tx_env, recovered));
+                    }
+                    match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+                        Ok(None) => {
+                            return executor
+                                .execute_transaction_without_commit((tx_env, recovered));
+                        }
+                        Ok(Some(_)) => {}
+                        Err(err) => return Err(BlockExecutionError::msg(err)),
+                    }
+                    executor.execute_transaction_without_commit_with(
+                        (tx_env, recovered),
+                        |evm, tx_env, transaction_hash| {
+                            MonadEvmFactory::default().transact_replay(evm, tx_env).map_err(|err| {
+                                BlockExecutionError::msg(format!(
+                                    "failed to replay Monad transaction {transaction_hash}: \
+                                         {err}"
+                                ))
+                            })
+                        },
+                    )
+                },
+                rollback_monad_transaction
+            );
         }
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run!(evm, noop_before_transaction, noop_on_execution_error)
+        run!(evm, noop_before_transaction, execute_pool_transaction, noop_on_execution_error)
     }
 
     /// Applies Ethereum block-start transitions to a disposable simulation candidate.
@@ -5791,11 +5824,7 @@ where
                     &|pool_tx, account| {
                         let validation_env =
                             if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
-                        self.validate_pool_transaction_for(
-                            &pool_tx.pending_transaction,
-                            account,
-                            validation_env,
-                        )
+                        self.validate_mining_pool_transaction_for(pool_tx, account, validation_env)
                     },
                 )?;
 
@@ -5838,9 +5867,15 @@ where
             let header = block.header.clone();
             #[cfg(feature = "monad")]
             let monad_participants = self.is_monad().then(|| {
-                let tx_envs = self
-                    .monad_tx_envs(&block.body.transactions)
-                    .expect("mined Monad transactions must remain decodable");
+                let tx_envs = included
+                    .iter()
+                    .map(|pool_tx| {
+                        build_tx_env_for_pending::<FoundryTxEnvelope, TxEnv>(
+                            &pool_tx.pending_transaction,
+                            self.cheats(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 collect_monad_block_participants(&tx_envs)
             });
 
@@ -8851,6 +8886,53 @@ fn get_pool_transactions_nonce(
         return Some(tx_count);
     }
     None
+}
+
+impl<N: Network> Backend<N>
+where
+    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+{
+    /// Validates a transaction candidate selected for mining.
+    fn validate_mining_pool_transaction_for(
+        &self,
+        pool_tx: &PoolTransaction<FoundryTxEnvelope>,
+        account: &AccountInfo,
+        evm_env: &EvmEnv,
+    ) -> Result<(), InvalidTransactionError> {
+        #[cfg(feature = "monad")]
+        if self.is_monad() && pool_tx.is_replay {
+            let tx_env: TxEnv =
+                build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
+            match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+                Ok(Some(system_call)) => {
+                    if system_call
+                        .chain_id
+                        .is_some_and(|chain_id| chain_id != evm_env.cfg_env.chain_id)
+                    {
+                        return Err(InvalidTransactionError::InvalidChainId);
+                    }
+                    if system_call.nonce < account.nonce {
+                        return Err(InvalidTransactionError::NonceTooLow);
+                    }
+                    if system_call.nonce > account.nonce {
+                        return Err(InvalidTransactionError::NonceTooHigh);
+                    }
+                    if system_call.nonce == u64::MAX {
+                        return Err(InvalidTransactionError::NonceMaxValue);
+                    }
+                    return Ok(());
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    return Err(InvalidTransactionError::Revm(InvalidTransaction::Str(
+                        err.to_string().into(),
+                    )));
+                }
+            }
+        }
+
+        self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, evm_env)
+    }
 }
 
 #[async_trait::async_trait]
