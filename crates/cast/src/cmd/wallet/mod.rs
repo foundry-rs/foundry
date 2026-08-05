@@ -421,15 +421,20 @@ impl WalletSubcommands {
                             rpassword::prompt_password("Enter secret: ")?
                         };
 
+                        if touch_id {
+                            ensure_touch_id_sidecars_available(
+                                &path,
+                                account_name.as_deref(),
+                                number,
+                            )?;
+                        }
+
                         // Prevent accidental overwriting: check all target files upfront
                         if !force && let Some(ref acc_name) = account_name {
                             let mut existing_files = Vec::new();
 
                             for i in 0..number {
-                                let name = match number {
-                                    1 => acc_name.clone(),
-                                    _ => format!("{}_{}", acc_name, i + 1),
-                                };
+                                let name = indexed_account_name(acc_name, number, i);
                                 let file_path = path.join(&name);
                                 if file_path.exists() {
                                     existing_files.push(name);
@@ -456,11 +461,9 @@ impl WalletSubcommands {
                             }
                         }
                         for i in 0..number {
-                            let account_name_ref =
-                                account_name.as_deref().map(|name| match number {
-                                    1 => name.to_string(),
-                                    _ => format!("{}_{}", name, i + 1),
-                                });
+                            let account_name_ref = account_name
+                                .as_deref()
+                                .map(|name| indexed_account_name(name, number, i));
 
                             let (wallet, uuid) = PrivateKeySigner::new_keystore(
                                 &path,
@@ -1080,6 +1083,11 @@ flag to set your key via:
 
                 let touch_id_enrolled = is_touch_id_sidecar(&touch_id_sidecar_path(&keypath));
 
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                let touch_id_policy = touch_id_enrolled
+                    .then(|| foundry_wallets::touch_id::policy(&keypath))
+                    .transpose()?;
+
                 let current_password = if let Some(password) = unsafe_password {
                     password
                 } else {
@@ -1114,12 +1122,9 @@ flag to set your key via:
                 )?;
 
                 #[cfg(all(target_os = "macos", feature = "touch-id"))]
-                if touch_id_enrolled
-                    && let Err(enrollment_error) = foundry_wallets::touch_id::enroll(
-                        &keypath,
-                        &new_password,
-                        foundry_wallets::touch_id::Policy::default(),
-                    )
+                if let Some(policy) = touch_id_policy
+                    && let Err(enrollment_error) =
+                        foundry_wallets::touch_id::enroll(&keypath, &new_password, policy)
                 {
                     match remove_touch_id_sidecar(&keypath) {
                         Ok(true) => eyre::bail!(
@@ -1249,6 +1254,26 @@ fn ensure_touch_id_sidecar_available(keystore_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn indexed_account_name(base: &str, number: u32, index: u32) -> String {
+    if number == 1 { base.to_string() } else { format!("{base}_{}", index + 1) }
+}
+
+fn ensure_touch_id_sidecars_available(
+    dir: &Path,
+    account_name: Option<&str>,
+    number: u32,
+) -> Result<()> {
+    let Some(account_name) = account_name else { return Ok(()) };
+    for index in 0..number {
+        ensure_touch_id_sidecar_available(&dir.join(indexed_account_name(
+            account_name,
+            number,
+            index,
+        )))?;
+    }
+    Ok(())
+}
+
 fn remove_touch_id_sidecar(keystore_path: &Path) -> Result<bool> {
     let sidecar = touch_id_sidecar_path(keystore_path);
     if !sidecar.exists() {
@@ -1277,6 +1302,22 @@ mod tests {
 
         std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
         assert!(!is_touch_id_sidecar(&sidecar));
+    }
+
+    #[test]
+    fn preflights_every_named_touch_id_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("batch_2.touchid");
+        std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
+
+        let error = ensure_touch_id_sidecars_available(dir.path(), Some("batch"), 2).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "refusing Touch ID enrollment because {} is an existing keystore",
+                sidecar.display()
+            )
+        );
     }
 
     #[test]

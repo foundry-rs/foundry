@@ -1886,6 +1886,74 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     assert_eq!(decrypted_private_key, test_private_key);
 });
 
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+casttest!(
+    wallet_change_password_rejects_unsupported_touch_id_sidecar_before_rewrite,
+    |prj, cmd| {
+        let keystore_dir = prj.root().join("keystore");
+        let sidecar = keystore_dir.join("testAccount.touchid");
+
+        cmd.args([
+            "wallet",
+            "import",
+            "testAccount",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_success();
+        fs::write(&sidecar, r#"{"version":2,"policy":"watch","se_key":"","sealed_password":""}"#)
+            .unwrap();
+
+        cmd.cast_fuse()
+            .args([
+                "wallet",
+                "change-password",
+                "testAccount",
+                "--keystore-dir",
+                keystore_dir.to_str().unwrap(),
+                "--unsafe-password",
+                "old_password",
+                "--unsafe-new-password",
+                "new_password",
+            ])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Error: unsupported Touch ID sidecar version 2; re-enroll this keystore to regenerate it, or delete its `.touchid` sidecar to use the password prompt
+
+"#]]);
+        assert!(sidecar.exists());
+
+        cmd.cast_fuse()
+            .args([
+                "wallet",
+                "decrypt-keystore",
+                "testAccount",
+                "--keystore-dir",
+                keystore_dir.to_str().unwrap(),
+                "--unsafe-password",
+                "old_password",
+            ])
+            .assert_success();
+
+        cmd.cast_fuse()
+            .args([
+                "wallet",
+                "decrypt-keystore",
+                "testAccount",
+                "--keystore-dir",
+                keystore_dir.to_str().unwrap(),
+                "--unsafe-password",
+                "new_password",
+            ])
+            .assert_failure();
+    }
+);
+
 #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
 casttest!(wallet_change_password_removes_touch_id_sidecar, |prj, cmd| {
     let keystore_dir = prj.root().join("keystore");
