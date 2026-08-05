@@ -353,7 +353,7 @@ use revm::{
     interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
-    state::{AccountInfo, EvmState},
+    state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
@@ -3274,23 +3274,22 @@ impl<N: Network> Backend<N> {
         if !self.is_fork() {
             if let Some(eth_rpc_url) = forking.json_rpc_url.clone() {
                 let mut evm_env = self.evm_env.read().clone();
+                let mut node_config = self.node_config.read().await.clone();
 
-                let (db, config) = {
-                    let mut node_config = self.node_config.write().await;
+                // we want to force the correct base fee for the next block during
+                // `setup_fork_db_config`
+                node_config.base_fee.take();
+                node_config.fork_urls = vec![eth_rpc_url.clone()];
+                node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
-                    // we want to force the correct base fee for the next block during
-                    // `setup_fork_db_config`
-                    node_config.base_fee.take();
-                    node_config.fork_urls = vec![eth_rpc_url.clone()];
-                    node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
-
-                    node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
-                };
+                let (db, config) =
+                    node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?;
 
                 *self.db.write().await = Box::new(db);
 
                 let fork = ClientFork::new(config, Arc::clone(&self.db));
 
+                *self.node_config.write().await = node_config;
                 *self.evm_env.write() = evm_env;
                 *self.fork.write() = Some(fork);
             } else {
@@ -3344,12 +3343,12 @@ impl<N: Network> Backend<N> {
             // update all settings related to the forked block
             {
                 if let Some(fork_url) = forking.json_rpc_url {
-                    self.reset_block_number(fork_url, fork_block_number).await?;
+                    self.reset_block_number(fork_url, fork_block_number, true).await?;
                 } else {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     if let Some(fork_url) = target_rpc_url.clone() {
-                        self.reset_block_number(fork_url, fork_block_number).await?;
+                        self.reset_block_number(fork_url, fork_block_number, false).await?;
                     }
 
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
@@ -3479,9 +3478,16 @@ impl<N: Network> Backend<N> {
         &self,
         fork_url: String,
         fork_block_number: u64,
+        validated_url: bool,
     ) -> Result<(), BlockchainError> {
-        let mut node_config = self.node_config.write().await;
+        let mut node_config = self.node_config.read().await.clone();
         node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
+        let override_chain_id =
+            self.get_fork().and_then(|fork| fork.config.read().override_chain_id);
+        node_config.set_chain_id(override_chain_id);
+        if validated_url {
+            node_config.fork_chain_id = None;
+        }
         // Update fork_urls so setup_fork_db_config uses the correct URL set
         node_config.fork_urls = vec![fork_url.clone()];
 
@@ -3491,6 +3497,7 @@ impl<N: Network> Backend<N> {
 
         *self.db.write().await = Box::new(forked_db);
         let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+        *self.node_config.write().await = node_config;
         *self.fork.write() = Some(fork);
         *self.evm_env.write() = evm_env;
 
@@ -3751,7 +3758,7 @@ where
     pub async fn mine_block(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
-    ) -> MinedBlockOutcome<FoundryTxEnvelope> {
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         self.do_mine_block(pool_transactions).await
     }
 
@@ -4042,7 +4049,7 @@ where
     async fn do_mine_block(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
-    ) -> MinedBlockOutcome<FoundryTxEnvelope> {
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
@@ -4079,22 +4086,18 @@ where
             // Use the `prevrandao` value set via `anvil_setNextBlockPrevRandao` for this block if
             // one was provided, otherwise derive it from the parent hash and block number. The
             // manual override is consumed here so it only applies to this single block.
+            let next_prevrandao = self.cheats.prepare_next_block_prevrandao();
             evm_env.block_env.prevrandao =
-                Some(self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(input)));
+                Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
 
-            if self.prune_state_history_config.is_state_history_supported() {
-                let db = self.db.read().await.current_state();
-                // store current state before executing all transactions
-                self.states.write().insert(best_hash, db);
-            }
-
-            let (block_info, included, invalid, not_yet_valid, block_hash) = {
+            let (block_info, included, invalid, not_yet_valid, block_hash, parent_state) = {
                 let mut db = self.db.write().await;
 
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
+                let pending_timestamp = self.time.prepare_next_timestamp();
+                evm_env.block_env.timestamp = U256::from(pending_timestamp.timestamp);
 
                 // Forced historical transactions bypass pool admission and are replayed while
                 // mining. Keep this exception local to the disposable mining environment.
@@ -4108,33 +4111,38 @@ where
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
-                let (pool_result, block_result) = self
-                    .execute_with_block_executor(
-                        &mut **db,
-                        &mining_evm_env,
-                        best_hash,
-                        spec_id,
-                        Some(B256::ZERO),
-                        BlockExecutionKind::Complete,
-                        &pool_transactions,
-                        &gas_config,
-                        &inspector_tx_config,
-                        &|pool_tx, account| {
-                            let validation_env =
-                                if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
-                            self.validate_pool_transaction_for(
-                                &pool_tx.pending_transaction,
-                                account,
-                                validation_env,
-                            )
-                        },
-                    )
-                    .expect("block execution failed");
+                let mut candidate_db = AnvilCacheDB::new(&**db);
+                let (pool_result, block_result) = self.execute_with_block_executor(
+                    &mut candidate_db,
+                    &mining_evm_env,
+                    best_hash,
+                    spec_id,
+                    Some(B256::ZERO),
+                    BlockExecutionKind::Complete,
+                    &pool_transactions,
+                    &gas_config,
+                    &inspector_tx_config,
+                    &|pool_tx, account| {
+                        let validation_env =
+                            if pool_tx.is_replay { &mining_evm_env } else { &evm_env };
+                        self.validate_pool_transaction_for(
+                            &pool_tx.pending_transaction,
+                            account,
+                            validation_env,
+                        )
+                    },
+                )?;
 
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
+                let CacheDB { cache, db: _ } = candidate_db.0;
+                let parent_state = self
+                    .prune_state_history_config
+                    .is_state_history_supported()
+                    .then(|| db.current_state());
+                commit_cache(&mut **db, cache)?;
                 let state_root = db.maybe_state_root().unwrap_or_default();
                 let block_info = self.build_block_info(
                     &mining_evm_env,
@@ -4150,14 +4158,22 @@ where
                 // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
+                self.time.commit_next_timestamp(pending_timestamp);
+                if let Some(pending) = next_prevrandao {
+                    self.cheats.consume_next_block_prevrandao(pending);
+                }
 
-                (block_info, included, invalid, not_yet_valid, block_hash)
+                (block_info, included, invalid, not_yet_valid, block_hash, parent_state)
             };
 
             // create the new block with the current timestamp
             let BlockInfo { block, transactions, receipts } = block_info;
 
             let header = block.header.clone();
+
+            if let Some(parent_state) = parent_state {
+                self.states.write().insert(best_hash, parent_state);
+            }
 
             trace!(
                 target: "backend",
@@ -4253,7 +4269,7 @@ where
         // notify all listeners
         self.notify_on_new_block(header.into_inner(), block_hash);
 
-        outcome
+        Ok(outcome)
     }
 
     /// Reorg the chain to a common height and execute blocks to build new chain.
@@ -4272,7 +4288,7 @@ where
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await;
+            let outcome = self.do_mine_block(to_be_mined).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -5803,8 +5819,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     }
 
     /// Apply [SerializableState] data to the backend storage.
-    pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        let mut block_env = state.block.clone();
+    pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
+        let mut block_env = state.block.take();
         let mut selected_head = None;
         let mut selected_header = None;
         let mut checkpoint = None;
@@ -5902,8 +5918,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         // without their transactions or a partially updated head.
         {
             let mut storage = self.blockchain.storage.write();
-            storage.load_blocks(state.blocks.clone());
-            storage.load_transactions(state.transactions.clone());
+            storage.load_blocks(std::mem::take(&mut state.blocks));
+            storage.load_transactions(std::mem::take(&mut state.transactions));
             if let Some(checkpoint) = checkpoint {
                 storage.insert_block(checkpoint);
             }
@@ -5950,7 +5966,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             ));
         }
 
-        if !self.db.write().await.load_state(state.clone())? {
+        let historical_states = state.historical_states.take();
+        if !self.db.write().await.load_state(state)? {
             return Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
@@ -5973,7 +5990,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         };
         self.db.write().await.set_block_hashes(block_hashes);
 
-        if let Some(historical_states) = state.historical_states {
+        if let Some(historical_states) = historical_states {
             self.states.write().load_states(historical_states);
         }
 
@@ -6323,6 +6340,7 @@ impl Backend<FoundryNetwork> {
                 }
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
+                let spec_id = *simulation_evm_env.spec_id();
                 let ethereum_transitions = self
                     .ethereum_block_transitions(self.hardfork(), None, BlockExecutionKind::Complete)
                     .map(|mut transitions| {
@@ -6580,6 +6598,13 @@ impl Backend<FoundryNetwork> {
                     // commit the transaction
                     cache_db.commit(state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
+                    let post_state = if spec_id < SpecId::BYZANTIUM {
+                        let accounts =
+                            cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                        Some(state_root(&accounts))
+                    } else {
+                        None
+                    };
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used
@@ -6625,6 +6650,7 @@ impl Backend<FoundryNetwork> {
                         &result,
                         canonical_logs.clone(),
                         cumulative_gas_used,
+                        post_state,
                         deposit_nonce,
                         deposit_receipt_version,
                     ));
@@ -6641,7 +6667,9 @@ impl Backend<FoundryNetwork> {
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
-                        max_used_gas: None,
+                        max_used_gas: Some(
+                            result.gas().total_gas_spent().max(result.gas().floor_gas()),
+                        ),
                         status: result.is_success(),
                         error: match &result {
                             ExecutionResult::Success { .. } => None,
@@ -6656,16 +6684,13 @@ impl Backend<FoundryNetwork> {
                                     data: Some(output.clone()),
                                 })
                             }
-                            ExecutionResult::Halt { reason: HaltReason::OutOfGas(_), .. } => {
-                                Some(SimulateError {
-                                    code: SimulateError::VM_EXECUTION_ERROR_CODE,
-                                    message: "out of gas".to_string(),
-                                    data: None,
-                                })
-                            }
-                            _ => Some(SimulateError {
-                                code: -3200,
-                                message: "execution failed".to_string(),
+                            ExecutionResult::Halt { reason, .. } => Some(SimulateError {
+                                code: SimulateError::VM_EXECUTION_ERROR_CODE,
+                                message: if matches!(reason, HaltReason::OutOfGas(_)) {
+                                    "out of gas".to_string()
+                                } else {
+                                    format!("vm execution error: {reason}")
+                                },
                                 data: None,
                             }),
                         },
@@ -6712,10 +6737,10 @@ impl Backend<FoundryNetwork> {
                     Default::default()
                 };
 
-                let state_root = cache_db
-                    .maybe_full_db()
-                    .map(|accounts| state_root(&accounts))
-                    .unwrap_or_default();
+                // TODO: Assess restoring fork-backed simulations by deriving a canonical
+                // post-state root.
+                let accounts = cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                let state_root = state_root(&accounts);
                 let header = Header {
                     logs_bloom: receipts.iter().fold(Bloom::ZERO, |mut bloom, receipt| {
                         bloom.accrue_bloom(receipt.logs_bloom());
@@ -6726,7 +6751,7 @@ impl Backend<FoundryNetwork> {
                     parent_hash,
                     beneficiary: block_env.beneficiary,
                     state_root,
-                    difficulty: Default::default(),
+                    difficulty: block_env.difficulty,
                     number: block_env.number.saturating_to(),
                     gas_limit: block_env.gas_limit,
                     gas_used,
@@ -6734,8 +6759,8 @@ impl Backend<FoundryNetwork> {
                     extra_data: Default::default(),
                     mix_hash: block_env.prevrandao.unwrap_or_default(),
                     nonce: Default::default(),
-                    base_fee_per_gas: Some(block_env.basefee),
-                    withdrawals_root: None,
+                    base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block_env.basefee),
+                    withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
                     blob_gas_used: is_cancun.then_some(block_blob_gas_used),
                     excess_blob_gas: if is_cancun { block_env.blob_excess_gas() } else { None },
                     parent_beacon_block_root: ethereum_transitions.and_then(|transitions| {
@@ -6749,6 +6774,12 @@ impl Backend<FoundryNetwork> {
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
+                for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
+                    transaction.block_hash = Some(block_hash);
+                    transaction.block_number = Some(header.number);
+                    transaction.transaction_index = Some(transaction_index as u64);
+                    transaction.block_timestamp = Some(header.timestamp);
+                }
                 let mut block = alloy_rpc_types::Block {
                     header: AnyRpcHeader {
                         hash: block_hash,
@@ -6758,7 +6789,7 @@ impl Backend<FoundryNetwork> {
                     },
                     uncles: vec![],
                     transactions: BlockTransactions::Full(transactions),
-                    withdrawals: None,
+                    withdrawals: (spec_id >= SpecId::SHANGHAI).then_some(Default::default()),
                 };
 
                 if !return_full_transactions {
@@ -7467,6 +7498,48 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
     false
 }
 
+/// Commits a fully executed candidate cache to the live database.
+fn commit_cache(db: &mut dyn Db, cache: revm::database::Cache) -> Result<(), BlockchainError> {
+    let revm::database::Cache { accounts, contracts, .. } = cache;
+    let mut changes = EvmState::default();
+    for (address, db_account) in accounts {
+        if db_account.account_state == AccountState::None {
+            continue;
+        }
+
+        let DbAccount { mut info, account_state, storage } = db_account;
+        // `CacheDB` also records absent-account reads as `NotExisting`. They are not state changes
+        // and must not become synthetic selfdestructs in the live database.
+        if account_state == AccountState::NotExisting && db.basic(address)?.is_none() {
+            continue;
+        }
+        if info.code.is_none() {
+            info.code = contracts.get(&info.code_hash).cloned();
+        }
+        let mut account = Account::from(info);
+        account.mark_touch();
+        match account_state {
+            AccountState::NotExisting => account.mark_selfdestruct(),
+            AccountState::StorageCleared => account.mark_created(),
+            AccountState::Touched => {}
+            AccountState::None => unreachable!(),
+        }
+        for (slot, value) in storage {
+            let original = if account_state == AccountState::StorageCleared {
+                U256::ZERO
+            } else {
+                db.storage(address, slot)?
+            };
+            account
+                .storage
+                .insert(slot, EvmStorageSlot::new_changed(original, value, TransactionId::ZERO));
+        }
+        changes.insert(address, account);
+    }
+    db.commit(changes);
+    Ok(())
+}
+
 fn simulate_rpc_error(code: i64, message: impl Into<String>) -> BlockchainError {
     BlockchainError::RpcError(RpcError {
         code: ErrorCode::from(code),
@@ -7629,8 +7702,8 @@ mod tests {
         let (api_b, _handle_b) = spawn(config_b).await;
 
         // Mine empty blocks (no transactions) on both backends
-        let outcome_a_1 = api_a.backend.mine_block(vec![]).await;
-        let outcome_b_1 = api_b.backend.mine_block(vec![]).await;
+        let outcome_a_1 = api_a.backend.mine_block(vec![]).await.unwrap();
+        let outcome_b_1 = api_b.backend.mine_block(vec![]).await.unwrap();
 
         // Both should mine the same block number
         assert_eq!(outcome_a_1.block_number, outcome_b_1.block_number);
@@ -7649,8 +7722,8 @@ mod tests {
         );
 
         // Mine another block to ensure it remains deterministic
-        let outcome_a_2 = api_a.backend.mine_block(vec![]).await;
-        let outcome_b_2 = api_b.backend.mine_block(vec![]).await;
+        let outcome_a_2 = api_a.backend.mine_block(vec![]).await.unwrap();
+        let outcome_b_2 = api_b.backend.mine_block(vec![]).await.unwrap();
 
         let block_a_2 =
             api_a.block_by_number(outcome_a_2.block_number.into()).await.unwrap().unwrap();

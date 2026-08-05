@@ -752,7 +752,7 @@ async fn test_debug_trace_call_tx_index() {
         let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
     }
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block_number = provider.get_block_number().await.unwrap();
 
     let get_value = simple_storage_contract.getValue();
@@ -807,7 +807,7 @@ async fn test_debug_trace_transaction_reports_transaction_gas() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let first_receipt = first.get_receipt().await.unwrap();
     let second_receipt = second.get_receipt().await.unwrap();
     assert_eq!(first_receipt.block_hash, second_receipt.block_hash);
@@ -1863,7 +1863,7 @@ async fn test_trace_replay_block_transactions_local() {
     let tx2 = WithOtherFields::new(tx2);
     let pending_tx2 = provider.send_transaction(tx2).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let receipt1 = pending_tx1.get_receipt().await.unwrap();
     let receipt2 = pending_tx2.get_receipt().await.unwrap();
 

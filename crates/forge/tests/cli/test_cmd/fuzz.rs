@@ -4326,6 +4326,68 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 "#]]);
 });
 
+forgetest_init!(test_fuzz_stale_success_does_not_consume_run, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.dictionary.dictionary_weight = 0;
+    });
+    prj.add_test(
+        "StaleFailure.t.sol",
+        r#"
+contract StaleFailureTest {
+    error Nonzero(uint256 value);
+
+    function testFuzz_slot(uint256 value) public pure {
+        if (value != 0) revert Nonzero(value);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "StaleFailureTest", "-j1"]).assert_failure();
+
+    let failure_file = prj.root().join("cache/fuzz/failures/StaleFailureTest/testFuzz_slot");
+    let mut failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    let generated_calldata = failure.calldata.clone();
+    assert_ne!(U256::from_be_slice(&generated_calldata[4..]), U256::ZERO);
+
+    let selector = generated_calldata[..4].to_vec();
+    failure.calldata = [selector.as_slice(), &[0; 32]].concat().into();
+    failure.args = Some("0".to_string());
+    failure.raw_args = Some("0".to_string());
+    std::fs::write(&failure_file, serde_json::to_vec(&failure).unwrap()).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "StaleFailureTest", "-j1"]).assert_failure();
+
+    let failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert_eq!(failure.calldata, generated_calldata);
+    assert_eq!(failure.fuzz.seed, Some(U256::from(1)));
+    assert_eq!(failure.fuzz.run, Some(1));
+    assert_eq!(failure.fuzz.worker, Some(0));
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "StaleFailureTest",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-run",
+            "1",
+            "--fuzz-worker",
+            "0",
+            "-j1",
+        ])
+        .assert_failure();
+
+    let failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert_eq!(failure.calldata, generated_calldata);
+});
+
 forgetest_init!(fuzz_basic, |prj, cmd| {
     prj.add_test(
         "Fuzz.t.sol",
@@ -5059,6 +5121,80 @@ Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]
     ]);
+});
+
+forgetest_init!(fuzz_mutations_preserve_enum_bounds, |prj, cmd| {
+    let corpus_dir = prj.root().join("enum-corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 256;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_dir.clone());
+        config.fuzz.corpus.corpus_random_sequence_weight = 0;
+        let weights = &mut config.fuzz.corpus.mutation_weights;
+        weights.mutation_weight_splice = 0;
+        weights.mutation_weight_repeat = 0;
+        weights.mutation_weight_interleave = 0;
+        weights.mutation_weight_prefix = 0;
+        weights.mutation_weight_suffix = 0;
+        weights.mutation_weight_abi = 1;
+        weights.mutation_weight_cmp = 0;
+    });
+    prj.add_test(
+        "FuzzEnumMutation.t.sol",
+        r#"
+contract FuzzEnumMutation {
+    enum Choice { A, B, C }
+
+    function testEnum(Choice) public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "FuzzEnumMutation", "-j1"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzEnumMutation.t.sol:FuzzEnumMutation
+[PASS] testEnum(uint8) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    std::fs::remove_dir_all(&corpus_dir).unwrap();
+    prj.clear_cache_dir();
+    prj.update_config(|config| {
+        let weights = &mut config.fuzz.corpus.mutation_weights;
+        weights.mutation_weight_abi = 0;
+        weights.mutation_weight_cmp = 1;
+    });
+    prj.add_test(
+        "FuzzEnumMutation.t.sol",
+        r#"
+contract FuzzEnumMutation {
+    enum Choice { A, B, C }
+
+    function testEnum(Choice) public pure {
+        uint256 raw;
+        assembly {
+            raw := calldataload(4)
+        }
+        require(raw != 255, "unreachable for a valid enum");
+    }
+}
+   "#,
+    );
+
+    cmd.forge_fuse().args(["test", "--mc", "FuzzEnumMutation", "-j1"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/FuzzEnumMutation.t.sol:FuzzEnumMutation
+[PASS] testEnum(uint8) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
 });
 
 fn random_failure_reason(stdout: &str) -> String {

@@ -208,7 +208,7 @@ async fn test_can_handle_large_timestamp() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let num = 317071597274;
     api.evm_set_next_block_timestamp(num).unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, num);
@@ -218,7 +218,7 @@ async fn test_can_handle_large_timestamp() {
 async fn test_shanghai_fields() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.withdrawals_root, Some(EMPTY_ROOT_HASH));
@@ -231,7 +231,7 @@ async fn test_shanghai_fields() {
 async fn test_cancun_fields() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.withdrawals_root, Some(EMPTY_ROOT_HASH));
