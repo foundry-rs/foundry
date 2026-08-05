@@ -52,10 +52,19 @@ impl ResolvedFork {
         jwt: Option<&str>,
         selector: Option<BlockNumber>,
     ) -> bool {
+        self.matches_source(url, headers, jwt) && self.selector == selector
+    }
+
+    /// Returns whether the configured RPC source still matches this resolved fork.
+    pub(crate) fn matches_source(
+        &self,
+        url: &str,
+        headers: Option<&[String]>,
+        jwt: Option<&str>,
+    ) -> bool {
         self.source.url == url
             && self.source.headers.as_slice() == headers.unwrap_or_default()
             && self.source.jwt.as_deref() == jwt
-            && self.selector == selector
     }
 
     /// Returns the resolved block number.

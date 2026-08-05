@@ -291,12 +291,8 @@ impl Default for EvmOpts {
 }
 
 impl EvmOpts {
-    /// Selects a new fork URL and clears endpoint-derived state from the previous source.
-    pub fn set_fork_url(&mut self, fork_url: String) {
-        if self.fork_url.as_ref() == Some(&fork_url) {
-            return;
-        }
-        self.fork_url = Some(fork_url);
+    /// Clears state derived from a fork endpoint while preserving explicit configuration.
+    fn clear_endpoint_derived_fork_state(&mut self) {
         if self.fork_block_number_is_inferred {
             self.fork_block_number = None;
             self.fork_block_number_is_inferred = false;
@@ -311,6 +307,32 @@ impl EvmOpts {
             self.env.chain_id = None;
             self.fork_chain_id_is_inferred = false;
         }
+    }
+
+    /// Selects a new fork URL and clears endpoint-derived state from the previous source.
+    pub fn set_fork_url(&mut self, fork_url: String) {
+        if self.fork_url.as_ref() == Some(&fork_url) {
+            return;
+        }
+        self.fork_url = Some(fork_url);
+        self.clear_endpoint_derived_fork_state();
+    }
+
+    /// Invalidates endpoint-derived state when the effective RPC source changed since `fork` was
+    /// resolved.
+    ///
+    /// The effective source consists of the URL, active headers, and JWT. Explicit block, network,
+    /// and chain-ID selections are retained so the new source is resolved under the same user
+    /// configuration.
+    pub fn invalidate_fork_endpoint_if_source_changed(&mut self, fork: &ResolvedFork) -> bool {
+        let matches = self.fork_url.as_deref().is_some_and(|fork_url| {
+            fork.matches_source(fork_url, self.fork_source_headers(), self.rpc_jwt.as_deref())
+        });
+        if matches {
+            return false;
+        }
+        self.clear_endpoint_derived_fork_state();
+        true
     }
 
     /// Applies an explicit network override, replacing any endpoint-inferred selection.
@@ -1610,6 +1632,96 @@ mod tests {
         assert_eq!(explicit.fork_endpoint, None);
         assert_eq!(explicit.expected_fork_endpoint, None);
         assert!(!explicit.fork_block_number_is_inferred);
+    }
+
+    #[test]
+    fn changed_fork_auth_clears_only_endpoint_derived_state() {
+        let endpoint = "http://localhost:8545";
+        let identity = ForkEndpointIdentity {
+            endpoint: endpoint.to_string(),
+            execution_chain_id: 42,
+            source_chain_id: 42,
+            network: NetworkVariant::Ethereum,
+            network_profile: NetworkConfigs::with_celo(),
+            reported_hardfork: None,
+            hardfork: None,
+            instance_id: Some(B256::with_last_byte(1)),
+            source_fork_block_number: None,
+            source_fork_block_hash: None,
+        };
+        let context = ForkContext {
+            execution_chain_id: identity.execution_chain_id,
+            source_chain_id: identity.source_chain_id,
+            network: identity.network,
+            network_profile: identity.network_profile,
+            block_number: 123,
+            hardfork: identity.hardfork,
+            instance_id: identity.instance_id,
+            source_fork_block_number: identity.source_fork_block_number,
+            source_fork_block_hash: identity.source_fork_block_hash,
+        };
+        let mut evm_opts = EvmOpts {
+            fork_url: Some(endpoint.to_string()),
+            fork_block_number: Some(123),
+            fork_headers: Some(vec!["Authorization: first".to_string()]),
+            rpc_jwt: Some("first-jwt".to_string()),
+            fork_endpoint: Some(identity.clone()),
+            expected_fork_endpoint: Some(identity),
+            networks: NetworkConfigs::with_celo(),
+            ..Default::default()
+        };
+        evm_opts.env.chain_id = Some(42);
+        let fork = evm_opts.resolved_fork(
+            endpoint,
+            BlockNumHash::new(context.block_number, B256::with_last_byte(2)),
+            context,
+        );
+
+        evm_opts.fork_headers = Some(vec!["Authorization: second".to_string()]);
+        evm_opts.rpc_jwt = Some("second-jwt".to_string());
+
+        assert!(evm_opts.invalidate_fork_endpoint_if_source_changed(&fork));
+        assert_eq!(evm_opts.fork_endpoint, None);
+        assert_eq!(evm_opts.expected_fork_endpoint, None);
+        assert_eq!(evm_opts.fork_block_number, Some(123));
+        assert_eq!(evm_opts.networks, NetworkConfigs::with_celo());
+        assert_eq!(evm_opts.env.chain_id, Some(42));
+    }
+
+    #[test]
+    fn changed_fork_selector_preserves_endpoint_identity() {
+        let endpoint = "http://localhost:8545";
+        let identity = ForkEndpointIdentity {
+            endpoint: endpoint.to_string(),
+            execution_chain_id: 1,
+            source_chain_id: 1,
+            network: NetworkVariant::Ethereum,
+            network_profile: NetworkConfigs::default(),
+            reported_hardfork: None,
+            hardfork: None,
+            instance_id: Some(B256::with_last_byte(1)),
+            source_fork_block_number: None,
+            source_fork_block_hash: None,
+        };
+        let mut evm_opts = EvmOpts {
+            fork_url: Some(endpoint.to_string()),
+            fork_headers: Some(vec!["x-source: stable".to_string()]),
+            rpc_jwt: Some("stable-jwt".to_string()),
+            fork_endpoint: Some(identity.clone()),
+            expected_fork_endpoint: Some(identity.clone()),
+            ..Default::default()
+        };
+        let fork = evm_opts.resolved_fork(
+            endpoint,
+            BlockNumHash::new(1, B256::with_last_byte(2)),
+            resolved_context(1),
+        );
+
+        evm_opts.fork_block_number = Some(1);
+
+        assert!(!evm_opts.invalidate_fork_endpoint_if_source_changed(&fork));
+        assert_eq!(evm_opts.fork_endpoint, Some(identity.clone()));
+        assert_eq!(evm_opts.expected_fork_endpoint, Some(identity));
     }
 
     #[test]

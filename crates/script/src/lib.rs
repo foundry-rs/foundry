@@ -972,6 +972,9 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         {
             return Ok(Some(fork.clone()));
         }
+        if let Some(fork) = &self.resolved_fork {
+            self.evm_opts.invalidate_fork_endpoint_if_source_changed(fork);
+        }
 
         let fork = resolve_script_fork::<FEN>(&mut self.config, &mut self.evm_opts).await?;
         self.resolved_fork = fork.clone();
@@ -1399,6 +1402,74 @@ mod tests {
         assert!(config.backends.contains_key(&without_headers));
         assert!(config.backends.contains_key(&with_headers));
         assert_eq!(config.backends.len(), 2);
+    }
+
+    async fn assert_same_url_fork_auth_change_re_resolves(
+        configure_initial: impl FnOnce(&mut EvmOpts),
+        configure_changed: impl FnOnce(&mut EvmOpts),
+    ) {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        let mut evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(0),
+            networks: NetworkConfigs::with_ethereum(),
+            ..Default::default()
+        };
+        evm_opts.env.chain_id = Some(42);
+        configure_initial(&mut evm_opts);
+
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        config._get_runner(None, false, false).await.unwrap();
+        let first = config.resolved_fork().unwrap().unwrap().clone();
+        let first_instance = first.context().instance_id.unwrap();
+        assert_eq!(config.backends.len(), 1);
+
+        api.anvil_reset(None).await.unwrap();
+        assert_ne!(api.instance_id(), first_instance);
+        configure_changed(&mut config.evm_opts);
+
+        let second = config.ensure_resolved_fork().await.unwrap().unwrap();
+        assert_ne!(second.context().instance_id, Some(first_instance));
+        assert_ne!(second, first);
+        assert_eq!(config.evm_opts.fork_block_number, Some(0));
+        assert_eq!(config.evm_opts.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.evm_opts.env.chain_id, Some(42));
+        assert!(config.backends.contains_key(&first));
+        assert!(!config.backends.contains_key(&second));
+
+        config._get_runner(None, false, false).await.unwrap();
+        assert!(config.backends.contains_key(&first));
+        assert!(config.backends.contains_key(&second));
+        assert_eq!(config.backends.len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_same_url_rpc_headers_change_adopts_new_fork_identity() {
+        assert_same_url_fork_auth_change_re_resolves(
+            |evm_opts| evm_opts.rpc_headers = Some(vec!["x-fork-source: first".to_string()]),
+            |evm_opts| evm_opts.rpc_headers = Some(vec!["x-fork-source: second".to_string()]),
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_same_url_jwt_change_adopts_new_fork_identity() {
+        const FIRST_JWT: &str = "5c43996d0d150a81f06ae452fce38120d97a4156650aec7487b3384bfe32edae";
+        const SECOND_JWT: &str = "cabee703106087906e50f3e75a6ddbab60809f980511d1d1548d449d52220795";
+
+        assert_same_url_fork_auth_change_re_resolves(
+            |evm_opts| evm_opts.rpc_jwt = Some(FIRST_JWT.to_string()),
+            |evm_opts| evm_opts.rpc_jwt = Some(SECOND_JWT.to_string()),
+        )
+        .await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
