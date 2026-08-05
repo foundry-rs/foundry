@@ -731,7 +731,11 @@ casttest!(wallet_remove_touch_id_sidecar, |prj, cmd| {
     .assert_success();
 
     let sidecar = keystore_dir.join(format!("{account_name}.touchid"));
-    fs::write(&sidecar, "fake sidecar").unwrap();
+    fs::write(
+        &sidecar,
+        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
+    )
+    .unwrap();
 
     cmd.cast_fuse()
         .args([
@@ -811,6 +815,46 @@ Error: refusing to remove existing keystore at [..]/testAccount.touchid
 "#]]);
     assert!(keystore_file.exists());
     assert!(legacy_keystore.exists());
+});
+
+casttest!(wallet_remove_preserves_ambiguous_touch_id_file, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_file = keystore_dir.join("testAccount");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, "malformed").unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            "testAccount",
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: failed to parse json file: "[..]/testAccount.touchid": expected value at line 1 column 1
+
+"#]]);
+    assert!(keystore_file.exists());
+    assert!(sidecar.exists());
 });
 
 casttest!(wallet_import_rejects_touch_id_suffix, |prj, cmd| {
@@ -1218,7 +1262,11 @@ Created new encrypted keystore file: [..]
 
 "#]]);
 
-    fs::write(keystore_path.join("ignored.touchid"), "fake sidecar").unwrap();
+    fs::write(
+        keystore_path.join("ignored.touchid"),
+        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
+    )
+    .unwrap();
 
     // Test listing new wallets while omitting the Touch ID sidecar.
     cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
@@ -1238,6 +1286,19 @@ Created new encrypted keystore file: [..]
     ]);
 });
 
+casttest!(wallet_list_preserves_ambiguous_touch_id_file, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+    fs::write(keystore_path.join("ambiguous.touchid"), "malformed").unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
+        [r#"ambiguous.touchid (Local)
+
+"#]
+    ]);
+});
+
 // Tests that `cast wallet list --json --dir` wraps local accounts in the shared envelope.
 casttest!(wallet_list_local_accounts_json, |prj, cmd| {
     let keystore_path = prj.root().join("keystore");
@@ -1245,7 +1306,11 @@ casttest!(wallet_list_local_accounts_json, |prj, cmd| {
     cmd.set_current_dir(prj.root());
 
     cmd.args(["wallet", "new", "keystore", "--unsafe-password", "test"]).assert_success();
-    fs::write(keystore_path.join("ignored.touchid"), "fake sidecar").unwrap();
+    fs::write(
+        keystore_path.join("ignored.touchid"),
+        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
+    )
+    .unwrap();
 
     cmd.cast_fuse()
         .args(["wallet", "list", "--json", "--dir", "keystore"])
@@ -1851,7 +1916,8 @@ casttest!(wallet_change_password, |prj, cmd| {
         .stdout_eq(str![[r#"
 Password for keystore `testAccount` was changed successfully. [ADDRESS]
 
-"#]]);
+"#]])
+        .stderr_eq(str![""]);
 
     // verify the old password no longer works
     cmd.cast_fuse()
@@ -1971,7 +2037,11 @@ casttest!(wallet_change_password_removes_touch_id_sidecar, |prj, cmd| {
         "old_password",
     ])
     .assert_success();
-    fs::write(&sidecar, "fake sidecar").unwrap();
+    fs::write(
+        &sidecar,
+        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
+    )
+    .unwrap();
 
     cmd.cast_fuse()
         .args([

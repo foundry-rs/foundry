@@ -82,9 +82,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
+        include:
+          - target: x86_64-apple-darwin
+            run_tests: true
+          - target: aarch64-apple-darwin
+            run_tests: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,6 +97,12 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
       - run: cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target "${{ matrix.target }}" --locked --no-run
+      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target "${{ matrix.target }}" --locked
+      - name: Run native Touch ID regressions
+        if: matrix.run_tests
+        run: |
+          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --locked cmd::wallet::tests
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --locked wallet_change_password
 
   typos:
     runs-on: depot-ubuntu-latest

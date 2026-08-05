@@ -16,7 +16,7 @@ use foundry_cli::{
     utils,
     utils::LoadConfig,
 };
-use foundry_common::{fs, sh_println, shell};
+use foundry_common::{errors::FsPathError, fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
@@ -476,18 +476,34 @@ impl WalletSubcommands {
 
                             #[cfg(all(target_os = "macos", feature = "touch-id"))]
                             if touch_id {
-                                ensure_touch_id_sidecar_available(&keystore_path)?;
-                                foundry_wallets::touch_id::enroll(
-                                    &keystore_path,
-                                    &password,
-                                    foundry_wallets::touch_id::Policy::default(),
-                                )
-                                .map_err(|e| {
+                                ensure_touch_id_sidecar_available(&keystore_path).map_err(|e| {
                                     eyre::eyre!(
-                                        "keystore was created at {}, but Touch ID enrollment failed: {e}",
+                                        "keystore was created at {}, but Touch ID enrollment preflight failed: {e}. The sidecar was left untouched and must be resolved manually before password-prompt fallback is reliable",
                                         keystore_path.display()
                                     )
                                 })?;
+                                if let Err(enrollment_error) = foundry_wallets::touch_id::enroll(
+                                    &keystore_path,
+                                    &password,
+                                    foundry_wallets::touch_id::Policy::default(),
+                                ) {
+                                    let completed_action = if i == 0 {
+                                        format!(
+                                            "keystore was created at {}",
+                                            keystore_path.display()
+                                        )
+                                    } else {
+                                        format!(
+                                            "keystore was created at {} (earlier batch keystores were not rolled back)",
+                                            keystore_path.display()
+                                        )
+                                    };
+                                    return Err(touch_id_enrollment_failure(
+                                        &keystore_path,
+                                        &completed_action,
+                                        enrollment_error,
+                                    ));
+                                }
                             }
 
                             if let Some(json) = json_values.as_mut() {
@@ -902,14 +918,23 @@ flag to set your key via:
 
                 #[cfg(all(target_os = "macos", feature = "touch-id"))]
                 if touch_id {
-                    foundry_wallets::touch_id::enroll(
+                    ensure_touch_id_sidecar_available(&keystore_path).map_err(|e| {
+                        eyre::eyre!(
+                            "keystore was imported at {}, but Touch ID enrollment preflight failed: {e}. The sidecar was left untouched and must be resolved manually before password-prompt fallback is reliable",
+                            keystore_path.display()
+                        )
+                    })?;
+                    if let Err(enrollment_error) = foundry_wallets::touch_id::enroll(
                         &keystore_path,
                         &password,
                         foundry_wallets::touch_id::Policy::default(),
-                    )
-                    .map_err(|e| {
-                        eyre::eyre!("keystore was imported, but Touch ID enrollment failed: {e}")
-                    })?;
+                    ) {
+                        return Err(touch_id_enrollment_failure(
+                            &keystore_path,
+                            &format!("keystore was imported at {}", keystore_path.display()),
+                            enrollment_error,
+                        ));
+                    }
                 }
 
                 if shell::is_json() {
@@ -1081,7 +1106,7 @@ flag to set your key via:
                     eyre::bail!("Keystore file does not exist at {}", keypath.display());
                 }
 
-                let touch_id_enrolled = is_touch_id_sidecar(&touch_id_sidecar_path(&keypath));
+                let touch_id_enrolled = is_touch_id_sidecar(&touch_id_sidecar_path(&keypath))?;
 
                 #[cfg(all(target_os = "macos", feature = "touch-id"))]
                 let touch_id_policy = touch_id_enrolled
@@ -1126,24 +1151,32 @@ flag to set your key via:
                     && let Err(enrollment_error) =
                         foundry_wallets::touch_id::enroll(&keypath, &new_password, policy)
                 {
-                    match remove_touch_id_sidecar(&keypath) {
-                        Ok(true) => eyre::bail!(
-                            "password changed, but Touch ID re-enrollment failed: {enrollment_error}. The stale Touch ID sidecar was removed; password-prompt fallback remains available"
+                    return Err(touch_id_enrollment_failure(
+                        &keypath,
+                        &format!(
+                            "password for keystore `{account_name}` was changed at {}",
+                            keypath.display()
                         ),
-                        Ok(false) => eyre::bail!(
-                            "password changed, but Touch ID re-enrollment failed: {enrollment_error}. No stale Touch ID sidecar remained; password-prompt fallback remains available"
-                        ),
-                        Err(cleanup_error) => eyre::bail!(
-                            "password changed, but Touch ID re-enrollment failed: {enrollment_error}. The stale sidecar could not be removed: {cleanup_error}. Remove {} manually before password-prompt fallback is possible",
-                            touch_id_sidecar_path(&keypath).display()
-                        ),
-                    }
+                        enrollment_error,
+                    ));
                 }
 
                 #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
                 if touch_id_enrolled {
-                    remove_touch_id_sidecar(&keypath)?;
-                    sh_warn!("Removed the stale Touch ID enrollment after changing the password")?;
+                    match remove_touch_id_sidecar(&keypath) {
+                        Ok(true) => {
+                            sh_warn!(
+                                "Removed the stale Touch ID enrollment after changing the password"
+                            )?;
+                        }
+                        Ok(false) => {}
+                        Err(cleanup_error) => {
+                            eyre::bail!(
+                                "password changed, but Touch ID sidecar cleanup failed: {cleanup_error}. The new password is valid; remove {} manually",
+                                touch_id_sidecar_path(&keypath).display()
+                            )
+                        }
+                    }
                 }
 
                 let address = wallet.address();
@@ -1207,7 +1240,7 @@ fn ensure_touch_id_available(touch_id: bool) -> Result<()> {
     #[cfg(all(target_os = "macos", feature = "touch-id"))]
     {
         if !foundry_wallets::touch_id::is_available() {
-            eyre::bail!("Touch ID is unavailable on this Mac")
+            eyre::bail!("Touch ID is unavailable on this Mac");
         }
         Ok(())
     }
@@ -1220,7 +1253,7 @@ const TOUCH_ID_SIDECAR_SUFFIX: &str = ".touchid";
 
 fn ensure_account_name_available(name: &str) -> Result<()> {
     if name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
-        eyre::bail!("account names ending in `{TOUCH_ID_SIDECAR_SUFFIX}` are reserved")
+        eyre::bail!("account names ending in `{TOUCH_ID_SIDECAR_SUFFIX}` are reserved");
     }
     Ok(())
 }
@@ -1231,27 +1264,44 @@ fn touch_id_sidecar_path(keystore_path: &Path) -> PathBuf {
     path.into()
 }
 
-fn is_keystore(path: &Path) -> bool {
-    let Ok(value) = fs::read_json_file::<serde_json::Value>(path) else { return false };
-    value.get("version").is_some()
-        && (value.get("crypto").is_some() || value.get("Crypto").is_some())
+fn is_not_found(error: &FsPathError) -> bool {
+    matches!(error, FsPathError::Read { source, .. } if source.kind() == std::io::ErrorKind::NotFound)
 }
 
-fn is_touch_id_sidecar(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) && !is_keystore(path))
+fn is_keystore(path: &Path) -> fs::Result<bool> {
+    let value = fs::read_json_file::<serde_json::Value>(path)?;
+    Ok(value.get("version").is_some()
+        && (value.get("crypto").is_some() || value.get("Crypto").is_some()))
+}
+
+fn is_touch_id_sidecar(path: &Path) -> Result<bool> {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(false);
+    };
+    if !name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
+        return Ok(false);
+    }
+
+    match is_keystore(path) {
+        Ok(is_keystore) => Ok(!is_keystore),
+        Err(error) if is_not_found(&error) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn ensure_touch_id_sidecar_available(keystore_path: &Path) -> Result<()> {
     let sidecar = touch_id_sidecar_path(keystore_path);
-    if sidecar.exists() && is_keystore(&sidecar) {
-        eyre::bail!(
-            "refusing Touch ID enrollment because {} is an existing keystore",
-            sidecar.display()
-        )
+    match is_keystore(&sidecar) {
+        Ok(true) => {
+            eyre::bail!(
+                "refusing Touch ID enrollment because {} is an existing keystore",
+                sidecar.display()
+            );
+        }
+        Ok(false) => Ok(()),
+        Err(error) if is_not_found(&error) => Ok(()),
+        Err(error) => Err(error.into()),
     }
-    Ok(())
 }
 
 fn indexed_account_name(base: &str, number: u32, index: u32) -> String {
@@ -1276,15 +1326,46 @@ fn ensure_touch_id_sidecars_available(
 
 fn remove_touch_id_sidecar(keystore_path: &Path) -> Result<bool> {
     let sidecar = touch_id_sidecar_path(keystore_path);
-    if !sidecar.exists() {
-        return Ok(false);
+    if is_touch_id_sidecar(&sidecar)? {
+        match std::fs::remove_file(&sidecar) {
+            Ok(()) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).wrap_err_with(|| {
+                    format!("Failed to remove Touch ID sidecar at {}", sidecar.display())
+                });
+            }
+        }
     }
-    if is_keystore(&sidecar) {
-        eyre::bail!("refusing to remove existing keystore at {}", sidecar.display())
+
+    match is_keystore(&sidecar) {
+        Ok(true) => {
+            eyre::bail!("refusing to remove existing keystore at {}", sidecar.display());
+        }
+        Ok(false) => Ok(false),
+        Err(error) if is_not_found(&error) => Ok(false),
+        Err(error) => Err(error.into()),
     }
-    std::fs::remove_file(&sidecar)
-        .wrap_err_with(|| format!("Failed to remove Touch ID sidecar at {}", sidecar.display()))?;
-    Ok(true)
+}
+
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+fn touch_id_enrollment_failure(
+    keystore_path: &Path,
+    completed_action: &str,
+    enrollment_error: impl std::fmt::Display,
+) -> eyre::Report {
+    match remove_touch_id_sidecar(keystore_path) {
+        Ok(true) => eyre::eyre!(
+            "{completed_action}, but Touch ID enrollment failed: {enrollment_error}. The stale Touch ID sidecar was removed; password-prompt fallback remains available"
+        ),
+        Ok(false) => eyre::eyre!(
+            "{completed_action}, but Touch ID enrollment failed: {enrollment_error}. No stale Touch ID sidecar remained; password-prompt fallback remains available"
+        ),
+        Err(cleanup_error) => eyre::eyre!(
+            "{completed_action}, but Touch ID enrollment failed: {enrollment_error}. The stale sidecar could not be removed: {cleanup_error}. Remove {} manually before password-prompt fallback is possible",
+            touch_id_sidecar_path(keystore_path).display()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1297,11 +1378,33 @@ mod tests {
     fn distinguishes_touch_id_sidecars_from_legacy_keystores() {
         let dir = tempfile::tempdir().unwrap();
         let sidecar = dir.path().join("account.touchid");
-        std::fs::write(&sidecar, "opaque sidecar").unwrap();
-        assert!(is_touch_id_sidecar(&sidecar));
+        std::fs::write(
+            &sidecar,
+            r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
+        )
+        .unwrap();
+        assert!(is_touch_id_sidecar(&sidecar).unwrap());
 
         std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
-        assert!(!is_touch_id_sidecar(&sidecar));
+        assert!(!is_touch_id_sidecar(&sidecar).unwrap());
+
+        std::fs::write(&sidecar, r#"{"version":3,"Crypto":{}}"#).unwrap();
+        assert!(!is_touch_id_sidecar(&sidecar).unwrap());
+    }
+
+    #[test]
+    fn propagates_ambiguous_touch_id_sidecar_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+
+        assert!(!is_touch_id_sidecar(&sidecar).unwrap());
+
+        std::fs::write(&sidecar, "malformed").unwrap();
+        assert!(is_touch_id_sidecar(&sidecar).is_err());
+
+        std::fs::remove_file(&sidecar).unwrap();
+        std::fs::create_dir(&sidecar).unwrap();
+        assert!(is_touch_id_sidecar(&sidecar).is_err());
     }
 
     #[test]
