@@ -1174,7 +1174,7 @@ flag to set your key via:
                             eyre::bail!(
                                 "password changed, but Touch ID sidecar cleanup failed: {cleanup_error}. The new password is valid; remove {} manually",
                                 touch_id_sidecar_path(&keypath).display()
-                            )
+                            );
                         }
                     }
                 }
@@ -1246,7 +1246,7 @@ fn ensure_touch_id_available(touch_id: bool) -> Result<()> {
     }
 
     #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
-    eyre::bail!("`--touch-id` requires macOS and a cast build with the `touch-id` feature")
+    eyre::bail!("`--touch-id` requires macOS and a cast build with the `touch-id` feature");
 }
 
 const TOUCH_ID_SIDECAR_SUFFIX: &str = ".touchid";
