@@ -5186,6 +5186,9 @@ interface IHookVm {
 }
 
 contract MappingTarget {
+    bytes32 public constant SLOT_42 =
+        0x64d962e4eec2a0d2e4053fc69d3b480f61c5923c09e4bad52cdeec343ff95073;
+
     mapping(uint256 => uint256) values;
     mapping(uint256 => mapping(uint256 => uint256)) nested;
     function set(uint256 key, uint256 value) external { values[key] = value; }
@@ -5219,6 +5222,12 @@ contract MappingTarget {
         bytes32 slot = keccak256(abi.encode(uint256(1), uint256(0)));
         assembly { sstore(slot, value) }
         require(observed == slot);
+    }
+    function foldedConstantStore(uint256 key, uint256 value) external {
+        bytes32 observed = keccak256(abi.encode(key, uint256(0)));
+        require(observed == SLOT_42);
+        bytes32 slot = SLOT_42;
+        assembly { sstore(slot, value) }
     }
     function constrainedRootStore(uint256 key, uint256 root, uint256 value) external {
         require(root == 0);
@@ -5529,6 +5538,13 @@ contract SymbolicMappingStorageHooks is Test {
         target.constrainedConstantStore(key, value);
         assertEq(calls, 1);
         assertEq(seenKey, 1);
+    }
+
+    function checkConstraintEquivalentFoldedSlot(uint256 key, uint256 value) public {
+        target.foldedConstantStore(key, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, target.SLOT_42());
     }
 
     function checkConstraintEquivalentKeccakShape(

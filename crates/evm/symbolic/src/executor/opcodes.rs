@@ -87,9 +87,7 @@ impl SymbolicExecutor {
             if contains_observed_hash && !key.visit_bool(|candidate| candidate == &hash) {
                 continue;
             }
-            let use_legacy_match = contains_observed_hash
-                || !key_contains_keccak && !key_is_const
-                || key_is_const && key_is_storage_mapping_key;
+            let use_legacy_match = contains_observed_hash || !key_contains_keccak;
             if use_legacy_match
                 && let Some(provenance) =
                     hash.storage_mapping_provenance_observed_with(&mut self.cx, |candidate| {
@@ -104,6 +102,15 @@ impl SymbolicExecutor {
                     continue;
                 }
                 let equality = SymBoolExpr::eq(&mut self.cx, key.clone(), hash.clone());
+                if key_is_const {
+                    let inequality = equality.not(&mut self.cx);
+                    let (_, inequality_is_sat) =
+                        self.constraints_with_condition(state, inequality)?;
+                    if !inequality_is_sat {
+                        return Ok(MappingStorageProvenance::Exact(provenance));
+                    }
+                    continue;
+                }
                 if let Some(provenance) =
                     self.classify_mapping_match(state, equality, provenance)?
                 {
