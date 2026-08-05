@@ -610,7 +610,14 @@ impl CallTraceDecoder {
         }
     }
 
-    fn functions_for_selector(&self, address: Address, selector: &Selector) -> Option<&[Function]> {
+    /// Returns the functions registered for `selector` at `address`.
+    ///
+    /// Address-scoped metadata takes precedence over globally registered functions.
+    pub fn functions_for_selector(
+        &self,
+        address: Address,
+        selector: &Selector,
+    ) -> Option<&[Function]> {
         if self.is_current_committee_active(address) {
             static FUNCTIONS: OnceLock<HashMap<Selector, Vec<Function>>> = OnceLock::new();
             if let Some(functions) = FUNCTIONS

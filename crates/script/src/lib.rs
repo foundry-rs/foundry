@@ -54,7 +54,7 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
         fork::ResolvedFork,
     },
     executors::ExecutorBuilder,
@@ -1012,21 +1012,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let resolved = self.ensure_resolved_fork().await?;
-        let (mut evm_env, mut tx_env) =
-            self.evm_opts.env_with_resolved_fork::<_, _, TxEnvFor<FEN>>(resolved.as_ref()).await?;
-        let fork_context = resolved.as_ref().map(ResolvedFork::context);
-        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
-        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
-        self.source_chain_id = fork_chain_id;
-        self.hardfork = resolve_execution_spec(
-            &self.config,
-            self.evm_opts.networks,
-            &mut evm_env,
-            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
-            None,
-            None,
-        );
+        let (resolved, evm_env, mut tx_env) = self.resolve_execution_env().await?;
 
         let db = if self.evm_opts.fork_url.is_some() {
             let resolved = resolved.context("fork must be resolved")?;
@@ -1091,6 +1077,28 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         }
 
         Ok(runner)
+    }
+
+    /// Resolves the configured fork and execution spec without constructing a database or runner.
+    async fn resolve_execution_env(
+        &mut self,
+    ) -> Result<(Option<ResolvedFork>, EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
+        let resolved = self.ensure_resolved_fork().await?;
+        let (mut evm_env, tx_env) =
+            self.evm_opts.env_with_resolved_fork::<_, _, TxEnvFor<FEN>>(resolved.as_ref()).await?;
+        let fork_context = resolved.as_ref().map(ResolvedFork::context);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        self.source_chain_id = fork_chain_id;
+        self.hardfork = resolve_execution_spec(
+            &self.config,
+            self.evm_opts.networks,
+            &mut evm_env,
+            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            None,
+            None,
+        );
+        Ok((resolved, evm_env, tx_env))
     }
 }
 

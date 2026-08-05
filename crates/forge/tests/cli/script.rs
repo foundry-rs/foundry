@@ -207,6 +207,89 @@ contract SequentialMonadContextScript {
     cmd.forge_fuse().args(common).arg("--slow").assert_success();
 });
 
+#[cfg(feature = "monad")]
+forgetest_async!(monad_multi_rpc_sequence_uses_per_fork_decoder, |prj, cmd| {
+    let (monad_eight_api, monad_eight) =
+        spawn(NodeConfig::test_monad().with_hardfork(Some("monad:MonadEight".parse().unwrap())))
+            .await;
+    let (monad_nine_api, monad_nine) =
+        spawn(NodeConfig::test_monad().with_hardfork(Some("monad:MonadNine".parse().unwrap())))
+            .await;
+    monad_eight_api.mine_one().await.unwrap();
+    monad_nine_api.mine_one().await.unwrap();
+    let monad_eight_rpc = monad_eight.http_endpoint();
+    let monad_nine_rpc = monad_nine.http_endpoint();
+
+    let script = r#"
+interface Vm {
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract PerForkMetadataScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant RESERVE_BALANCE = 0x0000000000000000000000000000000000001001;
+
+    function recordReserveCall() internal {
+        vm.startBroadcast();
+        (bool success,) = RESERVE_BALANCE.call(abi.encodeWithSignature("dippedIntoReserve()"));
+        require(success, "reserve call failed");
+        vm.stopBroadcast();
+    }
+
+    function run() external {
+        vm.createSelectFork("<MONAD_EIGHT_RPC>");
+        recordReserveCall();
+
+        vm.createSelectFork("<MONAD_NINE_RPC>");
+        recordReserveCall();
+    }
+}
+"#
+    .replace("<MONAD_EIGHT_RPC>", &monad_eight_rpc)
+    .replace("<MONAD_NINE_RPC>", &monad_nine_rpc);
+    prj.add_script("PerForkMetadata.s.sol", &script);
+
+    let common = [
+        "script",
+        "PerForkMetadataScript",
+        "--rpc-url",
+        monad_eight_rpc.as_str(),
+        "--network",
+        "monad",
+        "--non-interactive",
+    ];
+
+    let assert_metadata = || {
+        let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| path.to_string_lossy().contains("-latest") && path.ends_with("run.json"))
+            .expect("No multi-RPC broadcast artifact");
+        let sequence: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        let deployments = sequence["deployments"].as_array().expect("multi-RPC deployments");
+        assert_eq!(deployments.len(), 2);
+
+        let monad_eight_tx = &deployments[0]["transactions"][0];
+        assert!(monad_eight_tx["function"].is_null());
+        assert!(monad_eight_tx["functionAbi"].is_null());
+        assert!(monad_eight_tx["arguments"].is_null());
+
+        let monad_nine_tx = &deployments[1]["transactions"][0];
+        assert_eq!(monad_nine_tx["function"], "dippedIntoReserve()");
+        assert_eq!(
+            monad_nine_tx["functionAbi"],
+            "function dippedIntoReserve() returns (bool dipped)"
+        );
+        assert_eq!(monad_nine_tx["arguments"], serde_json::json!([]));
+    };
+
+    cmd.forge_fuse().args(common).assert_success();
+    assert_metadata();
+
+    cmd.forge_fuse().args(common).arg("--skip-simulation").assert_success();
+    assert_metadata();
+});
+
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
     let script = prj.add_source(
