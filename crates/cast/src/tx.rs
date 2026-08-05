@@ -613,7 +613,18 @@ where
             fill && self.auth.is_empty() && tempo_wallet.is_none() && !self.chain.is_tempo();
         let tx_nonce = if resolve_in_parallel {
             let nonce = self.tx.nonce();
-            let (tx_nonce, ()) = tokio::try_join!(
+            let fees_are_complete = if self.legacy {
+                self.tx.gas_price().is_some()
+            } else {
+                matches!(
+                    (self.tx.max_fee_per_gas(), self.tx.max_priority_fee_per_gas()),
+                    (Some(max_fee), Some(priority_fee)) if priority_fee <= max_fee
+                )
+            } && (!self.blob || self.tx.max_fee_per_blob_gas().is_some());
+            let gas_request =
+                (fees_are_complete && self.access_list.is_none() && self.tx.gas_limit().is_none())
+                    .then(|| self.tx.clone());
+            let (tx_nonce, (), gas_limit) = tokio::try_join!(
                 Self::resolve_nonce(&self.provider, sender.address(), nonce),
                 Self::fill_fees(
                     &self.provider,
@@ -623,7 +634,18 @@ where
                     self.browser,
                     self.eip1559_fee_estimate,
                 ),
+                async {
+                    match gas_request {
+                        Some(request) => {
+                            Self::estimate_gas(&self.provider, request).await.map(Some)
+                        }
+                        None => Ok(None),
+                    }
+                },
             )?;
+            if let Some(gas_limit) = gas_limit {
+                self.tx.set_gas_limit(gas_limit);
+            }
             Some(tx_nonce)
         } else if fill || !self.auth.is_empty() {
             Some(Self::resolve_nonce(&self.provider, sender.address(), self.tx.nonce()).await?)
@@ -768,24 +790,22 @@ where
     /// Fills gas limit from the provider.
     async fn fill_gas_limit(&mut self) -> Result<()> {
         if self.tx.gas_limit().is_none() {
-            self.estimate_gas().await?;
+            let request = if self.browser && self.chain.is_tempo() {
+                self.tx.browser_wallet_gas_estimation_request()
+            } else {
+                self.tx.clone()
+            };
+            let estimated = Self::estimate_gas(&self.provider, request).await?;
+            self.tx.set_gas_limit(estimated);
         }
 
         Ok(())
     }
 
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
-    async fn estimate_gas(&mut self) -> Result<()> {
-        let request = if self.browser && self.chain.is_tempo() {
-            self.tx.browser_wallet_gas_estimation_request()
-        } else {
-            self.tx.clone()
-        };
-        match self.provider.estimate_gas(request).await {
-            Ok(estimated) => {
-                self.tx.set_gas_limit(estimated);
-                Ok(())
-            }
+    async fn estimate_gas(provider: &P, request: N::TransactionRequest) -> Result<u64> {
+        match provider.estimate_gas(request).await {
+            Ok(estimated) => Ok(estimated),
             Err(err) => {
                 if let TransportError::ErrorResp(payload) = &err {
                     // If execution reverted with code 3 during provider gas estimation then try
@@ -933,7 +953,10 @@ mod tests {
         fn call(&mut self, req: RequestPacket) -> Self::Future {
             let fill_method = match &req {
                 RequestPacket::Single(req)
-                    if matches!(req.method(), "eth_getTransactionCount" | "eth_gasPrice") =>
+                    if matches!(
+                        req.method(),
+                        "eth_getTransactionCount" | "eth_gasPrice" | "eth_estimateGas"
+                    ) =>
                 {
                     Some(req.method().to_string())
                 }
@@ -954,9 +977,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn filled_build_fetches_nonce_and_fees_concurrently() {
+    async fn filled_build_fetches_nonce_and_gas_concurrently_with_explicit_fees() {
         let asserter = Asserter::new();
-        for _ in 0..3 {
+        for _ in 0..2 {
             asserter.push_success(&U64::from(1));
         }
         let fill_methods = Arc::new(Mutex::new(Vec::new()));
@@ -971,7 +994,7 @@ mod tests {
 
         let builder = CastTxBuilder::new(
             &provider,
-            TransactionOpts::parse_from(["test", "--legacy"]),
+            TransactionOpts::parse_from(["test", "--legacy", "--gas-price", "1"]),
             &config,
         )
         .await
@@ -984,7 +1007,7 @@ mod tests {
         .unwrap();
         let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
             .await
-            .expect("nonce and fee requests were not in flight together")
+            .expect("nonce and gas requests were not in flight together")
             .unwrap();
 
         assert_eq!(tx.nonce, Some(1));
@@ -992,7 +1015,7 @@ mod tests {
         assert_eq!(tx.gas, Some(1));
         let mut fill_methods = fill_methods.lock().unwrap().clone();
         fill_methods.sort();
-        assert_eq!(fill_methods, ["eth_gasPrice", "eth_getTransactionCount"]);
+        assert_eq!(fill_methods, ["eth_estimateGas", "eth_getTransactionCount"]);
     }
 
     #[tokio::test]
