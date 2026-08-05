@@ -110,11 +110,13 @@ windows-sys = { version = "0.61", features = [
 [dev-dependencies]
 alloy-hardforks.workspace = true
 alloy-serde.workspace = true
+axum.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
 tempo-hardfork.workspace = true
 path-slash.workspace = true
+reqwest.workspace = true
 tower.workspace = true
 
 [features]

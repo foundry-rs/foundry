@@ -10,12 +10,13 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_consensus::BlockHeader;
+use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
     BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder,
     primitives::HeaderResponse,
 };
-use alloy_primitives::{Bytes, TxKind, U256, hex, map::AddressHashMap};
+use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -372,22 +373,18 @@ impl CallArgs {
                 .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
             let requested_block = block.unwrap_or(BlockId::latest());
             let fetched_block = provider.get_block(requested_block).await?;
-            // Pin moving canonical tags to the block whose timestamp is used for decoding. This
-            // prevents `latest`, `safe`, or `finalized` from crossing an activation boundary
-            // between the block lookup and `debug_traceCall`.
-            let block = if matches!(
+            let resolved_canonical_block =
+                if matches!(requested_block, BlockId::Number(_)) && !requested_block.is_pending() {
+                    fetched_block.as_ref().map(|block| {
+                        BlockNumHash::new(block.header().number(), block.header().hash())
+                    })
+                } else {
+                    None
+                };
+            let block = pin_remote_trace_block(
                 requested_block,
-                BlockId::Number(
-                    BlockNumberOrTag::Latest | BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized
-                )
-            ) {
-                fetched_block
-                    .as_ref()
-                    .map(|block| BlockId::hash(block.header().hash()))
-                    .unwrap_or(requested_block)
-            } else {
-                requested_block
-            };
+                fetched_block.as_ref().map(|block| block.header().hash()),
+            )?;
             let block_time_override = block_overrides.as_ref().and_then(|overrides| overrides.time);
             let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
@@ -492,6 +489,16 @@ impl CallArgs {
                     FoundryHardfork::from_chain_and_timestamp(chain.id(), timestamp)
                 })
             });
+            if let Some(resolved_block) = resolved_canonical_block {
+                let canonical_block =
+                    provider.get_block_by_number(resolved_block.number.into()).await?;
+                ensure_remote_trace_block_is_canonical(
+                    resolved_block,
+                    canonical_block.as_ref().map(|block| {
+                        BlockNumHash::new(block.header().number(), block.header().hash())
+                    }),
+                )?;
+            }
             handle_traces(
                 result,
                 &config,
@@ -771,6 +778,52 @@ impl CallArgs {
     }
 }
 
+fn pin_remote_trace_block(requested: BlockId, fetched_hash: Option<B256>) -> Result<BlockId> {
+    if requested.is_pending() {
+        return Ok(requested);
+    }
+
+    let fetched_hash = fetched_hash.ok_or_else(|| {
+        eyre::eyre!("block {requested:?} was not found while preparing the remote trace")
+    })?;
+    if let BlockId::Hash(requested_hash) = requested {
+        if requested_hash.block_hash != fetched_hash {
+            eyre::bail!(
+                "the RPC endpoint returned block {fetched_hash} for requested block {}; retry the command",
+                requested_hash.block_hash
+            );
+        }
+        // Preserve `requireCanonical` exactly as supplied by the caller.
+        return Ok(requested);
+    }
+
+    Ok(BlockId::hash(fetched_hash))
+}
+
+fn ensure_remote_trace_block_is_canonical(
+    expected: BlockNumHash,
+    actual: Option<BlockNumHash>,
+) -> Result<()> {
+    let Some(actual) = actual else {
+        eyre::bail!(
+            "block {} at {} changed canonicality while collecting its remote trace: the canonical block lookup no longer reports that height; retry the command",
+            expected.hash,
+            expected.number,
+        );
+    };
+    if actual != expected {
+        eyre::bail!(
+            "block {} at {} changed canonicality while collecting its remote trace: the canonical block lookup reported block {} at {}; retry the command",
+            expected.hash,
+            expected.number,
+            actual.hash,
+            actual.number,
+        );
+    }
+
+    Ok(())
+}
+
 impl figment::Provider for CallArgs {
     fn metadata(&self) -> Metadata {
         Metadata::named("CallArgs")
@@ -793,7 +846,69 @@ impl figment::Provider for CallArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_eips::RpcBlockHash;
     use alloy_primitives::U64;
+
+    #[test]
+    fn pending_remote_trace_block_remains_unpinned() {
+        assert_eq!(pin_remote_trace_block(BlockId::pending(), None).unwrap(), BlockId::pending());
+    }
+
+    #[test]
+    fn non_pending_remote_trace_blocks_are_pinned() {
+        let hash = B256::repeat_byte(0x11);
+        for requested in [
+            BlockId::number(42),
+            BlockId::earliest(),
+            BlockId::latest(),
+            BlockId::safe(),
+            BlockId::finalized(),
+        ] {
+            assert_eq!(pin_remote_trace_block(requested, Some(hash)).unwrap(), BlockId::hash(hash));
+        }
+    }
+
+    #[test]
+    fn non_pending_remote_trace_block_must_exist() {
+        let err = pin_remote_trace_block(BlockId::number(42), None).unwrap_err();
+        assert!(err.to_string().contains("was not found while preparing the remote trace"));
+    }
+
+    #[test]
+    fn hash_remote_trace_block_preserves_canonical_requirement() {
+        let hash = B256::repeat_byte(0x22);
+        for require_canonical in [None, Some(false), Some(true)] {
+            let requested = BlockId::Hash(RpcBlockHash { block_hash: hash, require_canonical });
+            assert_eq!(pin_remote_trace_block(requested, Some(hash)).unwrap(), requested);
+        }
+    }
+
+    #[test]
+    fn hash_remote_trace_block_must_match_response() {
+        let err = pin_remote_trace_block(
+            BlockId::hash_canonical(B256::repeat_byte(0x33)),
+            Some(B256::repeat_byte(0x44)),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("returned block"));
+    }
+
+    #[test]
+    fn remote_trace_block_must_remain_canonical() {
+        let expected = BlockNumHash::new(42, B256::repeat_byte(0x55));
+
+        ensure_remote_trace_block_is_canonical(expected, Some(expected)).unwrap();
+
+        let err = ensure_remote_trace_block_is_canonical(expected, None).unwrap_err();
+        assert!(err.to_string().contains("no longer reports that height"));
+
+        let err = ensure_remote_trace_block_is_canonical(
+            expected,
+            Some(BlockNumHash::new(expected.number, B256::repeat_byte(0x66))),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("changed canonicality"));
+    }
 
     #[test]
     fn can_parse_call_data() {

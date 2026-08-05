@@ -11,9 +11,11 @@ use crate::{
     },
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
-
+use alloy_eips::BlockNumHash;
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, Network, ReceiptResponse, TransactionResponse};
+use alloy_network::{
+    BlockResponse, Network, ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
+};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressHashMap, AddressSet},
@@ -222,9 +224,11 @@ impl RunArgs {
             let endpoint_identity = endpoint_identity
                 .as_ref()
                 .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
-            let tx_block_number = tx
-                .block_number()
+            let tx_inclusion = tx
+                .block_hash_num()
                 .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+            let tx_block_number = tx_inclusion.number;
+            let tx_block_hash = tx_inclusion.hash;
 
             let geth_trace = provider
                 .debug_trace_transaction(
@@ -260,6 +264,30 @@ impl RunArgs {
                 .get_transaction_receipt(tx_hash)
                 .await?
                 .ok_or_else(|| eyre::eyre!("tx receipt not found: {:?}", tx_hash))?;
+            ensure_remote_transaction_inclusion(
+                tx_hash,
+                tx_inclusion,
+                receipt.block_hash_num(),
+                "transaction receipt",
+            )?;
+
+            let Some(transaction_block) = provider.get_block_by_hash(tx_block_hash).await? else {
+                return ensure_remote_transaction_inclusion(
+                    tx_hash,
+                    tx_inclusion,
+                    None,
+                    "block fetched by hash",
+                );
+            };
+            ensure_remote_transaction_inclusion(
+                tx_hash,
+                tx_inclusion,
+                Some(BlockNumHash::new(
+                    transaction_block.header().number(),
+                    transaction_block.header().hash(),
+                )),
+                "block fetched by hash",
+            )?;
 
             let success = receipt.status();
             let gas_used = receipt.gas_used();
@@ -286,7 +314,7 @@ impl RunArgs {
                     &provider,
                     &result,
                     tx_hash,
-                    tx_block_number.into(),
+                    BlockId::hash(tx_block_hash),
                 )
                 .await?
             } else {
@@ -306,15 +334,29 @@ impl RunArgs {
             ) {
                 Some(hardfork)
             } else {
-                provider.get_block_by_number(tx_block_number.into()).await?.and_then(|block| {
-                    FoundryHardfork::from_chain_and_timestamp(
-                        chain.id(),
-                        block.header().timestamp(),
-                    )
-                })
+                FoundryHardfork::from_chain_and_timestamp(
+                    chain.id(),
+                    transaction_block.header().timestamp(),
+                )
             };
             let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
             ensure_remote_trace_context_unchanged(endpoint_identity, &final_endpoint_identity)?;
+
+            let current_tx = provider.get_transaction_by_hash(tx_hash).await?;
+            ensure_remote_transaction_inclusion(
+                tx_hash,
+                tx_inclusion,
+                current_tx.and_then(|tx| tx.block_hash_num()),
+                "transaction lookup",
+            )?;
+            let canonical_block = provider.get_block_by_number(tx_block_number.into()).await?;
+            ensure_remote_transaction_inclusion(
+                tx_hash,
+                tx_inclusion,
+                canonical_block
+                    .map(|block| BlockNumHash::new(block.header().number(), block.header().hash())),
+                "canonical block lookup",
+            )?;
             handle_traces(
                 result,
                 &config,
@@ -648,6 +690,30 @@ impl RunArgs {
     }
 }
 
+fn ensure_remote_transaction_inclusion(
+    tx_hash: B256,
+    expected: BlockNumHash,
+    actual: Option<BlockNumHash>,
+    source: &str,
+) -> Result<()> {
+    let Some(actual) = actual else {
+        eyre::bail!(
+            "transaction {tx_hash} changed inclusion while collecting its remote trace: {source} no longer reports it as mined; retry the command"
+        );
+    };
+    if actual != expected {
+        eyre::bail!(
+            "transaction {tx_hash} changed inclusion while collecting its remote trace: expected block {} at {}, but {source} reported block {} at {}; retry the command",
+            expected.hash,
+            expected.number,
+            actual.hash,
+            actual.number,
+        );
+    }
+
+    Ok(())
+}
+
 fn parent_beacon_block_root_for_network<FEN: FoundryEvmNetwork>(
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
@@ -819,6 +885,28 @@ impl figment::Provider for RunArgs {
 mod tests {
     use super::*;
     use alloy_primitives::address;
+
+    #[test]
+    fn remote_transaction_inclusion_must_remain_stable() {
+        let tx_hash = B256::repeat_byte(0x11);
+        let expected = BlockNumHash::new(42, B256::repeat_byte(0x22));
+
+        ensure_remote_transaction_inclusion(tx_hash, expected, Some(expected), "receipt").unwrap();
+
+        let err =
+            ensure_remote_transaction_inclusion(tx_hash, expected, None, "receipt").unwrap_err();
+        assert!(err.to_string().contains("no longer reports it as mined"));
+
+        for actual in [
+            BlockNumHash::new(43, expected.hash),
+            BlockNumHash::new(expected.number, B256::repeat_byte(0x33)),
+        ] {
+            let err =
+                ensure_remote_transaction_inclusion(tx_hash, expected, Some(actual), "receipt")
+                    .unwrap_err();
+            assert!(err.to_string().contains("changed inclusion"));
+        }
+    }
 
     #[test]
     fn parses_legacy_short_label_alias() {
