@@ -411,7 +411,7 @@ alloy-op-evm = "0.32.0"
 # revm
 revm = { version = "42.0.1", default-features = false }
 revm-inspectors = { version = "0.42.0", features = ["serde"] }
-op-revm = { git = "https://github.com/foundry-rs/optimism", branch = "develop", default-features = false }
+op-revm = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2", default-features = false }
 
 ## cli
 anstream = "1.0"
@@ -607,11 +607,11 @@ foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "d
 
 ## op-revm / op-alloy / alloy-op-evm
 ## Pinned to foundry-rs forks for the revm 42 stack.
-alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
+alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
+op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
+op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
 
 ## commonware — match the rev patched by the current Tempo workspace
 commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
