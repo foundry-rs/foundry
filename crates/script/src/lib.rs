@@ -46,6 +46,8 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -410,7 +412,7 @@ impl ScriptArgs {
 
         #[cfg(feature = "base")]
         if evm_opts.networks.is_base() {
-            eyre::bail!("Base script execution is not supported yet");
+            return Box::pin(self.run_generic_script::<BaseEvmNetwork>(config, evm_opts)).await;
         }
 
         #[cfg(feature = "monad")]

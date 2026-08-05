@@ -12,7 +12,14 @@ use alloy_chains::{
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
+#[cfg(feature = "base")]
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
+    TxContextStorage,
+};
 use clap::Parser;
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseUpgrade;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
@@ -67,6 +74,25 @@ const MONAD_PRECOMPILE_LABELS: &[(&str, Address)] =
 #[cfg(feature = "monad")]
 const MONAD_PRECOMPILES: &[(&str, Address)] =
     &[("MonadStaking", STAKING_ADDRESS), ("MonadReserveBalance", RESERVE_BALANCE_ADDRESS)];
+
+#[cfg(feature = "base")]
+const BASE_PRECOMPILES: &[(&str, Address)] = &[
+    ("B20Factory", B20FactoryStorage::ADDRESS),
+    ("ActivationRegistry", ActivationRegistryStorage::ADDRESS),
+    ("PolicyRegistry", PolicyRegistryStorage::ADDRESS),
+    ("TxContext", TxContextStorage::ADDRESS),
+    ("NonceManager", NonceManagerStorage::ADDRESS),
+];
+
+/// All fixed Base precompile addresses.
+#[cfg(feature = "base")]
+pub const BASE_PRECOMPILE_ADDRESSES: &[Address] = &[
+    B20FactoryStorage::ADDRESS,
+    ActivationRegistryStorage::ADDRESS,
+    PolicyRegistryStorage::ADDRESS,
+    TxContextStorage::ADDRESS,
+    NonceManagerStorage::ADDRESS,
+];
 
 /// BSC secp256r1 precompile address introduced by the Haber hardfork.
 const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
@@ -144,6 +170,34 @@ pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterat
 pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
     address == STAKING_ADDRESS
         || (address == RESERVE_BALANCE_ADDRESS && MonadHardfork::MonadNine.is_enabled_in(hardfork))
+}
+
+/// Returns whether a fixed Base precompile is active at `upgrade`.
+#[cfg(feature = "base")]
+pub fn is_base_precompile_active_at(address: Address, upgrade: BaseUpgrade) -> bool {
+    if matches!(address, TxContextStorage::ADDRESS | NonceManagerStorage::ADDRESS) {
+        upgrade >= BaseUpgrade::Cobalt
+    } else if matches!(
+        address,
+        B20FactoryStorage::ADDRESS
+            | ActivationRegistryStorage::ADDRESS
+            | PolicyRegistryStorage::ADDRESS
+    ) {
+        upgrade >= BaseUpgrade::Beryl
+    } else {
+        false
+    }
+}
+
+/// Returns the fixed Base precompiles active at `upgrade`.
+#[cfg(feature = "base")]
+pub fn active_base_precompiles(
+    upgrade: BaseUpgrade,
+) -> impl Iterator<Item = (&'static str, Address)> {
+    BASE_PRECOMPILES
+        .iter()
+        .copied()
+        .filter(move |(_, address)| is_base_precompile_active_at(*address, upgrade))
 }
 
 #[derive(
@@ -856,6 +910,25 @@ impl NetworkConfigs {
         labels
     }
 
+    /// Returns labels for fixed Base precompiles.
+    #[cfg(feature = "base")]
+    pub fn base_precompiles_label(self, upgrade: Option<BaseUpgrade>) -> AddressHashMap<String> {
+        let mut labels = AddressHashMap::default();
+        if self.is_base() {
+            labels.extend(
+                BASE_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        upgrade
+                            .is_none_or(|upgrade| is_base_precompile_active_at(*address, upgrade))
+                    })
+                    .map(|(label, address)| (address, label.to_string())),
+            );
+        }
+        labels
+    }
+
     /// Returns precompiles for configured networks.
     pub fn precompiles(
         self,
@@ -1324,6 +1397,28 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_precompile_labels_follow_upgrade_boundaries() {
+        let config = NetworkConfigs::with_base();
+
+        assert!(config.base_precompiles_label(Some(BaseUpgrade::Azul)).is_empty());
+
+        let beryl = config.base_precompiles_label(Some(BaseUpgrade::Beryl));
+        assert_eq!(beryl.get(&B20FactoryStorage::ADDRESS), Some(&"B20Factory".to_string()));
+        assert_eq!(
+            beryl.get(&ActivationRegistryStorage::ADDRESS),
+            Some(&"ActivationRegistry".to_string())
+        );
+        assert_eq!(beryl.get(&PolicyRegistryStorage::ADDRESS), Some(&"PolicyRegistry".to_string()));
+        assert!(!beryl.contains_key(&TxContextStorage::ADDRESS));
+        assert!(!beryl.contains_key(&NonceManagerStorage::ADDRESS));
+
+        let cobalt = config.base_precompiles_label(Some(BaseUpgrade::Cobalt));
+        assert_eq!(cobalt.len(), BASE_PRECOMPILES.len());
+        assert_eq!(config.base_precompiles_label(None).len(), BASE_PRECOMPILES.len());
+    }
+
     #[test]
     fn new_tempo_flag_equivalent_to_legacy() {
         let via_new = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
@@ -1658,7 +1753,6 @@ mod tests {
     #[cfg(feature = "base")]
     mod base {
         use super::*;
-        use foundry_evm_hardforks::BaseUpgrade;
 
         #[test]
         fn new_base_flag_equivalent_to_legacy() {

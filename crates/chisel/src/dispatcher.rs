@@ -165,7 +165,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let chain_id = trace_chain_id(session_config);
         let resolved_hardfork = session_config.resolved_hardfork;
 
-        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        #[cfg_attr(not(any(feature = "base", feature = "monad")), allow(unused_mut))]
         let mut builder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::from_config(
@@ -186,6 +186,14 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
                         _ => None,
                     },
                 ));
+        }
+        #[cfg(feature = "base")]
+        {
+            builder =
+                builder.with_base_upgrade(resolved_hardfork.and_then(|hardfork| match hardfork {
+                    FoundryHardfork::Base(upgrade) => Some(upgrade),
+                    _ => None,
+                }));
         }
         let mut decoder = builder.build();
 
@@ -826,6 +834,17 @@ mod tests {
         let loaded = config_with_network(Some("tempo"));
 
         ensure_loaded_session_network_matches(&current, &loaded, "42").unwrap();
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn ensure_loaded_session_network_matches_preserves_base() {
+        let base = config_with_network(Some("base"));
+        ensure_loaded_session_network_matches(&base, &base, "42").unwrap();
+
+        let err =
+            ensure_loaded_session_network_matches(&Config::default(), &base, "42").unwrap_err();
+        assert!(err.to_string().contains("Rerun with `--network base`"), "{err}");
     }
 
     #[test]

@@ -1,10 +1,15 @@
 use super::auth::confirm_auth_rpc_disclosure;
-use crate::tx::{CastTxBuilder, SenderKind};
+use crate::{
+    cmd::resolve_network,
+    tx::{CastTxBuilder, SenderKind},
+};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -92,10 +97,20 @@ pub enum EstimateSubcommands {
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
         if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoNetwork>().await
-        } else {
-            self.run_with_network::<Ethereum>().await
+            return self.run_with_network::<TempoNetwork>().await;
         }
+
+        let config = self.rpc.load_config()?;
+        let network = resolve_network(&config).await?;
+        if network.is_tempo() {
+            return self.run_with_network::<TempoNetwork>().await;
+        }
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            return self.run_with_network::<BaseNetwork>().await;
+        }
+
+        self.run_with_network::<Ethereum>().await
     }
 
     pub async fn run_with_network<N: Network>(self) -> Result<()>

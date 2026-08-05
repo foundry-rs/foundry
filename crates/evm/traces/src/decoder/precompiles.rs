@@ -11,10 +11,14 @@ use foundry_evm_core::{
     },
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses},
 };
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseUpgrade;
 use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::NetworkConfigs;
 #[cfg(feature = "monad")]
 use foundry_evm_networks::is_monad_precompile_active_at;
+#[cfg(feature = "base")]
+use foundry_evm_networks::{BASE_PRECOMPILE_ADDRESSES, is_base_precompile_active_at};
 use itertools::Itertools;
 #[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
@@ -155,6 +159,34 @@ pub(crate) fn is_known_precompile(
         return true;
     }
     false
+}
+
+#[cfg(feature = "base")]
+pub(crate) fn is_known_base_precompile(
+    address: Address,
+    networks: Option<NetworkConfigs>,
+    chain_id: Option<u64>,
+    upgrade: Option<BaseUpgrade>,
+) -> bool {
+    let is_base_context = networks.map_or_else(
+        || {
+            chain_id.is_some_and(|id| {
+                matches!(
+                    Chain::from_id(id).named(),
+                    Some(NamedChain::Base | NamedChain::BaseSepolia)
+                )
+            }) || upgrade.is_some()
+        },
+        |networks| networks.is_base(),
+    );
+    if !is_base_context {
+        return false;
+    }
+
+    match upgrade {
+        Some(upgrade) => is_base_precompile_active_at(address, upgrade),
+        None => BASE_PRECOMPILE_ADDRESSES.contains(&address),
+    }
 }
 
 /// Tries to decode a precompile call. Returns `Some` if successful.

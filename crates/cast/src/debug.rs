@@ -10,6 +10,11 @@ use foundry_debugger::Debugger;
 use foundry_evm::hardforks::EthereumHardfork;
 #[cfg(feature = "monad")]
 use foundry_evm::hardforks::MonadHardfork;
+#[cfg(feature = "base")]
+use foundry_evm::{
+    core::evm::{BaseEvmNetwork, SpecFor},
+    hardforks::{BaseUpgrade, ExecutionSpec},
+};
 use foundry_evm::{
     hardforks::TempoHardfork,
     opts::ForkEndpointIdentity,
@@ -101,6 +106,22 @@ pub(crate) async fn handle_traces(
         builder = builder.with_monad_hardfork(
             monad_hardfork.or_else(|| is_monad.then(|| config.evm_spec_id::<MonadHardfork>())),
         );
+    }
+    #[cfg(feature = "base")]
+    if execution_network.is_base() {
+        let upgrade = resolved_hardfork
+            .and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
+                _ => None,
+            })
+            .or_else(|| {
+                config
+                    .evm_spec_id::<SpecFor<BaseEvmNetwork>>()
+                    .evm_version_name()
+                    .parse::<BaseUpgrade>()
+                    .ok()
+            });
+        builder = builder.with_base_upgrade(upgrade);
     }
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {

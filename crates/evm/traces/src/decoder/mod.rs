@@ -27,9 +27,13 @@ use foundry_evm_core::{
         EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseUpgrade;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::TempoHardfork;
+#[cfg(feature = "base")]
+use foundry_evm_networks::active_base_precompiles;
 #[cfg(feature = "monad")]
 use foundry_evm_networks::is_monad_precompile_active_at;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
@@ -174,6 +178,14 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the Base upgrade for upgrade-specific precompile detection.
+    #[cfg(feature = "base")]
+    #[inline]
+    pub const fn with_base_upgrade(mut self, upgrade: Option<BaseUpgrade>) -> Self {
+        self.decoder.base_upgrade = upgrade;
+        self
+    }
+
     /// Hides addresses in trace parameters when a label is available.
     #[inline]
     pub const fn with_compact_labels(mut self, compact: bool) -> Self {
@@ -196,6 +208,8 @@ impl CallTraceDecoderBuilder {
         self.decoder.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.decoder.register_monad_metadata();
+        #[cfg(feature = "base")]
+        self.decoder.register_base_metadata();
         self.decoder
     }
 }
@@ -269,6 +283,10 @@ pub struct CallTraceDecoder {
     /// The Monad hardfork, used to determine network- and hardfork-specific metadata.
     monad_hardfork: Option<MonadHardfork>,
 
+    /// The Base upgrade, used to determine upgrade-specific precompiles.
+    #[cfg(feature = "base")]
+    pub base_upgrade: Option<BaseUpgrade>,
+
     /// Hide addresses when a label is available, showing only the label.
     pub compact_labels: bool,
 }
@@ -299,6 +317,18 @@ impl CallTraceDecoder {
             self.labels
                 .entry(RECEIVE_POLICY_GUARD_ADDRESS)
                 .or_insert_with(|| "ReceivePolicyGuard".to_string());
+        }
+    }
+
+    #[cfg(feature = "base")]
+    fn register_base_metadata(&mut self) {
+        if self.networks.is_some_and(|networks| !networks.is_base()) {
+            return;
+        }
+        let Some(upgrade) = self.base_upgrade else { return };
+
+        for (label, address) in active_base_precompiles(upgrade) {
+            self.labels.entry(address).or_insert_with(|| label.to_string());
         }
     }
 
@@ -480,6 +510,9 @@ impl CallTraceDecoder {
             tempo_hardfork: None,
 
             monad_hardfork: None,
+            #[cfg(feature = "base")]
+            base_upgrade: None,
+
             compact_labels: false,
         }
     }
@@ -506,21 +539,38 @@ impl CallTraceDecoder {
         self.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.register_monad_metadata();
+        #[cfg(feature = "base")]
+        self.register_base_metadata();
+    }
+
+    /// Returns whether `address` is a precompile in this decoder's chain context.
+    fn is_known_precompile(&self, address: Address) -> bool {
+        if precompiles::is_known_precompile(
+            address,
+            self.networks,
+            self.chain_id,
+            self.tempo_hardfork,
+            self.monad_hardfork,
+        ) {
+            return true;
+        }
+        #[cfg(feature = "base")]
+        if precompiles::is_known_base_precompile(
+            address,
+            self.networks,
+            self.chain_id,
+            self.base_upgrade,
+        ) {
+            return true;
+        }
+        false
     }
 
     /// Returns labels for precompiles active in this decoder's chain context.
     pub fn precompile_labels(&self) -> AddressHashMap<String> {
         self.labels
             .iter()
-            .filter(|(address, _)| {
-                precompiles::is_known_precompile(
-                    **address,
-                    self.networks,
-                    self.chain_id,
-                    self.tempo_hardfork,
-                    self.monad_hardfork,
-                )
-            })
+            .filter(|(address, _)| self.is_known_precompile(**address))
             .map(|(address, label)| (*address, label.clone()))
             .collect()
     }
@@ -553,15 +603,7 @@ impl CallTraceDecoder {
     ) -> Vec<IdentifiedAddress<'a>> {
         let nodes = arena.nodes().iter().filter(|node| {
             // Skip precompile addresses, they will never resolve externally.
-            if node.is_precompile()
-                || precompiles::is_known_precompile(
-                    node.trace.address,
-                    self.networks,
-                    self.chain_id,
-                    self.tempo_hardfork,
-                    self.monad_hardfork,
-                )
-            {
+            if node.is_precompile() || self.is_known_precompile(node.trace.address) {
                 return false;
             }
             let address = &node.trace.address;
@@ -684,13 +726,7 @@ impl CallTraceDecoder {
     fn is_current_committee_active(&self, address: Address) -> bool {
         address == CURRENT_COMMITTEE_ADDRESS
             && self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t8())
-            && precompiles::is_known_precompile(
-                address,
-                self.networks,
-                self.chain_id,
-                self.tempo_hardfork,
-                self.monad_hardfork,
-            )
+            && self.is_known_precompile(address)
     }
 
     /// Selects the appropriate function from a list of functions with the same selector by
@@ -1436,13 +1472,7 @@ impl CallTraceDecoder {
                 // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER
                     || n.is_precompile()
-                    || precompiles::is_known_precompile(
-                        n.trace.address,
-                        self.networks,
-                        self.chain_id,
-                        self.tempo_hardfork,
-                        self.monad_hardfork,
-                    )
+                    || self.is_known_precompile(n.trace.address)
                 {
                     return false;
                 }
@@ -3229,6 +3259,27 @@ mod tests {
             inferred_celo.precompile_labels().get(&CELO_TRANSFER),
             Some(&CELO_TRANSFER_LABEL.to_string())
         );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn test_precompile_labels_follow_base_upgrade_boundaries() {
+        use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
+
+        let labels_for_upgrade = |upgrade| {
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(8453))
+                .with_base_upgrade(Some(upgrade))
+                .build()
+                .precompile_labels()
+        };
+        let base_label_count = |labels: &AddressHashMap<String>| {
+            BASE_PRECOMPILE_ADDRESSES.iter().filter(|address| labels.contains_key(*address)).count()
+        };
+
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Azul)), 0);
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Beryl)), 3);
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Cobalt)), 5);
     }
 
     #[tokio::test]

@@ -67,7 +67,12 @@ monad = [
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
 ]
-base = ["foundry-common/base", "foundry-evm-core/base"]
+base = [
+    "foundry-common/base",
+    "foundry-evm-core/base",
+    "foundry-evm-hardforks/base",
+    "foundry-evm-networks/base",
+]
 optimism = [
     "foundry-common/optimism",
     "foundry-evm-core/optimism",

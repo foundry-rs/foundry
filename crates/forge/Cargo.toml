@@ -153,6 +153,7 @@ base = [
     "foundry-cli/base",
     "foundry-debugger/base",
     "foundry-test-utils/base",
+    "forge-script/base",
     "forge-verify/base",
 ]
 optimism = [

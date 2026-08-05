@@ -79,6 +79,16 @@ monad = [
     "forge-script-sequence/monad",
     "forge-verify/monad",
 ]
+base = [
+    "foundry-evm/base",
+    "foundry-evm-networks/base",
+    "foundry-common/base",
+    "foundry-cheatcodes/base",
+    "foundry-cli/base",
+    "foundry-debugger/base",
+    "forge-script-sequence/base",
+    "forge-verify/base",
+]
 optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

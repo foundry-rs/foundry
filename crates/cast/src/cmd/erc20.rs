@@ -3,6 +3,7 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::{
         call_overrides::CallOverrideOpts,
+        resolve_network,
         send::{
             cast_send, cast_send_with_tempo_wallet, cast_send_with_tempo_wallet_via_sponsor,
             validate_sponsor_url,
@@ -21,6 +22,8 @@ use alloy_provider::{
 };
 use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use foundry_cli::{
     json::{print_json_success, print_scalar},
@@ -352,10 +355,20 @@ impl Erc20Subcommand {
             resolved_tempo || self.should_use_tempo_network(&tempo_access_key, has_session).await?;
 
         if is_tempo {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None, has_session).await
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await;
         }
+
+        let config = self.rpc_opts().load_config()?;
+        let network = resolve_network(&config).await?;
+        if network.is_tempo() {
+            return self.run_generic::<TempoNetwork>(signer, None, has_session).await;
+        }
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            return self.run_generic::<BaseNetwork>(signer, None, has_session).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None, has_session).await
     }
 
     #[allow(clippy::large_stack_frames)]

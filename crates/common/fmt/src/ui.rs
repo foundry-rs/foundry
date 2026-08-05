@@ -21,7 +21,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 #[cfg(feature = "base")]
 use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit};
 #[cfg(feature = "base")]
-use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_rpc_types::{BaseTransactionReceipt, Transaction as BaseRpcTransaction};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
@@ -708,6 +708,21 @@ effectiveGasPrice    {}
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
             self.inner.inner().pretty().trim_start(),
+        )
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmt for BaseRpcTransaction {
+    fn pretty(&self) -> String {
+        format!(
+            "
+depositNonce         {}
+depositReceiptVersion {}
+{}",
+            self.deposit_nonce.pretty(),
+            self.deposit_receipt_version.pretty(),
+            self.inner.pretty().trim_start(),
         )
     }
 }

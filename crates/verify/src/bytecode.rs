@@ -32,6 +32,8 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -260,7 +262,12 @@ impl VerifyBytecodeArgs {
             }
             #[cfg(feature = "base")]
             NetworkVariant::Base => {
-                eyre::bail!("Base verify-bytecode execution is not supported yet")
+                self.run_with_network_and_config::<BaseEvmNetwork>(
+                    config,
+                    endpoint_identity,
+                    network_was_inferred,
+                )
+                .await
             }
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
@@ -1139,6 +1146,16 @@ mod tests {
                 .unwrap()
                 .id(),
             1
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn configured_network_preserves_base() {
+        let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(None, &config),
+            Some(NetworkVariant::Base)
         );
     }
 }

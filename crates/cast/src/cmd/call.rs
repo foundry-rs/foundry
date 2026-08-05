@@ -47,6 +47,8 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -264,6 +266,13 @@ impl CallArgs {
         if evm_opts.networks.is_monad() {
             return self
                 .run_with_network_and_opts::<MonadEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
+        }
+
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return self
+                .run_with_network_and_opts::<BaseEvmNetwork>(config, evm_opts, auth_preflight)
                 .await;
         }
 

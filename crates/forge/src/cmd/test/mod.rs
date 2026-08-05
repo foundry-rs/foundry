@@ -59,10 +59,10 @@ use foundry_config::{
     fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -2982,6 +2982,14 @@ impl TestArgs {
                         _ => None,
                     },
                 ));
+        }
+        #[cfg(feature = "base")]
+        {
+            builder =
+                builder.with_base_upgrade(resolved_hardfork.and_then(|hardfork| match hardfork {
+                    FoundryHardfork::Base(upgrade) => Some(upgrade),
+                    _ => None,
+                }));
         }
         // Signatures are of no value for gas reports.
         if !self.gas_report {

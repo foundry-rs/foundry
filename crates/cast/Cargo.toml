@@ -64,6 +64,9 @@ tempo-contracts.workspace = true
 tempo-primitives.workspace = true
 alloy-evm.workspace = true
 
+# Base
+base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
+
 op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-flz = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
@@ -136,6 +139,15 @@ monad = [
     "foundry-evm-networks/monad",
     "foundry-evm/monad",
     "foundry-cli/monad",
+]
+base = [
+    "dep:base-common-network",
+    "dep:op-alloy-flz",
+    "foundry-common/base",
+    "foundry-debugger/base",
+    "foundry-evm/base",
+    "foundry-evm-networks/base",
+    "foundry-cli/base",
 ]
 optimism = [
     "dep:op-alloy-flz",

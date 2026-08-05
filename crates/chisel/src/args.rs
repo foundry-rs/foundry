@@ -7,6 +7,8 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -75,6 +77,18 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     #[cfg(feature = "monad")]
     if evm_opts.networks.is_monad() {
         return Box::pin(run_command_with_network::<MonadEvmNetwork>(
+            args,
+            config,
+            evm_opts,
+            local_networks,
+            local_chain_id,
+        ))
+        .await;
+    }
+
+    #[cfg(feature = "base")]
+    if evm_opts.networks.is_base() {
+        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
             args,
             config,
             evm_opts,
