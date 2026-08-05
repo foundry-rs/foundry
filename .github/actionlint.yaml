@@ -10,3 +10,11 @@ self-hosted-runner:
     - depot-windows-latest-16
 
 config-variables: null
+
+paths:
+  .github/workflows/finalize-release.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/release.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
