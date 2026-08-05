@@ -64,6 +64,7 @@ base-common-evm = { workspace = true, optional = true, features = [
     "std",
 ] }
 base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
 revm = { workspace = true, features = [
     "std",
@@ -111,6 +112,11 @@ foundry-test-utils.workspace = true
 tempo-primitives.workspace = true
 base-common-precompiles = { workspace = true, features = ["std"] }
 
+[[test]]
+name = "base_replay"
+path = "tests/base_replay.rs"
+required-features = ["base"]
+
 [features]
 default = ["optimism"]
 monad = [
@@ -125,6 +131,7 @@ base = [
     "dep:base-common-consensus",
     "dep:base-common-evm",
     "dep:base-common-network",
+    "dep:base-common-rpc-types",
     "foundry-common/base",
     "foundry-config/base",
     "foundry-evm-hardforks/base",

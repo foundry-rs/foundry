@@ -19,7 +19,9 @@ use alloy_rpc_types::{
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 #[cfg(feature = "base")]
-use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit,
+};
 #[cfg(feature = "base")]
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction as BaseRpcTransaction};
 #[cfg(feature = "optimism")]
@@ -237,7 +239,49 @@ impl UIfmt for TransactionReceipt {
 #[cfg(feature = "base")]
 impl UIfmt for BaseTransactionReceipt {
     fn pretty(&self) -> String {
-        pretty_receipt(&self.inner, self.inner.inner.receipt.tx_type() as u8)
+        let (deposit_nonce, deposit_receipt_version) = match &self.inner.inner.receipt {
+            BaseReceipt::Deposit(receipt) => {
+                (receipt.deposit_nonce, receipt.deposit_receipt_version)
+            }
+            _ => (None, None),
+        };
+        format!(
+            "{}
+l1GasPrice           {}
+l1GasUsed            {}
+l1Fee                {}
+l1FeeScalar          {}
+l1BaseFeeScalar      {}
+l1BlobBaseFee        {}
+l1BlobBaseFeeScalar  {}
+operatorFeeScalar    {}
+operatorFeeConstant  {}
+daFootprintGasScalar {}
+depositNonce         {}
+depositReceiptVersion {}
+payer                {}
+phaseStatuses        {}
+metadata             {}",
+            pretty_receipt(&self.inner, self.inner.inner.receipt.tx_type() as u8).trim_end(),
+            self.l1_block_info.l1_gas_price.pretty(),
+            self.l1_block_info.l1_gas_used.pretty(),
+            self.l1_block_info.l1_fee.pretty(),
+            self.l1_block_info.l1_fee_scalar.map(|value| value.to_string()).unwrap_or_default(),
+            self.l1_block_info.l1_base_fee_scalar.pretty(),
+            self.l1_block_info.l1_blob_base_fee.pretty(),
+            self.l1_block_info.l1_blob_base_fee_scalar.pretty(),
+            self.l1_block_info.operator_fee_scalar.pretty(),
+            self.l1_block_info.operator_fee_constant.pretty(),
+            self.l1_block_info
+                .da_footprint_gas_scalar
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            deposit_nonce.pretty(),
+            deposit_receipt_version.pretty(),
+            self.payer.pretty(),
+            self.phase_statuses.pretty(),
+            self.metadata.pretty(),
+        )
     }
 }
 
@@ -1239,6 +1283,45 @@ mod tests {
         );
         let b: Bytes = val.into();
         assert_eq!(b.pretty(), b32.pretty());
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_pretty_print_base_deposit_receipt_fields() {
+        let receipt: BaseTransactionReceipt = serde_json::from_value(serde_json::json!({
+            "blockHash": "0x9e6a0fb7e22159d943d760608cc36a0fb596d1ab3c997146f5b7c55c8c718c67",
+            "blockNumber": "0x6cfef89",
+            "contractAddress": null,
+            "cumulativeGasUsed": "0xfa0d",
+            "depositNonce": "0x8a2d11",
+            "depositReceiptVersion": "0x1",
+            "effectiveGasPrice": "0x0",
+            "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
+            "gasUsed": "0xfa0d",
+            "logs": [],
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "status": "0x1",
+            "to": "0x4200000000000000000000000000000000000015",
+            "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
+            "transactionIndex": "0x0",
+            "type": "0x7e",
+            "l1GasPrice": "0x3ef12787",
+            "l1GasUsed": "0x1177",
+            "l1Fee": "0x5bf1ab43d",
+            "l1BaseFeeScalar": "0x1",
+            "l1BlobBaseFee": "0x600ab8f05e64",
+            "l1BlobBaseFeeScalar": "0x1",
+            "operatorFeeScalar": "0x1",
+            "operatorFeeConstant": "0x1",
+            "daFootprintGasScalar": "0x1"
+        }))
+        .unwrap();
+
+        let pretty = receipt.pretty();
+        assert!(pretty.contains("l1Fee                24681034813"), "{pretty}");
+        assert!(pretty.contains("operatorFeeScalar    1"), "{pretty}");
+        assert!(pretty.contains("depositNonce         9055505"), "{pretty}");
+        assert!(pretty.contains("depositReceiptVersion 1"), "{pretty}");
     }
 
     #[cfg(feature = "optimism")]

@@ -704,7 +704,10 @@ impl FromAnyRpcTransaction for TempoTxEnv {
 #[cfg(feature = "base")]
 mod base {
     use base_common_consensus::BaseTxEnvelope;
-    use base_common_evm::{BaseTransaction, BaseTxTr, DEPOSIT_TRANSACTION_TYPE};
+    use base_common_evm::{
+        BaseTransaction, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, EIP8130_TRANSACTION_TYPE,
+    };
+    use base_common_rpc_types::Transaction as BaseRpcTransaction;
 
     use super::*;
 
@@ -806,8 +809,20 @@ mod base {
 
     impl FromAnyRpcTransaction for BaseTransaction<TxEnv> {
         fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
-            let envelope = BaseTxEnvelope::try_from(tx.clone())
-                .map_err(|_| eyre::eyre!("cannot convert transaction to BaseTxEnvelope"))?;
+            let envelope = match BaseTxEnvelope::try_from(tx.clone()) {
+                Ok(envelope) => envelope,
+                Err(_) if tx.ty() == EIP8130_TRANSACTION_TYPE => {
+                    let rpc_tx =
+                        serde_json::from_value::<BaseRpcTransaction>(serde_json::to_value(tx)?)
+                            .map_err(|err| {
+                                eyre::eyre!(
+                                    "cannot convert RPC transaction to Base envelope: {err}"
+                                )
+                            })?;
+                    rpc_tx.inner.into_inner()
+                }
+                Err(_) => eyre::bail!("cannot convert transaction to BaseTxEnvelope"),
+            };
             Ok(Self::from_recovered_tx(&envelope, tx.from()))
         }
     }

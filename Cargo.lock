@@ -6227,6 +6227,7 @@ dependencies = [
  "base-common-evm",
  "base-common-network",
  "base-common-precompiles",
+ "base-common-rpc-types",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
