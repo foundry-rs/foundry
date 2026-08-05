@@ -13,7 +13,7 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
-    backend::{DatabaseError, DatabaseExt, JournaledState},
+    backend::{ContextAuxUpdate, DatabaseError, DatabaseExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
@@ -490,11 +490,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<ContextAuxUpdate<ContextAuxFor<FEN>>> {
         let evm_env = ecx.evm_clone();
+        let outer_tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, inner, &mut inspector)
+        db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, &mut inspector)
     }
 
     fn transact_from_tx_on_db(

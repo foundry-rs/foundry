@@ -2,7 +2,8 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
-    Vm::*, inspector::RecordDebugStepInfo,
+    Vm::*,
+    inspector::{RecordDebugStepInfo, refresh_context_after_state_change},
 };
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_evm::FromRecoveredTx;
@@ -1251,6 +1252,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1424,6 +1426,10 @@ impl Cheatcode for executeTransactionCall {
                 slot_mut.is_cold &= val.is_cold;
             }
         }
+
+        // Keep network-specific caches aligned with the state merged from the nested EVM while
+        // preserving the outer transaction's execution context.
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
 
         // Return output bytes.
         let output = match res.result {

@@ -30,6 +30,7 @@ use revm::{
     inspector::{InspectSystemCallEvm, Inspector, InspectorHandler},
     interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
     primitives::{Address, HashSet},
+    state::EvmState,
 };
 
 use crate::{
@@ -167,6 +168,16 @@ impl FoundryEvmFactory for MonadEvmFactory {
             current,
             current_tx_index,
         )
+    }
+
+    fn rebase_context_aux(
+        &self,
+        current: &Self::ContextAux,
+        replacement: &mut Self::ContextAux,
+        state: &EvmState,
+    ) {
+        replacement.reserve_balance = current.reserve_balance.clone();
+        replacement.reserve_balance.rebase(&replacement.chain, state);
     }
 
     fn protocol_system_call(&self, tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
@@ -418,6 +429,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 mod tests {
     use super::*;
     use crate::evm::{BlockContext, MonadEvmNetwork};
+    use monad_revm::reserve_balance::tracker::ReserveBalanceInit;
     use revm::{
         context_interface::{
             either::Either,
@@ -426,6 +438,7 @@ mod tests {
             },
         },
         primitives::{B256, U256},
+        state::{Account, AccountInfo},
     };
 
     fn transaction(caller: Address, authority: Address) -> TxEnv {
@@ -464,6 +477,39 @@ mod tests {
         fn assert_foundry_factory<F: FoundryEvmFactory>() {}
 
         assert_foundry_factory::<MonadEvmFactory>();
+    }
+
+    #[test]
+    fn monad_factory_rebases_live_tracker_with_replacement_context() {
+        let sender = Address::with_last_byte(1);
+        let old_chain = monad_revm::MonadChainContext::default();
+        let new_chain = monad_revm::MonadChainContext {
+            parent_senders_and_authorities: [sender].into_iter().collect(),
+            ..Default::default()
+        };
+        let mut account =
+            Account::from(AccountInfo { balance: U256::from(12), ..Default::default() });
+        account.info.balance = U256::from(9);
+
+        let mut current = MonadContextAux { chain: old_chain.clone(), ..Default::default() };
+        current.reserve_balance.init(ReserveBalanceInit {
+            chain: &old_chain,
+            spec: MonadHardfork::MonadNine,
+            sender,
+            effective_gas_price: 0,
+            gas_limit: 0,
+            sender_is_delegated: false,
+            sender_account: Some(&account),
+        });
+        assert!(!current.reserve_balance.has_violation());
+
+        let mut replacement = MonadContextAux { chain: new_chain.clone(), ..Default::default() };
+        let state = EvmState::from_iter([(sender, account)]);
+        MonadEvmFactory::default().rebase_context_aux(&current, &mut replacement, &state);
+
+        assert_eq!(replacement.chain, new_chain);
+        assert!(replacement.reserve_balance.has_violation());
+        assert!(!current.reserve_balance.has_violation());
     }
 
     #[test]

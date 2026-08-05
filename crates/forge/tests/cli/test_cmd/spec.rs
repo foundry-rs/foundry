@@ -8,6 +8,8 @@ use alloy_primitives::{Address, B256, TxKind, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 #[cfg(feature = "monad")]
 use anvil::{NodeConfig, spawn};
+#[cfg(feature = "monad")]
+use axum::{Router, body::Bytes as BodyBytes};
 use foundry_compilers::artifacts::EvmVersion;
 #[cfg(feature = "monad")]
 use foundry_evm::hardforks::MonadHardfork;
@@ -17,6 +19,11 @@ use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 #[cfg(feature = "monad")]
 use serde_json::{Value, json};
+#[cfg(feature = "monad")]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 #[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
@@ -78,6 +85,26 @@ fn address_and_flags(address: Address, flags: u64) -> U256 {
 #[cfg(feature = "monad")]
 fn storage_value(value: U256) -> B256 {
     B256::from(value.to_be_bytes::<32>())
+}
+
+#[cfg(feature = "monad")]
+fn override_rpc_transaction_chain_id(value: &mut Value, target: &str, chain_id: &str) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                override_rpc_transaction_chain_id(value, target, chain_id);
+            }
+        }
+        Value::Object(object) => {
+            if object.get("hash").and_then(Value::as_str) == Some(target) {
+                object.insert("chainId".to_string(), Value::String(chain_id.to_string()));
+            }
+            for value in object.values_mut() {
+                override_rpc_transaction_chain_id(value, target, chain_id);
+            }
+        }
+        _ => {}
+    }
 }
 
 // Test evm version switch during tests / scripts.
@@ -525,7 +552,10 @@ forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let ancestor = wallets[0].address();
     let control = wallets[1].address();
+    let tracked = wallets[3].address();
+    let nested_only = wallets[5].address();
     let probe = Address::with_last_byte(0x20);
+    let receiver = Address::with_last_byte(0x21);
 
     // Mine the ancestor in the block Forge will fork. The synthetic transaction should execute
     // in a child of this block, making this sender ineligible to dip into its reserve.
@@ -572,12 +602,57 @@ forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
     let mut control_raw = Vec::new();
     control_tx.into_signed(signature).eip2718_encode(&mut control_raw);
 
+    let mut credit_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+        to: TxKind::Call(tracked),
+        value,
+        ..Default::default()
+    };
+    let signature = wallets[2].sign_transaction_sync(&mut credit_tx).unwrap();
+    let mut credit_raw = Vec::new();
+    credit_tx.into_signed(signature).eip2718_encode(&mut credit_raw);
+
+    let mut preserve_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+        to: TxKind::Call(receiver),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[4].sign_transaction_sync(&mut preserve_tx).unwrap();
+    let mut preserve_raw = Vec::new();
+    preserve_tx.into_signed(signature).eip2718_encode(&mut preserve_raw);
+
+    let nested_only_balance = provider.get_balance(nested_only).await.unwrap();
+    let nested_only_remaining = U256::from(7_000_000_000_000_000_000u128);
+    let mut nested_only_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+        to: TxKind::Call(receiver),
+        value: nested_only_balance - nested_only_remaining,
+        ..Default::default()
+    };
+    let signature = wallets[5].sign_transaction_sync(&mut nested_only_tx).unwrap();
+    let mut nested_only_raw = Vec::new();
+    nested_only_tx.into_signed(signature).eip2718_encode(&mut nested_only_raw);
+
     let source = r#"
 interface Vm {
     function createSelectFork(string calldata url) external returns (uint256 forkId);
     function deal(address account, uint256 newBalance) external;
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+    function prank(address msgSender) external;
 }
 
 interface IReserveBalance {
@@ -589,7 +664,10 @@ contract ExecuteTransactionMonadContextTest {
     IReserveBalance constant RESERVE_BALANCE = IReserveBalance(address(0x1001));
     address constant ANCESTOR = <ancestor>;
     address constant CONTROL = <control>;
+    address constant TRACKED = <tracked>;
+    address constant NESTED_ONLY = <nested_only>;
     address constant PROBE = <probe>;
+    address constant RECEIVER = <receiver>;
 
     function test_execute_transaction_uses_ancestor_context() public {
         vm.createSelectFork("<rpc>");
@@ -610,14 +688,56 @@ contract ExecuteTransactionMonadContextTest {
         require(!abi.decode(controlResult, (bool)), "fresh sender should be allowed to dip");
         require(CONTROL.balance == 9 ether, "unexpected control balance");
     }
+
+    function test_execute_transaction_credit_clears_outer_violation() public {
+        vm.createSelectFork("<rpc>");
+        violateReserve(TRACKED);
+
+        vm.executeTransaction(hex"<credit_raw>");
+
+        require(TRACKED.balance == 12 ether, "unexpected credited balance");
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "credited violation was not cleared");
+    }
+
+    function test_execute_transaction_preserves_unaffected_outer_violation() public {
+        vm.createSelectFork("<rpc>");
+        violateReserve(TRACKED);
+
+        vm.executeTransaction(hex"<preserve_raw>");
+
+        require(RESERVE_BALANCE.dippedIntoReserve(), "unaffected violation was cleared");
+    }
+
+    function test_execute_transaction_does_not_track_nested_only_account() public {
+        vm.createSelectFork("<rpc>");
+
+        vm.executeTransaction(hex"<nested_only_raw>");
+
+        require(NESTED_ONLY.balance == 7 ether, "unexpected nested sender balance");
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "nested-only account became tracked");
+    }
+
+    function violateReserve(address account) internal {
+        vm.deal(account, 12 ether);
+        vm.prank(account);
+        (bool success,) = payable(RECEIVER).call{value: 3 ether}("");
+        require(success, "debit failed");
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected reserve violation");
+    }
 }
 "#
     .replace("<ancestor>", &ancestor.to_string())
     .replace("<control>", &control.to_string())
+    .replace("<tracked>", &tracked.to_string())
+    .replace("<nested_only>", &nested_only.to_string())
     .replace("<probe>", &probe.to_string())
+    .replace("<receiver>", &receiver.to_string())
     .replace("<rpc>", &handle.http_endpoint())
     .replace("<ancestor_raw>", &hex::encode(ancestor_raw))
-    .replace("<control_raw>", &hex::encode(control_raw));
+    .replace("<control_raw>", &hex::encode(control_raw))
+    .replace("<credit_raw>", &hex::encode(credit_raw))
+    .replace("<preserve_raw>", &hex::encode(preserve_raw))
+    .replace("<nested_only_raw>", &hex::encode(nested_only_raw));
     prj.add_test("ExecuteTransactionMonadContext.t.sol", &source);
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
@@ -867,6 +987,632 @@ contract TransactionForkMonadContextTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "TransactionForkMonadContextTest"])
+        .assert_success();
+});
+
+#[cfg(feature = "monad")]
+forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
+    const CHAIN_ID: u64 = 31_337;
+    const MAX_FEE_PER_GAS: u128 = 3_000_000_000;
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = wallets[0].address();
+    let spender = wallets[3].address();
+    let unrelated = wallets[2].address();
+    let marker_recipient = wallets[4].address();
+    let target_recipient = wallets[5].address();
+    let receiver = wallets[6].address();
+    let later_marker_recipient = Address::with_last_byte(0x30);
+    let later_replay_recipient = Address::with_last_byte(0x31);
+    let later_target_recipient = Address::with_last_byte(0x32);
+    let fresh_block = provider.get_block_number().await.unwrap();
+
+    let mut marker_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 2_000_000_000,
+        to: TxKind::Call(marker_recipient),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[0].sign_transaction_sync(&mut marker_tx).unwrap();
+    let mut marker_raw = Vec::new();
+    marker_tx.into_signed(signature).eip2718_encode(&mut marker_raw);
+
+    let mut target_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(target_recipient),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut target_tx).unwrap();
+    let mut target_raw = Vec::new();
+    target_tx.into_signed(signature).eip2718_encode(&mut target_raw);
+
+    let mut credit_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(spender),
+        value: U256::from(3_000_000_000_000_000_000u128),
+        ..Default::default()
+    };
+    let signature = wallets[2].sign_transaction_sync(&mut credit_tx).unwrap();
+    let mut credit_raw = Vec::new();
+    credit_tx.into_signed(signature).eip2718_encode(&mut credit_raw);
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let marker_pending = provider.send_raw_transaction(&marker_raw).await.unwrap();
+    let marker_hash = *marker_pending.tx_hash();
+    let target_pending = provider.send_raw_transaction(&target_raw).await.unwrap();
+    let target_hash = *target_pending.tx_hash();
+    api.mine_one().await.unwrap();
+    let marker_receipt = marker_pending.get_receipt().await.unwrap();
+    let target_receipt = target_pending.get_receipt().await.unwrap();
+
+    let restricted_block = marker_receipt.block_number().unwrap();
+    assert_eq!(restricted_block, fresh_block + 1);
+    assert_eq!(marker_receipt.transaction_index(), Some(0));
+    assert_eq!(target_receipt.block_number(), Some(restricted_block));
+    assert_eq!(target_receipt.transaction_index(), Some(1));
+
+    let mut later_marker_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 2_000_000_000,
+        to: TxKind::Call(later_marker_recipient),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[7].sign_transaction_sync(&mut later_marker_tx).unwrap();
+    let mut later_marker_raw = Vec::new();
+    later_marker_tx.into_signed(signature).eip2718_encode(&mut later_marker_raw);
+
+    let mut later_replay_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(later_replay_recipient),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[8].sign_transaction_sync(&mut later_replay_tx).unwrap();
+    let mut later_replay_raw = Vec::new();
+    later_replay_tx.into_signed(signature).eip2718_encode(&mut later_replay_raw);
+
+    let mut later_target_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        gas_limit: 21_000,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(later_target_recipient),
+        value: U256::ONE,
+        ..Default::default()
+    };
+    let signature = wallets[9].sign_transaction_sync(&mut later_target_tx).unwrap();
+    let mut later_target_raw = Vec::new();
+    later_target_tx.into_signed(signature).eip2718_encode(&mut later_target_raw);
+
+    let later_marker_pending = provider.send_raw_transaction(&later_marker_raw).await.unwrap();
+    let later_replay_pending = provider.send_raw_transaction(&later_replay_raw).await.unwrap();
+    let later_replay_hash = *later_replay_pending.tx_hash();
+    let later_target_pending = provider.send_raw_transaction(&later_target_raw).await.unwrap();
+    let later_target_hash = *later_target_pending.tx_hash();
+    api.mine_one().await.unwrap();
+    let later_marker_receipt = later_marker_pending.get_receipt().await.unwrap();
+    let later_replay_receipt = later_replay_pending.get_receipt().await.unwrap();
+    let later_target_receipt = later_target_pending.get_receipt().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    assert_eq!(later_marker_receipt.block_number(), Some(restricted_block + 1));
+    assert_eq!(later_marker_receipt.transaction_index(), Some(0));
+    assert_eq!(later_replay_receipt.block_number(), Some(restricted_block + 1));
+    assert_eq!(later_replay_receipt.transaction_index(), Some(1));
+    assert_eq!(later_target_receipt.block_number(), Some(restricted_block + 1));
+    assert_eq!(later_target_receipt.transaction_index(), Some(2));
+
+    let upstream = handle.http_endpoint();
+    let failing_replay_hash_string = later_replay_hash.to_string();
+    let block_requests_armed = Arc::new(AtomicBool::new(false));
+    let block_requests = Arc::new(AtomicUsize::new(0));
+    let corrupt_replay_chain_id = Arc::new(AtomicBool::new(false));
+    let client = reqwest::Client::new();
+    let proxy_armed = Arc::clone(&block_requests_armed);
+    let proxy_requests = Arc::clone(&block_requests);
+    let proxy_corrupt_chain_id = Arc::clone(&corrupt_replay_chain_id);
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let failing_replay_hash = failing_replay_hash_string.clone();
+        let client = client.clone();
+        let armed = Arc::clone(&proxy_armed);
+        let block_requests = Arc::clone(&proxy_requests);
+        let corrupt_chain_id = Arc::clone(&proxy_corrupt_chain_id);
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            match request.get("method").and_then(Value::as_str) {
+                Some("test_armBlockRequests") => armed.store(true, Ordering::SeqCst),
+                Some("test_corruptReplayChainId") => corrupt_chain_id.store(true, Ordering::SeqCst),
+                Some("test_restoreReplayChainId") => {
+                    corrupt_chain_id.store(false, Ordering::SeqCst)
+                }
+                _ => {
+                    if armed.load(Ordering::SeqCst) {
+                        let count = request.as_array().map_or_else(
+                            || {
+                                usize::from(
+                                    request
+                                        .get("method")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|method| method.starts_with("eth_getBlockBy")),
+                                )
+                            },
+                            |requests| {
+                                requests
+                                    .iter()
+                                    .filter(|request| {
+                                        request.get("method").and_then(Value::as_str).is_some_and(
+                                            |method| method.starts_with("eth_getBlockBy"),
+                                        )
+                                    })
+                                    .count()
+                            },
+                        );
+                        block_requests.fetch_add(count, Ordering::SeqCst);
+                    }
+
+                    let response = client
+                        .post(upstream)
+                        .header("content-type", "application/json")
+                        .body(body)
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap();
+                    if !corrupt_chain_id.load(Ordering::SeqCst) {
+                        return response;
+                    }
+
+                    let mut response: Value = serde_json::from_slice(&response).unwrap();
+                    override_rpc_transaction_chain_id(&mut response, &failing_replay_hash, "0x1");
+                    return BodyBytes::from(serde_json::to_vec(&response).unwrap());
+                }
+            }
+
+            BodyBytes::from(
+                serde_json::to_vec(&json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id").cloned().unwrap_or(Value::Null),
+                    "result": "0x",
+                }))
+                .unwrap(),
+            )
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc_endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let source = r#"
+interface Vm {
+    function activeFork() external view returns (uint256);
+    function broadcastRawTransaction(bytes calldata data) external;
+    function createFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createSelectFork(string calldata url, uint256 blockNumber)
+        external
+        returns (uint256);
+    function createSelectFork(string calldata url, bytes32 transaction)
+        external
+        returns (uint256);
+    function deal(address account, uint256 newBalance) external;
+    function makePersistent(address account) external;
+    function prank(address msgSender) external;
+    function revertToState(uint256 snapshotId) external returns (bool);
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+    function rollFork(uint256 blockNumber) external;
+    function rollFork(bytes32 transaction) external;
+    function rollFork(uint256 forkId, uint256 blockNumber) external;
+    function rollFork(uint256 forkId, bytes32 transaction) external;
+    function selectFork(uint256 forkId) external;
+    function snapshotState() external returns (uint256);
+    function transact(bytes32 txHash) external;
+    function transact(uint256 forkId, bytes32 txHash) external;
+}
+
+interface IReserveBalance {
+    function dippedIntoReserve() external returns (bool);
+}
+
+contract MonadForkAuxLifecycleTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    IReserveBalance constant RESERVE_BALANCE = IReserveBalance(address(0x1001));
+    string constant RPC = "<rpc>";
+    address constant SENDER = <sender>;
+    address constant SPENDER = <spender>;
+    address constant UNRELATED = <unrelated>;
+    address constant MARKER_RECIPIENT = <marker_recipient>;
+    address constant LATER_MARKER_RECIPIENT = <later_marker_recipient>;
+    address constant RECEIVER = <receiver>;
+    uint256 constant FRESH_BLOCK = <fresh_block>;
+    uint256 constant RESTRICTED_BLOCK = <restricted_block>;
+    bytes32 constant MARKER_HASH = <marker_hash>;
+    bytes32 constant TARGET_HASH = <target_hash>;
+    bytes32 constant LATER_TARGET_HASH = <later_target_hash>;
+
+    function test_fork_create_select_block_refreshes_fresh_to_restricted() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        vm.createSelectFork(RPC, RESTRICTED_BLOCK);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_create_select_block_refreshes_restricted_to_fresh() public {
+        vm.createSelectFork(RPC, RESTRICTED_BLOCK);
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        assertSenderReserve(false);
+    }
+
+    function test_fork_create_select_hash_refreshes_fresh_to_restricted() public {
+        vm.createSelectFork(RPC, MARKER_HASH);
+        vm.createSelectFork(RPC, TARGET_HASH);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_create_select_hash_refreshes_restricted_to_fresh() public {
+        vm.createSelectFork(RPC, TARGET_HASH);
+        vm.createSelectFork(RPC, MARKER_HASH);
+        assertSenderReserve(false);
+    }
+
+    function test_fork_select_refreshes_fresh_to_restricted() public {
+        uint256 fresh = vm.createFork(RPC, FRESH_BLOCK);
+        uint256 restricted = vm.createFork(RPC, RESTRICTED_BLOCK);
+        vm.selectFork(fresh);
+        vm.selectFork(restricted);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_select_refreshes_restricted_to_fresh() public {
+        uint256 fresh = vm.createFork(RPC, FRESH_BLOCK);
+        uint256 restricted = vm.createFork(RPC, RESTRICTED_BLOCK);
+        vm.selectFork(restricted);
+        vm.selectFork(fresh);
+        assertSenderReserve(false);
+    }
+
+    function test_fork_select_same_id_preserves_tracker() public {
+        uint256 restricted = vm.createSelectFork(RPC, RESTRICTED_BLOCK);
+        debit(SENDER);
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected initial violation");
+
+        vm.rpc("test_armBlockRequests", "[]");
+        vm.selectFork(restricted);
+
+        require(RESERVE_BALANCE.dippedIntoReserve(), "same-fork select changed tracker");
+    }
+
+    function test_fork_roll_block_refreshes_fresh_to_restricted() public {
+        uint256 active = vm.createSelectFork(RPC, FRESH_BLOCK);
+        vm.rollFork(active, RESTRICTED_BLOCK);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_roll_block_refreshes_restricted_to_fresh() public {
+        vm.createSelectFork(RPC, RESTRICTED_BLOCK);
+        vm.rollFork(FRESH_BLOCK);
+        assertSenderReserve(false);
+    }
+
+    function test_fork_roll_hash_refreshes_fresh_to_restricted() public {
+        uint256 active = vm.createSelectFork(RPC, MARKER_HASH);
+        vm.rollFork(active, TARGET_HASH);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_roll_hash_refreshes_restricted_to_fresh() public {
+        vm.createSelectFork(RPC, TARGET_HASH);
+        vm.rollFork(MARKER_HASH);
+        assertSenderReserve(false);
+    }
+
+    function test_fork_inactive_roll_does_not_change_active_context() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        uint256 inactive = vm.createFork(RPC, FRESH_BLOCK);
+
+        vm.rollFork(inactive, RESTRICTED_BLOCK);
+        vm.rollFork(inactive, TARGET_HASH);
+
+        assertSenderReserve(false);
+    }
+
+    function test_fork_inactive_hash_roll_rebases_state_and_preserves_active_context() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        uint256 inactive = vm.createFork(RPC, FRESH_BLOCK);
+        violateMarkerRecipient();
+
+        vm.rollFork(inactive, TARGET_HASH);
+
+        require(
+            MARKER_RECIPIENT.balance > 10 ether - 1,
+            "inactive replay state was not merged"
+        );
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "merged credit left stale violation");
+        assertSenderReserve(false);
+    }
+
+    function test_fork_active_transact_advances_outer_context() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        vm.transact(MARKER_HASH);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_explicit_active_transact_advances_outer_context() public {
+        uint256 active = vm.createSelectFork(RPC, FRESH_BLOCK);
+        vm.transact(active, MARKER_HASH);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_inactive_transact_rebases_state_and_preserves_active_context() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        uint256 inactive = vm.createFork(RPC, FRESH_BLOCK);
+        violateMarkerRecipient();
+
+        vm.transact(inactive, MARKER_HASH);
+
+        require(
+            MARKER_RECIPIENT.balance > 10 ether - 1,
+            "inactive replay state was not merged"
+        );
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "merged credit left stale violation");
+        assertSenderReserve(false);
+    }
+
+    function violateMarkerRecipient() internal {
+        vm.deal(MARKER_RECIPIENT, 10 ether);
+        vm.prank(MARKER_RECIPIENT);
+        (bool success,) = payable(RECEIVER).call{value: 1}("");
+        require(success, "debit failed");
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected recipient violation");
+    }
+
+    function test_fork_failed_transact_preserves_outer_context() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+
+        bool reverted;
+        try vm.transact(TARGET_HASH) {
+            reverted = false;
+        } catch {
+            reverted = true;
+        }
+
+        require(reverted, "non-immediate transaction was replayed");
+        assertSenderReserve(false);
+
+        // The failed target must not advance the cursor or block the immediate transaction.
+        vm.transact(MARKER_HASH);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_failed_hash_roll_is_atomic() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        uint256 laterMarkerBalance = LATER_MARKER_RECIPIENT.balance;
+        debit(SPENDER);
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected initial violation");
+
+        bool reverted = attemptCorruptedHashRoll(0, false);
+
+        require(reverted, "invalid replay transaction succeeded");
+        require(block.number == FRESH_BLOCK, "failed roll changed block environment");
+        require(
+            LATER_MARKER_RECIPIENT.balance == laterMarkerBalance,
+            "partial replay state leaked"
+        );
+        require(RESERVE_BALANCE.dippedIntoReserve(), "failed roll changed tracker");
+
+        // The failed roll must leave the original cursor able to execute its immediate target.
+        vm.transact(MARKER_HASH);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_failed_hash_roll_retries_without_partial_replay() public {
+        uint256 active = vm.createSelectFork(RPC, FRESH_BLOCK);
+        uint256 laterMarkerBalance = LATER_MARKER_RECIPIENT.balance;
+
+        require(attemptCorruptedHashRoll(active, true), "invalid replay transaction succeeded");
+        require(
+            LATER_MARKER_RECIPIENT.balance == laterMarkerBalance,
+            "partial replay state leaked"
+        );
+
+        vm.rollFork(active, LATER_TARGET_HASH);
+
+        require(
+            LATER_MARKER_RECIPIENT.balance == laterMarkerBalance + 1,
+            "successful retry did not replay predecessor exactly once"
+        );
+    }
+
+    function test_fork_failed_inactive_hash_roll_is_atomic() public {
+        uint256 active = vm.createSelectFork(RPC, FRESH_BLOCK);
+        uint256 inactive = vm.createFork(RPC, FRESH_BLOCK);
+        uint256 laterMarkerBalance = LATER_MARKER_RECIPIENT.balance;
+        debit(SPENDER);
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected initial violation");
+
+        require(attemptCorruptedHashRoll(inactive, true), "invalid replay transaction succeeded");
+        require(vm.activeFork() == active, "failed roll changed active fork");
+        require(block.number == FRESH_BLOCK, "failed roll changed block environment");
+        require(
+            LATER_MARKER_RECIPIENT.balance == laterMarkerBalance,
+            "inactive partial replay state leaked"
+        );
+        require(RESERVE_BALANCE.dippedIntoReserve(), "failed roll changed tracker");
+
+        vm.selectFork(inactive);
+        vm.transact(MARKER_HASH);
+        assertSenderReserve(true);
+    }
+
+    function attemptCorruptedHashRoll(uint256 forkId, bool explicitFork)
+        internal
+        returns (bool reverted)
+    {
+        vm.rpc("test_corruptReplayChainId", "[]");
+        if (explicitFork) {
+            try vm.rollFork(forkId, LATER_TARGET_HASH) {
+                reverted = false;
+            } catch {
+                reverted = true;
+            }
+        } else {
+            try vm.rollFork(LATER_TARGET_HASH) {
+                reverted = false;
+            } catch {
+                reverted = true;
+            }
+        }
+        vm.rpc("test_restoreReplayChainId", "[]");
+    }
+
+    function test_broadcast_raw_transaction_rebases_without_advancing_cursor() public {
+        vm.createSelectFork(RPC, FRESH_BLOCK);
+        debit(SPENDER);
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected initial violation");
+
+        vm.broadcastRawTransaction(hex"<credit_raw>");
+
+        require(SPENDER.balance == 12 ether, "unexpected credited balance");
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "credited violation was not cleared");
+
+        vm.transact(MARKER_HASH);
+        assertSenderReserve(true);
+    }
+
+    function test_fork_persistent_violation_survives_select() public {
+        uint256 first = vm.createFork(RPC, FRESH_BLOCK);
+        uint256 second = vm.createFork(RPC, FRESH_BLOCK);
+        vm.selectFork(first);
+        vm.makePersistent(SPENDER);
+        debit(SPENDER);
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected persistent violation");
+
+        vm.selectFork(second);
+
+        require(RESERVE_BALANCE.dippedIntoReserve(), "persistent violation was dropped");
+    }
+
+    function test_fork_nonpersistent_violation_drops_on_select() public {
+        uint256 first = vm.createFork(RPC, FRESH_BLOCK);
+        uint256 second = vm.createFork(RPC, FRESH_BLOCK);
+        vm.selectFork(first);
+        debit(SPENDER);
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected old-fork violation");
+
+        vm.selectFork(second);
+
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "old-fork violation leaked");
+    }
+
+    function test_fork_unrelated_loaded_account_remains_untracked() public {
+        uint256 first = vm.createFork(RPC, FRESH_BLOCK);
+        uint256 second = vm.createFork(RPC, FRESH_BLOCK);
+        vm.selectFork(first);
+        vm.makePersistent(UNRELATED);
+        vm.deal(UNRELATED, 9 ether);
+
+        vm.selectFork(second);
+
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "loaded account became tracked");
+    }
+
+    function test_fork_snapshot_restores_chain_and_tracker() public {
+        uint256 fresh = vm.createFork(RPC, FRESH_BLOCK);
+        uint256 restricted = vm.createFork(RPC, RESTRICTED_BLOCK);
+        vm.selectFork(restricted);
+        debit(SENDER);
+        require(RESERVE_BALANCE.dippedIntoReserve(), "expected snapshotted violation");
+        uint256 snapshot = vm.snapshotState();
+
+        vm.selectFork(fresh);
+        require(!RESERVE_BALANCE.dippedIntoReserve(), "fresh context retained violation");
+
+        require(vm.revertToState(snapshot), "snapshot revert failed");
+        require(RESERVE_BALANCE.dippedIntoReserve(), "snapshot did not restore tracker");
+    }
+
+    function assertSenderReserve(bool expected) internal {
+        debit(SENDER);
+        require(
+            RESERVE_BALANCE.dippedIntoReserve() == expected,
+            "unexpected sender reserve state"
+        );
+    }
+
+    function debit(address account) internal {
+        vm.deal(account, 12 ether);
+        vm.prank(account);
+        (bool success,) = payable(RECEIVER).call{value: 3 ether}("");
+        require(success, "debit failed");
+    }
+}
+"#
+    .replace("<rpc>", &rpc_endpoint)
+    .replace("<sender>", &sender.to_string())
+    .replace("<spender>", &spender.to_string())
+    .replace("<unrelated>", &unrelated.to_string())
+    .replace("<marker_recipient>", &marker_recipient.to_string())
+    .replace("<later_marker_recipient>", &later_marker_recipient.to_string())
+    .replace("<receiver>", &receiver.to_string())
+    .replace("<fresh_block>", &fresh_block.to_string())
+    .replace("<restricted_block>", &restricted_block.to_string())
+    .replace("<marker_hash>", &marker_hash.to_string())
+    .replace("<target_hash>", &target_hash.to_string())
+    .replace("<later_target_hash>", &later_target_hash.to_string())
+    .replace("<credit_raw>", &hex::encode(credit_raw));
+    prj.add_test("MonadForkAuxLifecycle.t.sol", &source);
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadNine".parse().unwrap());
+        config.sender = sender;
+    });
+
+    cmd.args(["test", "--network", "monad", "--mc", "MonadForkAuxLifecycleTest", "--threads", "1"])
+        .assert_success();
+
+    block_requests_armed.store(false, Ordering::SeqCst);
+    block_requests.store(0, Ordering::SeqCst);
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--mc",
+            "MonadForkAuxLifecycleTest",
+            "--mt",
+            "test_fork_select_same_id_preserves_tracker",
+        ])
+        .assert_success();
+    assert_eq!(block_requests.load(Ordering::SeqCst), 0, "same-active select fetched a block");
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--mc",
+            "MonadForkAuxLifecycleTest",
+            "--mt",
+            "test_fork_active_transact_advances_outer_context",
+            "--isolate",
+        ])
         .assert_success();
 });
 

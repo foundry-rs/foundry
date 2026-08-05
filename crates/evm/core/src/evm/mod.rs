@@ -33,6 +33,7 @@ use revm::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
     primitives::{eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
+    state::EvmState,
 };
 use serde::{Deserialize, Serialize};
 use tempo_alloy::TempoNetwork;
@@ -218,6 +219,18 @@ pub trait FoundryEvmFactory:
         _current_tx_index: usize,
     ) -> Self::ContextAux {
         Self::ContextAux::default()
+    }
+
+    /// Rebases live auxiliary state after the underlying database or fork position changes.
+    ///
+    /// `replacement` contains context reconstructed at the new position. Implementations may
+    /// preserve transaction-scoped state from `current` while recomputing caches against `state`.
+    fn rebase_context_aux(
+        &self,
+        _current: &Self::ContextAux,
+        _replacement: &mut Self::ContextAux,
+        _state: &EvmState,
+    ) {
     }
 
     /// Converts a canonical envelope into a family-specific protocol system call.
