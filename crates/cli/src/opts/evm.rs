@@ -144,7 +144,8 @@ impl Provider for EvmArgs {
 
         if shell::verbosity() > 0 {
             // need to merge that manually otherwise `from_occurrences` does not work
-            dict.insert("verbosity".to_string(), shell::verbosity().into());
+            let verbosity = shell::verbosity();
+            dict.insert("verbosity".to_string(), verbosity.into());
         }
 
         if self.ffi {

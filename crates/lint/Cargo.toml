@@ -20,10 +20,10 @@ foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 solar.workspace = true
+solar-lint.workspace = true
 
 eyre.workspace = true
 heck.workspace = true
-rayon.workspace = true
 thiserror.workspace = true
 
 [features]

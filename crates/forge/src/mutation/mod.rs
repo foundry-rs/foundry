@@ -72,6 +72,7 @@ pub mod orchestrator;
 pub mod progress;
 mod reporter;
 pub mod runner;
+mod type_analysis;
 mod visitor;
 
 pub struct MutationsSummary {
@@ -340,6 +341,7 @@ pub struct MutationHandler {
     /// Optional regex used to restrict mutation to specific contracts within
     /// the file (matches against contract name).
     contract_filter: Option<regex::Regex>,
+    mutation_exclusions: type_analysis::MutationExclusionSet,
 }
 
 impl MutationHandler {
@@ -352,12 +354,22 @@ impl MutationHandler {
             report: MutationsSummary::new(),
             survived_spans: SurvivedSpans::new(),
             contract_filter: None,
+            mutation_exclusions: type_analysis::MutationExclusionSet::new(),
         }
     }
 
     /// Restrict mutation to contracts whose name matches `filter`.
     pub fn with_contract_filter(mut self, filter: regex::Regex) -> Self {
         self.contract_filter = Some(filter);
+        self
+    }
+
+    /// Exclude operator replacements rejected by type analysis.
+    pub(crate) fn with_mutation_exclusions(
+        mut self,
+        mutations: type_analysis::MutationExclusionSet,
+    ) -> Self {
+        self.mutation_exclusions = mutations;
         self
     }
 
@@ -418,7 +430,7 @@ impl MutationHandler {
         let mut mutant_cfg_hasher = DefaultHasher::new();
         // Version salt for this mutant-set cache schema. Bump this if the
         // inputs that define generated mutants change.
-        "mutant-set-v2".hash(&mut mutant_cfg_hasher);
+        "mutant-set-v5".hash(&mut mutant_cfg_hasher);
         for op in self.config.mutation.enabled_operators() {
             op.to_string().hash(&mut mutant_cfg_hasher);
         }
@@ -500,7 +512,8 @@ impl MutationHandler {
 
             let operators = self.config.mutation.enabled_operators();
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
-                .with_source(&target_content);
+                .with_source(&target_content)
+                .with_mutation_exclusions(self.mutation_exclusions.clone());
 
             if let Some(filter) = contract_filter {
                 mutant_visitor =

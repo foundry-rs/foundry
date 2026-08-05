@@ -12,7 +12,7 @@ use foundry_cli::{
     utils::{LoadConfig, parse_ether_value},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
-use foundry_wallets::WalletOpts;
+use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
@@ -44,6 +44,9 @@ pub struct EstimateArgs {
 
     #[command(flatten)]
     wallet: WalletOpts,
+
+    #[command(flatten)]
+    browser: BrowserWalletOpts,
 
     #[command(subcommand)]
     command: Option<EstimateSubcommands>,
@@ -93,11 +96,17 @@ impl EstimateArgs {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, mut sig, mut args, mut tx, block, cost, wallet, rpc, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, cost, wallet, browser, rpc, command } =
+            self;
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let sender = SenderKind::from_wallet_opts(wallet).await?;
+        let browser = browser.run::<N>().await?;
+        let sender = if let Some(browser) = &browser {
+            browser.address().into()
+        } else {
+            SenderKind::from_wallet_opts(wallet).await?
+        };
 
         let code = if let Some(EstimateSubcommands::Create {
             code,
@@ -126,6 +135,7 @@ impl EstimateArgs {
             .build(sender)
             .await?;
 
+        let tx = if browser.is_some() { tx.browser_wallet_gas_estimation_request() } else { tx };
         let gas = provider.estimate_gas(tx).block(block.unwrap_or_default()).await?;
         if cost {
             let gas_price_wei = provider.get_gas_price().await?;

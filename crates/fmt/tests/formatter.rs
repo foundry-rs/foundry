@@ -230,6 +230,8 @@ fmt_tests! {
     IntTypes,
     LiteralExpression,
     MappingType,
+    MethodChain,
+    MethodChainCallOptions,
     ModifierDefinition,
     NamedCallArgsInChain,
     NestedNamedCallArgumentChain,

@@ -1,17 +1,24 @@
-use alloy_json_abi::JsonAbi;
+use alloy_dyn_abi::{DynSolValue, Specifier};
+use alloy_json_abi::{Constructor, JsonAbi};
 use eyre::{Result, WrapErr};
-use foundry_common::{TestFunctionExt, fs, fs::json_files, selectors::SelectorKind, shell};
+use foundry_common::{
+    TestFunctionExt, fmt::parse_tokens, fs, fs::json_files, selectors::SelectorKind, shell,
+};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput, artifacts::CompactBytecode, utils::read_json_file,
 };
-use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
+use foundry_config::{
+    Chain, Config, NamedChain,
+    error::ExtractConfigError,
+    figment::{Figment, Provider},
+};
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
         CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
-        prune_trace_depth, render_trace_arena_inner,
+        prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
     },
 };
 use std::{
@@ -168,7 +175,7 @@ pub trait LoadConfig {
 
     /// Load and sanitize the [`Config`] based on the options provided in self.
     fn load_config(&self) -> Result<Config, ExtractConfigError> {
-        self.load_config_no_warnings().inspect(emit_warnings)
+        load_config_from_provider(self.figment())
     }
 
     /// Same as [`LoadConfig::load_config`] but does not emit warnings.
@@ -212,6 +219,11 @@ pub trait LoadConfig {
     }
 }
 
+/// Loads and sanitizes [`Config`] from a provider and emits generated warnings.
+pub fn load_config_from_provider<T: Provider>(provider: T) -> Result<Config, ExtractConfigError> {
+    Config::from_provider(provider).map(Config::sanitized).inspect(emit_warnings)
+}
+
 impl<T> LoadConfig for T
 where
     for<'a> Figment: From<&'a T>,
@@ -241,6 +253,30 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<
         fs::read_to_string(constructor_args_path)?.split_whitespace().map(str::to_string).collect()
     };
     Ok(args)
+}
+
+/// Parses constructor arguments by matching them against the constructor's input parameters.
+pub fn parse_constructor_args(
+    constructor: &Constructor,
+    constructor_args: &[String],
+) -> Result<Vec<DynSolValue>> {
+    if constructor.inputs.len() != constructor_args.len() {
+        eyre::bail!(
+            "Constructor argument count mismatch: expected {} but got {}",
+            constructor.inputs.len(),
+            constructor_args.len()
+        );
+    }
+
+    let mut params = Vec::with_capacity(constructor.inputs.len());
+    for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
+        let ty = input
+            .resolve()
+            .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
+        params.push((ty, arg));
+    }
+    let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
+    parse_tokens(params).map_err(Into::into)
 }
 
 /// A slimmed down return from the executor used for returning minimal trace + gas metering info
@@ -302,11 +338,17 @@ pub async fn print_traces(
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await;
 
-        if let Some(trace_depth) = trace_depth {
-            prune_trace_depth(arena, trace_depth);
+        if shell::is_json()
+            && let Some(trace_depth) = trace_depth
+        {
+            let arena = trace_arena_at_depth(arena, trace_depth);
+            sh_println!("{}", render_trace_arena_inner(&arena, verbose, state_changes))?;
+        } else {
+            if let Some(trace_depth) = trace_depth {
+                prune_trace_depth(arena, trace_depth);
+            }
+            sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
         }
-
-        sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
     if shell::is_json() {
@@ -369,8 +411,28 @@ pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::TracingConfig;
     use std::fs;
     use tempfile::tempdir;
+
+    struct TracingConfigArgs;
+
+    impl LoadConfig for TracingConfigArgs {
+        fn figment(&self) -> Figment {
+            Config::figment()
+                .merge(("verbosity", 2u8))
+                .merge(("tracing", TracingConfig { verbosity: 4, ..Default::default() }))
+        }
+    }
+
+    #[test]
+    fn tracing_verbosity_is_independent_from_evm_opts() {
+        let (config, evm_opts) = TracingConfigArgs.load_config_and_evm_opts_no_warnings().unwrap();
+
+        assert_eq!(config.verbosity, 2);
+        assert_eq!(config.tracing.verbosity, 4);
+        assert_eq!(evm_opts.verbosity, 2);
+    }
 
     #[test]
     fn test_cache_signatures_from_abis() {

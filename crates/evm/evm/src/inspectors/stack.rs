@@ -740,10 +740,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                     log_collector,
                     tempo_labels,
                     tracer,
+                    revert_diag,
                     reverter,
                     ..
                 },
         } = self;
+
+        let trace_diagnostics =
+            revert_diag.map(|revert_diag| revert_diag.into_diagnostics()).unwrap_or_default();
 
         let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
             let ignored = cheatcodes
@@ -760,7 +764,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                 })
                 .unwrap_or_default();
 
-            SparsedTraceArena { arena, ignored }
+            SparsedTraceArena { arena, ignored, diagnostics: trace_diagnostics }
         });
 
         let (edge_coverage, evm_cmp_values) = edge_coverage
@@ -807,7 +811,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
-        if let Some(fuzzer) = &mut self.fuzzer {
+        let storage_hook_active =
+            self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
+        if !storage_hook_active && let Some(fuzzer) = &mut self.fuzzer {
             fuzzer.call_end(ecx, inputs, outcome);
         }
 
@@ -1064,6 +1070,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Invoked at the beginning of a new top-level (0 depth) frame.
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.locally_created_accounts.clear();
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.clear_storage_hook_mapping_slots();
+        }
 
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
@@ -1078,6 +1087,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx: &mut FoundryContextFor<'_, FEN>,
         result: InstructionResult,
     ) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.clear_storage_hook_mapping_slots();
+        }
         if !result.is_revert() {
             return;
         }
@@ -1107,6 +1119,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        let storage_hook_active = if let Some(cheats) = self.cheatcodes.as_mut() {
+            if cheats.has_storage_hooks() && cheats.finish_storage_hook_callback(interpreter, ecx) {
+                return;
+            }
+            cheats.pc = interpreter.bytecode.pc();
+            cheats.is_storage_hook_active()
+        } else {
+            false
+        };
+
         #[cfg(test)]
         if interpreter.bytecode.opcode() == op::JUMPDEST
             && let Some(gate) = &self.inner.early_exit_test_gate
@@ -1135,37 +1157,49 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         match self.static_step_dispatch {
             OpcodeStepDispatch::None => {}
             OpcodeStepDispatch::FuzzerOnly => {
-                if let Some(inspector) = &mut self.fuzzer {
+                if !storage_hook_active && let Some(inspector) = &mut self.fuzzer {
                     inspector.step(interpreter, ecx);
                 }
             }
             OpcodeStepDispatch::General => {
-                call_inspectors!(
-                    [
-                        // These are sorted in definition order.
-                        &mut self.edge_coverage,
-                        &mut self.fuzzer,
-                        &mut self.line_coverage,
-                        &mut self.printer,
-                        &mut self.revert_diag,
-                        &mut self.script_execution_inspector,
-                        &mut self.tracer,
-                    ],
-                    |inspector| (**inspector).step(interpreter, ecx),
-                );
+                if storage_hook_active {
+                    call_inspectors!(
+                        [
+                            // These are sorted in definition order.
+                            &mut self.printer,
+                            &mut self.revert_diag,
+                            &mut self.script_execution_inspector,
+                            &mut self.tracer,
+                        ],
+                        |inspector| (**inspector).step(interpreter, ecx),
+                    );
+                } else {
+                    call_inspectors!(
+                        [
+                            // These are sorted in definition order.
+                            &mut self.edge_coverage,
+                            &mut self.fuzzer,
+                            &mut self.line_coverage,
+                            &mut self.printer,
+                            &mut self.revert_diag,
+                            &mut self.script_execution_inspector,
+                            &mut self.tracer,
+                        ],
+                        |inspector| (**inspector).step(interpreter, ecx),
+                    );
+                }
             }
         }
 
-        if let Some(cheats) = self.cheatcodes.as_mut() {
-            cheats.pc = interpreter.bytecode.pc();
-            if cheats.has_step_hooks() {
-                let opcode = interpreter.bytecode.opcode();
-                if !cheats.has_recording_accesses_only_step_hook()
-                    || matches!(opcode, op::SLOAD | op::SSTORE)
-                {
-                    crate::utils::cold_path();
-                    cheats.step(interpreter, ecx);
-                }
+        if let Some(cheats) = self.cheatcodes.as_mut()
+            && cheats.has_step_hooks()
+        {
+            let opcode = interpreter.bytecode.opcode();
+            if !cheats.has_recording_accesses_only_step_hook()
+                || matches!(opcode, op::SLOAD | op::SSTORE)
+            {
+                crate::utils::cold_path();
+                cheats.step(interpreter, ecx);
             }
         }
     }
@@ -1187,6 +1221,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 ],
                 |inspector| (**inspector).step_end(interpreter, ecx),
             );
+        }
+
+        if let Some(fuzzer) = &mut self.fuzzer
+            && fuzzer.mapping_slots.is_some()
+        {
+            fuzzer.step_end(interpreter, ecx);
         }
 
         if let Some(cheats) = self.cheatcodes.as_mut()
@@ -1398,24 +1438,62 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             self.top_level_frame_start(ecx);
         }
 
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_start();
+        }
+
+        let storage_hook_callback = self
+            .cheatcodes
+            .as_deref()
+            .is_some_and(|cheatcodes| cheatcodes.is_storage_hook_callback(ecx, call));
+        let storage_hook_active =
+            self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
+
+        if !storage_hook_active {
+            call_inspectors!(
+                #[ret]
+                [&mut self.fuzzer],
+                |inspector| {
+                    let mut out = None;
+                    if let Some(output) = inspector.call(ecx, call) {
+                        out = Some(Some(output));
+                    }
+                    out
+                }
+            );
+        }
+
+        if self.tracer.is_some() {
+            crate::utils::cold_path();
+            let (output, trace_idx) = {
+                let tracer = self.tracer.as_deref_mut().unwrap();
+                let output = tracer.call(ecx, call);
+                (output, tracer.traces().nodes().len() - 1)
+            };
+            if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+                revert_diag.set_trace_node(trace_idx);
+            }
+            if output.is_some() {
+                return output;
+            }
+        }
+
         call_inspectors!(
             #[ret]
             [
-                &mut self.fuzzer,
-                &mut self.tracer,
                 &mut self.log_collector,
                 &mut self.printer,
                 &mut self.revert_diag,
                 &mut self.tempo_labels
             ],
-            |inspector| {
-                let mut out = None;
-                if let Some(output) = inspector.call(ecx, call) {
-                    out = Some(Some(output));
-                }
-                out
-            },
+            |inspector| inspector.call(ecx, call).map(Some),
         );
+
+        // Storage hook callbacks are instrumentation frames, not user calls. Let revm execute the
+        // callback after tracing it, but do not apply mocks, pranks, broadcasts, or isolation.
+        if storage_hook_callback {
+            return None;
+        }
 
         // The tracer records call inputs before cheatcodes apply caller overrides such as pranks
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
@@ -1530,6 +1608,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         self.do_call_end(ecx, inputs, outcome);
 
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_end();
+        }
+
         if ecx.journal().depth() == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
@@ -1549,9 +1631,28 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             self.top_level_frame_start(ecx);
         }
 
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_start();
+        }
+
+        if self.tracer.is_some() {
+            crate::utils::cold_path();
+            let (output, trace_idx) = {
+                let tracer = self.tracer.as_deref_mut().unwrap();
+                let output = tracer.create(ecx, create);
+                (output, tracer.traces().nodes().len() - 1)
+            };
+            if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+                revert_diag.set_trace_node(trace_idx);
+            }
+            if output.is_some() {
+                return output;
+            }
+        }
+
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.line_coverage],
+            [&mut self.line_coverage],
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
@@ -1634,6 +1735,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         }
 
         self.do_create_end(ecx, call, outcome);
+
+        if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
+            revert_diag.frame_end();
+        }
 
         if ecx.journal().depth() == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
@@ -1920,7 +2025,7 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
 #[cfg(test)]
 mod tests {
     use super::{
-        Address, Fuzzer, InspectorStack, InspectorStackInner, OpcodeStepDispatch,
+        Address, Fuzzer, InspectorStack, InspectorStackInner, OpcodeStepDispatch, RevertDiagnostic,
         TraceRequirements, compute_batch_create_salt,
     };
     use foundry_evm_core::evm::EthEvmNetwork;
@@ -1986,6 +2091,19 @@ mod tests {
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         stack.collect_edge_coverage(false);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+    }
+
+    #[test]
+    fn revert_diagnostic_frames_remain_balanced() {
+        let mut inspector = RevertDiagnostic::default();
+        inspector.frame_start();
+        inspector.set_trace_node(0);
+        inspector.frame_start();
+        inspector.set_trace_node(1);
+        inspector.frame_end();
+        inspector.frame_end();
+
+        assert!(inspector.into_diagnostics().is_empty());
     }
 
     #[test]

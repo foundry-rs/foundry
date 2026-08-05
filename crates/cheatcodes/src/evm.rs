@@ -57,7 +57,7 @@ mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
 use foundry_config::{ExecutionSpec, evm_spec_id_from_str};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeMap};
 
 mod fork;
 pub(crate) mod mapping;
@@ -74,6 +74,21 @@ struct LogJson {
     data: String,
     /// The address of the log's emitter.
     emitter: String,
+}
+
+struct StateDump<'a>(&'a [(Address, GenesisAccount)]);
+
+impl Serialize for StateDump<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (address, account) in self.0 {
+            map.serialize_entry(address, account)?;
+        }
+        map.end()
+    }
 }
 
 /// Records storage slots reads and writes.
@@ -284,7 +299,10 @@ impl Cheatcode for loadCall {
             .sload(target, slot.into())
             .map_err(|e| fmt_err!("failed to load storage slot: {:?}", e))?;
 
-        if val.is_cold && val.data.is_zero() {
+        if val.is_cold
+            && val.data.is_zero()
+            && !ccx.state.is_arbitrary_storage_slot_explicit(target, slot.into())
+        {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
@@ -361,6 +379,16 @@ impl Cheatcode for dumpStateCall {
         let Self { pathToStateJson } = self;
         let path = Path::new(pathToStateJson);
 
+        let fork_id = ccx.ecx.db().active_fork_id();
+        let created_accounts = ccx
+            .state
+            .created_accounts(fork_id)
+            .into_iter()
+            .filter(|address| {
+                ccx.ecx.journal().evm_state().get(address).is_some_and(Account::is_created)
+            })
+            .collect::<Vec<_>>();
+
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
             key == &CHEATCODE_ADDRESS
@@ -372,16 +400,24 @@ impl Cheatcode for dumpStateCall {
                 || val.is_empty()
         };
 
-        let alloc = ccx
+        let mut alloc = ccx
             .ecx
             .journal_mut()
             .evm_state_mut()
             .iter_mut()
             .filter(|(key, val)| !skip(key, val))
-            .map(|(key, val)| (key, genesis_account(val)))
+            .map(|(key, val)| (*key, genesis_account(val)))
             .collect::<BTreeMap<_, _>>();
 
-        write_json_file(path, &alloc)?;
+        let mut ordered_alloc = Vec::with_capacity(alloc.len());
+        for address in created_accounts {
+            if let Some(account) = alloc.remove(&address) {
+                ordered_alloc.push((address, account));
+            }
+        }
+        ordered_alloc.extend(alloc);
+
+        write_json_file(path, &StateDump(&ordered_alloc))?;
         Ok(Default::default())
     }
 }
@@ -410,6 +446,36 @@ impl Cheatcode for accessesCall {
             state.accesses.writes.entry(target).or_default().as_slice(),
         );
         Ok(result.abi_encode_params())
+    }
+}
+
+impl Cheatcode for registerSloadHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        ccx.state.register_storage_load_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        if ccx.state.has_mapping_storage_store_hooks(target) {
+            bail!("cannot register raw SSTORE hook: mapping SSTORE hooks already exist for target");
+        }
+        ccx.state.register_storage_store_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerMappingSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, rootSlot, callback } = *self;
+        if !ccx.state.register_mapping_storage_store_hook(target, rootSlot, ccx.caller, callback.0)
+        {
+            bail!("cannot register mapping SSTORE hook: raw SSTORE hook already exists for target");
+        }
+        Ok(Default::default())
     }
 }
 
@@ -781,6 +847,7 @@ impl Cheatcode for storeCall {
             .journal_mut()
             .sstore(target, slot.into(), value.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {:?}", e))?;
+        ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
         Ok(Default::default())
     }
 }
@@ -1016,6 +1083,7 @@ impl Cheatcode for deleteSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -1025,6 +1093,7 @@ impl Cheatcode for deleteStateSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -1035,6 +1104,7 @@ impl Cheatcode for deleteSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
 }
@@ -1044,6 +1114,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
 }
@@ -1051,7 +1122,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
 impl Cheatcode for startStateDiffRecordingCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
-        state.recorded_account_diffs_stack = Some(Default::default());
+        state.start_state_diff_recording();
         // Enable mapping recording to track mapping slot accesses
         state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
@@ -1171,10 +1242,8 @@ impl Cheatcode for getStorageAccessesCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let mut storage_accesses = Vec::new();
 
-        if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
-            for account_accesses in recorded_diffs.iter().flatten() {
-                storage_accesses.extend(account_accesses.storageAccesses.clone());
-            }
+        for account_access in state.recorded_account_diffs() {
+            storage_accesses.extend(account_access.storageAccesses.clone());
         }
 
         Ok(storage_accesses.abi_encode())
@@ -1253,6 +1322,7 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
+        let created_address = tx_env.kind().is_create().then(|| sender.create(tx_env.nonce()));
 
         // Save current env for restoration after execution.
         let cached_evm_env = ccx.ecx.evm_clone();
@@ -1283,6 +1353,10 @@ impl Cheatcode for executeTransactionCall {
         // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
         // when the inner EVM executes calls at depth == 1.
         executor.set_in_inner_context(true, Some(sender));
+        if let Some(address) = created_address {
+            let fork_id = ccx.ecx.db().active_fork_id();
+            ccx.state.record_created_account(fork_id, address);
+        }
 
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = {
@@ -1490,12 +1564,14 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
             active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
         }
     }
+    let fork_id = ccx.ecx.db().active_fork_id();
     let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
+    ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
 }
 
@@ -1560,6 +1636,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         if let Some(snap) = ccx.state.env_overrides_snapshots.get(&snapshot_id) {
             ccx.state.env_overrides = snap.clone();
         }
+        ccx.state.revert_created_accounts(snapshot_id, false);
         sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
@@ -1586,6 +1663,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;
         }
+        ccx.state.revert_created_accounts(snapshot_id, true);
         sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
@@ -1830,9 +1908,6 @@ fn restore_eip2935_cold_state<
 // crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
 // fixture, where `logoUri` has slot "5".
 const TIP20_LOGO_URI_SLOT_INDEX: u64 = 5;
-fn tip20_logo_uri_slot() -> U256 {
-    U256::from(TIP20_LOGO_URI_SLOT_INDEX)
-}
 
 fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
@@ -1845,7 +1920,12 @@ fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     })?;
     ccx.ensure_not_precompile(token)?;
     ensure_loaded_account(ccx.ecx, *token)?;
-    store_solidity_string(ccx.ecx, *token, tip20_logo_uri_slot(), new_logo_uri.as_bytes())
+    store_solidity_string(
+        ccx.ecx,
+        *token,
+        U256::from(TIP20_LOGO_URI_SLOT_INDEX),
+        new_logo_uri.as_bytes(),
+    )
 }
 
 fn store_solidity_string<CTX>(
@@ -1952,13 +2032,15 @@ const fn string_chunks(byte_length: usize) -> usize {
 /// depth than `startStateDiffRecording`, multiple `Vec<RecordedAccountAccesses>`
 /// will be flattened, preserving the order of the accesses.
 fn get_state_diff<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>) -> Result {
-    let res = state
-        .recorded_account_diffs_stack
-        .replace(Default::default())
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    let mut res = state.take_recorded_account_diffs_prefix();
+    res.extend(
+        state
+            .recorded_account_diffs_stack
+            .replace(Default::default())
+            .unwrap_or_default()
+            .into_iter()
+            .flatten(),
+    );
     Ok(res.abi_encode())
 }
 
@@ -1987,16 +2069,14 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
 
     // First, collect all unique addresses we need to look up
     let mut addresses_to_lookup = HashSet::new();
-    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
-        for account_access in records.iter().flatten() {
-            if !account_access.storageAccesses.is_empty()
-                || account_access.oldBalance != account_access.newBalance
-            {
-                addresses_to_lookup.insert(account_access.account);
-                for storage_access in &account_access.storageAccesses {
-                    if storage_access.isWrite && !storage_access.reverted {
-                        addresses_to_lookup.insert(storage_access.account);
-                    }
+    for account_access in ccx.state.recorded_account_diffs() {
+        if !account_access.storageAccesses.is_empty()
+            || account_access.oldBalance != account_access.newBalance
+        {
+            addresses_to_lookup.insert(account_access.account);
+            for storage_access in &account_access.storageAccesses {
+                if storage_access.isWrite && !storage_access.reverted {
+                    addresses_to_lookup.insert(storage_access.account);
                 }
             }
         }
@@ -2017,138 +2097,133 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     }
 
     // Now process the records
-    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
-        records
-            .iter()
-            .flatten()
-            .filter(|account_access| {
-                !account_access.storageAccesses.is_empty()
-                    || account_access.oldBalance != account_access.newBalance
-                    || (!account_access.reverted
-                        && account_access.oldNonce != account_access.newNonce)
-            })
-            .for_each(|account_access| {
-                // Record account balance diffs.
-                if account_access.oldBalance != account_access.newBalance {
-                    let account_diff =
-                        state_diffs.entry(account_access.account).or_insert_with(|| {
-                            AccountStateDiffs {
-                                label: ccx.state.labels.get(&account_access.account).cloned(),
-                                contract: contract_names.get(&account_access.account).cloned(),
-                                ..Default::default()
-                            }
-                        });
-                    // Update balance diff. Do not overwrite the initial balance if already set.
-                    if let Some(diff) = &mut account_diff.balance_diff {
-                        diff.new_value = account_access.newBalance;
-                    } else {
-                        account_diff.balance_diff = Some(BalanceDiff {
-                            previous_value: account_access.oldBalance,
-                            new_value: account_access.newBalance,
-                        });
+    ccx.state
+        .recorded_account_diffs()
+        .filter(|account_access| {
+            !account_access.storageAccesses.is_empty()
+                || account_access.oldBalance != account_access.newBalance
+                || (!account_access.reverted && account_access.oldNonce != account_access.newNonce)
+        })
+        .for_each(|account_access| {
+            // Record account balance diffs.
+            if account_access.oldBalance != account_access.newBalance {
+                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
+                    AccountStateDiffs {
+                        label: ccx.state.labels.get(&account_access.account).cloned(),
+                        contract: contract_names.get(&account_access.account).cloned(),
+                        ..Default::default()
                     }
+                });
+                // Update balance diff. Do not overwrite the initial balance if already set.
+                if let Some(diff) = &mut account_diff.balance_diff {
+                    diff.new_value = account_access.newBalance;
+                } else {
+                    account_diff.balance_diff = Some(BalanceDiff {
+                        previous_value: account_access.oldBalance,
+                        new_value: account_access.newBalance,
+                    });
                 }
+            }
 
-                // Record account nonce diffs.
-                if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
-                    let account_diff =
-                        state_diffs.entry(account_access.account).or_insert_with(|| {
-                            AccountStateDiffs {
-                                label: ccx.state.labels.get(&account_access.account).cloned(),
-                                contract: contract_names.get(&account_access.account).cloned(),
-                                ..Default::default()
-                            }
-                        });
-                    // Update nonce diff. Do not overwrite the initial nonce if already set.
-                    if let Some(diff) = &mut account_diff.nonce_diff {
-                        diff.new_value = account_access.newNonce;
-                    } else {
-                        account_diff.nonce_diff = Some(NonceDiff {
-                            previous_value: account_access.oldNonce,
-                            new_value: account_access.newNonce,
-                        });
+            // Record account nonce diffs.
+            if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
+                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
+                    AccountStateDiffs {
+                        label: ccx.state.labels.get(&account_access.account).cloned(),
+                        contract: contract_names.get(&account_access.account).cloned(),
+                        ..Default::default()
                     }
+                });
+                // Update nonce diff. Do not overwrite the initial nonce if already set.
+                if let Some(diff) = &mut account_diff.nonce_diff {
+                    diff.new_value = account_access.newNonce;
+                } else {
+                    account_diff.nonce_diff = Some(NonceDiff {
+                        previous_value: account_access.oldNonce,
+                        new_value: account_access.newNonce,
+                    });
                 }
+            }
 
-                // Collect all storage accesses for this account
-                let raw_changes_by_slot = account_access
-                    .storageAccesses
-                    .iter()
-                    .filter_map(|access| {
-                        (access.isWrite && !access.reverted)
-                            .then_some((access.slot, (access.previousValue, access.newValue)))
-                    })
-                    .collect::<BTreeMap<_, _>>();
+            // Collect all storage accesses for this account
+            let raw_changes_by_slot = account_access
+                .storageAccesses
+                .iter()
+                .filter_map(|access| {
+                    (access.isWrite && !access.reverted)
+                        .then_some((access.slot, (access.previousValue, access.newValue)))
+                })
+                .collect::<BTreeMap<_, _>>();
 
-                // Record account state diffs.
-                for storage_access in &account_access.storageAccesses {
-                    if storage_access.isWrite && !storage_access.reverted {
-                        let account_diff = state_diffs
-                            .entry(storage_access.account)
-                            .or_insert_with(|| AccountStateDiffs {
+            // Record account state diffs.
+            for storage_access in &account_access.storageAccesses {
+                if storage_access.isWrite && !storage_access.reverted {
+                    let account_diff =
+                        state_diffs.entry(storage_access.account).or_insert_with(|| {
+                            AccountStateDiffs {
                                 label: ccx.state.labels.get(&storage_access.account).cloned(),
                                 contract: contract_names.get(&storage_access.account).cloned(),
                                 ..Default::default()
+                            }
+                        });
+                    let layout = storage_layouts.get(&storage_access.account);
+                    // Update state diff. Do not overwrite the initial value if already set.
+                    let entry = match account_diff.state_diff.entry(storage_access.slot) {
+                        Entry::Vacant(slot_state_diff) => {
+                            // Get storage layout info for this slot
+                            // Include mapping slots if available for the account
+                            let mapping_slots = ccx
+                                .state
+                                .mapping_slots
+                                .as_ref()
+                                .and_then(|slots| slots.get(&storage_access.account));
+
+                            let slot_info = layout.and_then(|layout| {
+                                let decoder = SlotIdentifier::new(layout.clone());
+                                decoder.identify(&storage_access.slot, mapping_slots).or_else(
+                                    || {
+                                        // Create a map of new values for bytes/string
+                                        // identification. These values are used to determine
+                                        // the length of the data which helps determine how many
+                                        // slots to search
+                                        let current_base_slot_values = raw_changes_by_slot
+                                            .iter()
+                                            .map(|(slot, (_, new_val))| (*slot, *new_val))
+                                            .collect::<B256Map<_>>();
+                                        decoder.identify_bytes_or_string(
+                                            &storage_access.slot,
+                                            &current_base_slot_values,
+                                        )
+                                    },
+                                )
                             });
-                        let layout = storage_layouts.get(&storage_access.account);
-                        // Update state diff. Do not overwrite the initial value if already set.
-                        let entry = match account_diff.state_diff.entry(storage_access.slot) {
-                            Entry::Vacant(slot_state_diff) => {
-                                // Get storage layout info for this slot
-                                // Include mapping slots if available for the account
-                                let mapping_slots = ccx
-                                    .state
-                                    .mapping_slots
-                                    .as_ref()
-                                    .and_then(|slots| slots.get(&storage_access.account));
 
-                                let slot_info = layout.and_then(|layout| {
-                                    let decoder = SlotIdentifier::new(layout.clone());
-                                    decoder.identify(&storage_access.slot, mapping_slots).or_else(
-                                        || {
-                                            // Create a map of new values for bytes/string
-                                            // identification. These values are used to determine
-                                            // the length of the data which helps determine how many
-                                            // slots to search
-                                            let current_base_slot_values = raw_changes_by_slot
-                                                .iter()
-                                                .map(|(slot, (_, new_val))| (*slot, *new_val))
-                                                .collect::<B256Map<_>>();
-                                            decoder.identify_bytes_or_string(
-                                                &storage_access.slot,
-                                                &current_base_slot_values,
-                                            )
-                                        },
-                                    )
-                                });
+                            slot_state_diff.insert(SlotStateDiff {
+                                previous_value: storage_access.previousValue,
+                                new_value: storage_access.newValue,
+                                slot_info,
+                            })
+                        }
+                        Entry::Occupied(slot_state_diff) => {
+                            let entry = slot_state_diff.into_mut();
+                            entry.new_value = storage_access.newValue;
+                            entry
+                        }
+                    };
 
-                                slot_state_diff.insert(SlotStateDiff {
-                                    previous_value: storage_access.previousValue,
-                                    new_value: storage_access.newValue,
-                                    slot_info,
-                                })
-                            }
-                            Entry::Occupied(slot_state_diff) => {
-                                let entry = slot_state_diff.into_mut();
-                                entry.new_value = storage_access.newValue;
-                                entry
-                            }
-                        };
-
-                        // Update decoded values if we have slot info
-                        if let Some(slot_info) = &mut entry.slot_info {
-                            slot_info.decode_values(entry.previous_value, storage_access.newValue);
-                            if slot_info.is_bytes_or_string() {
-                                slot_info.decode_bytes_or_string_values(
-                                    &storage_access.slot,
-                                    &raw_changes_by_slot,
-                                );
-                            }
+                    // Update decoded values if we have slot info
+                    if let Some(slot_info) = &mut entry.slot_info {
+                        slot_info.decode_values(entry.previous_value, storage_access.newValue);
+                        if slot_info.is_bytes_or_string() {
+                            slot_info.decode_bytes_or_string_values(
+                                &storage_access.slot,
+                                &raw_changes_by_slot,
+                            );
                         }
                     }
                 }
-            });
-    }
+            }
+        });
     state_diffs
 }
 

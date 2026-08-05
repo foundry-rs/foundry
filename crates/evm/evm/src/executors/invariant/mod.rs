@@ -34,14 +34,15 @@ use foundry_evm_fuzz::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{EvmFuzzState, InvariantFuzzState, invariant_strat, override_call_strat},
+    strategies::{EvmFuzzState, FuzzState, TxGenerator, override_call_strat},
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
+#[cfg(test)]
+use proptest::strategy::Strategy;
 use proptest::{
     prelude::Rng,
-    strategy::Strategy,
     test_runner::{RngAlgorithm, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -612,7 +613,7 @@ struct InvariantTestData {
 /// Contains invariant test data.
 struct InvariantTest {
     // Fuzz state of invariant test.
-    fuzz_state: InvariantFuzzState,
+    fuzz_state: FuzzState,
     // Contracts fuzzed by the invariant test.
     targeted_contracts: FuzzRunIdentifiedContracts,
     // Data collected during invariant runs.
@@ -622,7 +623,7 @@ struct InvariantTest {
 impl InvariantTest {
     /// Instantiates an invariant test.
     fn new(
-        fuzz_state: InvariantFuzzState,
+        fuzz_state: FuzzState,
         targeted_contracts: FuzzRunIdentifiedContracts,
         failures: InvariantFailures,
         branch_runner: TestRunner,
@@ -1136,11 +1137,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let mut run_cancelled = false;
             let mut observed_call_entries = Vec::<(Vec<ObservedCall>, BasicTxDetails)>::new();
 
-            let initial_seq = corpus_manager.new_inputs(
-                &mut invariant_test.test_data.branch_runner,
-                &invariant_test.fuzz_state,
-                &invariant_test.targeted_contracts,
-            )?;
+            let sequence_plan =
+                corpus_manager.new_sequence(&mut invariant_test.test_data.branch_runner)?;
+            let initial_seq = sequence_plan.initial();
 
             let run_depth =
                 invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner);
@@ -1417,9 +1416,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.depth += 1;
                 }
 
-                current_run.inputs.push(corpus_manager.generate_next_input(
+                current_run.inputs.push(sequence_plan.next(
                     &mut invariant_test.test_data.branch_runner,
-                    &initial_seq,
                     discarded,
                     current_run.depth as usize,
                 )?);
@@ -1759,14 +1757,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         ));
 
         // Creates the invariant strategy.
-        let strategy = invariant_strat(
+        let generator = TxGenerator::invariant(
             fuzz_state.clone(),
             campaign_seed.sender_filters.clone(),
             targeted_contracts.clone(),
             config.clone(),
             fuzz_fixtures.clone(),
-        )
-        .no_shrink();
+        );
 
         // If any of the targeted contracts have the storage layout enabled then we can sample
         // mapping values. To accomplish, we need to record the mapping storage slots and keys.
@@ -1805,10 +1802,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_state.collect_fuzzer_values(fuzzer);
             let _ = fuzzer.take_observed_calls();
         }
+        let generator = foundry_evm_fuzz::sequence::SequenceGenerator::invariant_with_fixtures(
+            generator,
+            fuzz_state.clone(),
+            fuzz_fixtures.clone(),
+            targeted_contracts.clone(),
+            &config.corpus,
+        )?;
         let mut worker = WorkerCorpus::from_seed(
             plan.worker_id as usize,
             config.corpus.clone(),
-            strategy.boxed(),
+            generator,
             corpus_seed,
         )?;
 
@@ -2023,6 +2027,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.target_interfaces(to, &mut contracts)?;
 
         self.select_selectors(to, &mut contracts)?;
+        self.exclude_default_storage_hook_callbacks(&mut contracts)?;
 
         // There should be at least one contract identified as target for fuzz runs.
         if contracts.is_empty() {
@@ -2033,6 +2038,39 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         }
 
         Ok((sender_filters, FuzzRunIdentifiedContracts::new(contracts, selected.is_empty())))
+    }
+
+    /// Excludes registered storage-hook callbacks from implicit invariant targets.
+    ///
+    /// Explicit selector filters take precedence, so users can still target a callback
+    /// intentionally.
+    fn exclude_default_storage_hook_callbacks(
+        &self,
+        targeted_contracts: &mut TargetedContracts,
+    ) -> Result<()> {
+        let Some(cheatcodes) = self.executor.inspector().cheatcodes.as_deref() else {
+            return Ok(());
+        };
+        let callbacks =
+            cheatcodes
+                .storage_load_hooks()
+                .chain(cheatcodes.storage_store_hooks())
+                .map(|(_, hook)| (hook.callback_target, Selector::from(hook.callback_selector)))
+                .chain(cheatcodes.mapping_storage_store_hooks().map(|(_, _, hook)| {
+                    (hook.callback_target, Selector::from(hook.callback_selector))
+                }))
+                .collect::<HashSet<_>>();
+
+        for (target, selector) in callbacks {
+            let Some(contract) = targeted_contracts.get_mut(&target) else { continue };
+            if !contract.targeted_functions.is_empty()
+                || contract.function_by_selector(selector).is_none()
+            {
+                continue;
+            }
+            contract.add_selectors([selector], true)?;
+        }
+        Ok(())
     }
 
     /// Extends the contracts and selectors to fuzz with the addresses and ABIs specified in

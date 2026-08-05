@@ -1,7 +1,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
 use foundry_wallets::BrowserWalletOpts;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
@@ -24,8 +24,8 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, maybe_print_fee_token,
-        read_tempo_keys_file, resolve_and_set_fee_token, tempo_keys_path,
+        self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
+        resolve_and_set_fee_token, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -62,15 +62,15 @@ use crate::{
 
 /// Tempo keychain management commands.
 ///
-/// Manage access keys stored in `~/.tempo/wallet/keys.toml` and query or modify
+/// Manage access keys stored in `~/.tempo/wallet/store.json` and query or modify
 /// on-chain key state via the AccountKeychain precompile.
 #[derive(Debug, Parser)]
 pub enum KeychainSubcommand {
-    /// List all keys from the local keys.toml file.
+    /// List all keys from the local Tempo Accounts store.
     #[command(visible_alias = "ls")]
     List,
 
-    /// Show all keys for a specific wallet address from the local keys.toml file.
+    /// Show all keys for a specific wallet address from the local Tempo Accounts store.
     Show {
         /// The wallet address to look up.
         wallet_address: Address,
@@ -89,12 +89,12 @@ pub enum KeychainSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Inspect an access key policy using the local key registry and on-chain state.
+    /// Inspect an access key policy using the Tempo Accounts store and on-chain state.
     Inspect {
         /// The key address to inspect.
         key_address: Address,
 
-        /// Root account address. Required when the key is not present in the local keys.toml.
+        /// Root account address. Required when the key is not present in the local Accounts store.
         #[arg(long, visible_alias = "wallet-address", value_name = "ADDRESS")]
         root_account: Option<Address>,
 
@@ -104,14 +104,14 @@ pub enum KeychainSubcommand {
 
     /// Diagnose access-key signing issues end-to-end.
     ///
-    /// Walks the local registry, RPC, and on-chain key state and prints a green
+    /// Walks the Tempo Accounts store, RPC, and on-chain key state and prints a green
     /// checklist. The first failing step turns red and includes a one-line hint.
     Doctor {
         /// The key address to diagnose. Optional when `--root-account` is provided.
         #[arg(required_unless_present = "root_account")]
         key_address: Option<Address>,
 
-        /// Root account address. Required if the key cannot be resolved from the local registry,
+        /// Root account address. Required if the key cannot be resolved from the Accounts store,
         /// or to diagnose the default key for a sender.
         #[arg(long, visible_alias = "wallet-address", value_name = "ADDRESS")]
         root_account: Option<Address>,
@@ -479,7 +479,7 @@ pub enum KeychainPolicySubcommand {
         /// The key address to update.
         key_address: Address,
 
-        /// Root account address. Required when the key is not present in the local keys.toml.
+        /// Root account address. Required when the key is not present in the local Accounts store.
         #[arg(long, visible_alias = "wallet-address", value_name = "ADDRESS")]
         root_account: Option<Address>,
 
@@ -595,13 +595,6 @@ const fn key_type_label(t: &KeyType) -> &'static str {
         KeyType::Secp256k1 => "Secp256k1",
         KeyType::P256 => "P256",
         KeyType::WebAuthn => "WebAuthn",
-    }
-}
-
-const fn wallet_type_name(t: &WalletType) -> &'static str {
-    match t {
-        WalletType::Local => "local",
-        WalletType::Passkey => "passkey",
     }
 }
 
@@ -877,22 +870,22 @@ impl KeychainPolicySubcommand {
     }
 }
 
-/// `cast keychain list` — display all entries from keys.toml.
+/// `cast keychain list` — display all entries from the Tempo Accounts store.
 fn run_list() -> Result<()> {
-    let keys_file = load_keys_file()?;
+    let store = load_accounts_store()?;
 
     if shell::is_json() {
-        let entries: Vec<_> = keys_file.keys.iter().map(key_entry_to_json).collect();
+        let entries: Vec<_> = store.keys.iter().map(key_entry_to_json).collect();
         print_json_object(entries)?;
         return Ok(());
     }
 
-    if keys_file.keys.is_empty() {
-        sh_println!("No keys found in keys.toml.")?;
+    if store.keys.is_empty() {
+        sh_println!("No keys found in store.json.")?;
         return Ok(());
     }
 
-    for (i, entry) in keys_file.keys.iter().enumerate() {
+    for (i, entry) in store.keys.iter().enumerate() {
         if i > 0 {
             sh_println!()?;
         }
@@ -904,10 +897,10 @@ fn run_list() -> Result<()> {
 
 /// `cast keychain show <wallet_address>` — show keys for a specific wallet.
 fn run_show(wallet_address: Address) -> Result<()> {
-    let keys_file = load_keys_file()?;
+    let store = load_accounts_store()?;
 
     let entries: Vec<_> =
-        keys_file.keys.iter().filter(|e| e.wallet_address == wallet_address).collect();
+        store.keys.iter().filter(|e| e.wallet_address == wallet_address).collect();
 
     if shell::is_json() {
         let entries_json: Vec<_> = entries.iter().map(|e| key_entry_to_json(e)).collect();
@@ -1229,7 +1222,7 @@ struct DoctorContext {
     fee_token: Address,
 }
 
-/// Result of resolving a local registry entry for the doctor.
+/// Result of resolving a Tempo Accounts store entry for the doctor.
 #[derive(Debug)]
 struct DoctorSubject {
     root_account: Address,
@@ -1249,7 +1242,7 @@ struct DoctorCandidate {
 }
 
 impl DoctorCandidate {
-    fn from_entry(entry: tempo::KeyEntry) -> Self {
+    const fn from_entry(entry: tempo::KeyEntry) -> Self {
         Self {
             root_account: entry.wallet_address,
             key_address: key_entry_effective_key(&entry),
@@ -1265,12 +1258,6 @@ impl DoctorCandidate {
 
     fn has_inline_key(&self) -> bool {
         self.entry.as_ref().is_some_and(|entry| entry.has_inline_key())
-    }
-
-    fn is_passkey_with_inline_key(&self) -> bool {
-        self.entry
-            .as_ref()
-            .is_some_and(|entry| entry.wallet_type == WalletType::Passkey && entry.has_inline_key())
     }
 }
 
@@ -1355,7 +1342,7 @@ async fn run_doctor(
         fee_token: requested_fee_token.unwrap_or(DEFAULT_FEE_TOKEN),
     };
 
-    // Step 1: local registry lookup.
+    // Step 1: Tempo Accounts store lookup.
     let candidates = match collect_local_candidates(key_address, root_account) {
         Ok(resolution) => {
             steps.push(resolution.step);
@@ -1575,7 +1562,7 @@ async fn run_doctor(
     finalize_doctor(steps, context)
 }
 
-/// Step 1 helper: collect local registry candidates.
+/// Step 1 helper: collect Tempo Accounts store candidates.
 fn collect_local_candidates(
     key_address: Option<Address>,
     root_account: Option<Address>,
@@ -1586,15 +1573,15 @@ fn collect_local_candidates(
             .map(|(key_address, root_account)| DoctorCandidate::explicit(root_account, key_address))
     };
 
-    let Some(keys_file) = read_tempo_keys_file() else {
+    let Some(store) = read_tempo_accounts_store() else {
         if let Some(candidate) = explicit_candidate() {
             return Ok(LocalCandidateResolution {
                 step: DoctorStep::pass(
-                    "local_registry",
-                    "Local registry",
+                    "accounts_store",
+                    "Accounts store",
                     format!(
                         "could not read {}; using explicit root/key",
-                        tempo_keys_path_display()
+                        tempo_accounts_store_path_display()
                     ),
                 ),
                 candidates: vec![candidate],
@@ -1602,14 +1589,17 @@ fn collect_local_candidates(
         }
 
         return Err(DoctorStep::fail(
-            "local_registry",
-            "Local registry",
-            format!("could not read local keys file at {}", tempo_keys_path_display()),
+            "accounts_store",
+            "Accounts store",
+            format!(
+                "could not read Tempo Accounts store at {}",
+                tempo_accounts_store_path_display()
+            ),
             "run `cast tempo login` or pass both KEY_ADDRESS and --root-account",
         ));
     };
 
-    let matches: Vec<tempo::KeyEntry> = keys_file
+    let matches: Vec<tempo::KeyEntry> = store
         .keys
         .into_iter()
         .filter(|entry| match (key_address, root_account) {
@@ -1624,8 +1614,8 @@ fn collect_local_candidates(
         if let Some(candidate) = explicit_candidate() {
             return Ok(LocalCandidateResolution {
                 step: DoctorStep::pass(
-                    "local_registry",
-                    "Local registry",
+                    "accounts_store",
+                    "Accounts store",
                     format!(
                         "no local entry for key {} and root {}; using explicit root/key",
                         candidate.key_address, candidate.root_account
@@ -1643,13 +1633,13 @@ fn collect_local_candidates(
         };
         let hint = match (key_address, root_account) {
             (Some(_), None) => "pass --root-account to diagnose an explicit key/root pair",
-            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key without a local registry entry",
-            _ => "run `cast tempo login` or add the key to ~/.tempo/wallet/keys.toml",
+            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key absent from the Accounts store",
+            _ => "run `cast tempo login` to add a key to ~/.tempo/wallet/store.json",
         };
         return Err(DoctorStep::fail(
-            "local_registry",
-            "Local registry",
-            format!("no entry for {descriptor} in {}", tempo_keys_path_display()),
+            "accounts_store",
+            "Accounts store",
+            format!("no entry for {descriptor} in {}", tempo_accounts_store_path_display()),
             hint,
         ));
     }
@@ -1663,9 +1653,9 @@ fn collect_local_candidates(
 
     Ok(LocalCandidateResolution {
         step: DoctorStep::pass(
-            "local_registry",
-            "Local registry",
-            format!("{count} candidate(s) in {}", tempo_keys_path_display()),
+            "accounts_store",
+            "Accounts store",
+            format!("{count} candidate(s) in {}", tempo_accounts_store_path_display()),
         ),
         candidates,
     })
@@ -1702,13 +1692,8 @@ fn select_subject_for_chain(
 
     let has_explicit = chain_matched.iter().any(|entry| entry.explicit);
 
-    // Mirror MPP's primary-key discovery order after applying doctor-specific filters:
-    // passkey with inline key > first inline key > first matching entry.
-    let preferred_idx = chain_matched
-        .iter()
-        .position(DoctorCandidate::is_passkey_with_inline_key)
-        .or_else(|| chain_matched.iter().position(DoctorCandidate::has_inline_key))
-        .unwrap_or(0);
+    // Prefer a locally signable store entry over metadata-only records.
+    let preferred_idx = chain_matched.iter().position(DoctorCandidate::has_inline_key).unwrap_or(0);
     let entry = chain_matched.into_iter().nth(preferred_idx).expect("non-empty");
 
     Ok(DoctorSubject {
@@ -1725,8 +1710,8 @@ fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
         return DoctorStep::warn(
             "local_signing",
             "Local signing",
-            "not verified; using explicit root/key without a local registry entry",
-            "pass --tempo.access-key in the send command or add this key to ~/.tempo/wallet/keys.toml",
+            "not verified; using explicit root/key absent from the Accounts store",
+            "pass --tempo.access-key in the send command or run `cast tempo login`",
         );
     };
 
@@ -1772,7 +1757,7 @@ fn validate_pending_key_authorization(
         ));
     };
 
-    let Some(raw) = entry.key_authorization.as_deref().filter(|raw| !raw.trim().is_empty()) else {
+    let Some(signed) = entry.key_authorization.clone() else {
         return Err(DoctorStep::fail(
             "key_registration",
             "Key registration",
@@ -1783,15 +1768,6 @@ fn validate_pending_key_authorization(
             "authorize the key with `cast keychain authorize <KEY>` or refresh the local key_authorization",
         ));
     };
-
-    let signed: SignedKeyAuthorization = tempo::decode_key_authorization(raw).map_err(|err| {
-        DoctorStep::fail(
-            "key_registration",
-            "Key registration",
-            format!("local key_authorization could not be decoded: {err}"),
-            "refresh the access key with `cast tempo login`",
-        )
-    })?;
     let auth = &signed.authorization;
 
     if auth.key_id != subject.key_address {
@@ -2648,10 +2624,6 @@ async fn check_sponsorship(tempo: &TempoOpts, sender: Address) -> SponsorshipDia
     }
 }
 
-fn unix_timestamp_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
 const fn key_type_matches_authorization(key_type: &KeyType, auth_type: &AuthSignatureType) -> bool {
     matches!(
         (key_type, auth_type),
@@ -2910,6 +2882,7 @@ async fn run_key_auth_sign(
     browser: BrowserWalletOpts,
 ) -> Result<()> {
     let is_admin = args.admin;
+    let chain_id = args.chain_id;
 
     // TODO: remove this check once browser supports T5/T6 KeyAuthorization fields. Guard before
     // `browser.run()` so the browser flow never starts for unsupported authorizations.
@@ -2935,26 +2908,29 @@ async fn run_key_auth_sign(
         );
     }
 
-    let (signer, tempo_access_key) = wallet.maybe_signer().await?;
-    let signer = signer.ok_or_else(|| {
-        eyre::eyre!(
-            "a signer is required to sign key authorizations; pass a signer with \
-             --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
-        )
-    })?;
-    let signer_address = signer.address();
+    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
+    let signer_address = match (&signer, &tempo_access_key) {
+        (Some(signer), None) => signer.address(),
+        (None, Some(wallet)) => wallet.key_id()?,
+        _ => {
+            eyre::bail!(
+                "a signer is required to sign key authorizations; pass a signer with \
+                 --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+            );
+        }
+    };
 
     // Resolve the account this authorization is bound to (T6 replay protection).
     let bound_account = if let Some(access_key) = tempo_access_key.as_ref() {
         // The access key (an admin key) signs for its root, so bind to the root, not the signer.
         if let Some(explicit) = account {
             eyre::ensure!(
-                explicit == access_key.wallet_address,
+                explicit == access_key.account(),
                 "--bind-account {explicit} does not match the selected Tempo access key's root account {}",
-                access_key.wallet_address,
+                access_key.account(),
             );
         }
-        Some(access_key.wallet_address)
+        Some(access_key.account())
     } else {
         ensure_key_authorization_root_sender(signer_address, wallet.from)?;
         match account {
@@ -2967,8 +2943,16 @@ async fn run_key_auth_sign(
     let authorization = args.into_authorization(bound_account)?;
     let authorized_key_type = auth_signature_type_name(&authorization.key_type);
     let signature_hash = authorization.signature_hash();
-    let signature = signer.sign_hash(&signature_hash).await?;
-    let signed = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
+    let signature = match (signer.as_ref(), tempo_access_key.as_ref()) {
+        (Some(signer), None) => {
+            PrimitiveSignature::Secp256k1(signer.sign_hash(&signature_hash).await?)
+        }
+        (None, Some(wallet)) => wallet.sign_hash(&signature_hash).await?,
+        _ => {
+            eyre::bail!("exactly one signer is required to sign a key authorization");
+        }
+    };
+    let signed = authorization.into_signed(signature);
     print_signed_key_authorization(&signed, signature_hash, signer_address, authorized_key_type)
 }
 
@@ -3571,6 +3555,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     root_signer: KeychainRootSigner,
     before_submit: impl FnOnce() -> Result<()>,
 ) -> Result<KeychainTxOutcome> {
+    if tx_opts.tempo.sponsor_url.is_some() {
+        eyre::bail!(
+            "--sponsor-url is not supported by cast keychain; use --tempo.sponsor with \
+             --tempo.sponsor-signer or --tempo.sponsor-sig"
+        );
+    }
+
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let sponsor_fee_payer = tx_opts.tempo.sponsor;
     let expires_at = tx_opts.tempo.resolve_expires();
@@ -3626,11 +3617,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         KeychainRootSigner::Browser(browser) => {
             let chain = builder.chain();
             let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
-            if chain.is_tempo()
-                && let Some(gas) = tx.gas_limit()
-            {
-                tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
-            }
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor
                     .resolve_and_set_fee_token(
@@ -3758,6 +3744,28 @@ where
     }
 }
 
+/// Fails early with `requirement` when a Tempo precompile is not active yet: a pre-fork call
+/// would succeed as a silent no-op instead of reverting. Prefers the hardfork query and falls
+/// back to checking the precompile's code when the RPC lacks the method.
+pub(crate) async fn ensure_tempo_precompile_active<P>(
+    provider: &P,
+    hardfork: TempoHardfork,
+    precompile: Address,
+    requirement: &str,
+) -> Result<()>
+where
+    P: Provider<TempoNetwork>,
+{
+    let active = match is_tempo_hardfork_active(provider, hardfork).await {
+        Ok(active) => active,
+        Err(_) => !provider.get_code_at(precompile).await?.is_empty(),
+    };
+    if !active {
+        eyre::bail!("{requirement}");
+    }
+    Ok(())
+}
+
 async fn anvil_tempo_hardfork_active<P>(
     provider: &P,
     hardfork: TempoHardfork,
@@ -3786,11 +3794,11 @@ fn resolve_key_metadata(
     key_address: Address,
     root_account: Option<Address>,
 ) -> Result<KeyMetadata> {
-    let keys_file = read_tempo_keys_file();
+    let store = read_tempo_accounts_store();
 
     if let Some(root_account) = root_account {
-        if let Some(keys_file) = keys_file.as_ref()
-            && let Some(entry) = keys_file.keys.iter().find(|entry| {
+        if let Some(store) = store.as_ref()
+            && let Some(entry) = store.keys.iter().find(|entry| {
                 entry.wallet_address == root_account
                     && key_entry_effective_key(entry) == key_address
             })
@@ -3801,23 +3809,20 @@ fn resolve_key_metadata(
         return Ok(KeyMetadata { root_account, key_type: None, limits: Vec::new() });
     }
 
-    let Some(keys_file) = keys_file.as_ref() else {
+    let Some(store) = store.as_ref() else {
         eyre::bail!(
-            "key {key_address} was not found because the local keys file could not be read at {}; pass --root-account",
-            tempo_keys_path_display()
+            "key {key_address} was not found because the Tempo Accounts store could not be read at {}; pass --root-account",
+            tempo_accounts_store_path_display()
         );
     };
 
-    let matches: Vec<_> = keys_file
-        .keys
-        .iter()
-        .filter(|entry| key_entry_effective_key(entry) == key_address)
-        .collect();
+    let matches: Vec<_> =
+        store.keys.iter().filter(|entry| key_entry_effective_key(entry) == key_address).collect();
 
     if matches.is_empty() {
         eyre::bail!(
             "key {key_address} was not found in {}; pass --root-account",
-            tempo_keys_path_display()
+            tempo_accounts_store_path_display()
         );
     }
 
@@ -3825,7 +3830,7 @@ fn resolve_key_metadata(
     if matches.iter().any(|entry| entry.wallet_address != root_account) {
         eyre::bail!(
             "key {key_address} matches multiple root accounts in {}; pass --root-account",
-            tempo_keys_path_display()
+            tempo_accounts_store_path_display()
         );
     }
 
@@ -3834,8 +3839,8 @@ fn resolve_key_metadata(
     Ok(key_metadata_from_entry(entry))
 }
 
-fn key_entry_effective_key(entry: &tempo::KeyEntry) -> Address {
-    entry.key_address.unwrap_or(entry.wallet_address)
+const fn key_entry_effective_key(entry: &tempo::KeyEntry) -> Address {
+    entry.key_address
 }
 
 fn key_metadata_from_entry(entry: &tempo::KeyEntry) -> KeyMetadata {
@@ -3850,17 +3855,17 @@ fn key_metadata_from_entry(entry: &tempo::KeyEntry) -> KeyMetadata {
     }
 }
 
-fn tempo_keys_path_display() -> String {
-    let Some(path) = tempo_keys_path() else {
+fn tempo_accounts_store_path_display() -> String {
+    let Some(path) = tempo_accounts_store_path() else {
         return "(unknown)".to_string();
     };
 
     if let Some(home) =
         std::env::var_os("HOME").filter(|home| !home.is_empty()).map(std::path::PathBuf::from)
         && let Ok(relative) = path.strip_prefix(&home)
-        && relative == std::path::Path::new(".tempo/wallet/keys.toml")
+        && relative == std::path::Path::new(".tempo/wallet/store.json")
     {
-        return "~/.tempo/wallet/keys.toml".to_string();
+        return "~/.tempo/wallet/store.json".to_string();
     }
 
     path.display().to_string()
@@ -4069,7 +4074,8 @@ fn format_timestamp_iso(timestamp: u64) -> String {
 }
 
 fn format_relative_timestamp(timestamp: u64) -> String {
-    format_relative_timestamp_from(timestamp, unix_timestamp_now())
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    format_relative_timestamp_from(timestamp, now)
 }
 
 fn format_relative_timestamp_from(timestamp: u64, now: u64) -> String {
@@ -4108,35 +4114,27 @@ fn format_expiry(expiry: u64) -> String {
         .unwrap_or_else(|| expiry.to_string())
 }
 
-fn load_keys_file() -> Result<KeysFile> {
-    match read_tempo_keys_file() {
+fn load_accounts_store() -> Result<AccountsStoreView> {
+    match read_tempo_accounts_store() {
         Some(f) => Ok(f),
         None => {
-            let path = tempo_keys_path()
+            let path = tempo_accounts_store_path()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "(unknown)".to_string());
-            eyre::bail!("could not read keys file at {path}");
+            eyre::bail!("could not read Tempo Accounts store at {path}");
         }
     }
 }
 
 fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
     sh_println!("Wallet:       {}", entry.wallet_address)?;
-    sh_println!("Wallet Type:  {}", wallet_type_name(&entry.wallet_type))?;
     sh_println!("Chain ID:     {}", entry.chain_id)?;
     sh_println!("Key Type:     {}", key_type_name(&entry.key_type))?;
-
-    if let Some(key_address) = entry.key_address {
-        sh_println!("Key Address:  {key_address}")?;
-
-        if key_address == entry.wallet_address {
-            sh_println!("Mode:         direct (EOA)")?;
-        } else {
-            sh_println!("Mode:         keychain (access key)")?;
-        }
-    } else {
-        sh_println!("Key Address:  (not set)")?;
+    sh_println!("Key Address:  {}", entry.key_address)?;
+    if entry.key_address == entry.wallet_address {
         sh_println!("Mode:         direct (EOA)")?;
+    } else {
+        sh_println!("Mode:         keychain (access key)")?;
     }
 
     if let Some(expiry) = entry.expiry {
@@ -4173,7 +4171,7 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
 }
 
 fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
-    let is_direct = entry.key_address.is_none_or(|key_address| key_address == entry.wallet_address);
+    let is_direct = entry.key_address == entry.wallet_address;
     let decoded = decoded_entry_key_authorization(entry);
     let authorization_witness =
         decoded.as_ref().and_then(|signed| signed.authorization.witness()).map(|w| w.to_string());
@@ -4198,10 +4196,9 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
 
     serde_json::json!({
         "wallet_address": entry.wallet_address.to_string(),
-        "wallet_type": wallet_type_name(&entry.wallet_type),
         "chain_id": entry.chain_id,
         "key_type": key_type_name(&entry.key_type),
-        "key_address": entry.key_address.map(|a: Address| a.to_string()),
+        "key_address": entry.key_address.to_string(),
         "mode": if is_direct { "direct" } else { "keychain" },
         "expiry": entry.expiry,
         "expiry_human": entry.expiry.map(format_expiry),
@@ -4221,7 +4218,7 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
 /// the key as a T6 admin key, otherwise `access`. This reflects only locally available data; use
 /// `keychain is-admin` for the authoritative on-chain role.
 fn local_key_role(entry: &tempo::KeyEntry, is_admin: bool) -> &'static str {
-    let is_direct = entry.key_address.is_none_or(|key_address| key_address == entry.wallet_address);
+    let is_direct = entry.key_address == entry.wallet_address;
     if is_direct {
         "root"
     } else if is_admin {
@@ -4232,11 +4229,7 @@ fn local_key_role(entry: &tempo::KeyEntry, is_admin: bool) -> &'static str {
 }
 
 fn decoded_entry_key_authorization(entry: &tempo::KeyEntry) -> Option<SignedKeyAuthorization> {
-    let raw = entry.key_authorization.as_deref()?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    tempo::decode_key_authorization(raw).ok()
+    entry.key_authorization.clone()
 }
 
 #[cfg(test)]
@@ -4436,6 +4429,10 @@ mod tests {
         Address::from([byte; 20])
     }
 
+    fn stored_entry(wallet: Address, chain_id: u64, key: Address) -> tempo::KeyEntry {
+        tempo::KeyEntry::new(wallet, chain_id, KeyType::Secp256k1, key)
+    }
+
     fn signed_authorization_with_limits(
         limits: Option<Vec<AuthTokenLimit>>,
     ) -> SignedKeyAuthorization {
@@ -4470,12 +4467,11 @@ mod tests {
                 .with_witness(witness);
         let signed = authorization.into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
         let encoded = encode_key_authorization(&signed);
-        let hex = hex::encode_prefixed(&encoded);
 
         let decoded = SignedKeyAuthorization::decode(&mut encoded.as_slice()).unwrap();
         assert_eq!(decoded.authorization.witness(), Some(witness));
 
-        let entry = tempo::KeyEntry { key_authorization: Some(hex), ..Default::default() };
+        let entry = tempo::KeyEntry::default().with_key_authorization(signed);
         let json = key_entry_to_json(&entry);
         assert_eq!(json["authorization_witness"], witness.to_string());
     }
@@ -4690,18 +4686,10 @@ mod tests {
         let wallet = target_addr(0x01);
         let key = target_addr(0x02);
 
-        let root = tempo::KeyEntry {
-            wallet_address: wallet,
-            key_address: Some(wallet),
-            ..Default::default()
-        };
+        let root = stored_entry(wallet, 0, wallet);
         assert_eq!(local_key_role(&root, false), "root");
 
-        let access = tempo::KeyEntry {
-            wallet_address: wallet,
-            key_address: Some(key),
-            ..Default::default()
-        };
+        let access = stored_entry(wallet, 0, key);
         assert_eq!(local_key_role(&access, false), "limited");
         assert_eq!(local_key_role(&access, true), "admin");
     }
@@ -4988,13 +4976,7 @@ mod tests {
     fn test_select_subject_uses_explicit_root_key_when_local_entry_is_wrong_chain() {
         let root = target_addr(0x11);
         let key = target_addr(0x22);
-        let local = tempo::KeyEntry {
-            wallet_address: root,
-            chain_id: 1,
-            key_address: Some(key),
-            key: Some("0xdeadbeef".to_string()),
-            ..Default::default()
-        };
+        let local = stored_entry(root, 1, key).with_locally_signable(true);
 
         let subject = select_subject_for_chain(
             vec![DoctorCandidate::from_entry(local), DoctorCandidate::explicit(root, key)],
@@ -5009,48 +4991,29 @@ mod tests {
     }
 
     #[test]
-    fn test_select_subject_mirrors_mpp_passkey_inline_priority() {
+    fn test_select_subject_prefers_locally_signable_entry() {
         let root = target_addr(0x11);
-        let local_key = target_addr(0x22);
-        let passkey_key = target_addr(0x33);
-        let local = tempo::KeyEntry {
-            wallet_address: root,
-            chain_id: 31337,
-            key_address: Some(local_key),
-            key: Some("0xlocal".to_string()),
-            wallet_type: WalletType::Local,
-            ..Default::default()
-        };
-        let passkey = tempo::KeyEntry {
-            wallet_address: root,
-            chain_id: 31337,
-            key_address: Some(passkey_key),
-            key: Some("0xpasskey".to_string()),
-            wallet_type: WalletType::Passkey,
-            ..Default::default()
-        };
+        let metadata_only_key = target_addr(0x22);
+        let signable_key = target_addr(0x33);
+        let metadata_only = stored_entry(root, 31337, metadata_only_key);
+        let signable = stored_entry(root, 31337, signable_key).with_locally_signable(true);
 
         let subject = select_subject_for_chain(
-            vec![DoctorCandidate::from_entry(local), DoctorCandidate::from_entry(passkey)],
+            vec![DoctorCandidate::from_entry(metadata_only), DoctorCandidate::from_entry(signable)],
             31337,
             Some(root),
         )
         .unwrap();
 
-        assert_eq!(subject.key_address, passkey_key);
+        assert_eq!(subject.key_address, signable_key);
     }
 
     #[test]
     fn test_select_subject_keeps_explicit_stale_entry_for_authorization_metadata() {
         let root = target_addr(0x11);
         let key = target_addr(0x22);
-        let local = tempo::KeyEntry {
-            wallet_address: root,
-            chain_id: 31337,
-            key_address: Some(key),
-            key_authorization: Some("0xdeadbeef".to_string()),
-            ..Default::default()
-        };
+        let local = stored_entry(root, 31337, key)
+            .with_key_authorization(signed_authorization_with_limits(None));
 
         let subject = select_subject_for_chain(
             vec![DoctorCandidate::from_entry(local), DoctorCandidate::explicit(root, key)],
@@ -5076,12 +5039,7 @@ mod tests {
             root_account: root,
             key_address: key,
             explicit: false,
-            entry: Some(tempo::KeyEntry {
-                wallet_address: root,
-                chain_id: 31337,
-                key_address: Some(key),
-                ..Default::default()
-            }),
+            entry: Some(stored_entry(root, 31337, key)),
         };
 
         let signing = check_local_signing_readiness(&subject);
@@ -5096,13 +5054,7 @@ mod tests {
             root_account: root,
             key_address: key,
             explicit: false,
-            entry: Some(tempo::KeyEntry {
-                wallet_address: root,
-                chain_id: 31337,
-                key_address: Some(key),
-                key: Some("0xdeadbeef".to_string()),
-                ..Default::default()
-            }),
+            entry: Some(stored_entry(root, 31337, key).with_locally_signable(true)),
         };
 
         let signing = check_local_signing_readiness(&subject);

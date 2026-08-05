@@ -1,4 +1,4 @@
-use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
+use crate::sol::SolLint;
 
 mod block_timestamp;
 use block_timestamp::BLOCK_TIMESTAMP;

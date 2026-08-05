@@ -5,8 +5,8 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{
-        FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig,
-        is_generated_symbolic_regression_contract,
+        FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment, TestContract,
+        TestFunctionMatcher, TestRunnerConfig, is_generated_symbolic_regression_contract,
     },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
@@ -29,14 +29,16 @@ use alloy_primitives::{
     Address, B256, Bytes, Selector, U256, address, hex, keccak256, map::HashMap,
 };
 use eyre::Result;
-use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
+use foundry_common::{
+    LIBRARY_DEPLOYER, TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress,
+};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
 };
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
-    core::evm::FoundryEvmNetwork,
+    core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
@@ -60,6 +62,7 @@ use foundry_evm::{
         },
         strategies::EvmFuzzState,
     },
+    inspectors::cheatcodes::Vm::AccountAccess,
     revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
@@ -85,13 +88,6 @@ use std::{
 };
 use tokio::signal;
 use tracing::Span;
-
-/// When running tests, we deploy all external libraries present in the project. To avoid additional
-/// libraries affecting nonces of senders used in tests, we are using separate address to
-/// predeploy libraries.
-///
-/// `address(uint160(uint256(keccak256("foundry library deployer"))))`
-pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
@@ -733,27 +729,131 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
         let mut result = TestSetup::default();
-        for code in &self.mcr.libs_to_deploy {
-            let deploy_result = self.executor.deploy(
-                LIBRARY_DEPLOYER,
-                code.clone(),
-                U256::ZERO,
-                Some(&self.mcr.revert_decoder),
-            );
+        let mut pending_account_diffs = Vec::new();
+        match self.mcr.library_deployment {
+            LibraryDeployment::Nonce => {
+                for (nonce, code) in self.mcr.libs_to_deploy.iter().enumerate() {
+                    // Libraries are linked from nonce zero in the same order they are deployed.
+                    let expected_address = LIBRARY_DEPLOYER.create(nonce as u64);
+                    let recording_library_deployment =
+                        self.contract.library_addresses.contains(&expected_address)
+                            && self
+                                .executor
+                                .inspector_mut()
+                                .cheatcodes
+                                .as_deref_mut()
+                                .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
+                    let deploy_result = self.executor.deploy(
+                        LIBRARY_DEPLOYER,
+                        code.clone(),
+                        U256::ZERO,
+                        Some(&self.mcr.revert_decoder),
+                    );
+                    let recorded_account_diffs = if recording_library_deployment {
+                        self.finish_library_deployment_recording()
+                    } else {
+                        Vec::new()
+                    };
 
-            // Record deployed library address.
-            if let Ok(deployed) = &deploy_result {
-                result.deployed_libs.push(deployed.address);
+                    if let Ok(deployed) = &deploy_result {
+                        result.deployed_libs.push(deployed.address);
+                        if self.contract.library_addresses.contains(&deployed.address) {
+                            pending_account_diffs.extend(recorded_account_diffs);
+                        }
+                    }
+
+                    let (raw, reason) =
+                        RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
+                    result.extend(raw, TraceKind::Deployment);
+                    if reason.is_some() {
+                        debug!(?reason, "deployment of library failed");
+                        result.reason = reason;
+                        return Ok(result);
+                    }
+                }
             }
+            LibraryDeployment::Create2 { deployer, salt } => {
+                // Foundry only knows how to install the canonical factory locally. A custom
+                // factory is usable only when it already exists in fork state. Tempo also
+                // provides the factory as a predeploy, which must not be deployed again.
+                if deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
+                    && !self.evm_opts.networks.is_tempo()
+                {
+                    self.executor.deploy_create2_deployer()?;
+                }
+                for code in &self.mcr.libs_to_deploy {
+                    let address = deployer.create2_from_code(salt, code);
+                    if self.executor.is_empty_code(address)? {
+                        let recording_library_deployment = self
+                            .contract
+                            .library_addresses
+                            .contains(&address)
+                            && self
+                                .executor
+                                .inspector_mut()
+                                .cheatcodes
+                                .as_deref_mut()
+                                .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
+                        let calldata = [salt.as_slice(), code.as_ref()].concat().into();
+                        let raw = self.executor.transact_raw(
+                            LIBRARY_DEPLOYER,
+                            deployer,
+                            calldata,
+                            U256::ZERO,
+                        );
+                        let recorded_account_diffs = if recording_library_deployment {
+                            self.finish_library_deployment_recording()
+                        } else {
+                            Vec::new()
+                        };
+                        let raw = raw?;
+                        let (raw, reason) = if raw.reverted {
+                            RawCallResult::from_evm_result(Err(
+                                raw.into_evm_error(Some(&self.mcr.revert_decoder))
+                            ))?
+                        } else {
+                            (raw, None)
+                        };
+                        result.extend(raw, TraceKind::Deployment);
+                        if reason.is_some() {
+                            debug!(?reason, "CREATE2 deployment of library failed");
+                            result.reason = reason;
+                            return Ok(result);
+                        }
+                        if self.executor.is_empty_code(address)? {
+                            result.reason = Some(format!(
+                                "CREATE2 library deployment succeeded but no code was found at {address}"
+                            ));
+                            return Ok(result);
+                        }
+                        pending_account_diffs.extend(recorded_account_diffs);
+                    }
+                    self.executor.backend_mut().add_persistent_account(address);
+                    result.deployed_libs.push(address);
+                }
 
-            let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-            result.extend(raw, TraceKind::Deployment);
-            if reason.is_some() {
-                debug!(?reason, "deployment of library failed");
-                result.reason = reason;
-                return Ok(result);
+                // Factory calls are test harness setup and must not be observable through the
+                // last-call gas cheatcodes.
+                if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
+                    cheats.gas_metering.last_call_gas = None;
+                    cheats.gas_metering.last_frame_gas = None;
+                }
             }
         }
+        if !pending_account_diffs.is_empty()
+            && let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_deref_mut()
+        {
+            cheats.set_pending_account_diffs(pending_account_diffs);
+        }
+
+        // Configured libraries may already exist and are not present in `libs_to_deploy`.
+        for &address in &self.mcr.library_addresses {
+            if !self.executor.is_empty_code(address)? {
+                result.deployed_libs.push(address);
+            }
+        }
+        result.deployed_libs.sort_unstable();
+        result.deployed_libs.dedup();
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
         result.address = address;
@@ -788,7 +888,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(CALLER, self.initial_balance())?;
         self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance())?;
 
-        self.executor.deploy_create2_deployer()?;
+        if matches!(self.mcr.library_deployment, LibraryDeployment::Nonce)
+            && !self.evm_opts.networks.is_tempo()
+        {
+            self.executor.deploy_create2_deployer()?;
+        }
 
         // Optionally call the `setUp` function
         if call_setup {
@@ -804,6 +908,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
     fn initial_balance(&self) -> U256 {
         self.evm_opts.initial_balance
+    }
+
+    fn finish_library_deployment_recording(&mut self) -> Vec<AccountAccess> {
+        self.executor
+            .inspector_mut()
+            .cheatcodes
+            .as_deref_mut()
+            .map(|cheats| cheats.stop_internal_state_diff_recording())
+            .unwrap_or_default()
     }
 
     /// Configures this runner with the inline configuration for the contract.
@@ -1024,6 +1137,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 invalid_invariants.into_iter().collect(),
                 warnings,
             );
+        }
+
+        for invariant in &invariant_fns {
+            if invariant.outputs.len() == 1 && invariant.outputs[0].ty == "bool" {
+                warnings.push(format!(
+                    "Invariant function `{}` returns `bool`, but its return value is ignored; use assertions or revert to indicate failure.",
+                    invariant.signature()
+                ));
+            }
         }
 
         // Invariant testing requires tracing to figure out what contracts were created.
@@ -1390,11 +1512,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
     const fn revert_decoder(&self) -> &'a RevertDecoder {
         &self.cr.mcr.revert_decoder
-    }
-
-    /// Returns whether verbose symbolic diagnostics should be rendered after progress clears.
-    fn should_defer_symbolic_diagnostics(&self) -> bool {
-        self.cr.progress.is_some() && self.config.symbolic.dump_smt
     }
 
     fn fuzz_minimize_target_id(&self, test_name: &str) -> String {
@@ -2437,7 +2554,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
-        if self.should_defer_symbolic_diagnostics() {
+        // Progress rendering must finish before verbose SMT diagnostics are printed.
+        if self.cr.progress.is_some() && self.config.symbolic.dump_smt {
             symbolic.capture_diagnostics();
         }
         let result = symbolic.run(SymbolicRunInput {
@@ -3638,6 +3756,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &invariant_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: None,
@@ -4775,6 +4894,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &fuzz_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: Some(StatelessReplayTarget {
@@ -5136,7 +5256,6 @@ struct InvariantPersistedFailure {
     failure_site: Option<SymbolicInvariantFailureSite>,
 }
 
-type CheckSequenceResult = eyre::Result<CheckSequenceOutcome>;
 type HandlerFailureKey = (Address, Selector);
 type HandlerFailureStorageKey = (Address, Selector, B256);
 type HandlerFailureMap = std::collections::HashMap<HandlerFailureKey, InvariantFuzzError>;
@@ -5207,11 +5326,6 @@ fn invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
     canonicalized(failure_dir.join("invariants").join(&invariant.name))
 }
 
-/// Returns the legacy invariant failure cache path.
-fn legacy_invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
-    canonicalized(failure_dir.join(&invariant.name))
-}
-
 /// Loads a persisted invariant failure from the new cache path, falling back to the legacy path.
 fn persisted_invariant_failure(
     failure_dir: &Path,
@@ -5220,7 +5334,8 @@ fn persisted_invariant_failure(
 ) -> Option<InvariantPersistedFailure> {
     persisted_call_sequence(invariant_failure_file(failure_dir, invariant).as_path(), current_settings)
         .or_else(|| {
-            let legacy_path = legacy_invariant_failure_file(failure_dir, invariant);
+            // Older Foundry versions stored invariant failures directly under the failure root.
+            let legacy_path = canonicalized(failure_dir.join(&invariant.name));
             let persisted = persisted_call_sequence(legacy_path.as_path(), current_settings)?;
             let _ = sh_warn!(
                 "Using legacy invariant failure cache at {}; new failures will be persisted under {}/invariants.",
@@ -5316,7 +5431,7 @@ fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
     call_sequence: &mut [BaseCounterExample],
     expect_assertion_failure: bool,
     storage: &[SymbolicStorageAssignment],
-) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
+) -> (Vec<BasicTxDetails>, eyre::Result<CheckSequenceOutcome>) {
     let txes = base_counterexamples_to_txes(ctx, call_sequence);
     if let Err(err) = apply_symbolic_storage_assignments(&mut executor, storage) {
         return (txes, Err(err));

@@ -40,15 +40,25 @@ pub struct EvmFuzzState {
     pub deployed_libs: Vec<Address>,
 }
 
-/// Worker-local mutable fuzz dictionary used by invariant campaigns.
+/// Worker-local fuzz state.
+///
+/// Stateless workers share the immutable campaign seed, while invariant workers own an isolated
+/// mutable dictionary. The latter deliberately uses `Rc<RefCell<_>>`: worker state is not shared
+/// across threads.
 #[derive(Clone, Debug)]
-pub struct InvariantFuzzState {
-    inner: Rc<RefCell<FuzzDictionary>>,
+pub struct FuzzState {
+    inner: FuzzStateInner,
     /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
     pub deployed_libs: Vec<Address>,
 }
 
-pub trait FuzzStateReader: Clone + 'static {
+#[derive(Clone, Debug)]
+enum FuzzStateInner {
+    Stateless(Arc<FuzzDictionary>),
+    Invariant(Rc<RefCell<FuzzDictionary>>),
+}
+
+pub(crate) trait DictionaryRead: Clone + 'static {
     fn deployed_libs(&self) -> &[Address];
     fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R;
 }
@@ -84,9 +94,16 @@ impl EvmFuzzState {
         Self { inner: Arc::new(dictionary), deployed_libs: deployed_libs.to_vec() }
     }
 
-    pub fn into_invariant(self) -> InvariantFuzzState {
-        InvariantFuzzState {
-            inner: Rc::new(RefCell::new((*self.inner).clone())),
+    pub fn stateless_worker(&self) -> FuzzState {
+        FuzzState {
+            inner: FuzzStateInner::Stateless(Arc::clone(&self.inner)),
+            deployed_libs: self.deployed_libs.clone(),
+        }
+    }
+
+    pub fn into_invariant(self) -> FuzzState {
+        FuzzState {
+            inner: FuzzStateInner::Invariant(Rc::new(RefCell::new((*self.inner).clone()))),
             deployed_libs: self.deployed_libs,
         }
     }
@@ -114,26 +131,17 @@ impl EvmFuzzState {
     }
 }
 
-impl FuzzStateReader for EvmFuzzState {
-    fn deployed_libs(&self) -> &[Address] {
-        &self.deployed_libs
-    }
-
-    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
-        f(&self.inner)
-    }
-}
-
-impl InvariantFuzzState {
+impl FuzzState {
     pub fn snapshot(&self) -> EvmFuzzState {
         EvmFuzzState {
-            inner: Arc::new(self.inner.borrow().clone()),
+            inner: Arc::new(self.with_dictionary(Clone::clone)),
             deployed_libs: self.deployed_libs.clone(),
         }
     }
 
     pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
-        let mut dict = self.inner.borrow_mut();
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        let mut dict = inner.borrow_mut();
         for value in values {
             dict.insert_value(value);
         }
@@ -144,13 +152,14 @@ impl InvariantFuzzState {
             return;
         }
 
-        let mut dict = self.inner.borrow_mut();
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        let mut dict = inner.borrow_mut();
         for value in fuzzer.collected_values.drain(..) {
             dict.insert_value(value);
         }
     }
 
-    /// Collects state changes from a [StateChangeset] and logs into an [InvariantFuzzState]
+    /// Collects state changes from a [StateChangeset] and logs into a worker state
     /// according to the given [FuzzDictionaryConfig].
     #[allow(clippy::too_many_arguments)]
     pub fn collect_values_from_call(
@@ -167,7 +176,8 @@ impl InvariantFuzzState {
             return;
         }
 
-        let mut dict = self.inner.borrow_mut();
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        let mut dict = inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
         let (target_contract, target_function) = if logs.is_empty() && result.is_empty() {
             (None, None)
@@ -187,7 +197,8 @@ impl InvariantFuzzState {
     /// Values are inserted into both persistent state values (survive reverts) and typed
     /// sample buckets (for ABI-aware mutation).
     pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u8, B256)>) {
-        let mut dict = self.inner.borrow_mut();
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        let mut dict = inner.borrow_mut();
         for (width, value) in values {
             dict.insert_persistent_value(value);
             dict.insert_typed_cmp_value(width, value);
@@ -199,26 +210,49 @@ impl InvariantFuzzState {
     /// Should be called between fuzz/invariant runs to avoid accumulating data derived from fuzz
     /// inputs.
     pub fn revert(&self) {
-        self.inner.borrow_mut().revert();
+        if let FuzzStateInner::Invariant(inner) = &self.inner {
+            inner.borrow_mut().revert();
+        }
     }
 
     /// Logs stats about the current state.
     pub fn log_stats(&self) {
-        self.inner.borrow().log_stats();
+        self.with_dictionary(FuzzDictionary::log_stats);
+    }
+
+    pub fn deployed_libs(&self) -> &[Address] {
+        &self.deployed_libs
+    }
+
+    pub fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
+        match &self.inner {
+            FuzzStateInner::Stateless(inner) => f(inner),
+            FuzzStateInner::Invariant(inner) => f(&inner.borrow()),
+        }
     }
 }
 
-impl FuzzStateReader for InvariantFuzzState {
+impl DictionaryRead for FuzzState {
+    fn deployed_libs(&self) -> &[Address] {
+        self.deployed_libs()
+    }
+
+    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
+        self.with_dictionary(f)
+    }
+}
+
+impl DictionaryRead for EvmFuzzState {
     fn deployed_libs(&self) -> &[Address] {
         &self.deployed_libs
     }
 
     fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
-        f(&self.inner.borrow())
+        f(&self.inner)
     }
 }
 
-impl From<EvmFuzzState> for InvariantFuzzState {
+impl From<EvmFuzzState> for FuzzState {
     fn from(state: EvmFuzzState) -> Self {
         state.into_invariant()
     }
@@ -288,7 +322,8 @@ impl Default for FuzzDictionary {
 }
 
 impl FuzzDictionary {
-    pub fn new(config: FuzzDictionaryConfig) -> Self {
+    pub fn new(mut config: FuzzDictionaryConfig) -> Self {
+        config.max_fuzz_dictionary_values = config.max_fuzz_dictionary_values.max(1);
         let mut dictionary = Self {
             config,
             samples_seeded: false,
@@ -307,13 +342,9 @@ impl FuzzDictionary {
             misses: Default::default(),
             hits: Default::default(),
         };
-        dictionary.prefill();
+        // Zero is a useful default seed even before state or literals populate the dictionary.
+        dictionary.insert_value(B256::ZERO);
         dictionary
-    }
-
-    /// Insert common values into the dictionary at initialization.
-    fn prefill(&mut self) {
-        self.insert_value(B256::ZERO);
     }
 
     /// Seeds `sample_values` with all words from the [`LiteralsDictionary`].
@@ -622,8 +653,24 @@ impl FuzzDictionary {
         if self.persistent_values.len() >= MAX_PERSISTENT_VALUES {
             return;
         }
-        if self.persistent_values.insert(value) && self.state_values.insert(value) {
-            self.db_state_values += 1;
+        if !self.persistent_values.insert(value) {
+            return;
+        }
+        // `revert()` truncates `state_values` down to the first `db_state_values` entries, so the
+        // value must be placed inside that prefix; a plain `insert` appends past it and would be
+        // truncated at the end of the run.
+        match self.state_values.get_index_of(&value) {
+            // Already inside the persisted prefix.
+            Some(index) if index < self.db_state_values => {}
+            // Collected as an ephemeral value earlier in this run: move it into the prefix.
+            Some(index) => {
+                self.state_values.move_index(index, self.db_state_values);
+                self.db_state_values += 1;
+            }
+            None => {
+                self.state_values.shift_insert(self.db_state_values, value);
+                self.db_state_values += 1;
+            }
         }
     }
 
@@ -853,6 +900,19 @@ mod tests {
     }
 
     #[test]
+    fn zero_value_capacity_keeps_only_required_seed() {
+        let mut dictionary = FuzzDictionary::new(FuzzDictionaryConfig {
+            max_fuzz_dictionary_values: 0,
+            ..Default::default()
+        });
+
+        assert_eq!(dictionary.config.max_fuzz_dictionary_values, 1);
+        assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
+        assert!(!dictionary.insert_value(B256::from(U256::from(1))));
+        assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
+    }
+
+    #[test]
     fn duplicate_push_values_in_same_bytecode_are_collected_once() {
         let mut dictionary = FuzzDictionary::default();
 
@@ -931,6 +991,48 @@ mod tests {
     }
 
     #[test]
+    fn persistent_value_survives_revert() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.db_state_values = dictionary.state_values.len();
+
+        let ephemeral = B256::from(U256::from(0xbeef_u64));
+        let persistent = B256::from(U256::from(0xcafe_u64));
+        dictionary.insert_value(ephemeral);
+        dictionary.insert_persistent_value(persistent);
+
+        dictionary.revert();
+
+        assert!(dictionary.state_values.contains(&persistent));
+        assert!(!dictionary.state_values.contains(&ephemeral));
+        assert!(dictionary.db_state_values <= dictionary.state_values.len());
+
+        // Values already inside the persisted prefix are left untouched.
+        let watermark = dictionary.db_state_values;
+        let len = dictionary.state_values.len();
+        dictionary.insert_persistent_value(B256::ZERO);
+        assert_eq!(dictionary.db_state_values, watermark);
+        assert_eq!(dictionary.state_values.len(), len);
+    }
+
+    #[test]
+    fn persistent_value_promotes_existing_ephemeral() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.db_state_values = dictionary.state_values.len();
+
+        let ephemeral = B256::from(U256::from(0xbeef_u64));
+        let value = B256::from(U256::from(0xdead_u64));
+        dictionary.insert_value(ephemeral);
+        dictionary.insert_value(value);
+        dictionary.insert_persistent_value(value);
+
+        dictionary.revert();
+
+        assert!(dictionary.state_values.contains(&value));
+        assert!(!dictionary.state_values.contains(&ephemeral));
+        assert!(dictionary.db_state_values <= dictionary.state_values.len());
+    }
+
+    #[test]
     fn history_storage_account_is_excluded_from_initial_dictionary() {
         let mut db = CacheDB::<EmptyDB>::default();
         let code = Bytecode::new_raw(Bytes::from_static(&[0x61, 0x01, 0x23, 0x00]));
@@ -952,6 +1054,32 @@ mod tests {
             assert!(!dict.values().contains(&B256::from(U256::from(0x123))));
             assert!(!dict.values().contains(&B256::from(U256::from(7))));
             assert!(!dict.values().contains(&B256::from(U256::from(0xdead_u64))));
+        });
+    }
+
+    #[test]
+    fn worker_modes_share_seed_but_isolate_feedback() {
+        let seed = EvmFuzzState::test();
+        let readonly = seed.stateless_worker();
+        let first = seed.clone().into_invariant();
+        let second = seed.into_invariant();
+        let transient = B256::from(U256::from(0xdead_u64));
+        let persistent = B256::from(U256::from(0xbeef_u64));
+
+        readonly.collect_values([transient]);
+        assert!(!readonly.with_dictionary(|dict| dict.state_values.contains(&transient)));
+
+        first.collect_values([transient]);
+        first.collect_typed_cmp_values([(8, persistent)]);
+        assert!(first.with_dictionary(|dict| dict.state_values.contains(&transient)));
+        assert!(!second.with_dictionary(|dict| dict.state_values.contains(&transient)));
+
+        first.revert();
+        assert!(!first.with_dictionary(|dict| dict.state_values.contains(&transient)));
+        first.with_dictionary(|dict| {
+            assert!(dict.state_values.contains(&persistent));
+            assert!(dict.persistent_values.contains(&persistent));
+            assert!(dict.sample_values[&DynSolType::Uint(8)].contains(&persistent));
         });
     }
 }

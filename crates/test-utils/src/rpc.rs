@@ -182,7 +182,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     }
 
     if matches!(chain, BinanceSmartChainTestnet) {
-        return "https://bsc-testnet-rpc.publicnode.com".to_string();
+        return "https://bsc-testnet.bnbchain.org".to_string();
     }
 
     if matches!(chain, Celo) {
@@ -194,6 +194,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         if !rpc_url.is_empty() {
             return rpc_url;
         }
+        return "https://ethereum-sepolia-rpc.publicnode.com".to_string();
     }
 
     if matches!(chain, Arbitrum) {

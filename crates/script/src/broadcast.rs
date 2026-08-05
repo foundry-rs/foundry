@@ -14,9 +14,10 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_eips::{BlockId, eip2718::Encodable2718};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
-    EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
+    AnyNetwork, EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse,
+    TransactionBuilder,
 };
 use alloy_primitives::{
     Address, TxHash, TxKind, U256, keccak256,
@@ -35,22 +36,18 @@ use foundry_common::{
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
-        try_get_http_provider,
     },
     shell,
-    tempo::{
-        KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
-        maybe_print_fee_token, resolve_and_set_fee_token, tempo_home,
-    },
+    tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Config;
 use foundry_evm::core::{
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvmNetwork, TempoEvmNetwork},
+    fork::ResolvedFork,
+    opts::EvmOpts,
 };
-use foundry_wallets::{
-    TempoAccessKeyConfig, WalletSigner, tempo::TempoLookup, wallet_browser::signer::BrowserSigner,
-};
+use foundry_wallets::{TempoAccountsWallet, wallet_browser::signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -61,6 +58,7 @@ pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
+    tempo_browser: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -69,24 +67,46 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
+    let request =
+        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
     tx.set_gas_limit(
-        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
             / 100,
     );
     Ok(())
 }
 
-pub async fn next_nonce(
+/// Returns `caller`'s nonce at an already resolved fork block.
+pub(super) async fn next_nonce_resolved(
     caller: Address,
-    provider_url: &str,
-    block_number: Option<u64>,
+    evm_opts: &EvmOpts,
+    fork: &ResolvedFork,
 ) -> eyre::Result<u64> {
-    let provider = try_get_http_provider(provider_url)
-        .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
+    let provider = evm_opts.provider_for_resolved_fork::<AnyNetwork>(fork)?;
+    Ok(provider.get_transaction_count(caller).block_id(fork.exact_block_id()).await?)
+}
 
-    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
-    Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
+fn reject_access_key_create<N: Network>(
+    tx: &N::TransactionRequest,
+    uses_access_key: bool,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if uses_access_key && tx.tempo_calls().iter().any(|(to, _)| to.is_create()) {
+        bail!("Tempo access-key transactions cannot use CREATE");
+    }
+    Ok(())
+}
+
+fn convert_tempo_aa_create<N: Network>(tx: &mut N::TransactionRequest)
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if tx.is_tempo_aa() {
+        tx.convert_create_to_call();
+    }
 }
 
 /// Represents how to send a single transaction.
@@ -96,7 +116,7 @@ pub enum SendTransactionKind<'a, N: Network> {
     Raw(N::TransactionRequest, &'a EthereumWallet),
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
     Signed(N::TxEnvelope),
-    AccessKey(N::TransactionRequest, &'a WalletSigner, &'a TempoAccessKeyConfig),
+    AccessKey(N::TransactionRequest, Box<TempoAccountsWallet>),
 }
 
 impl<'a, N: Network> SendTransactionKind<'a, N>
@@ -122,21 +142,14 @@ where
         tempo_sponsor: Option<&TempoSponsor>,
         chain: Option<Chain>,
     ) -> Result<()> {
-        let (tx, access_key_authorization) = match self {
+        let tempo_browser = matches!(self, Self::Browser(..)) && chain.is_some_and(Chain::is_tempo);
+        let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
-            Self::AccessKey(tx, _, access_key) => {
-                tx.set_key_id(access_key.key_address);
-                (
-                    tx,
-                    Some((
-                        access_key.wallet_address,
-                        access_key.key_address,
-                        access_key.key_authorization.as_ref(),
-                    )),
-                )
-            }
+            Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
             Self::Signed(_) => return Ok(()),
         };
+
+        reject_access_key_create::<N>(tx, tempo_wallet.is_some())?;
 
         if sequential_broadcast {
             let from = tx.from().expect("no sender");
@@ -169,14 +182,8 @@ where
             }
         }
 
-        if let Some((wallet_address, key_address, key_authorization)) = access_key_authorization {
-            tx.prepare_access_key_authorization(
-                provider,
-                wallet_address,
-                key_address,
-                key_authorization,
-            )
-            .await?;
+        if let Some(wallet) = tempo_wallet {
+            **wallet = tx.prepare_with_tempo_wallet(provider, wallet).await?;
         }
 
         let fee_token = if let Some(sponsor) = tempo_sponsor {
@@ -186,10 +193,15 @@ where
             resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
         };
 
+        // A fee token, sponsor, validity window, or other Tempo field selects
+        // the AA transaction type. AA requests carry CREATE as their first
+        // call rather than as the Ethereum transaction `to` field.
+        convert_tempo_aa_create::<N>(tx);
+
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier).await?;
+            estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -236,18 +248,10 @@ where
                 // Sign and send the transaction via the browser wallet
                 Ok(signer.send_transaction_via_browser(tx).await?)
             }
-            Self::AccessKey(tx, signer, access_key) => {
+            Self::AccessKey(tx, wallet) => {
                 debug!("sending transaction via tempo access key: {:?}", tx);
 
-                let raw_tx = tx
-                    .sign_with_access_key(
-                        provider.as_ref(),
-                        signer,
-                        access_key.wallet_address,
-                        access_key.key_address,
-                        access_key.key_authorization.as_ref(),
-                    )
-                    .await?;
+                let raw_tx = tx.sign_with_tempo_wallet(&wallet).await?;
 
                 let pending = provider.send_raw_transaction(&raw_tx).await?;
                 Ok(*pending.tx_hash())
@@ -285,88 +289,6 @@ where
     }
 }
 
-fn build_lookup(entry: &KeyEntry) -> Result<TempoLookup> {
-    let Some(ref key) = entry.key else {
-        return Ok(TempoLookup::NotFound);
-    };
-    let signer = foundry_wallets::utils::create_private_key_signer(key)?;
-    let Some(key_address) = entry.key_address.filter(|ka| *ka != entry.wallet_address) else {
-        return Ok(TempoLookup::Direct(signer));
-    };
-    let key_authorization =
-        entry.key_authorization.as_deref().map(decode_key_authorization).transpose()?;
-    let config = TempoAccessKeyConfig {
-        wallet_address: entry.wallet_address,
-        key_address,
-        key_authorization,
-    };
-    Ok(TempoLookup::Keychain(signer, Box::new(config)))
-}
-
-/// Like [`build_lookup`] but strips `key_authorization` since the entry is chain-0 and its
-/// authorization was not issued for the target chain.
-fn build_lookup_chain0_fallback(entry: &KeyEntry, chain: u64) -> Result<TempoLookup> {
-    let Some(ref key) = entry.key else {
-        return Ok(TempoLookup::NotFound);
-    };
-    let signer = foundry_wallets::utils::create_private_key_signer(key)?;
-    let Some(key_address) = entry.key_address.filter(|ka| *ka != entry.wallet_address) else {
-        return Ok(TempoLookup::Direct(signer));
-    };
-    if entry.key_authorization.is_some() {
-        warn!(
-            "keys.toml entry for {} has no chain_id — \
-             key_authorization ignored for chain {chain} broadcast",
-            entry.wallet_address
-        );
-    }
-    let config = TempoAccessKeyConfig {
-        wallet_address: entry.wallet_address,
-        key_address,
-        key_authorization: None,
-    };
-    Ok(TempoLookup::Keychain(signer, Box::new(config)))
-}
-
-/// Looks up a Tempo wallet signer scoped to the transaction chain.
-///
-/// Prefers an entry whose `(wallet_address, chain_id)` both match. Falls back to an entry with
-/// `chain_id == 0` (the value when the field is absent) so that `keys.toml` files written by older
-/// Tempo clients (which omit `chain_id`) continue to work.
-pub(crate) fn lookup_signer_for_chain(from: Address, chain: u64) -> Result<TempoLookup> {
-    let Some(path) = tempo_home().map(|home| home.join(WALLET_KEYS_PATH)) else {
-        return Ok(TempoLookup::NotFound);
-    };
-    if !path.is_file() {
-        return Ok(TempoLookup::NotFound);
-    }
-
-    let contents = std::fs::read_to_string(&path)?;
-    let file: KeysFile = toml::from_str(&contents)?;
-
-    lookup_signer_in(from, chain, &file)
-}
-
-fn lookup_signer_in(from: Address, chain: u64, file: &KeysFile) -> Result<TempoLookup> {
-    let mut fallback: Option<&KeyEntry> = None;
-    for entry in &file.keys {
-        if entry.wallet_address != from {
-            continue;
-        }
-        if entry.chain_id == chain {
-            if entry.key.is_some() {
-                return build_lookup(entry);
-            }
-            // exact chain match but no key -> keep searching for a fallback
-            continue;
-        }
-        if entry.chain_id == 0 && fallback.is_none() {
-            fallback = Some(entry);
-        }
-    }
-    fallback.map(|e| build_lookup_chain0_fallback(e, chain)).unwrap_or(Ok(TempoLookup::NotFound))
-}
-
 pub(crate) fn remaining_unsigned_transactions<N: Network>(
     sequences: &[ScriptSequence<N>],
 ) -> impl Iterator<Item = RemainingScriptTransaction> + '_ {
@@ -398,7 +320,7 @@ pub enum SendTransactionsKind<N: Network> {
     Raw {
         eth_wallets: AddressHashMap<EthereumWallet>,
         browser: Option<BrowserSigner<N>>,
-        access_keys: HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)>,
+        access_keys: HashMap<SignerScope, TempoAccountsWallet>,
     },
 }
 
@@ -420,8 +342,8 @@ impl<N: Network> SendTransactionsKind<N> {
                 Ok(SendTransactionKind::Unlocked(tx))
             }
             Self::Raw { eth_wallets, browser, access_keys } => {
-                if let Some((signer, config)) = access_keys.get(&SignerScope::new(chain, *addr)) {
-                    Ok(SendTransactionKind::AccessKey(tx, signer, config))
+                if let Some(wallet) = access_keys.get(&SignerScope::new(chain, *addr)) {
+                    Ok(SendTransactionKind::AccessKey(tx, Box::new(wallet.clone())))
                 } else if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
                 } else if let Some(b) = browser
@@ -466,6 +388,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         sequence,
                         &provider,
                         self.script_config.config.transaction_timeout,
+                        self.args.confirmations,
                     )
                     .await
             })
@@ -503,9 +426,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 &required_addresses,
             )?;
 
-            // For addresses without an explicit signer, try Tempo keys.toml fallback.
-            let mut access_keys: HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)> =
-                HashMap::default();
+            // For addresses without an explicit signer, try the Tempo Accounts store.
+            let mut access_keys: HashMap<SignerScope, TempoAccountsWallet> = HashMap::default();
             if let Some(expected_session_sender) = expected_session_sender
                 && let Some(session) =
                     self.script_config.tempo.session_signer_for_multi_wallet_any_chain(
@@ -528,22 +450,25 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .chain(self.browser_wallet.as_ref().map(|b| b.address()))
                 .collect();
 
-            let mut direct_signers: AddressHashMap<WalletSigner> = AddressHashMap::default();
             let mut missing_addresses = Vec::new();
+            let accounts_wallet = self
+                .script_config
+                .evm_opts
+                .networks
+                .is_tempo()
+                .then(TempoAccountsWallet::try_from_default_store)
+                .transpose()?
+                .flatten();
 
             for tx in &remaining_transactions {
                 let scope = tx.scope();
                 if !signers.contains(&tx.from) && !access_keys.contains_key(&scope) {
-                    match lookup_signer_for_chain(tx.from, tx.chain) {
-                        Ok(TempoLookup::Direct(signer)) => {
-                            direct_signers.insert(tx.from, signer);
-                        }
-                        Ok(TempoLookup::Keychain(signer, config)) => {
-                            access_keys.insert(scope, (signer, *config));
-                        }
-                        _ => {
-                            missing_addresses.push(tx.from);
-                        }
+                    if let Some(wallet) = accounts_wallet.as_ref()
+                        && wallet.has_account(tx.from)?
+                    {
+                        access_keys.insert(scope, wallet.clone().with_chain_id(tx.chain));
+                    } else {
+                        missing_addresses.push(tx.from);
                     }
                 }
             }
@@ -560,11 +485,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             }
 
             let signers = self.script_wallets.into_multi_wallet().into_signers()?;
-            let mut eth_wallets: AddressHashMap<EthereumWallet> =
+            let eth_wallets: AddressHashMap<EthereumWallet> =
                 signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
-            for (addr, signer) in direct_signers {
-                eth_wallets.insert(addr, signer.into());
-            }
 
             SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
         };
@@ -825,6 +747,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 sequence,
                                 &provider,
                                 self.script_config.config.transaction_timeout,
+                                self.args.confirmations,
                             )
                             .await?
                     }
@@ -874,6 +797,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     }
 
     pub async fn verify_preflight_check(&self) -> Result<()> {
+        if self.args.verify_external && self.script_config.config.offline {
+            bail!("External contract verification is unavailable in offline mode");
+        }
+
         for sequence in self.sequence.sequences() {
             let chain: Chain = sequence.chain.into();
             // Resolve the API key: CLI arg first, then per-chain config, then global fallback.
@@ -991,18 +918,10 @@ impl BundledState<TempoEvmNetwork> {
             )?;
 
             let timeout = self.script_config.config.transaction_timeout;
-            let receipt_result = tokio::time::timeout(Duration::from_secs(timeout), async {
-                loop {
-                    if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
-                        return Ok::<_, eyre::Error>(Some(receipt));
-                    }
-                    // If the tx has left the mempool without a receipt it was dropped.
-                    if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
-                        return Ok(None);
-                    }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            })
+            let receipt_result = tokio::time::timeout(
+                Duration::from_secs(timeout),
+                wait_for_batch_receipt(provider.as_ref(), tx_hash, self.args.confirmations),
+            )
             .await;
 
             match receipt_result {
@@ -1127,31 +1046,30 @@ impl BundledState<TempoEvmNetwork> {
         enum BatchSigner {
             Unlocked,
             Wallet(EthereumWallet),
-            TempoKeychain(Box<WalletSigner>, Box<TempoAccessKeyConfig>),
+            TempoKeychain(Box<TempoAccountsWallet>),
         }
 
-        let batch_signer = if self.args.unlocked {
+        let mut batch_signer = if self.args.unlocked {
             BatchSigner::Unlocked
         } else if let Some(session) = self.script_config.tempo.session_signer_for_multi_wallet(
             &self.args.wallets,
             Some(sender),
             chain_id,
         )? {
-            BatchSigner::TempoKeychain(Box::new(session.signer), Box::new(session.access_key))
+            BatchSigner::TempoKeychain(Box::new(session.access_key))
         } else {
             let mut signers = self.script_wallets.into_multi_wallet().into_signers()?;
             if let Some(signer) = signers.remove(&sender) {
                 BatchSigner::Wallet(EthereumWallet::new(signer))
             } else {
-                // Try Tempo keys.toml fallback
-                match lookup_signer_for_chain(sender, chain_id)? {
-                    TempoLookup::Direct(signer) => BatchSigner::Wallet(EthereumWallet::new(signer)),
-                    TempoLookup::Keychain(signer, config) => {
-                        BatchSigner::TempoKeychain(Box::new(signer), config)
-                    }
-                    TempoLookup::NotFound => {
-                        bail!("No wallet found for sender {}", sender);
-                    }
+                // Try the Tempo Accounts store only for Tempo broadcasts.
+                if self.script_config.evm_opts.networks.is_tempo()
+                    && let Some(wallet) = TempoAccountsWallet::try_from_default_store()?
+                    && wallet.has_account(sender)?
+                {
+                    BatchSigner::TempoKeychain(Box::new(wallet.with_chain_id(chain_id)))
+                } else {
+                    bail!("No wallet found for sender {}", sender);
                 }
             }
         };
@@ -1282,20 +1200,13 @@ impl BundledState<TempoEvmNetwork> {
             .await?
         };
 
-        if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
-            batch_tx.key_id = Some(ak.key_address);
-            batch_tx
-                .prepare_access_key_authorization(
-                    provider.as_ref(),
-                    ak.wallet_address,
-                    ak.key_address,
-                    ak.key_authorization.as_ref(),
-                )
-                .await?;
+        if let BatchSigner::TempoKeychain(wallet) = &mut batch_signer {
+            **wallet = batch_tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?;
         }
 
         // Estimate gas for the batch transaction
-        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier).await?;
+        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier, false)
+            .await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 
@@ -1316,16 +1227,8 @@ impl BundledState<TempoEvmNetwork> {
                 let pending = provider_with_wallet.send_transaction(batch_tx).await?;
                 *pending.tx_hash()
             }
-            BatchSigner::TempoKeychain(signer, access_key) => {
-                let raw_tx = batch_tx
-                    .sign_with_access_key(
-                        provider.as_ref(),
-                        &*signer,
-                        access_key.wallet_address,
-                        access_key.key_address,
-                        access_key.key_authorization.as_ref(),
-                    )
-                    .await?;
+            BatchSigner::TempoKeychain(wallet) => {
+                let raw_tx = batch_tx.sign_with_tempo_wallet(&wallet).await?;
 
                 let pending = provider.send_raw_transaction(&raw_tx).await?;
                 *pending.tx_hash()
@@ -1351,16 +1254,13 @@ impl BundledState<TempoEvmNetwork> {
 
         // Wait for receipt
         let timeout = self.script_config.config.transaction_timeout;
-        let receipt = tokio::time::timeout(Duration::from_secs(timeout), async {
-            loop {
-                if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
-                    return Ok::<_, eyre::Error>(receipt);
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        })
+        let receipt = tokio::time::timeout(
+            Duration::from_secs(timeout),
+            wait_for_batch_receipt(provider.as_ref(), tx_hash, self.args.confirmations),
+        )
         .await
-        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??;
+        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??
+        .ok_or_else(|| eyre::eyre!("Batch transaction {tx_hash:#x} was dropped from the mempool. Run with --resume to retry."))?;
 
         let success = receipt.status();
         if success {
@@ -1450,10 +1350,34 @@ impl BundledState<TempoEvmNetwork> {
     }
 }
 
+async fn wait_for_batch_receipt<N: Network>(
+    provider: &RootProvider<N>,
+    tx_hash: TxHash,
+    confirmations: u64,
+) -> Result<Option<N::ReceiptResponse>> {
+    loop {
+        if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await?
+            && let Some(receipt_block) = receipt.block_number()
+        {
+            let latest_block = provider.get_block_number().await?;
+            if latest_block >= receipt_block.saturating_add(confirmations.saturating_sub(1)) {
+                return Ok(Some(receipt));
+            }
+        }
+
+        if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
+            return Ok(None);
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::{Bloom, address};
     use alloy_rpc_types::TransactionReceipt;
@@ -1462,30 +1386,71 @@ mod tests {
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-    const TEST_ADDR: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const ACCESS_KEY_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn next_nonce_uses_exact_fork_hash() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let recipient = Address::with_last_byte(1);
+
+        let receipt = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .from(sender)
+                    .to(recipient)
+                    .value(U256::from(1))
+                    .into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let block_number = receipt.block_number.unwrap();
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(block_number),
+            ..Default::default()
+        };
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
+        assert_eq!(next_nonce_resolved(sender, &evm_opts, &fork).await.unwrap(), 1);
+
+        provider
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        assert_eq!(
+            provider
+                .get_transaction_count(sender)
+                .block_id(BlockId::number(block_number))
+                .await
+                .unwrap(),
+            0
+        );
+
+        match next_nonce_resolved(sender, &evm_opts, &fork).await {
+            Ok(0) => panic!("the exact lookup fell back to the replacement block"),
+            Ok(1) | Err(_) => {}
+            Ok(nonce) => panic!("unexpected nonce: {nonce}"),
+        }
+    }
 
     #[test]
     fn access_key_signer_takes_precedence_over_same_sender_wallet() {
         let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
         let root_address = root.address();
         let access_key =
-            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
+            foundry_wallets::utils::create_local_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
         let access_key_address = access_key.address();
         let mut eth_wallets = AddressHashMap::default();
         eth_wallets.insert(root_address, EthereumWallet::new(root));
         let mut access_keys = HashMap::default();
         access_keys.insert(
             SignerScope::new(4217, root_address),
-            (
-                access_key,
-                TempoAccessKeyConfig {
-                    wallet_address: root_address,
-                    key_address: access_key_address,
-                    key_authorization: None,
-                },
-            ),
+            TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217),
         );
         let send_kind =
             SendTransactionsKind::<Ethereum>::Raw { eth_wallets, browser: None, access_keys };
@@ -1494,9 +1459,9 @@ mod tests {
         let sender = send_kind.for_sender(4217, &root_address, tx).unwrap();
 
         match sender {
-            SendTransactionKind::AccessKey(_, signer, access_key) => {
-                assert_eq!(signer.address(), access_key_address);
-                assert_eq!(access_key.wallet_address, root_address);
+            SendTransactionKind::AccessKey(_, wallet) => {
+                assert_eq!(wallet.key_id().unwrap(), access_key_address);
+                assert_eq!(wallet.account(), root_address);
             }
             _ => panic!("expected access key signer"),
         }
@@ -1507,21 +1472,13 @@ mod tests {
         let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
         let root_address = root.address();
         let access_key =
-            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
-        let access_key_address = access_key.address();
+            foundry_wallets::utils::create_local_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
         let mut eth_wallets = AddressHashMap::default();
         eth_wallets.insert(root_address, EthereumWallet::new(root));
         let mut access_keys = HashMap::default();
         access_keys.insert(
             SignerScope::new(4217, root_address),
-            (
-                access_key,
-                TempoAccessKeyConfig {
-                    wallet_address: root_address,
-                    key_address: access_key_address,
-                    key_authorization: None,
-                },
-            ),
+            TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217),
         );
         let send_kind =
             SendTransactionsKind::<Ethereum>::Raw { eth_wallets, browser: None, access_keys };
@@ -1602,20 +1559,16 @@ mod tests {
     async fn access_key_sets_key_id_before_estimation() {
         let root_address = address!("0x1111111111111111111111111111111111111111");
         let access_key =
-            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
+            foundry_wallets::utils::create_local_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
         let access_key_address = access_key.address();
-        let access_key_config = TempoAccessKeyConfig {
-            wallet_address: root_address,
-            key_address: access_key_address,
-            key_authorization: None,
-        };
+        let access_key_wallet =
+            TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217);
         let mut sender = SendTransactionKind::<TempoNetwork>::AccessKey(
             TempoTransactionRequest {
                 inner: TransactionRequest { from: Some(root_address), ..Default::default() },
                 ..Default::default()
             },
-            &access_key,
-            &access_key_config,
+            Box::new(access_key_wallet),
         );
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
@@ -1634,11 +1587,38 @@ mod tests {
             .unwrap();
 
         match sender {
-            SendTransactionKind::AccessKey(tx, _, _) => {
+            SendTransactionKind::AccessKey(tx, _) => {
                 assert_eq!(tx.key_id, Some(access_key_address));
             }
             _ => panic!("expected access key transaction"),
         }
+    }
+
+    #[test]
+    fn tempo_aa_create_moves_deployment_into_calls() {
+        let mut tx = TempoTransactionRequest {
+            inner: TransactionRequest { to: Some(TxKind::Create), ..Default::default() },
+            fee_token: Some(address!("0x20c0000000000000000000000000000000000000")),
+            ..Default::default()
+        };
+
+        convert_tempo_aa_create::<TempoNetwork>(&mut tx);
+
+        assert!(tx.inner.to.is_none());
+        assert_eq!(tx.calls.len(), 1);
+        assert!(tx.calls[0].to.is_create());
+    }
+
+    #[test]
+    fn tempo_access_key_create_is_rejected_before_preparation() {
+        let tx = TempoTransactionRequest {
+            inner: TransactionRequest { to: Some(TxKind::Create), ..Default::default() },
+            ..Default::default()
+        };
+
+        let error = reject_access_key_create::<TempoNetwork>(&tx, true).unwrap_err();
+
+        assert!(error.to_string().contains("Tempo access-key transactions cannot use CREATE"));
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {
@@ -1670,49 +1650,5 @@ mod tests {
             to: None,
             contract_address: None,
         }
-    }
-
-    // lookup_signer_in tests
-
-    fn make_entry(addr: Address, chain_id: u64) -> KeyEntry {
-        KeyEntry {
-            wallet_address: addr,
-            chain_id,
-            key: Some(ROOT_PRIVATE_KEY.to_string()),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn lookup_exact_chain_match() {
-        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 31318)] };
-        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
-        assert!(matches!(result, TempoLookup::Direct(_)));
-    }
-
-    #[test]
-    fn lookup_chain_zero_fallback() {
-        // Entry with chain_id omitted (defaults to 0) should match any chain.
-        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 0)] };
-        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
-        assert!(
-            matches!(result, TempoLookup::Direct(_)),
-            "chain-0 entry should be used as fallback"
-        );
-    }
-
-    #[test]
-    fn lookup_exact_wins_over_chain_zero_fallback() {
-        // chain-0 entry comes first; exact match must still win.
-        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 0), make_entry(TEST_ADDR, 31318)] };
-        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
-        assert!(matches!(result, TempoLookup::Direct(_)));
-    }
-
-    #[test]
-    fn lookup_mismatched_chain_no_fallback_returns_not_found() {
-        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 1)] };
-        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
-        assert!(matches!(result, TempoLookup::NotFound));
     }
 }

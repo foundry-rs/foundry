@@ -4,8 +4,8 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
-        FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, MultiNetworkConfig,
-        ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
+        FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode, FuzzMinimizeObservation,
+        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
         is_generated_symbolic_regression_contract,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
@@ -32,7 +32,7 @@ use clap::{Parser, ValueEnum, ValueHint};
 use dialoguer::{Select, console::Term};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs},
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TracingArgs},
     utils::{self, FoundryPathExt, LoadConfig},
 };
 use foundry_common::{
@@ -69,7 +69,10 @@ use foundry_evm::{
     fuzz::{BasicTxDetails, CounterExample},
     hardforks::TempoHardfork,
     opts::EvmOpts,
-    traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
+    traces::{
+        backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
+        trace_arena_at_depth,
+    },
 };
 use foundry_tui::tui_mode;
 use rand::Rng;
@@ -160,10 +163,12 @@ impl FuzzMinimizeReplaySession {
         &self,
         sequence: Vec<BasicTxDetails>,
         evm_edge_indices: FuzzMinimizeEdgeIndices,
+        mode: FuzzMinimizeMode,
     ) -> Result<Vec<FuzzMinimizeObservation>> {
         let observations = Arc::new(Mutex::new(Vec::new()));
         let fuzz_minimize = FuzzMinimizeConfig {
             input: sequence.into(),
+            mode,
             evm_edge_indices,
             observations: observations.clone(),
         };
@@ -603,14 +608,8 @@ pub struct TestArgs {
     #[arg(long, requires = "evm_profile")]
     no_open: bool,
 
-    /// Identify internal functions in traces.
-    ///
-    /// This will trace internal functions and decode stack parameters.
-    ///
-    /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
-    /// single function is matched, similarly to `--debug`, for performance reasons.
-    #[arg(long)]
-    decode_internal: bool,
+    #[command(flatten)]
+    tracing: TracingArgs,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -638,12 +637,18 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Suppress successful test traces and show only traces for failures.
-    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Display options")]
+    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Trace options")]
     suppress_successful_traces: bool,
 
-    /// Defines the depth of a trace
-    #[arg(long)]
-    trace_depth: Option<usize>,
+    /// Write test results as JSON to the specified file.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with = "list",
+        help_heading = "Display options"
+    )]
+    json_file: Option<PathBuf>,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -1017,10 +1022,6 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 
-    /// Disables the labels in the traces.
-    #[arg(long, help_heading = "Display options")]
-    pub disable_labels: bool,
-
     /// Replay the persisted corpus and emit AFL-`afl-showmap`-style coverage
     /// files at the given output directory. Disables the regular fuzz/invariant
     /// campaign and skips unit tests.
@@ -1176,6 +1177,9 @@ impl TestArgs {
         if self.junit {
             conflicts.push("--junit");
         }
+        if self.json_file.is_some() {
+            conflicts.push("--json-file");
+        }
         if coverage {
             conflicts.push("coverage");
         }
@@ -1205,6 +1209,9 @@ impl TestArgs {
         }
         if self.junit {
             conflicts.push("--junit");
+        }
+        if self.json_file.is_some() {
+            conflicts.push("--json-file");
         }
         if self.list {
             conflicts.push("--list");
@@ -1961,12 +1968,12 @@ impl TestArgs {
         }
 
         // Enable internal tracing for more informative flamegraph/profile.
-        if !self.decode_internal && trace_output.is_some() {
-            self.decode_internal = true;
-        }
+        config.tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let json_trace_depth = config.tracing.trace_depth;
+        let decode_internal_enabled = config.tracing.decode_internal || trace_output.is_some();
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
-        let decode_internal = if self.decode_internal {
+        let decode_internal = if decode_internal_enabled {
             // If more than one function matched, we enable simple tracing.
             // If only one function matched, we enable full tracing. This is done in `run_tests`.
             InternalTraceMode::Simple
@@ -2075,6 +2082,13 @@ impl TestArgs {
                     replayed
                 );
             }
+        }
+
+        if let Some(path) = &self.json_file {
+            let mut results =
+                outcome.json_file_results.take().unwrap_or_else(|| outcome.results.clone());
+            prepare_results_for_json(&mut results, evm_opts.verbosity, json_trace_depth);
+            fs::write_json_file(path, &results)?;
         }
 
         if let Some(trace_output) = trace_output {
@@ -2499,8 +2513,11 @@ impl TestArgs {
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork) =
+            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let create2_deployer_available =
+            evm_opts.can_use_create2_deployer_resolved(fork.as_ref()).await?;
+        let fork_block_number = fork.as_ref().map(|fork| fork.number());
 
         let config = Arc::new(config);
         let showmap = self.showmap_config()?;
@@ -2510,7 +2527,7 @@ impl TestArgs {
             .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block_number))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .set_coverage(execution.coverage)
@@ -2519,6 +2536,7 @@ impl TestArgs {
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
+            .with_create2_deployer_available(create2_deployer_available)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
@@ -2533,19 +2551,23 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         options: FuzzMinimizeNetworkPassOptions,
     ) -> eyre::Result<MultiContractRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork) =
+            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let create2_deployer_available =
+            evm_opts.can_use_create2_deployer_resolved(fork.as_ref()).await?;
+        let fork_block_number = fork.as_ref().map(|fork| fork.number());
 
         let config = Arc::new(config);
         MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block_number))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .with_multi_network(options.multi_network)
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
+            .with_create2_deployer_available(create2_deployer_available)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
     }
 
@@ -2639,10 +2661,12 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json()
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
+        let tracing = &config.tracing;
+        let trace_verbosity = tracing.verbosity;
 
         let mut num_filtered = runner.matching_test_functions(filter).count();
 
-        if !self.opcodes.is_empty() && verbosity < 5 {
+        if !self.opcodes.is_empty() && trace_verbosity < 5 {
             sh_eprintln!()?;
             eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
         }
@@ -2742,24 +2766,14 @@ impl TestArgs {
         }
 
         // If exactly one test matched, we enable full tracing.
-        if num_filtered == 1 && self.decode_internal {
+        if num_filtered == 1 && runner.decode_internal != InternalTraceMode::None {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
         if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
-            for suite_result in results.values_mut() {
-                for test_result in suite_result.test_results.values_mut() {
-                    if verbosity >= 2 {
-                        // Decode logs at level 2 and above.
-                        test_result.decoded_logs = decode_console_logs(&test_result.logs);
-                    } else {
-                        // Empty logs for non verbose runs.
-                        test_result.logs = vec![];
-                    }
-                }
-            }
+            prepare_results_for_json(&mut results, verbosity, tracing.trace_depth);
             if let Some(regression) = &symbolic_regression {
                 let artifacts = collect_symbolic_artifacts_from_suites(results.values());
                 let regressions = emit_symbolic_regressions(
@@ -2803,6 +2817,7 @@ impl TestArgs {
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
         let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
+        let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -2825,9 +2840,8 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
+            .with_tracing_config(tracing)
             .with_known_contracts(&known_contracts)
-            .with_label_disabled(self.disable_labels)
-            .with_verbosity(verbosity)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_tempo_hardfork(
                 (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
@@ -2839,7 +2853,7 @@ impl TestArgs {
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
 
-        if self.decode_internal {
+        if decode_internal {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
@@ -2861,7 +2875,7 @@ impl TestArgs {
 
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
-        for (contract_name, mut suite_result) in rx {
+        while let Ok((contract_name, mut suite_result)) = rx.recv() {
             let len = suite_result.len();
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
@@ -2901,8 +2915,12 @@ impl TestArgs {
                 let show_traces = !self.suppress_successful_traces || test_failed;
                 let render_trace_output = should_render_trace_output(silent, show_traces);
                 let should_include_trace = |kind: &TraceKind| match kind {
-                    TraceKind::Execution => (verbosity == 3 && test_failed) || verbosity >= 4,
-                    TraceKind::Setup => (verbosity == 4 && test_failed) || verbosity >= 5,
+                    TraceKind::Execution => {
+                        (trace_verbosity == 3 && test_failed) || trace_verbosity >= 4
+                    }
+                    TraceKind::Setup => {
+                        (trace_verbosity == 4 && test_failed) || trace_verbosity >= 5
+                    }
                     TraceKind::Deployment => false,
                 };
                 let renders_trace = render_trace_output
@@ -2966,26 +2984,32 @@ impl TestArgs {
                             decoder.identify(arena, &mut identifier);
                         }
 
-                        // verbosity:
-                        // - 0..3: nothing
-                        // - 3: only display traces for failed tests
-                        // - 4: also display the setup trace for failed tests
-                        // - 5..: display all traces for all tests, including storage changes
+                        // Trace verbosity.
+                        // - 0..3: nothing.
+                        // - 3: only display traces for failed tests.
+                        // - 4: also display the setup trace for failed tests.
+                        // - 5..: display all traces for all tests, including storage changes.
                         let should_include = should_include_trace(kind);
 
                         if renders_trace && should_include {
                             decoder.opcodes = self.opcodes.clone();
                             decode_trace_arena(arena, &decoder).await;
 
-                            if let Some(trace_depth) = self.trace_depth {
-                                prune_trace_depth(arena, trace_depth);
+                            if let Some(trace_depth) = tracing.trace_depth {
+                                let mut arena = arena.clone();
+                                prune_trace_depth(&mut arena, trace_depth);
+                                decoded_traces.push(render_trace_arena_inner(
+                                    &arena,
+                                    false,
+                                    trace_verbosity > 4,
+                                ));
+                            } else {
+                                decoded_traces.push(render_trace_arena_inner(
+                                    arena,
+                                    false,
+                                    trace_verbosity > 4,
+                                ));
                             }
-
-                            decoded_traces.push(render_trace_arena_inner(
-                                arena,
-                                false,
-                                verbosity > 4,
-                            ));
                         }
                     }
                 }
@@ -2997,12 +3021,12 @@ impl TestArgs {
                     }
                 }
 
-                // Extract and display backtrace for failed tests when verbosity >= 3.
-                // At verbosity 3-4 backtraces show contract/function names only.
-                // At verbosity 5 backtraces include source file locations.
+                // Extract and display backtrace for failed tests when trace verbosity >= 3.
+                // At trace verbosity 3-4 backtraces show contract/function names only.
+                // At trace verbosity 5 backtraces include source file locations.
                 if !silent
                     && result.status.is_failure()
-                    && verbosity >= 3
+                    && trace_verbosity >= 3
                     && !result.traces.is_empty()
                     && let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
@@ -3042,6 +3066,14 @@ impl TestArgs {
                             decoder.identify(arena, &mut identifier);
                             gas_report.analyze([arena], &decoder).await;
                         }
+                    }
+                }
+
+                if shell::is_json()
+                    && let Some(trace_depth) = tracing.trace_depth
+                {
+                    for (_, arena) in &mut result.traces {
+                        *arena = trace_arena_at_depth(arena, trace_depth);
                     }
                 }
                 // Clear memory.
@@ -3186,6 +3218,9 @@ impl TestArgs {
             sh_println!("{summary_report}")?;
         }
 
+        // Keep the receiver alive only when its queued results are needed for the JSON file.
+        let json_results_rx = self.json_file.is_some().then_some(rx);
+
         // Reattach the task.
         match handle.await {
             Ok(result) => {
@@ -3196,6 +3231,21 @@ impl TestArgs {
                 Ok(payload) => std::panic::resume_unwind(payload),
                 Err(e) => return Err(e.into()),
             },
+        }
+
+        // Include suites that completed after fail-fast stopped console output in the JSON file.
+        if let Some(rx) = json_results_rx {
+            let mut results = outcome.results.clone();
+            for (contract_name, suite_result) in rx.try_iter() {
+                if is_multi_pass
+                    && suite_result.test_results.is_empty()
+                    && suite_result.warnings.is_empty()
+                {
+                    continue;
+                }
+                results.insert(contract_name, suite_result);
+            }
+            outcome.json_file_results = Some(results);
         }
 
         // Persist test run failures to enable replaying.
@@ -3248,6 +3298,37 @@ impl TestArgs {
             let config = self.load_config()?;
             Ok([config.src, config.test])
         })
+    }
+}
+
+fn prepare_results_for_json(
+    results: &mut BTreeMap<String, SuiteResult>,
+    verbosity: u8,
+    trace_depth: Option<usize>,
+) {
+    for suite_result in results.values_mut() {
+        for test_result in suite_result.test_results.values_mut() {
+            if verbosity >= 2 {
+                test_result.decoded_logs = decode_console_logs(&test_result.logs);
+            } else {
+                test_result.logs = Vec::new();
+            }
+            for (_, arena) in &mut test_result.traces {
+                // Discard presentation-only decoding populated by the streaming renderer.
+                for node in arena.nodes_mut() {
+                    node.trace.decoded = None;
+                    for log in &mut node.logs {
+                        log.decoded = None;
+                    }
+                    for step in &mut node.trace.steps {
+                        step.decoded = None;
+                    }
+                }
+                if let Some(trace_depth) = trace_depth {
+                    *arena = trace_arena_at_depth(arena, trace_depth);
+                }
+            }
+        }
     }
 }
 
@@ -3722,9 +3803,23 @@ fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>)
 ///
 /// For suites that appear in both, test results are combined (function-level pass routing ensures
 /// each function appears in exactly one pass, so there are no key conflicts in practice).
-fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
-    for (suite_id, other_suite) in other.results {
-        match base.results.entry(suite_id) {
+fn merge_outcomes(base: &mut TestOutcome, mut other: TestOutcome) {
+    if let Some(other_results) = other.json_file_results.take() {
+        let base_results = base.json_file_results.get_or_insert_with(|| base.results.clone());
+        merge_suite_results(base_results, other_results);
+    }
+    merge_suite_results(&mut base.results, other.results);
+    if let Some(decoder) = other.last_run_decoder {
+        base.last_run_decoder = Some(decoder);
+    }
+}
+
+fn merge_suite_results(
+    base: &mut BTreeMap<String, SuiteResult>,
+    other: BTreeMap<String, SuiteResult>,
+) {
+    for (suite_id, other_suite) in other {
+        match base.entry(suite_id) {
             std::collections::btree_map::Entry::Vacant(e) => {
                 e.insert(other_suite);
             }
@@ -3735,9 +3830,6 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
                 base_suite.duration = base_suite.duration.max(other_suite.duration);
             }
         }
-    }
-    if let Some(decoder) = other.last_run_decoder {
-        base.last_run_decoder = Some(decoder);
     }
 }
 
@@ -4081,7 +4173,13 @@ mod tests {
     #[test]
     fn depth_trace() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--trace-depth", "2"]);
-        assert!(args.trace_depth.is_some());
+        assert!(args.tracing.trace_depth.is_some());
+    }
+
+    #[test]
+    fn compact_labels_trace() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--compact-labels"]);
+        assert!(args.tracing.compact_labels);
     }
 
     #[test]

@@ -7,6 +7,8 @@ struct MyStruct {
     uint256 value;
 }
 
+error ExplicitRollCompleted();
+
 contract MyContract {
     uint256 forkId;
     bytes32 blockHash;
@@ -28,6 +30,7 @@ contract MyContract {
 contract ForkTest is Test {
     uint256 mainnetFork;
     uint256 optimismFork;
+    address createdBeforeSwitch;
 
     // this will create two _different_ forks during setup
     function setUp() public {
@@ -144,6 +147,246 @@ contract ForkTest is Test {
         // the account is now marked as persistent and the contract is persistent across swaps
         dummy.hello();
         assertEq(dummy.val(), expectedValue);
+    }
+
+    function testForkDumpStatePreservesPersistentDeploymentOrder() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_persistent_deployment_order.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        vm.makePersistent(address(first));
+
+        vm.selectFork(optimismFork);
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesRevokedPersistentDeploymentOrder() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_revoked_persistent_deployment_order.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        vm.makePersistent(address(first));
+
+        vm.selectFork(optimismFork);
+        vm.revokePersistent(address(first));
+        assert(!vm.isPersistent(address(first)));
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStateUsesActiveForkCreationForSameAddress() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_same_address_creation.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract{salt: bytes32(uint256(1))}();
+
+        vm.selectFork(optimismFork);
+        DummyContract second = new DummyContract();
+        DummyContract recreated = new DummyContract{salt: bytes32(uint256(1))}();
+        assertEq(address(first), address(recreated));
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        uint256 recreatedIndex =
+            vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(recreated))), '"'));
+        assertTrue(secondIndex != type(uint256).max);
+        assertTrue(recreatedIndex != type(uint256).max);
+        assertLt(secondIndex, recreatedIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesPropagationAfterSnapshotRevert() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_snapshot_propagation.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        vm.makePersistent(address(first));
+        uint256 snapshot = vm.snapshotState();
+
+        vm.selectFork(optimismFork);
+        vm.revokePersistent(address(first));
+        assert(vm.revertToState(snapshot));
+        vm.selectFork(optimismFork);
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesInitialDeploymentOrder() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_initial_order.json");
+
+        DummyContract first = new DummyContract();
+        vm.selectFork(mainnetFork);
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesSourceOrderAfterRevertedSwitch() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_reverted_switch.json");
+
+        vm.selectFork(mainnetFork);
+        try this.createSwitchAndRevert(optimismFork) {} catch {}
+
+        vm.selectFork(mainnetFork);
+        address first = createdBeforeSwitch;
+        assertTrue(first != address(0));
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesOrderAfterRevertedRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_reverted_roll.json");
+
+        vm.selectFork(mainnetFork);
+        address first =
+            vm.computeCreate2Address(bytes32(uint256(1)), keccak256(type(DummyContract).creationCode), address(this));
+        try this.createRollAndRevert(block.number) {} catch {}
+
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function createSwitchAndRevert(uint256 forkId) external {
+        createdBeforeSwitch = address(new DummyContract());
+        vm.selectFork(forkId);
+        revert();
+    }
+
+    function createRollAndRevert(uint256 blockNumber) external {
+        new DummyContract{salt: bytes32(uint256(1))}();
+        vm.rollFork(blockNumber);
+        revert();
+    }
+
+    function testForkDumpStatePreservesOrderAfterCreateSelectForkAtBlock() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_create_select_fork_block.json");
+
+        DummyContract first = new DummyContract();
+        vm.createSelectFork("mainnet", 16_261_703);
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterCreateSelectForkAtTransaction() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_create_select_fork_transaction.json");
+
+        DummyContract first = new DummyContract();
+        vm.createSelectFork("mainnet", bytes32(0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace));
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterExplicitActiveRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_explicit_active_roll.json");
+
+        vm.selectFork(mainnetFork);
+        address first =
+            vm.computeCreate2Address(bytes32(uint256(2)), keccak256(type(DummyContract).creationCode), address(this));
+        try this.createExplicitRollAndRevert(mainnetFork, block.number) {
+            assertTrue(false);
+        } catch (bytes memory reason) {
+            assertEq(bytes4(reason), ExplicitRollCompleted.selector);
+        }
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, first, address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterInactiveRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_inactive_roll.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        uint256 mainnetBlock = block.number;
+
+        vm.selectFork(optimismFork);
+        vm.rollFork(mainnetFork, mainnetBlock);
+        vm.selectFork(mainnetFork);
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function createExplicitRollAndRevert(uint256 forkId, uint256 blockNumber) external {
+        new DummyContract{salt: bytes32(uint256(2))}();
+        vm.rollFork(forkId, blockNumber);
+        revert ExplicitRollCompleted();
+    }
+
+    function assertDumpStateOrder(string memory path, address first, address second) private {
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(second)), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
     }
 
     /// forge-config: default.allow_internal_expect_revert = true
@@ -357,12 +600,10 @@ contract ForkTest is Test {
     }
 
     // Verify struct decoding for transaction objects (original issue #7858).
-    // Hardcode the DRPC URL to avoid provider-specific non-standard fields
-    // (e.g. `blockTimestamp` from PublicNode) that shift ABI decoding offsets.
     // <https://github.com/foundry-rs/foundry/issues/7858>
     function testRpcTransactionByHash() public {
         bytes memory data = vm.rpc(
-            "https://sepolia.drpc.org",
+            "sepolia",
             "eth_getTransactionByHash",
             '["0xe1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"]'
         );

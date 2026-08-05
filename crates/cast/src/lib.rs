@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![recursion_limit = "256"]
 
 #[macro_use]
 extern crate foundry_common;
@@ -76,6 +77,8 @@ pub mod rpc_trace;
 pub mod tx;
 
 use rlp_converter::Item;
+
+const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -756,7 +759,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                         Self::get_logs_bisecting(&provider, &filter, start_block, end_block).await
                     }
                 })
-                .buffered(5)
+                .buffered(MAX_CONCURRENT_RPC_REQUESTS)
                 .try_collect()
                 .await?;
 
@@ -2440,19 +2443,22 @@ impl SimpleCast {
             .functions
             .expect("functions extraction was requested")
             .into_iter()
-            .map(|f| {
-                (
-                    f.selector.into(),
-                    f.arguments
-                        .expect("arguments extraction was requested")
-                        .into_iter()
-                        .map(|t| t.sol_type_name().to_string())
-                        .collect::<Vec<String>>()
-                        .join(","),
-                    f.state_mutability
-                        .expect("state_mutability extraction was requested")
-                        .as_json_str(),
-                )
+            .filter_map(|f| {
+                if f.dispatch == evmole::SelectorDispatch::Abi {
+                    return Some((
+                        f.selector.into(),
+                        f.arguments
+                            .expect("arguments extraction was requested")
+                            .into_iter()
+                            .map(|t| t.sol_type_name().to_string())
+                            .collect::<Vec<String>>()
+                            .join(","),
+                        f.state_mutability
+                            .expect("state_mutability extraction was requested")
+                            .as_json_str(),
+                    ));
+                }
+                None
             })
             .collect())
     }

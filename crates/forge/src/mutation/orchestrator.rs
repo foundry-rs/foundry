@@ -34,6 +34,7 @@ use crate::{
         MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
         mutant::{Mutant, MutationResult},
         runner::run_mutations_parallel_with_progress,
+        type_analysis::{collect_mutation_exclusions, normalize_path},
     },
 };
 
@@ -130,9 +131,11 @@ pub struct MutationRunResult {
 pub async fn run_mutation_testing(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
-    evm_opts: EvmOpts,
+    mut evm_opts: EvmOpts,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
+    let fork_block = evm_opts.pin_fork_block().await?;
+    let create2_deployer_available = evm_opts.can_use_create2_deployer(fork_block).await?;
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
     let artifact_link_references = output.artifact_ids().filter_map(|(id, artifact)| {
@@ -170,6 +173,7 @@ pub async fn run_mutation_testing(
         mutation_config.rerun_failures.as_deref(),
         num_workers,
     )?;
+    let mut mutation_exclusions = collect_mutation_exclusions(&config, output).unwrap_or_default();
 
     if !mutation_config.show_progress && !json_output {
         sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
@@ -201,6 +205,9 @@ pub async fn run_mutation_testing(
         // Create handler for this file, optionally restricting to a subset of
         // contracts by name when --mutate-contract is provided.
         let mut handler = MutationHandler::new(path.clone(), config.clone());
+        if let Some(mutations) = mutation_exclusions.remove(&normalize_path(&path)) {
+            handler = handler.with_mutation_exclusions(mutations);
+        }
         if let Some(filter) = &mutation_config.mutate_contract_pattern {
             handler = handler.with_contract_filter(filter.clone());
         }
@@ -295,6 +302,7 @@ pub async fn run_mutation_testing(
             handler.src.clone(),
             config.clone(),
             evm_opts.clone(),
+            create2_deployer_available,
             num_workers,
             progress.clone(),
             json_output,
