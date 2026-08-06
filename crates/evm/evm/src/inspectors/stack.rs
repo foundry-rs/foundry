@@ -371,6 +371,12 @@ struct EarlyExitTestGate {
     notified: Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PendingCreate2Redirect {
+    depth: usize,
+    charged_create_state_gas: bool,
+}
+
 /// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
@@ -410,8 +416,7 @@ pub struct InspectorStackInner {
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
-    /// Each entry records the journal depth at which the redirect occurred.
-    pub pending_create2_redirects: Vec<usize>,
+    pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
@@ -1362,7 +1367,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         gas: Gas::new(gas_limit),
                     },
                     address: None,
-                    charged_create_state_gas: false,
+                    charged_create_state_gas: inputs.charged_create_state_gas(),
                 });
                 return None;
             } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
@@ -1373,7 +1378,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         gas: Gas::new(gas_limit),
                     },
                     address: None,
-                    charged_create_state_gas: false,
+                    charged_create_state_gas: inputs.charged_create_state_gas(),
                 });
                 return None;
             }
@@ -1383,7 +1388,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     .ok()?;
 
             // Record the redirect depth *after* validation succeeds.
-            self.inner.pending_create2_redirects.push(ecx.journal().depth());
+            self.inner.pending_create2_redirects.push(PendingCreate2Redirect {
+                depth: ecx.journal().depth(),
+                charged_create_state_gas: inputs.charged_create_state_gas(),
+            });
 
             // Rewrite the frame input from Create to Call.
             *frame_input = FrameInput::Call(Box::new(call_inputs));
@@ -1399,10 +1407,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         frame_result: &mut FrameResult,
     ) {
         let depth = ecx.journal().depth();
-        if self.inner.pending_create2_redirects.last().copied() != Some(depth) {
+        let Some(redirect) = self
+            .inner
+            .pending_create2_redirects
+            .last()
+            .copied()
+            .filter(|redirect| redirect.depth == depth)
+        else {
             return;
-        }
-
+        };
         self.inner.pending_create2_redirects.pop();
 
         let FrameResult::Call(call) = frame_result else {
@@ -1426,7 +1439,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         *frame_result = FrameResult::Create(CreateOutcome {
             result: call.result.clone(),
             address,
-            charged_create_state_gas: false,
+            charged_create_state_gas: redirect.charged_create_state_gas,
         });
     }
 
@@ -1710,7 +1723,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             );
             let address =
                 address.or_else(|| if result.is_revert() { precomputed_address } else { None });
-            return Some(CreateOutcome { result, address, charged_create_state_gas: false });
+            return Some(CreateOutcome {
+                result,
+                address,
+                charged_create_state_gas: create.charged_create_state_gas(),
+            });
         }
 
         None

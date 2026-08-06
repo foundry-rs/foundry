@@ -1736,6 +1736,44 @@ mod tests {
     }
 
     #[test]
+    fn amsterdam_intercepted_create_refunds_state_gas() {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .spec_id(SpecId::AMSTERDAM)
+            .gas_limit(1_000_000)
+            .build(EvmEnv::default(), TxEnv::default(), backend);
+
+        let target = Address::repeat_byte(0x11);
+        // PUSH0; PUSH0; PUSH0; CREATE; POP; STOP.
+        executor
+            .set_code(
+                target,
+                Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x5f, 0x5f, 0xf0, 0x50, 0x00])),
+            )
+            .unwrap();
+        executor.inspector_mut().cheatcodes.as_mut().unwrap().intercept_next_create_call = true;
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+
+        assert!(!result.reverted);
+        assert!(
+            result.gas_used
+                < revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM)
+                    .create_state_gas(),
+            "failed CREATE retained its conditional state-gas charge"
+        );
+    }
+
+    #[test]
     fn early_exit_interrupts_active_evm_execution() {
         const GAS_LIMIT: u64 = 1 << 24;
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
