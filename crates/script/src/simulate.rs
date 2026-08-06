@@ -31,7 +31,7 @@ use foundry_evm::{
     },
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
-use futures::future::{join_all, try_join_all};
+use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -327,7 +327,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     async fn build_runners(
         &self,
     ) -> Result<Vec<(String, RpcSimulationContext<ScriptRunner<FEN>>)>> {
-        let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
+        let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
 
         if !shell::is_json() {
             let n = rpcs.len();
@@ -335,23 +335,32 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             sh_println!("\n## Setting up {n} EVM{s}.")?;
         }
 
-        let futs = rpcs.into_iter().map(|rpc| {
-            build_rpc_simulation_context(
-                rpc,
-                &self.args,
-                &self.script_config,
-                &self.build_data.known_contracts,
-                &self.build_data.sources,
-                &self.execution_result,
-            )
-        });
-        try_join_all(futs).await
+        // Context construction performs several identity and block probes per endpoint. Resolve
+        // endpoints serially so setup does not create an unbounded cross-endpoint request burst.
+        let mut contexts = Vec::with_capacity(rpcs.len());
+        for rpc in rpcs.iter().cloned() {
+            contexts.push(
+                build_rpc_simulation_context(
+                    rpc,
+                    &self.args,
+                    &self.script_config,
+                    &self.build_data.known_contracts,
+                    &self.build_data.sources,
+                    &self.execution_result,
+                )
+                .await?,
+            );
+        }
+        Ok(contexts)
     }
 
     /// Builds one trace decoder for every RPC without constructing simulation runners.
     async fn build_rpc_decoders(&self) -> Result<HashMap<String, CallTraceDecoder>> {
-        let futs = self.execution_artifacts.rpc_data.total_rpcs.iter().cloned().map(|rpc| {
-            build_rpc_decoder(
+        let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
+        // Decoder construction resolves the same endpoint context as a simulation runner.
+        let mut decoders = HashMap::default();
+        for rpc in rpcs.iter().cloned() {
+            let (rpc, decoder) = build_rpc_decoder(
                 rpc,
                 &self.args,
                 &self.script_config,
@@ -359,8 +368,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 &self.build_data.sources,
                 &self.execution_result,
             )
-        });
-        Ok(try_join_all(futs).await?.into_iter().collect())
+            .await?;
+            decoders.insert(rpc, decoder);
+        }
+        Ok(decoders)
     }
 }
 
@@ -418,7 +429,7 @@ mod tests {
         let known_contracts = ContractsByArtifact::default();
         let sources = ContractSources::default();
         let execution_result = ScriptResult::default();
-        let contexts = try_join_all([
+        let contexts = [
             build_rpc_simulation_context(
                 monad_eight_rpc.clone(),
                 &args,
@@ -426,7 +437,9 @@ mod tests {
                 &known_contracts,
                 &sources,
                 &execution_result,
-            ),
+            )
+            .await
+            .unwrap(),
             build_rpc_simulation_context(
                 monad_nine_rpc.clone(),
                 &args,
@@ -434,10 +447,10 @@ mod tests {
                 &known_contracts,
                 &sources,
                 &execution_result,
-            ),
-        ])
-        .await
-        .unwrap()
+            )
+            .await
+            .unwrap(),
+        ]
         .into_iter()
         .collect::<HashMap<_, _>>();
 
@@ -506,7 +519,7 @@ mod tests {
         let known_contracts = ContractsByArtifact::default();
         let sources = ContractSources::default();
         let execution_result = ScriptResult::default();
-        let decoders = try_join_all([
+        let decoders = [
             build_rpc_decoder(
                 monad_eight_rpc.clone(),
                 &args,
@@ -514,7 +527,9 @@ mod tests {
                 &known_contracts,
                 &sources,
                 &execution_result,
-            ),
+            )
+            .await
+            .unwrap(),
             build_rpc_decoder(
                 monad_nine_rpc.clone(),
                 &args,
@@ -522,10 +537,10 @@ mod tests {
                 &known_contracts,
                 &sources,
                 &execution_result,
-            ),
-        ])
-        .await
-        .unwrap()
+            )
+            .await
+            .unwrap(),
+        ]
         .into_iter()
         .collect::<HashMap<_, _>>();
 
