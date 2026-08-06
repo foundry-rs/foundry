@@ -9,7 +9,7 @@ contract Issue3674Test is Test {
     function testNonceCreateSelect() public {
         vm.createSelectFork("sepolia");
 
-        vm.createSelectFork("avaxTestnet");
+        vm.createSelectFork("avaxTestnet", 57578054);
         assertTrue(vm.getNonce(msg.sender) > 0x17);
     }
 }
