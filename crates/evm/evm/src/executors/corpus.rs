@@ -1657,15 +1657,14 @@ impl WorkerCorpus {
             let mut replay_executor = executor.clone();
             let ReplayOutcome {
                 keep_entry, new_coverage, new_edge, edges_covered, cmp_seq, ..
-            } =
-                replay_corpus_sequence_with_executor(
-                    &tx_seq,
-                    &mut replay_executor,
-                    target,
-                    coverage,
-                    true,
-                    false,
-                )?;
+            } = replay_corpus_sequence_with_executor(
+                &tx_seq,
+                &mut replay_executor,
+                target,
+                coverage,
+                true,
+                false,
+            )?;
 
             let sync_path = &entry.path;
             if keep_entry && new_coverage {
@@ -1755,14 +1754,9 @@ impl WorkerCorpus {
             .filter_map(|&index| self.in_memory_corpus.get(index).map(|corpus| corpus.uuid))
             .collect::<HashSet<_>>();
 
-        for corpus in self
-            .in_memory_corpus
-            .iter()
-            .filter(|entry| {
-                new_entry_uuids.contains(&entry.uuid)
-                    || self.pending_sync_uuids.contains(&entry.uuid)
-            })
-        {
+        for corpus in self.in_memory_corpus.iter().filter(|entry| {
+            new_entry_uuids.contains(&entry.uuid) || self.pending_sync_uuids.contains(&entry.uuid)
+        }) {
             let file_name = corpus.file_name(self.config.corpus_gzip);
             let file_path = corpus_dir.join(&file_name);
             if !file_path.is_file()
