@@ -25,6 +25,16 @@ the check action's built-in AI installer, which does not pin the installed CLI.
 - Generated `CHANGELOG.md` history starts at adoption. Historical releases are not
   backfilled.
 
+Release automation accepts only canonical `X.Y.Z` versions and `vX.Y.Z` tags, plus
+strict release candidates in the form `X.Y.Z-rcN` and `vX.Y.Z-rcN` where `N >= 1`.
+Legacy prerelease forms are excluded from transition state. Manual dispatches must
+confirm their exact source and target tags: `start` turns the checked-in stable candidate
+into `rc1`, `advance` moves the latest same-core RC to the next RC, and `promote` removes
+the RC suffix. Starting and advancing require and consume changelog fragments; promotion
+requires zero fragments and leaves `CHANGELOG.md` unchanged. Source RC tags must exist,
+be the latest same-core RC, form a contiguous sequence from `rc1`, and be ancestors of
+the release commit.
+
 Root changelog format gives every discovered package one unified version. A read-only dry
 run at the pinned revision discovers 37 release-planned packages;
 `forge-sol-macro-gen` and `foundry-test-utils` are excluded because they set

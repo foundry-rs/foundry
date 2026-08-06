@@ -218,7 +218,8 @@ impl InvariantConfig {
 
     /// Returns true if generated invariant calls may advance block time or height.
     pub const fn has_delay(&self) -> bool {
-        self.max_block_delay.is_some() || self.max_time_delay.is_some()
+        matches!(self.max_block_delay, Some(delay) if delay > 0)
+            || matches!(self.max_time_delay, Some(delay) if delay > 0)
     }
 }
 
@@ -253,6 +254,19 @@ mod tests {
     fn invariant_workers_reject_zero() {
         let err = serde_json::from_str::<InvariantWorkers>(r#"0"#).unwrap_err();
         assert!(err.to_string().contains("greater than 0"));
+    }
+
+    #[test]
+    fn invariant_config_zero_delays_are_disabled() {
+        let mut config = InvariantConfig { max_block_delay: Some(0), ..Default::default() };
+        assert!(!config.has_delay());
+
+        config.max_block_delay = None;
+        config.max_time_delay = Some(0);
+        assert!(!config.has_delay());
+
+        config.max_time_delay = Some(1);
+        assert!(config.has_delay());
     }
 
     #[test]

@@ -1283,8 +1283,13 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    /// Returns the canonical hash for the given block number.
+    pub(crate) fn block_hash_by_number(&self, number: u64) -> Option<B256> {
+        self.blockchain.hash(BlockNumber::Number(number).into(), self.slots_in_an_epoch)
+    }
+
     /// Returns the block and its hash for the given id
-    fn get_block_with_hash(&self, id: impl Into<BlockId>) -> Option<(Block, B256)> {
+    pub(crate) fn get_block_with_hash(&self, id: impl Into<BlockId>) -> Option<(Block, B256)> {
         let hash = self.blockchain.hash(id.into(), self.slots_in_an_epoch)?;
         let block = self.get_block_by_hash(hash)?;
         Some((block, hash))
@@ -1296,6 +1301,26 @@ impl<N: Network> Backend<N> {
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<Block> {
         self.blockchain.get_block_by_hash(&hash)
+    }
+
+    /// Returns the base fees for the block after a fee history range.
+    ///
+    /// Mining publishes a new canonical block before advancing the fee manager. Holding the mining
+    /// lock makes choosing between an existing child and the current head's pending fees atomic
+    /// with that publication sequence.
+    pub(crate) async fn fee_history_next_fees(&self, highest: u64) -> Option<(u128, u128)> {
+        let _mining_guard = self.mining.lock().await;
+        let next_number = highest.checked_add(1)?;
+        if let Some(block) = self.get_block(next_number) {
+            Some((
+                block.header.base_fee_per_gas.unwrap_or_default() as u128,
+                block.header.blob_fee(self.blob_params()).unwrap_or_default(),
+            ))
+        } else if highest == self.best_number() {
+            Some((self.fees().base_fee() as u128, self.fees().base_fee_per_blob_gas()))
+        } else {
+            None
+        }
     }
 
     /// Returns the traces for the given transaction

@@ -228,7 +228,7 @@ pub enum PoolError {
 pub enum FeeHistoryError {
     #[error("requested block range is out of bounds")]
     InvalidBlockRange,
-    #[error("could not find newest block number requested: {0}")]
+    #[error("could not find block number requested: {0}")]
     BlockNotFound(BlockNumberOrTag),
 }
 
@@ -451,9 +451,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
                 }
-                BlockchainError::TransactionConfirmationTimeout { .. } => {
-                    RpcError::internal_error_with("Transaction confirmation timeout")
-                }
+                BlockchainError::TransactionConfirmationTimeout { hash, .. } => RpcError {
+                    code: ErrorCode::ServerError(4),
+                    message: "Transaction confirmation timeout".into(),
+                    data: Some(serde_json::Value::String(hash.to_string())),
+                },
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error

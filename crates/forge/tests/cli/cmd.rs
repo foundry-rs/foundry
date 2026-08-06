@@ -4105,6 +4105,47 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/11146>
+forgetest!(inspect_contracts_by_exact_input_path, |prj, cmd| {
+    prj.add_test(
+        "InspectTarget.t.sol",
+        r#"
+contract InspectTarget {
+    function testValue() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "node_modules/example/Dependency.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract Dependency {
+    function dependencyValue() external pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.libs.push("node_modules".into()));
+
+    for (target, function) in [
+        ("test/InspectTarget.t.sol:InspectTarget", "testValue"),
+        ("node_modules/example/Dependency.sol:Dependency", "dependencyValue"),
+    ] {
+        let stdout = cmd
+            .forge_fuse()
+            .args(["inspect", target, "abi", "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let abi: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(abi.as_array().unwrap().iter().any(|item| item["name"] == function));
+    }
+});
+
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
