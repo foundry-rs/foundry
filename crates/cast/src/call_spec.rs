@@ -67,10 +67,14 @@ impl CallSpec {
         // Pattern: to:value:sig:args or to::sig:args (empty value) or to:value:0xdata
         let mut idx = 1;
 
-        // Check for value (non-empty, not starting with 0x unless it's a number)
+        // Check for value (non-empty and not a signature). A terminal lowercase hex field is
+        // treated as raw calldata, while one followed by another field is a value.
         if idx < parts.len() {
             let part = parts[idx];
-            if !part.is_empty() && !part.starts_with("0x") && !part.contains('(') {
+            if !part.is_empty()
+                && (!part.starts_with("0x") || idx + 1 < parts.len())
+                && !part.contains('(')
+            {
                 // This looks like a value
                 value = parse_ether_or_wei(part)?;
                 idx += 1;
@@ -189,6 +193,19 @@ mod tests {
     fn test_parse_hex_value() {
         assert_eq!(parse_ether_or_wei("0x10").unwrap(), U256::from(16));
         assert_eq!(parse_ether_or_wei("0X10").unwrap(), U256::from(16));
+    }
+
+    #[test]
+    fn test_parse_lowercase_hex_value() {
+        let address = "0x1234567890123456789012345678901234567890";
+
+        let spec = CallSpec::parse(&format!("{address}:0x10:deposit()")).unwrap();
+        assert_eq!(spec.value, U256::from(16));
+        assert_eq!(spec.sig.as_deref(), Some("deposit()"));
+
+        let spec = CallSpec::parse(&format!("{address}:0x10")).unwrap();
+        assert_eq!(spec.value, U256::ZERO);
+        assert_eq!(spec.data, Some(Bytes::from([0x10])));
     }
 
     #[test]
