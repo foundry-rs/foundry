@@ -519,6 +519,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
+    /// Explicit stateless fuzz failure file to replay.
+    pub fuzz_input_file: Option<PathBuf>,
 
     /// When set, run only the matching test and replay this artifact's concrete payload.
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
@@ -654,6 +656,8 @@ pub struct MultiContractRunnerBuilder {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
+    /// Explicit stateless fuzz failure file to replay.
+    pub fuzz_input_file: Option<PathBuf>,
     /// Symbolic artifact replay mode (CLI-only, off by default).
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
     /// Whether the configured CREATE2 deployer is available in the execution environment.
@@ -687,6 +691,7 @@ impl MultiContractRunnerBuilder {
             fuzz_minimize: None,
             fuzz_only: false,
             fuzz_failure_replay: false,
+            fuzz_input_file: None,
             symbolic_artifact_replay: None,
             create2_deployer_available: None,
         }
@@ -714,6 +719,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn with_fuzz_failure_replay(mut self, fuzz_failure_replay: bool) -> Self {
         self.fuzz_failure_replay = fuzz_failure_replay;
+        self
+    }
+
+    pub fn with_fuzz_input_file(mut self, fuzz_input_file: Option<PathBuf>) -> Self {
+        self.fuzz_input_file = fuzz_input_file;
         self
     }
 
@@ -963,6 +973,7 @@ impl MultiContractRunnerBuilder {
                 fuzz_minimize: self.fuzz_minimize,
                 fuzz_only: self.fuzz_only,
                 fuzz_failure_replay: self.fuzz_failure_replay,
+                fuzz_input_file: self.fuzz_input_file,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },

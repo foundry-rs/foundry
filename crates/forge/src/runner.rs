@@ -4842,6 +4842,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.cr.name,
             &func.name,
         );
+        if self.cr.mcr.tcfg.fuzz_input_file.is_some() && fuzz_config.run.is_some() {
+            self.result.fuzz_setup_fail(eyre::eyre!(
+                "`--fuzz-input-file` cannot be combined with `fuzz.run`"
+            ));
+            return self.result;
+        }
 
         // Showmap replay mode: replay the persisted corpus and emit coverage
         // files instead of running the fuzz campaign.
@@ -4925,16 +4931,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        // Load persisted counterexample, if any.
-        let persisted_failure =
-            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
+        // Load persisted counterexample, if any. An explicit input is required to be readable;
+        // the canonical cache remains optional.
+        let replay_file =
+            self.cr.mcr.tcfg.fuzz_input_file.as_deref().unwrap_or(failure_file.as_path());
+        let persisted_failure = if self.cr.mcr.tcfg.fuzz_input_file.is_some() {
+            match foundry_common::fs::read_json_file::<BaseCounterExample>(replay_file) {
+                Ok(failure) => Some(failure),
+                Err(err) => {
+                    self.result.fuzz_setup_fail(err.into());
+                    return self.result;
+                }
+            }
+        } else {
+            foundry_common::fs::read_json_file::<BaseCounterExample>(replay_file).ok()
+        };
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let Some(failure) = persisted_failure.as_ref() else {
                 let result = FuzzTestResult {
                     skipped: true,
                     reason: Some(format!(
                         "no persisted fuzz failure found at {}",
-                        failure_file.display()
+                        replay_file.display()
                     )),
                     ..Default::default()
                 };

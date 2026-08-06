@@ -755,8 +755,13 @@ pub struct TestArgs {
     pub fuzz_mutation_weight_cmp: Option<u32>,
 
     /// File to rerun fuzz failures from.
-    #[arg(long)]
-    pub fuzz_input_file: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with = "fuzz_run"
+    )]
+    pub fuzz_input_file: Option<PathBuf>,
 
     /// Number of calls executed to try to break invariants in one run.
     #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH", value_name = "DEPTH")]
@@ -2535,6 +2540,7 @@ impl TestArgs {
             .with_showmap(showmap)
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
+            .with_fuzz_input_file(self.fuzz_input_file.clone())
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
@@ -3423,9 +3429,6 @@ impl Provider for TestArgs {
         }
         if let Some(weight) = self.fuzz_mutation_weight_cmp {
             fuzz_dict.insert("mutation_weight_cmp".to_string(), weight.into());
-        }
-        if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
-            fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
