@@ -2071,7 +2071,7 @@ mod tests {
     use super::*;
     use crate::inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey};
     use alloy_dyn_abi::DynSolValue;
-    use foundry_config::FuzzDictionaryConfig;
+    use foundry_config::{FuzzCorpusMutationWeights, FuzzDictionaryConfig};
     use proptest::prelude::Just;
     use revm::database::{CacheDB, EmptyDB};
     use std::fs;
@@ -2150,6 +2150,16 @@ mod tests {
         let config = corpus_config(corpus_root);
         let generator =
             test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
+        WorkerCorpus::from_seed(id, config, generator, seed).unwrap()
+    }
+
+    fn worker_corpus_with_config(
+        id: usize,
+        config: FuzzCorpusConfig,
+        generated: BasicTxDetails,
+        seed: WorkerCorpusSeed,
+    ) -> WorkerCorpus {
+        let generator = test_sequence(&config, TxGenerator::from_strategy(Just(generated).boxed()));
         WorkerCorpus::from_seed(id, config, generator, seed).unwrap()
     }
 
