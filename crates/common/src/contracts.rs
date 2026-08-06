@@ -577,23 +577,14 @@ pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> R
         PathOrContractInfo::ContractInfo(info) => {
             if let Some(path) = info.path.as_ref() {
                 let path = canonicalized(project.root().join(path));
-                let sources = project.sources()?;
-                let contract_path = sources
-                    .iter()
-                    .find_map(|(src_path, _)| {
-                        if **src_path == path {
-                            return Some(src_path.clone());
-                        }
-                        None
-                    })
-                    .ok_or_else(|| {
-                        eyre::eyre!(
-                            "Could not find source file for contract `{}` at {}",
-                            info.name,
-                            path.strip_prefix(project.root()).unwrap().display()
-                        )
-                    })?;
-                return Ok(contract_path);
+                if !path.is_file() {
+                    eyre::bail!(
+                        "Could not find source file for contract `{}` at {}",
+                        info.name,
+                        path.strip_prefix(project.root()).unwrap_or(&path).display()
+                    );
+                }
+                return Ok(path);
             }
             // If ContractInfo.path hasn't been provided we try to find the contract using the name.
             // This will fail if projects have multiple contracts with the same name. In that case,
