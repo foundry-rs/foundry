@@ -86,7 +86,8 @@ differential-coverage relscore coverage_data
   the persisted-failure replay path. To reproduce the last saved fuzz failure,
   run `forge fuzz replay` without `--corpus-dir`, or replay a specific failure
   with `forge fuzz replay --fuzz-input-file <PATH>`. `--corpus-dir` and
-  `--fuzz-input-file` cannot be combined.
+  `--fuzz-input-file` cannot be combined. The selected tests must contain exactly
+  one stateless fuzz function matching the artifact's selector.
 - Unit and table tests are not runnable in showmap mode and are skipped.
 - A test with no `corpus_dir` configured is `SKIP`ped with reason
   `"no corpus_dir configured for this test"`.

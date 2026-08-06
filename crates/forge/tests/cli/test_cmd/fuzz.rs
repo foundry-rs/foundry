@@ -1,6 +1,6 @@
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, hex};
+use alloy_primitives::{U256, hex, keccak256};
 use foundry_config::fs_permissions::PathPermission;
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
@@ -320,13 +320,19 @@ forgetest_init!(forge_fuzz_replays_explicit_failure_file, |prj, cmd| {
     prj.add_test(
         "ForgeExplicitFuzzReplay.t.sol",
         r#"
-contract ForgeExplicitFuzzReplayTest {
-    function testFuzz_failure(uint256) public pure {
+library ForgeExplicitFuzzReplayLibrary {
+    function fail() external pure {
         revert("boom");
     }
+}
 
-    function testFuzz_other(uint256 value) public pure {
-        value;
+contract ForgeExplicitFuzzReplayTest {
+    function testFuzz_failure(uint256) public pure {
+        ForgeExplicitFuzzReplayLibrary.fail();
+    }
+
+    function testFuzz_other(uint256) public pure {
+        revert("other boom");
     }
 }
    "#,
@@ -352,6 +358,15 @@ contract ForgeExplicitFuzzReplayTest {
     let original = std::fs::read(&explicit).unwrap();
     let persisted: BaseCounterExample = serde_json::from_slice(&original).unwrap();
     let failing_value = U256::from_be_slice(&persisted.calldata[4..36]);
+    let mut other_failure = persisted.clone();
+    let mut other_calldata = other_failure.calldata.to_vec();
+    other_calldata[..4].copy_from_slice(&keccak256("testFuzz_other(uint256)").as_slice()[..4]);
+    other_failure.calldata = other_calldata.into();
+    std::fs::write(
+        prj.root().join("cache/fuzz/failures/ForgeExplicitFuzzReplayTest/testFuzz_other"),
+        serde_json::to_vec(&other_failure).unwrap(),
+    )
+    .unwrap();
 
     let missing = cmd
         .forge_fuse()
@@ -395,9 +410,79 @@ contract ForgeExplicitFuzzReplayTest {
             "--fuzz-input-file",
         ])
         .arg(&explicit)
-        .assert_success();
-    let stdout = String::from_utf8_lossy(&mismatch.get_output().stdout);
-    assert!(stdout.contains("persisted fuzz failure selector does not match"), "{stdout}");
+        .assert_failure();
+    let stderr = String::from_utf8_lossy(&mismatch.get_output().stderr);
+    assert!(stderr.contains("does not match any selected stateless fuzz test"), "{stderr}");
+
+    let short = prj.root().join("short-fuzz-failure.json");
+    let mut short_failure = persisted;
+    short_failure.calldata = hex!("12").into();
+    std::fs::write(&short, serde_json::to_vec(&short_failure).unwrap()).unwrap();
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "ForgeExplicitFuzzReplayTest",
+            "--match-test",
+            "testFuzz_failure",
+            "--fuzz-input-file",
+        ])
+        .arg(&short)
+        .assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("calldata shorter than a 4-byte selector"), "{stderr}");
+
+    for args in [
+        &["test", "--list", "--fuzz-input-file"][..],
+        &["fuzz", "replay", "--list", "--fuzz-input-file"][..],
+    ] {
+        let output = cmd.forge_fuse().args(args).arg(&explicit).assert_failure();
+        let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+        assert!(
+            stderr.contains("cannot be used with")
+                && stderr.contains("--list")
+                && stderr.contains("--fuzz-input-file"),
+            "{stderr}"
+        );
+    }
+
+    prj.add_test(
+        "ForgeExplicitFuzzReplayDuplicate.t.sol",
+        r#"
+contract ForgeExplicitFuzzReplayDuplicateTest {
+    function testFuzz_failure(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+    let output = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--match-test", "testFuzz_failure", "--fuzz-input-file"])
+        .arg(&explicit)
+        .assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("matches 2 selected stateless fuzz tests; replay requires exactly one"),
+        "{stderr}"
+    );
+
+    let broad = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "ForgeExplicitFuzzReplayTest",
+            "--fuzz-input-file",
+        ])
+        .arg(&explicit)
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&broad.get_output().stdout);
+    assert!(stdout.contains("[FAIL: boom; counterexample:"), "{stdout}");
+    assert!(stdout.contains("[FAIL: other boom; counterexample:"), "{stdout}");
 
     prj.add_test(
         "ForgeExplicitFuzzReplay.t.sol",
@@ -448,8 +533,8 @@ contract ForgeExplicitFuzzReplayTest {{
         ])
         .arg(&missing_explicit)
         .assert_failure();
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    assert!(stdout.contains(&missing_explicit.display().to_string()), "{stdout}");
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains(&missing_explicit.display().to_string()), "{stderr}");
 
     let malformed = prj.root().join("malformed-fuzz-failure.json");
     std::fs::write(&malformed, "not json").unwrap();
@@ -466,8 +551,8 @@ contract ForgeExplicitFuzzReplayTest {{
         ])
         .arg(&malformed)
         .assert_failure();
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    assert!(stdout.contains(&malformed.display().to_string()), "{stdout}");
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains(&malformed.display().to_string()), "{stderr}");
 
     let output = cmd
         .forge_fuse()
@@ -492,6 +577,20 @@ contract ForgeExplicitFuzzReplayTest {{
         .assert_failure();
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("cannot be combined with `fuzz.run`"), "{stdout}");
+
+    prj.update_config(|config| config.fuzz.run = None);
+    std::fs::write(
+        prj.root().join("cache/test-failures"),
+        r#"{"version":1,"failures":[{"contract":"test/ForgeExplicitFuzzReplay.t.sol:ForgeExplicitFuzzReplayTest","test":"testFuzz_other(uint256)"}]}"#,
+    )
+    .unwrap();
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--rerun", "--fuzz-input-file"])
+        .arg(&explicit)
+        .assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("does not match any selected stateless fuzz test"), "{stderr}");
 });
 
 forgetest_init!(forge_fuzz_replay_rejects_multiple_input_sources, |_prj, cmd| {
@@ -1017,20 +1116,12 @@ contract ForgeFuzzRunInvariantWarningsTest is Test {
             "1",
             "--frontier-dir",
             "frontier",
-            "--fuzz-input-file",
-            "failure",
         ])
         .assert_success();
     let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
     assert!(
         stderr.contains(
             "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
-        ),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains(
-            "`--fuzz-input-file` only applies to fuzz tests; no matched fuzz tests were found."
         ),
         "{stderr}"
     );

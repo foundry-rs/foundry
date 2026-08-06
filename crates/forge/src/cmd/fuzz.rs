@@ -197,7 +197,7 @@ pub struct FuzzRunArgs {
     pub(crate) showmap_corpus_dir: Option<PathBuf>,
 
     /// File to rerun fuzz failures from.
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath, conflicts_with = "list")]
     pub(crate) fuzz_input_file: Option<PathBuf>,
 }
 

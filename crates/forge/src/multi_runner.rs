@@ -29,7 +29,7 @@ use foundry_evm::{
     executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fork::CreateFork,
     fuzz::{
-        BasicTxDetails,
+        BaseCounterExample, BasicTxDetails,
         strategies::{EnumBounds, LiteralsDictionary},
     },
     inspectors::{CheatsConfig, EdgeIndexMap},
@@ -473,6 +473,17 @@ pub struct SymbolicArtifactReplayConfig {
     pub path: PathBuf,
 }
 
+/// A validated stateless fuzz failure and its unique replay target.
+#[derive(Clone, Debug)]
+pub struct FuzzFailureReplayConfig {
+    /// Artifact payload to replay.
+    pub failure: Arc<BaseCounterExample>,
+    /// Fully qualified contract identifier selected for replay.
+    pub contract: String,
+    /// Function signature selected for replay.
+    pub test: String,
+}
+
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
@@ -519,8 +530,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
-    /// Explicit stateless fuzz failure file to replay.
-    pub fuzz_input_file: Option<PathBuf>,
+    /// Validated explicit stateless fuzz failure to replay.
+    pub fuzz_input: Option<FuzzFailureReplayConfig>,
 
     /// When set, run only the matching test and replay this artifact's concrete payload.
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
@@ -656,8 +667,8 @@ pub struct MultiContractRunnerBuilder {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
-    /// Explicit stateless fuzz failure file to replay.
-    pub fuzz_input_file: Option<PathBuf>,
+    /// Validated explicit stateless fuzz failure to replay.
+    pub fuzz_input: Option<FuzzFailureReplayConfig>,
     /// Symbolic artifact replay mode (CLI-only, off by default).
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
     /// Whether the configured CREATE2 deployer is available in the execution environment.
@@ -691,7 +702,7 @@ impl MultiContractRunnerBuilder {
             fuzz_minimize: None,
             fuzz_only: false,
             fuzz_failure_replay: false,
-            fuzz_input_file: None,
+            fuzz_input: None,
             symbolic_artifact_replay: None,
             create2_deployer_available: None,
         }
@@ -722,8 +733,8 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn with_fuzz_input_file(mut self, fuzz_input_file: Option<PathBuf>) -> Self {
-        self.fuzz_input_file = fuzz_input_file;
+    pub fn with_fuzz_input(mut self, fuzz_input: Option<FuzzFailureReplayConfig>) -> Self {
+        self.fuzz_input = fuzz_input;
         self
     }
 
@@ -973,7 +984,7 @@ impl MultiContractRunnerBuilder {
                 fuzz_minimize: self.fuzz_minimize,
                 fuzz_only: self.fuzz_only,
                 fuzz_failure_replay: self.fuzz_failure_replay,
-                fuzz_input_file: self.fuzz_input_file,
+                fuzz_input: self.fuzz_input,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },
