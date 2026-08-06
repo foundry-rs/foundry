@@ -833,7 +833,7 @@ impl EvmOpts {
             "fork endpoint {} changed while its EVM and transaction environments were being \
              resolved",
             fork_endpoint_description(fork_url)
-        )
+        );
     }
 
     /// Returns the execution environment and the source identity of its remote fork, if any.
@@ -899,7 +899,7 @@ impl EvmOpts {
         eyre::bail!(
             "fork endpoint {} changed while its resolved environment was being reconstructed",
             fork_endpoint_description(self.fork_url.as_deref().unwrap_or_default())
-        )
+        );
     }
 
     /// Returns the [`EvmEnv`] (cfg + block) and [`BlockNumber`] fetched from the fork endpoint via
