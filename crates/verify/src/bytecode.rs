@@ -349,6 +349,7 @@ impl VerifyBytecodeArgs {
         .transpose()?
         .or(self.encoded_constructor_args.clone().map(hex::decode).transpose()?);
 
+        let args_from_user = provided_constructor_args.is_some();
         let mut constructor_args = if let Some(provided) = provided_constructor_args {
             provided.into()
         } else if let Some(source_code) = &source_code {
@@ -547,12 +548,29 @@ impl VerifyBytecodeArgs {
             })?
         };
 
+        // `is_partial_match` cuts `constructor_args.len()` bytes off both sides before comparing,
+        // so argument *values* never reach the creation comparison and wrong ones of the right
+        // length always match. Whether the supplied args are the on-chain tail is decided here
+        // instead, and a mismatch is a failed verification rather than something to paper over.
+        let args_are_creation_tail = maybe_creation_code.ends_with(&constructor_args);
+        let user_args_mismatch = args_from_user && !args_are_creation_tail;
+
         // In some cases, Etherscan will return incorrect constructor arguments. If this
-        // happens, try extracting arguments ourselves.
-        if !maybe_creation_code.ends_with(&constructor_args) {
-            trace!("mismatch of constructor args with etherscan");
-            // If local bytecode is longer than on-chain one, this is probably not a match.
-            if maybe_creation_code.len() >= local_bytecode.len() {
+        // happens, try extracting arguments ourselves. Args the user passed are never replaced:
+        // substituting them is what let a deployment with different immutables verify clean.
+        if !args_are_creation_tail {
+            trace!(from_user = args_from_user, "constructor args are not the creation code tail");
+            // Do not fold into `user_args_mismatch && !shell::is_json()`: that falls through to
+            // the `else if` under --json and substitutes the args again.
+            if user_args_mismatch {
+                if !shell::is_json() {
+                    sh_warn!(
+                        "Provided constructor args are not the ones used at deployment, so the \
+                         contract's immutables differ. Omit --constructor-args to use those."
+                    )?;
+                }
+            } else if maybe_creation_code.len() >= local_bytecode.len() {
+                // If local bytecode is longer than on-chain one, this is probably not a match.
                 constructor_args =
                     Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
                 trace!(
@@ -572,13 +590,17 @@ impl VerifyBytecodeArgs {
         // Check if `--ignore` is set to `creation`.
         if self.ignore.is_none_or(|b| !b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
-            let match_type = crate::utils::match_bytecodes(
-                local_bytecode_vec.as_slice(),
-                &maybe_creation_code,
-                &constructor_args,
-                false,
-                config.bytecode_hash,
-            );
+            let match_type = if user_args_mismatch {
+                None
+            } else {
+                crate::utils::match_bytecodes(
+                    local_bytecode_vec.as_slice(),
+                    &maybe_creation_code,
+                    &constructor_args,
+                    false,
+                    config.bytecode_hash,
+                )
+            };
 
             crate::utils::print_result(
                 match_type,

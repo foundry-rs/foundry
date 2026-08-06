@@ -255,6 +255,62 @@ forgetest_async!(flaky_verify_bytecode_with_constructor_args, |prj, cmd| {
     .await;
 });
 
+// Wrong `--constructor-args` used to verify clean, because supplied args that were not the tail
+// of the creation code were silently replaced by the real ones.
+forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cmd| {
+    let etherscan_key = next_etherscan_api_key();
+    let rpc_url = next_http_archive_rpc_url();
+    let addr = "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b";
+
+    let source_code = fetch_etherscan_source_flattened(addr, &etherscan_key, Chain::mainnet())
+        .await
+        .expect("failed to fetch source code from etherscan");
+    prj.add_source("StrategyManager", &source_code);
+    prj.write_config(Config {
+        evm_version: EvmVersion::London,
+        optimizer: Some(true),
+        optimizer_runs: Some(200),
+        ..Default::default()
+    });
+
+    let etherscan_key = next_etherscan_api_key();
+    let run = cmd
+        .forge_fuse()
+        .args([
+            "verify-bytecode",
+            addr,
+            "StrategyManager",
+            "--etherscan-api-key",
+            &etherscan_key,
+            "--verifier",
+            "etherscan",
+            "--verifier-url",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            "--rpc-url",
+            &rpc_url,
+            // Three zero addresses instead of the real constructor arguments.
+            "--constructor-args",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+        ])
+        .assert_success();
+    let output = run.get_output();
+
+    // The warning goes to stderr, the match verdict to stdout.
+    let stderr = output.stderr_lossy();
+    let stdout = output.stdout_lossy();
+
+    assert!(
+        stderr.contains("Provided constructor args are not the ones used at deployment"),
+        "expected a warning that the supplied args do not match the deployment, got:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("Creation code matched"),
+        "wrong constructor args must not produce a creation match, got:\n{stdout}"
+    );
+});
+
 // `--ignore` tests
 forgetest_async!(flaky_verify_bytecode_can_ignore_creation, |prj, cmd| {
     test_verify_bytecode_with_ignore(
@@ -432,10 +488,10 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
     cmd.unset_env("ETHERSCAN_API_KEY");
     cmd.unset_env("VERIFIER_API_KEY");
     cmd.unset_env("VERIFIER_URL");
-    let assert = cmd
+    let run = cmd
         .args(["verify-bytecode", &address, "Counter", "--rpc-url", rpc.as_str()])
         .assert_success();
-    let output = assert.get_output();
+    let output = run.get_output();
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
@@ -461,7 +517,7 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
     cmd.unset_env("ETHERSCAN_API_KEY");
     cmd.unset_env("VERIFIER_API_KEY");
     cmd.unset_env("VERIFIER_URL");
-    let assert = cmd
+    let run = cmd
         .args([
             "verify-bytecode",
             &address,
@@ -472,7 +528,7 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
             "runtime",
         ])
         .assert_success();
-    let output = assert.get_output();
+    let output = run.get_output();
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
@@ -626,7 +682,7 @@ contract LinkedContract {
     cmd.unset_env("ETHERSCAN_API_KEY");
     cmd.unset_env("VERIFIER_API_KEY");
     cmd.unset_env("VERIFIER_URL");
-    let assert = cmd
+    let run = cmd
         .args([
             "verify-bytecode",
             contract.as_str(),
@@ -639,7 +695,7 @@ contract LinkedContract {
             second_lib_spec.as_str(),
         ])
         .assert_success();
-    let output = assert.get_output();
+    let output = run.get_output();
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
@@ -657,7 +713,7 @@ contract LinkedContract {
     cmd.unset_env("ETHERSCAN_API_KEY");
     cmd.unset_env("VERIFIER_API_KEY");
     cmd.unset_env("VERIFIER_URL");
-    let assert = cmd
+    let run = cmd
         .args([
             "verify-bytecode",
             contract.as_str(),
@@ -666,7 +722,7 @@ contract LinkedContract {
             rpc.as_str(),
         ])
         .assert_success();
-    let output = assert.get_output();
+    let output = run.get_output();
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
