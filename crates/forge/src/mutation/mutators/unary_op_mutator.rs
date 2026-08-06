@@ -112,11 +112,12 @@ impl Mutator for UnaryOpMutator {
 }
 
 fn is_definitely_non_lvalue(expr: &solar::ast::Expr<'_>) -> bool {
-    if let ExprKind::Call(callee, _) = &expr.peel_parens().kind {
-        return !matches!(
-            &callee.peel_parens().kind,
-            ExprKind::Member(_, member) if member.as_str() == "push"
-        );
+    if let ExprKind::Call(callee, args) = &expr.peel_parens().kind {
+        return !(args.is_empty()
+            && matches!(
+                &callee.peel_parens().kind,
+                ExprKind::Member(_, member) if member.as_str() == "push"
+            ));
     }
 
     matches!(

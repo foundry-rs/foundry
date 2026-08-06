@@ -38,6 +38,7 @@ mutator_tests!(UnaryOpMutator;
         "values.push()++",
         "values.push()--",
     ]);
+    negated_method_named_push: "-producer.push(1)" => Some(vec!["~producer.push(1)"]);
     parenthesized_storage_push: "-(values.push())" => Some(vec![
         "++(values.push())",
         "--(values.push())",
