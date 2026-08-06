@@ -1590,7 +1590,7 @@ mod tests {
     use alloy_primitives::B256;
     use foundry_cheatcodes::{
         CheatsConfig,
-        Vm::{blobhashesCall, revertToStateCall, snapshotStateCall},
+        Vm::{blobhashesCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall},
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
@@ -1770,6 +1770,60 @@ mod tests {
                 < revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM)
                     .create_state_gas(),
             "failed CREATE retained its conditional state-gas charge"
+        );
+    }
+
+    #[test]
+    fn amsterdam_mocked_call_revert_refunds_state_gas() {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .spec_id(SpecId::AMSTERDAM)
+            .gas_limit(1_000_000)
+            .build(EvmEnv::default(), TxEnv::default(), backend);
+
+        let target = Address::repeat_byte(0x11);
+        let mocked = Address::repeat_byte(0x22);
+        executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                mockCallRevert_1Call {
+                    callee: mocked,
+                    msgValue: U256::from(1),
+                    data: Bytes::new(),
+                    revertData: Bytes::new(),
+                }
+                .abi_encode()
+                .into(),
+                U256::ZERO,
+            )
+            .unwrap();
+        executor.set_code(mocked, Bytecode::default()).unwrap();
+        executor.set_balance(target, U256::from(1)).unwrap();
+
+        // PUSH0 x4; PUSH1 1; PUSH20 <mocked>; GAS; CALL; POP; STOP.
+        let mut code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x60, 0x01, 0x73];
+        code.extend_from_slice(mocked.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1, 0x50, 0x00]);
+        executor.set_code(target, Bytecode::new_raw(code.into())).unwrap();
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+
+        assert!(!result.reverted);
+        assert!(
+            result.gas_used
+                < revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM)
+                    .new_account_state_gas(),
+            "reverted mocked CALL retained its conditional state-gas charge"
         );
     }
 
