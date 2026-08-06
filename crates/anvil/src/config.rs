@@ -1645,7 +1645,7 @@ impl NodeConfig {
                 return Ok(provider);
             }
         }
-        eyre::bail!("fork endpoint changed while its identity was being resolved")
+        eyre::bail!("fork endpoint changed while its identity was being resolved");
     }
 
     async fn stable_fork_snapshot(
@@ -1689,7 +1689,7 @@ impl NodeConfig {
         }
         eyre::bail!(
             "fork endpoint changed while its identity and block context were being resolved"
-        )
+        );
     }
 
     pub(crate) async fn fork_context_matches(
