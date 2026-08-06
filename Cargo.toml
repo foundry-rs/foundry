@@ -538,11 +538,11 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "76908150fc
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "76908150fc56bc6dcb91ecbb8a424939f8acef4c" }
 
 # Monad
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", rev = "64c54591edae05224728ed562603936d22a9a9a6", default-features = false, features = [
+alloy-monad-evm = { version = "0.5.0", default-features = false, features = [
     "std",
     "memory_limit",
 ] }
-monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "704889928d3e0d8b75111a81676ff2b9fcf33df6", default-features = false, features = [
+monad-revm = { version = "0.5.1", default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
@@ -559,7 +559,6 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-monad-revm = { git = "https://github.com/category-labs/monad-revm.git", rev = "704889928d3e0d8b75111a81676ff2b9fcf33df6" }
 solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }

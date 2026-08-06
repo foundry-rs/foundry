@@ -405,8 +405,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-monad-evm"
-version = "0.4.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm.git?rev=64c54591edae05224728ed562603936d22a9a9a6#64c54591edae05224728ed562603936d22a9a9a6"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee87cbd5434dffc3d7e55d2ad2a9bb13f8e2fd838e006b909bc7190228543066"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -7774,8 +7775,9 @@ dependencies = [
 
 [[package]]
 name = "monad-revm"
-version = "0.3.0"
-source = "git+https://github.com/category-labs/monad-revm.git?rev=704889928d3e0d8b75111a81676ff2b9fcf33df6#704889928d3e0d8b75111a81676ff2b9fcf33df6"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ede63f743c4335ab969430eed9fd6ee170959e900439bac52ae8e058373da3ce"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
@@ -8203,7 +8205,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b685c8311c9171d1bd2895222965d25616b2de2cb5819dd3504ed9250df9fecd"
 dependencies = [
  "ahash",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "parking_lot",
  "stable_deref_trait",
 ]
