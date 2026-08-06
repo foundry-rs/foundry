@@ -615,6 +615,24 @@ Created new encrypted keystore file: [..]
 });
 
 // tests that we can outputting multiple keys without a keystore path
+
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+casttest!(wallet_new_help_describes_touch_id_fallback, |_prj, cmd| {
+    let assert = cmd.args(["wallet", "new", "--help"]).assert_success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+
+    assert!(output.contains("Touch ID-assisted authentication"));
+    assert!(output.contains("explicit keystore passwords remain available"));
+});
+
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+casttest!(wallet_import_help_describes_touch_id_fallback, |_prj, cmd| {
+    let assert = cmd.args(["wallet", "import", "--help"]).assert_success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+
+    assert!(output.contains("Touch ID-assisted authentication"));
+    assert!(output.contains("explicit keystore passwords remain available"));
+});
 casttest!(new_wallet_multiple_keys, |_prj, cmd| {
     cmd.args(["wallet", "new", "-n", "2"])
         .assert_success()
