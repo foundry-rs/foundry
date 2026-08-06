@@ -231,8 +231,8 @@ jobs:
                 }
               }
               const trials = Number(opts.trials);
-              if (!Number.isInteger(trials) || trials < 1 || trials > 64) {
-                invalid.push('`trials` must be between 1 and 64');
+              if (!Number.isInteger(trials) || trials < 1 || trials > 20) {
+                invalid.push('`trials` must be between 1 and 20');
               }
 
               const errors = [];
