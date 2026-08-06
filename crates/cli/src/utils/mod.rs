@@ -9,6 +9,7 @@ use path_slash::PathExt;
 use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -788,6 +789,85 @@ ignore them in the `.gitignore` file."
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
     }
 
+    /// Returns submodules at or below `path`, with paths relative to this Git root.
+    pub fn submodules_in(&self, path: &Path) -> Result<Vec<SubmoduleCheckout>> {
+        let pathspec = if path.as_os_str().is_empty() { Path::new(".") } else { path };
+        let output = self
+            .cmd()
+            .args(["--literal-pathspecs", "ls-files", "--stage", "-z", "--"])
+            .arg(pathspec)
+            .exec()?;
+        let (_, mappings) = self.submodule_mappings()?;
+        let mut gitlinks = BTreeMap::new();
+        for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
+            let Some(separator) = entry.iter().position(|byte| *byte == b'\t') else {
+                return Err(eyre::eyre!("invalid index entry"));
+            };
+            let mut fields = std::str::from_utf8(&entry[..separator])?.split_ascii_whitespace();
+            let Some(mode) = fields.next() else {
+                return Err(eyre::eyre!("invalid index entry"));
+            };
+            let Some(rev) = fields.next() else {
+                return Err(eyre::eyre!("invalid index entry"));
+            };
+            let Some(stage) = fields.next() else {
+                return Err(eyre::eyre!("invalid index entry"));
+            };
+            if fields.next().is_some() {
+                return Err(eyre::eyre!("invalid index entry"));
+            }
+            if mode != "160000" {
+                continue;
+            }
+
+            let submodule_path = PathBuf::from(std::str::from_utf8(&entry[separator + 1..])?);
+            if !mappings.contains(&submodule_path) {
+                gitlinks.insert(
+                    submodule_path.clone(),
+                    SubmoduleCheckout {
+                        status: SubmoduleCheckoutStatus::MissingMapping,
+                        rev: rev.to_string(),
+                        path: submodule_path,
+                    },
+                );
+                continue;
+            }
+            if stage != "0" {
+                gitlinks.insert(
+                    submodule_path.clone(),
+                    SubmoduleCheckout {
+                        status: SubmoduleCheckoutStatus::Conflicted,
+                        rev: rev.to_string(),
+                        path: submodule_path,
+                    },
+                );
+                continue;
+            }
+
+            let status = self
+                .cmd()
+                .args(["--literal-pathspecs", "submodule", "status", "--"])
+                .arg(&submodule_path)
+                .get_stdout_lossy()?;
+            let (status, rev) = match status.as_bytes().first() {
+                Some(b'-') => (SubmoduleCheckoutStatus::Uninitialized, &status[1..]),
+                Some(b'+') => (SubmoduleCheckoutStatus::Modified, &status[1..]),
+                Some(b'U') => (SubmoduleCheckoutStatus::Conflicted, &status[1..]),
+                Some(_) => (SubmoduleCheckoutStatus::Current, status.as_str()),
+                None => return Err(eyre::eyre!("missing submodule status")),
+            };
+            let rev = rev
+                .split_ascii_whitespace()
+                .next()
+                .ok_or_else(|| eyre::eyre!("invalid submodule status"))?;
+            gitlinks.insert(
+                submodule_path.clone(),
+                SubmoduleCheckout { status, rev: rev.to_string(), path: submodule_path },
+            );
+        }
+        Ok(gitlinks.into_values().collect())
+    }
+
     pub fn submodule_sync(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
     }
@@ -802,9 +882,14 @@ ignore them in the `.gitignore` file."
 
     /// Returns whether `.gitmodules` contains the default section name or an exact path mapping.
     pub fn has_submodule_mapping(self, path: &Path) -> Result<bool> {
+        let (names, paths) = self.submodule_mappings()?;
+        Ok(names.contains(path) || paths.contains(path))
+    }
+
+    fn submodule_mappings(self) -> Result<(BTreeSet<PathBuf>, BTreeSet<PathBuf>)> {
         let gitmodules = self.root.join(".gitmodules");
         if !gitmodules.exists() {
-            return Ok(false);
+            return Ok(Default::default());
         }
 
         let output = self
@@ -815,7 +900,8 @@ ignore them in the `.gitignore` file."
             .output()?;
         match output.status.code() {
             Some(0) => {
-                let expected_path = path.to_slash_lossy();
+                let mut names = BTreeSet::new();
+                let mut paths = BTreeSet::new();
                 for entry in
                     output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty())
                 {
@@ -826,13 +912,14 @@ ignore them in the `.gitignore` file."
                     let value = std::str::from_utf8(&entry[separator + 1..])?;
                     let Some(key) = key.strip_prefix("submodule.") else { continue };
                     let Some((name, field)) = key.rsplit_once('.') else { continue };
-                    if name == expected_path || field == "path" && value == expected_path {
-                        return Ok(true);
+                    names.insert(PathBuf::from(name));
+                    if field == "path" {
+                        paths.insert(PathBuf::from(value));
                     }
                 }
-                Ok(false)
+                Ok((names, paths))
             }
-            Some(1) => Ok(false),
+            Some(1) => Ok(Default::default()),
             _ => Err(eyre::eyre!(
                 "failed to inspect .gitmodules: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -1004,6 +1091,43 @@ impl Submodule {
     }
 }
 
+/// A submodule checkout inspected without changing its worktree or index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmoduleCheckout {
+    status: SubmoduleCheckoutStatus,
+    rev: String,
+    path: PathBuf,
+}
+
+impl SubmoduleCheckout {
+    pub const fn status(&self) -> SubmoduleCheckoutStatus {
+        self.status
+    }
+
+    pub fn rev(&self) -> &str {
+        &self.rev
+    }
+
+    pub const fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+/// State of an inspected submodule checkout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmoduleCheckoutStatus {
+    /// The checkout matches the commit recorded by the superproject.
+    Current,
+    /// The submodule has not been initialized.
+    Uninitialized,
+    /// The checkout differs from the commit recorded by the superproject.
+    Modified,
+    /// The submodule has merge conflicts.
+    Conflicted,
+    /// The index contains a gitlink without a corresponding `.gitmodules` mapping.
+    MissingMapping,
+}
+
 impl FromStr for Submodule {
     type Err = eyre::Report;
 
@@ -1086,6 +1210,23 @@ mod tests {
         assert_eq!(subs[0].path(), Path::new("lib/forge-std"));
         assert_eq!(subs[1].rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
         assert_eq!(subs[1].path(), Path::new("lib/openzeppelin-contracts"));
+    }
+
+    #[test]
+    fn deserialize_submodule() {
+        let submodule: Submodule = serde_json::from_str(
+            r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#,
+        )
+        .unwrap();
+        assert_eq!(submodule.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(submodule.path(), Path::new("lib/dep"));
+        assert_eq!(
+            serde_json::to_value(submodule).unwrap(),
+            serde_json::json!({
+                "rev": "8829465a08cac423dcf59852f21e448449c1a1a8",
+                "path": "lib/dep",
+            })
+        );
     }
 
     #[test]

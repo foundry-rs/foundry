@@ -25,6 +25,7 @@ pub mod init;
 pub mod inspect;
 pub mod install;
 pub mod lint;
+pub mod lock;
 pub mod remappings;
 pub mod remove;
 pub mod selectors;
