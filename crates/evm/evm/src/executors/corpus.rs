@@ -1657,15 +1657,14 @@ impl WorkerCorpus {
             let mut replay_executor = executor.clone();
             let ReplayOutcome {
                 keep_entry, new_coverage, new_edge, edges_covered, cmp_seq, ..
-            } =
-                replay_corpus_sequence_with_executor(
-                    &tx_seq,
-                    &mut replay_executor,
-                    target,
-                    coverage,
-                    true,
-                    false,
-                )?;
+            } = replay_corpus_sequence_with_executor(
+                &tx_seq,
+                &mut replay_executor,
+                target,
+                coverage,
+                true,
+                false,
+            )?;
 
             let sync_path = &entry.path;
             if keep_entry && new_coverage {
@@ -1746,7 +1745,7 @@ impl WorkerCorpus {
         };
 
         let mut exported_uuids = HashSet::new();
-        let mut recovered_descriptors = Vec::new();
+        let recovered_descriptors = Vec::new();
         let corpus_dir = worker_dir.join(CORPUS_DIR);
         let mut exported = 0;
         let new_entry_uuids = self
@@ -1755,14 +1754,9 @@ impl WorkerCorpus {
             .filter_map(|&index| self.in_memory_corpus.get(index).map(|corpus| corpus.uuid))
             .collect::<HashSet<_>>();
 
-        for corpus in self
-            .in_memory_corpus
-            .iter()
-            .filter(|entry| {
-                new_entry_uuids.contains(&entry.uuid)
-                    || self.pending_sync_uuids.contains(&entry.uuid)
-            })
-        {
+        for corpus in self.in_memory_corpus.iter().filter(|entry| {
+            new_entry_uuids.contains(&entry.uuid) || self.pending_sync_uuids.contains(&entry.uuid)
+        }) {
             let file_name = corpus.file_name(self.config.corpus_gzip);
             let file_path = corpus_dir.join(&file_name);
             if !file_path.is_file()
@@ -2324,8 +2318,9 @@ mod tests {
         let corpus_root = temp_corpus_dir();
         let mut worker = empty_worker_corpus(1, corpus_root.clone());
         let corpus = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        let uuid = corpus.uuid;
         let name = corpus.file_name(false);
-        worker.push_corpus_entry(corpus);
+        worker.push_corpus_entry(corpus, true);
 
         let master_sync = corpus_root.join("worker0").join(SYNC_DIR);
         fs::create_dir_all(&master_sync).unwrap();
@@ -2334,13 +2329,13 @@ mod tests {
             .unwrap();
 
         worker.export_to_master().unwrap();
-        assert_eq!(worker.new_entry_indices, [0]);
+        assert_eq!(worker.pending_sync_uuids, HashSet::from([uuid]));
         assert!(corpus_root.join("worker1").join(CORPUS_DIR).join(&name).is_file());
 
         fs::remove_file(&destination).unwrap();
         worker.export_to_master().unwrap();
 
-        assert!(worker.new_entry_indices.is_empty());
+        assert!(worker.pending_sync_uuids.is_empty());
         let exported = read_corpus_dir(&master_sync).next().unwrap().read_tx_seq().unwrap();
         assert!(same_tx_sequence(&exported, &[basic_tx_with_calldata([1])]));
     }
@@ -2353,7 +2348,7 @@ mod tests {
         let corpus = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
         let name = corpus.file_name(false);
         corpus.write_to_disk_in(&corpus_root.join("worker0").join(CORPUS_DIR), false).unwrap();
-        master.push_corpus_entry(corpus);
+        master.push_synced_corpus_entry(corpus, 0, name.clone());
 
         let worker2_sync = corpus_root.join("worker2").join(SYNC_DIR);
         fs::create_dir_all(&worker2_sync).unwrap();
@@ -2437,7 +2432,7 @@ mod tests {
         let pending = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
         let pending_name = pending.file_name(false);
         pending.write_to_disk_in(&flat_root.join("worker0").join(CORPUS_DIR), false).unwrap();
-        flat_master.push_corpus_entry(pending);
+        flat_master.push_synced_corpus_entry(pending, 0, pending_name.clone());
 
         flat_master.export_to_workers(2).unwrap();
 
@@ -2451,9 +2446,9 @@ mod tests {
         let corpus_root = temp_corpus_dir();
         let mut master = empty_worker_corpus(0, corpus_root.clone());
         master.initial_export_dirs = None;
-        let mut evicted = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
-        evicted.total_mutations = 1;
-        let retained = CorpusEntry::new(vec![basic_tx_with_calldata([2])]);
+        let evicted = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        let mut retained = CorpusEntry::new(vec![basic_tx_with_calldata([2])]);
+        retained.is_favored = true;
         let evicted_name = evicted.file_name(false);
         let retained_name = retained.file_name(false);
         let evicted_timestamp = evicted.timestamp;
@@ -2464,7 +2459,7 @@ mod tests {
         master.push_synced_corpus_entry(evicted, evicted_timestamp, evicted_name.clone());
         master.push_synced_corpus_entry(retained, retained_timestamp, retained_name.clone());
 
-        master.evict_oldest_corpus().unwrap();
+        master.cull_corpus().unwrap();
         master.export_to_workers(2).unwrap();
 
         let worker_sync = corpus_root.join("worker1").join(SYNC_DIR);
