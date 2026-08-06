@@ -85,9 +85,12 @@ impl CallSpec {
             let part = parts[idx];
             if part.starts_with("0x") {
                 // Raw calldata
-                data = Some(Bytes::from(
-                    hex::decode(part).map_err(|e| eyre!("Invalid hex data '{}': {}", part, e))?,
-                ));
+                let decoded =
+                    hex::decode(part).map_err(|e| eyre!("Invalid hex data '{}': {}", part, e))?;
+                if idx + 1 != parts.len() {
+                    return Err(eyre!("Unexpected trailing field(s) after raw calldata"));
+                }
+                data = Some(Bytes::from(decoded));
             } else if !part.is_empty() {
                 // Function signature
                 sig = Some(part.to_string());
@@ -215,5 +218,18 @@ mod tests {
         assert_eq!(spec.value, U256::ZERO);
         assert!(spec.sig.is_none());
         assert_eq!(spec.data, Some(Bytes::from(hex::decode("abcdef").unwrap())));
+    }
+
+    #[test]
+    fn test_parse_raw_data_rejects_trailing_fields() {
+        for spec in [
+            "0x1234567890123456789012345678901234567890::0xabcdef:typo",
+            "0x1234567890123456789012345678901234567890:1wei:0xabcdef:unexpected",
+        ] {
+            assert_eq!(
+                CallSpec::parse(spec).unwrap_err().to_string(),
+                "Unexpected trailing field(s) after raw calldata"
+            );
+        }
     }
 }
