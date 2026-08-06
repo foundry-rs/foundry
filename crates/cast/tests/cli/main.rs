@@ -1299,6 +1299,36 @@ casttest!(wallet_list_preserves_ambiguous_touch_id_file, |prj, cmd| {
     ]);
 });
 
+casttest!(wallet_list_retains_unknown_touch_id_sidecars_and_hides_recognized, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+
+    fs::write(
+        keystore_path.join("recognized.touchid"),
+        r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        keystore_path.join("future.touchid"),
+        r#"{
+            "version": 2,
+            "policy": "user-presence",
+            "se_key": "aa",
+            "sealed_password": "bb"
+        }"#,
+    )
+    .unwrap();
+
+    cmd.set_current_dir(prj.root());
+
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
+        [r#"future.touchid (Local)
+
+"#]
+    ]);
+});
+
 // Tests that `cast wallet list --json --dir` wraps local accounts in the shared envelope.
 casttest!(wallet_list_local_accounts_json, |prj, cmd| {
     let keystore_path = prj.root().join("keystore");
@@ -1958,6 +1988,8 @@ casttest!(
     |prj, cmd| {
         let keystore_dir = prj.root().join("keystore");
         let sidecar = keystore_dir.join("testAccount.touchid");
+        let sidecar_content =
+            r#"{"version":2,"policy":"user-presence","se_key":"","sealed_password":""}"#;
 
         cmd.args([
             "wallet",
@@ -1971,8 +2003,7 @@ casttest!(
             "old_password",
         ])
         .assert_success();
-        fs::write(&sidecar, r#"{"version":2,"policy":"watch","se_key":"","sealed_password":""}"#)
-            .unwrap();
+        fs::write(&sidecar, sidecar_content).unwrap();
 
         cmd.cast_fuse()
             .args([
@@ -1993,6 +2024,7 @@ Error: unsupported Touch ID sidecar version 2; re-enroll this keystore to regene
 
 "#]]);
         assert!(sidecar.exists());
+        assert_eq!(fs::read_to_string(&sidecar).unwrap(), sidecar_content);
 
         cmd.cast_fuse()
             .args([
@@ -2019,6 +2051,72 @@ Error: unsupported Touch ID sidecar version 2; re-enroll this keystore to regene
             .assert_failure();
     }
 );
+
+casttest!(wallet_change_password_refuses_unknown_touch_id_sidecar, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_path = keystore_dir.join("testAccount");
+    let sidecar_path = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "old_password",
+    ])
+    .assert_success();
+
+    let unknown_sidecar_content = r#"{"application":"unrelated"}"#;
+    fs::write(&sidecar_path, unknown_sidecar_content).unwrap();
+
+    let original_keystore_bytes = fs::read(&keystore_path).unwrap();
+    let original_sidecar_bytes = fs::read(&sidecar_path).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "change-password",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+            "--unsafe-new-password",
+            "new_password",
+        ])
+        .assert_failure();
+
+    assert_eq!(fs::read(&keystore_path).unwrap(), original_keystore_bytes);
+    assert_eq!(fs::read(&sidecar_path).unwrap(), original_sidecar_bytes);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "decrypt-keystore",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "decrypt-keystore",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "new_password",
+        ])
+        .assert_failure();
+});
 
 #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
 casttest!(wallet_change_password_removes_touch_id_sidecar, |prj, cmd| {

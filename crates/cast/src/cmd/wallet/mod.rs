@@ -1106,7 +1106,36 @@ flag to set your key via:
                     eyre::bail!("Keystore file does not exist at {}", keypath.display());
                 }
 
-                let touch_id_enrolled = is_touch_id_sidecar(&touch_id_sidecar_path(&keypath))?;
+                let sidecar = touch_id_sidecar_path(&keypath);
+
+                let touch_id_enrolled = match touch_id_sidecar_state(&sidecar)? {
+                    TouchIdSidecarState::Missing => false,
+                    TouchIdSidecarState::Recognized => true,
+
+                    TouchIdSidecarState::Keystore => {
+                        eyre::bail!(
+                            "refusing to change the password because {} is an existing keystore",
+                            sidecar.display()
+                        );
+                    }
+
+                    TouchIdSidecarState::Unknown => {
+                        #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                        {
+                            // Preserve useful structured errors such as UnsupportedVersion.
+                            if let Err(error) = foundry_wallets::touch_id::policy(&keypath) {
+                                return Err(error.into());
+                            }
+                        }
+
+                        // Never continue after an Unknown classification, even if another
+                        // parser happens to accept the file.
+                        eyre::bail!(
+                            "refusing to change the password because {} exists and is not a recognized Touch ID sidecar",
+                            sidecar.display()
+                        );
+                    }
+                };
 
                 #[cfg(all(target_os = "macos", feature = "touch-id"))]
                 let touch_id_policy = touch_id_enrolled
