@@ -1,5 +1,5 @@
 ---
-name: Validate and Tag Stable Release
+name: Validate and Tag Release
 
 permissions: {}
 
@@ -12,16 +12,16 @@ permissions: {}
     types: [closed]
 
 concurrency:
-  group: tag-stable-release-${{ github.event.pull_request.number }}
+  group: tag-release-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   validate:
-    name: Validate stable release
+    name: Validate release
     if: >-
       (github.event_name == 'pull_request' || github.event.pull_request.merged == true) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'release/stable'
+      github.event.pull_request.head.ref == 'release/version'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -39,7 +39,7 @@ jobs:
             .github/scripts/prepare-stable-release.py
           sparse-checkout-cone-mode: false
 
-      - name: Recognize stable version pull request
+      - name: Recognize release version pull request
         id: release
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -52,51 +52,55 @@ jobs:
               throw new Error('FOUNDRY_RELEASE_APP_BOT_ID is not configured');
             }
             if (pr.user?.type !== 'Bot' || String(pr.user.id) !== process.env.RELEASE_APP_BOT_ID) {
-              throw new Error('Stable version pull request was not created by the release App');
+              throw new Error('Release version pull request was not created by the release App');
             }
             if (pr.base.ref !== 'master' || pr.base.repo.full_name !== repository) {
-              throw new Error('Stable version pull request does not target this repository master');
+              throw new Error('Release version pull request does not target this repository master');
             }
-            if (pr.head.ref !== 'release/stable' || pr.head.repo.full_name !== repository) {
-              throw new Error('Stable version pull request did not use the release/stable branch');
+            if (pr.head.ref !== 'release/version' || pr.head.repo.full_name !== repository) {
+              throw new Error('Release version pull request did not use the release/version branch');
             }
 
-            const marker = '<!-- foundry-stable-version-pr -->';
+            const marker = '<!-- foundry-release-version-pr -->';
             const metadata = new RegExp(
-              `${marker}\\nPrepares Foundry (\\d+\\.\\d+\\.\\d+) from pending changelog entries\\.\\n\\n` +
+              `${marker}\\nPrepares an exact Foundry release transition\\.\\n\\n` +
+              '- Operation: `(stable|start|advance|promote)`\\n' +
               '- Base branch: `master`\\n' +
               '- Source master SHA: `([0-9a-f]{40})`\\n' +
-              '- Expected version: `([^`]+)`\\n' +
-              '- Expected tag: `([^`]+)`\\n' +
+              '- Source tag: `(v[^`]+)`\\n' +
+              '- Target version: `([^`]+)`\\n' +
+              '- Target tag: `(v[^`]+)`\\n' +
               '- Changelog fragments: (\\d+)\\n' +
-              '- Verified workspace packages: (\\d+)\\n',
+              '- Workspace packages: (\\d+)\\n?$',
             ).exec(pr.body || '');
-            if (!metadata) throw new Error('Stable version pull request metadata is malformed');
-            if (metadata[1] !== metadata[3]) {
-              throw new Error('Stable version pull request versions do not match');
+            if (!metadata) throw new Error('Release version pull request metadata is malformed');
+            if (metadata[5] !== `v${metadata[4]}`) {
+              throw new Error('Release version pull request tag does not match its version');
             }
-            if (metadata[4] !== `v${metadata[1]}`) {
-              throw new Error('Stable version pull request tag does not match its version');
+            if (pr.title !== `chore: prepare ${metadata[5]}`) {
+              throw new Error('Release version pull request title does not match its tag');
             }
-            if (pr.title !== `chore: prepare ${metadata[4]}`) {
-              throw new Error('Stable version pull request title does not match its tag');
+            if ((metadata[1] === 'promote') !== (Number(metadata[6]) === 0)) {
+              throw new Error('Release version pull request has invalid fragment semantics');
             }
             if (context.eventName === 'pull_request') {
               const master = await github.rest.repos.getCommit({ ...context.repo, ref: 'master' });
               if (metadata[2] !== pr.base.sha || metadata[2] !== master.data.sha) {
-                throw new Error('Stable version pull request was prepared from a stale master commit');
+                throw new Error('Release version pull request was prepared from a stale master commit');
               }
             }
             const sha = context.eventName === 'pull_request' ? context.sha : pr.merge_commit_sha;
             if (!/^[0-9a-f]{40}$/i.test(sha || '')) {
-              throw new Error('Stable version pull request has no exact validation commit');
+              throw new Error('Release version pull request has no exact validation commit');
             }
 
-            core.setOutput('version', metadata[1]);
+            core.setOutput('operation', metadata[1]);
             core.setOutput('source_sha', metadata[2]);
-            core.setOutput('tag', metadata[4]);
-            core.setOutput('fragment_count', metadata[5]);
-            core.setOutput('package_count', metadata[6]);
+            core.setOutput('source_tag', metadata[3]);
+            core.setOutput('version', metadata[4]);
+            core.setOutput('tag', metadata[5]);
+            core.setOutput('fragment_count', metadata[6]);
+            core.setOutput('package_count', metadata[7]);
             core.setOutput('sha', sha);
 
       - name: Checkout exact release tree
@@ -125,15 +129,19 @@ jobs:
           python3 trusted/.github/scripts/prepare-stable-release.py \
             --validate-merged \
             --root release \
+            --operation "$OPERATION" \
             --expected-sha "$MERGE_SHA" \
             --expected-source-sha "$SOURCE_SHA" \
+            --expected-source-tag "$SOURCE_TAG" \
             --expected-version "$EXPECTED_VERSION" \
             --expected-tag "$EXPECTED_TAG" \
             --expected-fragment-count "$EXPECTED_FRAGMENT_COUNT" \
             --expected-package-count "$EXPECTED_PACKAGE_COUNT"
         env:
+          OPERATION: ${{ steps.release.outputs.operation }}
           MERGE_SHA: ${{ steps.release.outputs.sha }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          SOURCE_TAG: ${{ steps.release.outputs.source_tag }}
           EXPECTED_VERSION: ${{ steps.release.outputs.version }}
           EXPECTED_TAG: ${{ steps.release.outputs.tag }}
           EXPECTED_FRAGMENT_COUNT: ${{ steps.release.outputs.fragment_count }}

@@ -797,15 +797,30 @@ import "forge-std/Test.sol";
 
 interface StorageHookVm {
     function registerSstoreHook(address target, bytes4 callback) external;
+    function registerMappingSstoreHook(address target, bytes32 root, bytes4 callback) external;
+}
+
+contract MappingHookRegistrationTarget {
+    mapping(uint256 => uint256) public values;
+
+    function step(uint256 newValue) external {
+        values[newValue] = newValue;
+    }
 }
 
 contract StorageHookRegistrationTarget {
     uint256 public value;
     uint256 public steps;
+    MappingHookRegistrationTarget public mappingTarget;
+
+    constructor(MappingHookRegistrationTarget mappingTarget_) {
+        mappingTarget = mappingTarget_;
+    }
 
     function step(uint256 newValue) external {
         value = newValue;
         steps++;
+        mappingTarget.step(newValue);
     }
 }
 
@@ -814,7 +829,9 @@ contract SymbolicInvariantStorageHookRegistration is Test {
         StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     StorageHookRegistrationTarget target;
+    MappingHookRegistrationTarget mappingTarget;
     uint256 ghost;
+    uint256 mappingGhost;
 
     modifier onlyStorageHook() {
         require(msg.sender == address(hookVm), "only storage hook");
@@ -822,8 +839,10 @@ contract SymbolicInvariantStorageHookRegistration is Test {
     }
 
     function setUp() public {
-        target = new StorageHookRegistrationTarget();
+        mappingTarget = new MappingHookRegistrationTarget();
+        target = new StorageHookRegistrationTarget(mappingTarget);
         hookVm.registerSstoreHook(address(target), this.initialHook.selector);
+        hookVm.registerMappingSstoreHook(address(mappingTarget), bytes32(0), this.initialMappingHook.selector);
         targetContract(address(target));
         targetSender(address(this));
     }
@@ -840,6 +859,27 @@ contract SymbolicInvariantStorageHookRegistration is Test {
         ghost = 3;
     }
 
+    function initialMappingHook(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        mappingGhost = 1;
+    }
+
+    function replacementMappingHook(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        mappingGhost = 2;
+    }
+
+    function afterInvariantMappingHook(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        mappingGhost = 3;
+    }
+
     /// forge-config: default.symbolic.invariant_depth = 2
     /// forge-config: default.invariant.check_interval = 1
     /// forge-config: default.invariant.runs = 1
@@ -847,14 +887,22 @@ contract SymbolicInvariantStorageHookRegistration is Test {
     function invariant_hookReplacementPersists() public {
         if (target.steps() == 2) {
             assertEq(ghost, 2);
+            assertEq(mappingGhost, 2);
         }
         hookVm.registerSstoreHook(address(target), this.replacementHook.selector);
+        hookVm.registerMappingSstoreHook(
+            address(mappingTarget), bytes32(0), this.replacementMappingHook.selector
+        );
     }
 
     function afterInvariant() public {
         hookVm.registerSstoreHook(address(target), this.afterInvariantHook.selector);
+        hookVm.registerMappingSstoreHook(
+            address(mappingTarget), bytes32(0), this.afterInvariantMappingHook.selector
+        );
         target.step(3);
         assertEq(ghost, 3);
+        assertEq(mappingGhost, 3);
     }
 }
 "#,

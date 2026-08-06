@@ -677,6 +677,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 }
             }
         }
+        let mut generated_inputs = 0;
 
         let mut persisted_failure =
             self.persisted_failure.as_ref().filter(|_| worker_id == 0 && self.config.run.is_none());
@@ -737,7 +738,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     runs_since_sync = 0;
                 }
 
-                let fuzz_run = self.config.run.unwrap_or(worker.runs + 1);
+                let fuzz_run = self.config.run.unwrap_or_else(|| {
+                    generated_inputs += 1;
+                    generated_inputs
+                });
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
                     && let Some(seed) = self.config.seed
                 {

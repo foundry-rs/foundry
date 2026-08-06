@@ -271,6 +271,42 @@ ghost must already account for that value. Known nonzero setup state must
 likewise be included in the initial ghost. These raw hooks cannot distinguish
 one mapping family from another without mapping-root provenance.
 
+### Mapping SSTORE hooks and ERC20 accounting
+
+`registerMappingSstoreHook` can maintain a ghost aggregate for one mapping root without reacting
+to unrelated storage. For an ERC20 whose `balances` mapping is at slot zero:
+
+```solidity
+function setUp() public {
+    token = new Token();
+    vm.registerMappingSstoreHook(address(token), bytes32(0), this.onBalanceWrite.selector);
+}
+
+function onBalanceWrite(
+    address account,
+    bytes32,
+    bytes32 root,
+    bytes32[] calldata keys,
+    bytes32 oldValue,
+    bytes32 newValue
+) external {
+    require(msg.sender == address(vm) && account == address(token));
+    require(root == bytes32(0) && keys.length == 1);
+    ghostSupply = ghostSupply - uint256(oldValue) + uint256(newValue);
+}
+```
+
+With `symbolic.storage_layout = "zero_init"`, initialize `ghostSupply` to zero and assert it equals
+`totalSupply` after symbolic mint, transfer, and burn operations. Allowance writes use a different
+root and do not affect the ghost. Both target writes and callback ghost updates roll back when the
+enclosing operation reverts. Mapping hooks require complete, exact 64-byte Keccak chains computed
+after the latest mapping-hook registration for that target in the current top-level execution.
+Resolution follows the complete chain to its terminal root instead of stopping at a registered
+intermediate hash; offsets, incomplete provenance, hashes computed before registration, and hashes
+from earlier top-level executions do not match. Hashes computed after registration remain usable by
+later calls in the same top-level execution. The contract that calls `registerMappingSstoreHook`
+receives the callback.
+
 ```solidity
 contract RiddleTest is Test {
     function check_riddle(uint256 x) external pure {

@@ -114,6 +114,7 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
         state.world.clear_transaction_scoped_state();
+        state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.origin = sender;

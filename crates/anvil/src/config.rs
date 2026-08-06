@@ -3,7 +3,9 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
-            fork::{ClientFork, ClientForkConfig, ForkEndpointIdentity},
+            fork::{
+                ClientFork, ClientForkConfig, ForkEndpointIdentity, ensure_fork_network_supported,
+            },
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
             time::duration_since_unix_epoch,
@@ -95,6 +97,14 @@ struct ForkOverrides {
     gas_limit: Option<u64>,
     gas_price: Option<u128>,
     base_fee: Option<u64>,
+}
+
+struct StableForkSnapshot {
+    endpoint_identity: ForkEndpointIdentity,
+    block_number: u64,
+    transaction_replay: Option<ForkTransactionReplay>,
+    block: Option<AnyRpcBlock>,
+    gas_price: u128,
 }
 
 /// One-shot source data for a transaction-hash fork replay.
@@ -1585,6 +1595,7 @@ impl NodeConfig {
     }
 
     fn offline_fork_identity(&self, chain_id: u64) -> Result<ForkEndpointIdentity> {
+        ensure_fork_network_supported(chain_id)?;
         let network_profile = if self.networks.has_network_selection() {
             Some(self.networks.canonical_execution_profile())
         } else {
@@ -1607,7 +1618,7 @@ impl NodeConfig {
         &self,
         provider: &RetryProvider,
     ) -> Result<ForkEndpointIdentity> {
-        if let Some(chain_id) = self.fork_chain_id {
+        let identity = if let Some(chain_id) = self.fork_chain_id {
             let chain_id = chain_id.to();
             // `fork_chain_id` avoids depending on `eth_chainId`, but an online Anvil endpoint can
             // still expose authoritative family, hardfork, and instance metadata. Probe it so
@@ -1617,7 +1628,68 @@ impl NodeConfig {
             let execution_chain_id =
                 provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
             self.fork_endpoint_identity(provider, execution_chain_id, None).await
+        }?;
+        ensure_fork_network_supported(identity.source_chain_id)?;
+        Ok(identity)
+    }
+
+    pub(crate) async fn stable_fork_provider(
+        &self,
+        eth_rpc_url: &str,
+    ) -> Result<Arc<RetryProvider>> {
+        let provider = Arc::new(self.fork_provider(eth_rpc_url)?);
+        for _ in 0..3 {
+            let before = self.resolved_fork_endpoint_identity(&provider).await?;
+            let after = self.resolved_fork_endpoint_identity(&provider).await?;
+            if before == after {
+                return Ok(provider);
+            }
         }
+        eyre::bail!("fork endpoint changed while its identity was being resolved")
+    }
+
+    async fn stable_fork_snapshot(
+        &self,
+        provider: &Arc<RetryProvider>,
+        fork_overrides: ForkOverrides,
+    ) -> Result<StableForkSnapshot> {
+        for _ in 0..3 {
+            let before = self.resolved_fork_endpoint_identity(provider).await?;
+            let (block_number, transaction_replay) = if let Some(fork_choice) = &self.fork_choice {
+                derive_block_and_replay(fork_choice, provider).await.wrap_err(
+                    "failed to derive fork block and transaction replay from fork choice",
+                )?
+            } else {
+                (
+                    find_latest_fork_block(provider)
+                        .await
+                        .wrap_err("failed to get fork block number")?,
+                    None,
+                )
+            };
+            let block = provider
+                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .await
+                .wrap_err("failed to get fork block")?;
+            let gas_price = if let Some(gas_price) = fork_overrides.gas_price {
+                gas_price
+            } else {
+                provider.get_gas_price().await.unwrap_or(INITIAL_GAS_PRICE)
+            };
+            let after = self.resolved_fork_endpoint_identity(provider).await?;
+            if before == after {
+                return Ok(StableForkSnapshot {
+                    endpoint_identity: before,
+                    block_number,
+                    transaction_replay,
+                    block,
+                    gas_price,
+                });
+            }
+        }
+        eyre::bail!(
+            "fork endpoint changed while its identity and block context were being resolved"
+        )
     }
 
     pub(crate) async fn fork_context_matches(
@@ -1637,6 +1709,14 @@ impl NodeConfig {
             let after = self.resolved_fork_endpoint_identity(&provider).await?;
             if before != after {
                 continue;
+            }
+            if before.source_chain_id != expected.source_chain_id {
+                eyre::bail!(
+                    "fork endpoints must use the same chain ID: expected {}, got {} from {}",
+                    expected.source_chain_id,
+                    before.source_chain_id,
+                    eth_rpc_url
+                );
             }
             return Ok(
                 before == expected && block.is_some_and(|block| block.header.hash == block_hash)
@@ -1719,6 +1799,13 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
+        if self.fork_chain_id.is_some() {
+            eyre::ensure!(
+                self.fork_urls.len() == 1,
+                "multiple fork URLs cannot be validated with --fork-chain-id; remove \
+                 --fork-chain-id to validate every endpoint"
+            );
+        }
         let fork_overrides = *self.fork_overrides.get_or_insert(ForkOverrides {
             gas_limit: self.gas_limit,
             gas_price: self.gas_price,
@@ -1732,44 +1819,13 @@ impl NodeConfig {
 
         // Resolve identity, block, and fee data as one stable snapshot. An upstream Anvil can
         // reset between any two RPC calls, so verify the endpoint identity on both sides.
-        let mut stable_snapshot = None;
-        for _ in 0..3 {
-            let before = self.resolved_fork_endpoint_identity(&provider).await?;
-            let derived = if let Some(fork_choice) = &self.fork_choice {
-                derive_block_and_replay(fork_choice, &provider).await.wrap_err(
-                    "failed to derive fork block and transaction replay from fork choice",
-                )?
-            } else {
-                (
-                    find_latest_fork_block(&provider)
-                        .await
-                        .wrap_err("failed to get fork block number")?,
-                    None,
-                )
-            };
-            let (fork_block_number, fork_transaction_replay) = derived;
-            let block = provider
-                .get_block(BlockNumberOrTag::Number(fork_block_number).into())
-                .await
-                .wrap_err("failed to get fork block")?;
-            let gas_price = if let Some(gas_price) = fork_overrides.gas_price {
-                gas_price
-            } else {
-                provider.get_gas_price().await.unwrap_or(INITIAL_GAS_PRICE)
-            };
-            let after = self.resolved_fork_endpoint_identity(&provider).await?;
-            if before == after {
-                stable_snapshot =
-                    Some((before, fork_block_number, fork_transaction_replay, block, gas_price));
-                break;
-            }
-        }
-        let (fork_identity, fork_block_number, fork_transaction_replay, block, gas_price) =
-            stable_snapshot.ok_or_else(|| {
-                eyre::eyre!(
-                    "fork endpoint changed while its identity and block context were being resolved"
-                )
-            })?;
+        let StableForkSnapshot {
+            endpoint_identity: fork_identity,
+            block_number: fork_block_number,
+            transaction_replay: fork_transaction_replay,
+            block,
+            gas_price,
+        } = self.stable_fork_snapshot(&provider, fork_overrides).await?;
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
