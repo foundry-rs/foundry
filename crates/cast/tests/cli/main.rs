@@ -6552,6 +6552,67 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(abi_encode_event_indexed_function, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Callback(function indexed callback)",
+        "0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xc5656f42bc03a54463abf4aa177d76f9e12a2b4c0307bd71f23e713c47e8ed2d
+[topic1]: 0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000
+
+"#]]);
+});
+
+casttest!(abi_encode_event_dynamic_tuple, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Details((uint256,string) details,uint256 nonce)",
+        "(7,hello)",
+        "9",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xaabc576555b53190a80e9ddc865e2c1a772416783d18d8e5dc1d3f80ccbbbf3e
+[data]: 0x0000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000900000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
+casttest!(abi_encode_event_argument_count_mismatch, |_prj, cmd| {
+    cmd.args(["abi-encode-event", "Pair(uint256,uint256)", "1"]).assert_failure().stderr_eq(str![
+        [r#"
+Error: encode length mismatch: expected 2 types, got 1
+
+"#]
+    ]);
+
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Pair(uint256,uint256)", "1", "2", "3"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: encode length mismatch: expected 2 types, got 3
+
+"#]]);
+});
+
+casttest!(abi_encode_event_anonymous, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Log(uint256 indexed id,string message) anonymous",
+        "7",
+        "hello",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0x0000000000000000000000000000000000000000000000000000000000000007
+[data]: 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
 // Test cast run Celo transfer with precompiles.
 casttest!(
     #[ignore = "requires debug_traceTransaction, which most free Celo RPC endpoints no longer support"]
