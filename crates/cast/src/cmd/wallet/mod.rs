@@ -1106,7 +1106,36 @@ flag to set your key via:
                     eyre::bail!("Keystore file does not exist at {}", keypath.display());
                 }
 
-                let touch_id_enrolled = is_touch_id_sidecar(&touch_id_sidecar_path(&keypath))?;
+                let sidecar = touch_id_sidecar_path(&keypath);
+
+                let touch_id_enrolled = match touch_id_sidecar_state(&sidecar)? {
+                    TouchIdSidecarState::Missing => false,
+                    TouchIdSidecarState::Recognized => true,
+
+                    TouchIdSidecarState::Keystore => {
+                        eyre::bail!(
+                            "refusing to change the password because {} is an existing keystore",
+                            sidecar.display()
+                        );
+                    }
+
+                    TouchIdSidecarState::Unknown => {
+                        #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                        {
+                            // Preserve useful structured errors such as UnsupportedVersion.
+                            if let Err(error) = foundry_wallets::touch_id::policy(&keypath) {
+                                return Err(error.into());
+                            }
+                        }
+
+                        // Never continue after an Unknown classification, even if another
+                        // parser happens to accept the file.
+                        eyre::bail!(
+                            "refusing to change the password because {} exists and is not a recognized Touch ID sidecar",
+                            sidecar.display()
+                        );
+                    }
+                };
 
                 #[cfg(all(target_os = "macos", feature = "touch-id"))]
                 let touch_id_policy = touch_id_enrolled
@@ -1268,10 +1297,73 @@ fn is_not_found(error: &FsPathError) -> bool {
     matches!(error, FsPathError::Read { source, .. } if source.kind() == std::io::ErrorKind::NotFound)
 }
 
-fn is_keystore(path: &Path) -> fs::Result<bool> {
-    let value = fs::read_json_file::<serde_json::Value>(path)?;
-    Ok(value.get("version").is_some()
-        && (value.get("crypto").is_some() || value.get("Crypto").is_some()))
+/// Classification of a file at a `.touchid` path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TouchIdSidecarState {
+    /// No filesystem entry exists at the path.
+    Missing,
+    /// The file strictly matches the currently supported Touch ID sidecar schema.
+    Recognized,
+    /// The file is an Ethereum keystore.
+    Keystore,
+    /// Anything else: malformed JSON, empty object, array, unrelated object,
+    /// unsupported sidecar version, unknown policy, or future sidecar format.
+    Unknown,
+}
+
+/// The only sidecar version this Cast release understands.
+const TOUCH_ID_SIDECAR_VERSION: u32 = 1;
+
+/// Strict deserialization-only representation of the persisted sidecar format.
+///
+/// Uses `deny_unknown_fields` so that any unrecognized field (e.g. from a
+/// future sidecar version) causes a parse failure, which maps to `Unknown`.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct TouchIdSidecarWire {
+    version: u32,
+    policy: TouchIdPolicyWire,
+    se_key: String,
+    sealed_password: String,
+}
+
+/// The policy values currently recognised by this Cast release.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum TouchIdPolicyWire {
+    UserPresence,
+    CurrentBiometry,
+}
+
+/// Returns the state of the file at `path` with respect to the Touch ID sidecar schema.
+///
+/// Classification order:
+/// 1. Not found → `Missing`
+/// 2. Has both `version` and `crypto`/`Crypto` fields → `Keystore`
+/// 3. Parses strictly as a v1 Touch ID sidecar → `Recognized`
+/// 4. Everything else → `Unknown`
+fn touch_id_sidecar_state(path: &Path) -> Result<TouchIdSidecarState> {
+    let value = match fs::read_json_file::<serde_json::Value>(path) {
+        Ok(v) => v,
+        Err(e) if is_not_found(&e) => return Ok(TouchIdSidecarState::Missing),
+        Err(e) => return Err(e.into()),
+    };
+
+    // Check for Ethereum keystore before attempting sidecar parse.
+    // Preserves both lowercase and uppercase `crypto` field variants.
+    if value.get("version").is_some()
+        && (value.get("crypto").is_some() || value.get("Crypto").is_some())
+    {
+        return Ok(TouchIdSidecarState::Keystore);
+    }
+
+    // Attempt strict sidecar parse.  Any missing/extra field or unsupported
+    // version/policy maps to `Unknown` rather than `Recognized`.
+    match serde_json::from_value::<TouchIdSidecarWire>(value) {
+        Ok(wire) if wire.version == TOUCH_ID_SIDECAR_VERSION => Ok(TouchIdSidecarState::Recognized),
+        _ => Ok(TouchIdSidecarState::Unknown),
+    }
 }
 
 fn is_touch_id_sidecar(path: &Path) -> Result<bool> {
@@ -1281,26 +1373,25 @@ fn is_touch_id_sidecar(path: &Path) -> Result<bool> {
     if !name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
         return Ok(false);
     }
-
-    match is_keystore(path) {
-        Ok(is_keystore) => Ok(!is_keystore),
-        Err(error) if is_not_found(&error) => Ok(false),
-        Err(error) => Err(error.into()),
-    }
+    Ok(matches!(touch_id_sidecar_state(path)?, TouchIdSidecarState::Recognized))
 }
 
 fn ensure_touch_id_sidecar_available(keystore_path: &Path) -> Result<()> {
     let sidecar = touch_id_sidecar_path(keystore_path);
-    match is_keystore(&sidecar) {
-        Ok(true) => {
+    match touch_id_sidecar_state(&sidecar)? {
+        TouchIdSidecarState::Missing | TouchIdSidecarState::Recognized => Ok(()),
+        TouchIdSidecarState::Keystore => {
             eyre::bail!(
                 "refusing Touch ID enrollment because {} is an existing keystore",
                 sidecar.display()
             );
         }
-        Ok(false) => Ok(()),
-        Err(error) if is_not_found(&error) => Ok(()),
-        Err(error) => Err(error.into()),
+        TouchIdSidecarState::Unknown => {
+            eyre::bail!(
+                "refusing Touch ID enrollment because {} already exists and is not a recognized Touch ID sidecar",
+                sidecar.display()
+            );
+        }
     }
 }
 
@@ -1326,25 +1417,24 @@ fn ensure_touch_id_sidecars_available(
 
 fn remove_touch_id_sidecar(keystore_path: &Path) -> Result<bool> {
     let sidecar = touch_id_sidecar_path(keystore_path);
-    if is_touch_id_sidecar(&sidecar)? {
-        match std::fs::remove_file(&sidecar) {
-            Ok(()) => return Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => {
-                return Err(error).wrap_err_with(|| {
-                    format!("Failed to remove Touch ID sidecar at {}", sidecar.display())
-                });
-            }
-        }
-    }
-
-    match is_keystore(&sidecar) {
-        Ok(true) => {
+    match touch_id_sidecar_state(&sidecar)? {
+        TouchIdSidecarState::Missing => Ok(false),
+        TouchIdSidecarState::Recognized => match std::fs::remove_file(&sidecar) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error).wrap_err_with(|| {
+                format!("Failed to remove Touch ID sidecar at {}", sidecar.display())
+            }),
+        },
+        TouchIdSidecarState::Keystore => {
             eyre::bail!("refusing to remove existing keystore at {}", sidecar.display());
         }
-        Ok(false) => Ok(false),
-        Err(error) if is_not_found(&error) => Ok(false),
-        Err(error) => Err(error.into()),
+        TouchIdSidecarState::Unknown => {
+            eyre::bail!(
+                "refusing to remove {} because it is not a recognized Touch ID sidecar",
+                sidecar.display()
+            );
+        }
     }
 }
 
@@ -1374,38 +1464,347 @@ mod tests {
     use alloy_primitives::{address, keccak256};
     use std::str::FromStr;
 
+    // ── Touch ID sidecar classification ────────────────────────────────────────
+
+    /// Returns a temp dir and the path `<dir>/account.touchid`.
+    fn setup_sidecar_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("account.touchid");
+        (dir, path)
+    }
+
+    /// Helper: write content to `path` and return the path.
+    fn write<'a>(path: &'a std::path::Path, content: &str) -> &'a std::path::Path {
+        std::fs::write(path, content).unwrap();
+        path
+    }
+
+    // ── is_touch_id_sidecar ────────────────────────────────────────────────────
+
     #[test]
-    fn distinguishes_touch_id_sidecars_from_legacy_keystores() {
+    fn recognized_sidecar_user_presence() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#);
+        assert!(is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Recognized);
+    }
+
+    #[test]
+    fn recognized_sidecar_current_biometry() {
+        let (_dir, p) = setup_sidecar_path();
+        write(
+            &p,
+            r#"{"version":1,"policy":"current-biometry","se_key":"aa","sealed_password":"bb"}"#,
+        );
+        assert!(is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Recognized);
+    }
+
+    #[test]
+    fn empty_object_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, "{}");
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn array_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, "[]");
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn unrelated_object_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, r#"{"application":"unrelated"}"#);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn unknown_version_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn unknown_field_is_unknown_due_to_deny_unknown_fields() {
+        let (_dir, p) = setup_sidecar_path();
+        write(
+            &p,
+            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb","future_field":true}"#,
+        );
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn unknown_policy_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, r#"{"version":1,"policy":"future-policy","se_key":"aa","sealed_password":"bb"}"#);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn malformed_json_propagates_error() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, "not json");
+        // Malformed JSON is an I/O/parse error, not Unknown.
+        assert!(is_touch_id_sidecar(&p).is_err());
+        assert!(touch_id_sidecar_state(&p).is_err());
+    }
+
+    #[test]
+    fn keystore_lowercase_crypto_is_keystore() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, r#"{"version":3,"crypto":{}}"#);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Keystore);
+    }
+
+    #[test]
+    fn keystore_uppercase_crypto_is_keystore() {
+        let (_dir, p) = setup_sidecar_path();
+        write(&p, r#"{"version":3,"Crypto":{}}"#);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Keystore);
+    }
+
+    #[test]
+    fn missing_file_is_missing() {
+        let (_dir, p) = setup_sidecar_path();
+        // File was never created.
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Missing);
+    }
+
+    // ── ensure_touch_id_sidecar_available ─────────────────────────────────────
+
+    /// Writes a recognized sidecar at `<dir>/account.touchid` and calls
+    /// `ensure_touch_id_sidecar_available` for `<dir>/account`.
+    fn keystore_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("account")
+    }
+
+    #[test]
+    fn enrollment_allows_missing_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        // No sidecar file exists — enrollment must succeed.
+        ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap();
+    }
+
+    #[test]
+    fn enrollment_allows_replacing_recognized_sidecar() {
         let dir = tempfile::tempdir().unwrap();
         let sidecar = dir.path().join("account.touchid");
-        std::fs::write(
+        write(
             &sidecar,
-            r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
-        )
-        .unwrap();
-        assert!(is_touch_id_sidecar(&sidecar).unwrap());
-
-        std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
-        assert!(!is_touch_id_sidecar(&sidecar).unwrap());
-
-        std::fs::write(&sidecar, r#"{"version":3,"Crypto":{}}"#).unwrap();
-        assert!(!is_touch_id_sidecar(&sidecar).unwrap());
+            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+        );
+        // Existing recognized sidecar — re-enrollment must succeed.
+        ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap();
     }
 
     #[test]
-    fn propagates_ambiguous_touch_id_sidecar_errors() {
+    fn enrollment_refuses_keystore() {
         let dir = tempfile::tempdir().unwrap();
         let sidecar = dir.path().join("account.touchid");
-
-        assert!(!is_touch_id_sidecar(&sidecar).unwrap());
-
-        std::fs::write(&sidecar, "malformed").unwrap();
-        assert!(is_touch_id_sidecar(&sidecar).is_err());
-
-        std::fs::remove_file(&sidecar).unwrap();
-        std::fs::create_dir(&sidecar).unwrap();
-        assert!(is_touch_id_sidecar(&sidecar).is_err());
+        write(&sidecar, r#"{"version":3,"crypto":{}}"#);
+        let err = ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap_err();
+        assert!(err.to_string().contains("is an existing keystore"), "unexpected error: {err}");
+        // File must be untouched.
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), r#"{"version":3,"crypto":{}}"#);
     }
+
+    #[test]
+    fn enrollment_refuses_unknown_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        write(&sidecar, r#"{"application":"unrelated"}"#);
+        let err = ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        // File must be untouched.
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), r#"{"application":"unrelated"}"#);
+    }
+
+    #[test]
+    fn enrollment_refuses_empty_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        write(&sidecar, "{}");
+        let err = ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), "{}");
+    }
+
+    #[test]
+    fn enrollment_refuses_array() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        write(&sidecar, "[]");
+        let err = ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), "[]");
+    }
+
+    #[test]
+    fn enrollment_refuses_unknown_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        let content =
+            r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#;
+        write(&sidecar, content);
+        let err = ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        // Future sidecar format must not be destroyed.
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), content);
+    }
+
+    // ── remove_touch_id_sidecar ────────────────────────────────────────────────
+
+    #[test]
+    fn removal_returns_false_for_missing_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let removed = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap();
+        assert!(!removed);
+    }
+
+    #[test]
+    fn removal_deletes_recognized_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        write(
+            &sidecar,
+            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+        );
+        let removed = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap();
+        assert!(removed);
+        assert!(!sidecar.exists());
+    }
+
+    #[test]
+    fn removal_refuses_keystore() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        let content = r#"{"version":3,"crypto":{}}"#;
+        write(&sidecar, content);
+        let err = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("refusing to remove existing keystore"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), content);
+    }
+
+    #[test]
+    fn removal_refuses_empty_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        write(&sidecar, "{}");
+        let err = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), "{}");
+    }
+
+    #[test]
+    fn removal_refuses_array() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        write(&sidecar, "[]");
+        let err = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), "[]");
+    }
+
+    #[test]
+    fn removal_refuses_unrelated_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        let content = r#"{"application":"unrelated"}"#;
+        write(&sidecar, content);
+        let err = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), content);
+    }
+
+    #[test]
+    fn removal_refuses_unknown_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        let content =
+            r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#;
+        write(&sidecar, content);
+        let err = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a recognized Touch ID sidecar"),
+            "unexpected error: {err}"
+        );
+        // Future sidecar format must not be destroyed.
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), content);
+    }
+
+    // ── Wallet listing regression ──────────────────────────────────────────────
+
+    /// Verify that the listing filter uses `!matches!(is_touch_id_sidecar(&path), Ok(true))`:
+    /// - recognized v1 sidecars are hidden
+    /// - unknown-content `.touchid` files are retained
+    /// - unknown-version `.touchid` files are retained
+    #[test]
+    fn listing_hides_only_recognized_sidecars() {
+        // is_touch_id_sidecar returns Ok(true) only for Recognized.
+        let dir = tempfile::tempdir().unwrap();
+
+        let recognized = dir.path().join("recognized.touchid");
+        write(
+            &recognized,
+            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+        );
+
+        let unknown_content = dir.path().join("unknown_content.touchid");
+        write(&unknown_content, r#"{"application":"unrelated"}"#);
+
+        let unknown_version = dir.path().join("unknown_version.touchid");
+        write(
+            &unknown_version,
+            r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+        );
+
+        // Recognized sidecar → is_touch_id_sidecar returns Ok(true) → hidden.
+        assert!(matches!(is_touch_id_sidecar(&recognized), Ok(true)));
+        // Unknown content → Ok(false) → retained by listing.
+        assert!(matches!(is_touch_id_sidecar(&unknown_content), Ok(false)));
+        // Unknown version → Ok(false) → retained by listing.
+        assert!(matches!(is_touch_id_sidecar(&unknown_version), Ok(false)));
+    }
+
+    // ── preflights_every_named_touch_id_sidecar (preserved from before) ────────
 
     #[test]
     fn preflights_every_named_touch_id_sidecar() {
