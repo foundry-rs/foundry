@@ -206,6 +206,12 @@ fn find_mismatch_in_settings(
     etherscan_settings: &Metadata,
     local_settings: &Config,
 ) -> Vec<String> {
+    // The verify path never calls `normalize_optimizer_settings`, so an unset `optimizer_runs`
+    // arrives here as `None` and used to be reported as "unknown", making every contract built
+    // with the default look like a mismatch. Normalize a copy rather than hardcoding the default,
+    // so the two cannot drift.
+    let local_settings = &local_settings.clone().normalized_optimizer_settings();
+
     let mut mismatches: Vec<String> = vec![];
     if etherscan_settings.evm_version != local_settings.evm_version.to_string().to_lowercase() {
         let str = format!(
@@ -223,12 +229,10 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64)
-        || (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
-    {
+    let local_runs = local_settings.optimizer_runs.unwrap_or_default() as u64;
+    if etherscan_settings.runs != local_runs {
         let str = format!(
-            "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
+            "Optimizer runs mismatch: local={local_runs}, onchain={}",
             etherscan_settings.runs
         );
         mismatches.push(str);
@@ -510,6 +514,47 @@ pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds [`Metadata`] with the compiler settings a caller cares about here.
+    fn metadata(evm_version: &str, optimization_used: u64, runs: u64) -> Metadata {
+        serde_json::from_value(serde_json::json!({
+            "SourceCode": "",
+            "ABI": "[]",
+            "ContractName": "C",
+            "CompilerVersion": "v0.8.24+commit.e11b9ed9",
+            "OptimizationUsed": optimization_used.to_string(),
+            "Runs": runs.to_string(),
+            "ConstructorArguments": "",
+            "EVMVersion": evm_version,
+            "Library": "",
+            "LicenseType": "",
+            "Proxy": "0",
+            "Implementation": "",
+            "SwarmSource": "",
+        }))
+        .expect("metadata fixture should deserialize")
+    }
+
+    #[test]
+    fn unset_optimizer_runs_is_the_default_not_a_mismatch() {
+        // A project that never sets `optimizer_runs` compiles with 200, and the verify path does
+        // not normalize the config, so this used to report `local=unknown` against a contract
+        // that agrees with it.
+        let local = Config { optimizer_runs: None, optimizer: Some(true), ..Default::default() };
+        let onchain = metadata(&local.evm_version.to_string().to_lowercase(), 1, 200);
+
+        assert!(find_mismatch_in_settings(&onchain, &local).is_empty());
+    }
+
+    #[test]
+    fn optimizer_runs_mismatch_is_still_reported() {
+        let local = Config { optimizer_runs: None, optimizer: Some(true), ..Default::default() };
+        let onchain = metadata(&local.evm_version.to_string().to_lowercase(), 1, 999);
+
+        let mismatches = find_mismatch_in_settings(&onchain, &local);
+        assert_eq!(mismatches, vec!["Optimizer runs mismatch: local=200, onchain=999"]);
+    }
+
     use crate::verify::VerifierArgs;
     use foundry_cli::opts::EtherscanOpts;
     use foundry_compilers::PathStyle;
