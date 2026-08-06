@@ -3448,6 +3448,54 @@ interface Interface {
     ]);
 });
 
+casttest!(interface_with_function_pointer_in_struct, |prj, cmd| {
+    let abi = r#"[
+        {
+            "anonymous": false,
+            "inputs": [
+                {
+                    "components": [
+                        {"internalType": "uint256", "name": "id", "type": "uint256"},
+                        {
+                            "internalType": "function (uint256) external",
+                            "name": "callback",
+                            "type": "function"
+                        }
+                    ],
+                    "indexed": false,
+                    "internalType": "struct StructWithFunctionEvent.Action",
+                    "name": "action",
+                    "type": "tuple"
+                }
+            ],
+            "name": "ActionLogged",
+            "type": "event"
+        }
+    ]"#;
+    let path = prj.root().join("function_event_abi.json");
+    fs::write(&path, abi).unwrap();
+
+    cmd.arg("interface")
+        .arg(&path)
+        .arg("--name")
+        .arg("StructWithFunctionEvent")
+        .assert_success()
+        .stdout_eq(str![[r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface StructWithFunctionEvent {
+    struct Action {
+        uint256 id;
+        function(uint256) external callback;
+    }
+
+    event ActionLogged(Action action);
+}
+
+"#]]);
+});
+
 casttest!(interface_local_contract_does_not_write_artifacts, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source(

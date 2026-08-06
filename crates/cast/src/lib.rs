@@ -13,7 +13,7 @@ use alloy_consensus::{
     BlockHeader,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, Specifier};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
@@ -34,7 +34,7 @@ use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
-    abi::{coerce_value, encode_function_args, encode_function_args_packed, get_event, get_func},
+    abi::{encode_function_args, encode_function_args_packed, get_event, get_func},
     compile::etherscan_project,
     flatten,
     fmt::*,
@@ -2017,44 +2017,42 @@ impl SimpleCast {
     /// ```
     pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<LogData> {
         let event = get_event(sig)?;
-        let tokens = std::iter::zip(&event.inputs, args)
-            .map(|(input, arg)| coerce_value(&input.ty, arg.as_ref()))
+        if event.inputs.len() != args.len() {
+            eyre::bail!(
+                "encode length mismatch: expected {} types, got {}",
+                event.inputs.len(),
+                args.len(),
+            );
+        }
+
+        let types = event
+            .inputs
+            .iter()
+            .map(Specifier::<DynSolType>::resolve)
+            .collect::<Result<Vec<_>, _>>()?;
+        let tokens = std::iter::zip(&types, args)
+            .map(|(ty, arg)| Ok(DynSolType::coerce_str(ty, arg.as_ref())?))
             .collect::<Result<Vec<_>>>()?;
 
-        let mut topics = vec![event.selector()];
-        let mut data_tokens: Vec<u8> = Vec::new();
+        let mut topics = if event.anonymous { vec![] } else { vec![event.selector()] };
+        let mut data_tokens = Vec::new();
 
         for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
-                let ty = DynSolType::parse(&input.ty)?;
-                if matches!(
-                    ty,
-                    DynSolType::String
-                        | DynSolType::Bytes
-                        | DynSolType::Array(_)
-                        | DynSolType::Tuple(_)
-                ) {
-                    // For dynamic types, hash the encoded value
-                    let encoded = token.abi_encode();
-                    let hash = keccak256(encoded);
-                    topics.push(hash);
+                if let Some(word) = token.as_word() {
+                    topics.push(word);
                 } else {
-                    // For fixed-size types, encode directly to 32 bytes
-                    let mut encoded = [0u8; 32];
-                    let token_encoded = token.abi_encode();
-                    if token_encoded.len() <= 32 {
-                        let start = 32 - token_encoded.len();
-                        encoded[start..].copy_from_slice(&token_encoded);
-                    }
-                    topics.push(B256::from(encoded));
+                    // Complex indexed values are represented by their encoded hash.
+                    topics.push(keccak256(token.abi_encode()));
                 }
             } else {
-                // Non-indexed parameters go into data
-                data_tokens.extend_from_slice(&token.abi_encode());
+                // Non-indexed parameters are encoded together as the event body.
+                data_tokens.push(token);
             }
         }
 
-        Ok(LogData::new_unchecked(topics, data_tokens.into()))
+        let data = DynSolValue::Tuple(data_tokens).abi_encode_params();
+        Ok(LogData::new_unchecked(topics, data.into()))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.

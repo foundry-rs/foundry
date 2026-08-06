@@ -196,6 +196,28 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(function_pointer_in_event_tuple, |_prj, cmd| {
+    let signature = "ActionLogged((uint256,function))";
+    let function = "0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90";
+    let action = format!("(1337,{function})");
+    let data = "0x000000000000000000000000000000000000000000000000000000000000053929088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000";
+
+    cmd.args(["abi-encode-event", signature, &action])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x413ec73c547fcf364943e3f9182965c6662c9bb75c94568d39ebb9f66d2cff4b
+[data]: 0x000000000000000000000000000000000000000000000000000000000000053929088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["decode-event", "--sig", signature, data]).assert_success().stdout_eq(
+        str![[r#"
+(1337, 0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90)
+
+"#]],
+    );
+});
+
 // tests cast can decode event with Openchain API
 casttest!(flaky_event_decode_with_openchain, |prj, cmd| {
     prj.clear_cache();
