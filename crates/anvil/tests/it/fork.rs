@@ -28,7 +28,9 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{
-    EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn, try_spawn,
+    EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
+    eth::{EthApi, fees::INITIAL_BASE_FEE},
+    spawn, try_spawn,
 };
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
@@ -572,6 +574,54 @@ async fn test_fork_reset_preserves_explicit_gas_settings_and_restores_memory() {
     assert_eq!(local_info.environment.gas_limit, explicit_gas_limit);
     assert_eq!(local_info.environment.base_fee, explicit_base_fee.into());
     assert_eq!(api.backend.fees().raw_gas_price(), explicit_gas_price);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_restores_implicit_memory_base_fee() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test().with_base_fee(Some(123))).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(999)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let local_info = api.anvil_node_info().await.unwrap();
+    assert!(local_info.fork_config.fork_url.is_none());
+    assert_eq!(local_info.environment.base_fee, INITIAL_BASE_FEE.into());
+    let genesis = handle.http_provider().get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(INITIAL_BASE_FEE));
+    api.mine_one().await.unwrap();
+    let first = handle.http_provider().get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(INITIAL_BASE_FEE));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_restores_explicit_genesis_base_fee() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test().with_base_fee(Some(123))).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() }))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(999)).await.unwrap();
+    assert_eq!(api.anvil_node_info().await.unwrap().environment.base_fee, 999);
+
+    api.anvil_reset(None).await.unwrap();
+
+    let local_info = api.anvil_node_info().await.unwrap();
+    assert!(local_info.fork_config.fork_url.is_none());
+    assert_eq!(local_info.environment.base_fee, 0);
+    let genesis = handle.http_provider().get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(0));
 }
 
 #[tokio::test(flavor = "multi_thread")]

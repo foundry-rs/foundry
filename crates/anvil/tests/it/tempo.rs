@@ -5745,4 +5745,35 @@ async fn test_tempo_t7_base_fee_is_dynamic() {
         (TEMPO_T7_BASE_FEE_FLOOR..=TEMPO_T7_BASE_FEE_CAP).contains(&last),
         "base fee should be clamped to the TIP-1067 range: {fees:?}"
     );
+
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(TEMPO_T1_BASE_FEE));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(TEMPO_T7_BASE_FEE_CAP)));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(TEMPO_T7_BASE_FEE_CAP));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t7_reset_restores_explicit_base_fee() {
+    let explicit_base_fee = TEMPO_T1_BASE_FEE + 1;
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_hardfork(Some(TempoHardfork::T7.into()))
+            .with_base_fee(Some(explicit_base_fee)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(TEMPO_T7_BASE_FEE_FLOOR)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(explicit_base_fee));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(TEMPO_T7_BASE_FEE_CAP)));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(TEMPO_T7_BASE_FEE_CAP));
 }

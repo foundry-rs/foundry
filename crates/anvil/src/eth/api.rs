@@ -765,9 +765,11 @@ impl<N: Network> EthApi<N> {
             self.pool.clear();
             self.fee_history_cache.lock().clear();
         } else {
-            let staged = self.backend.prepare_memory_reset().await?;
             let _lifecycle = self.lifecycle_lock.write().await;
+            // Unlike fork preparation, memory preparation snapshots live local fee state and does
+            // no remote I/O. Keep that snapshot and its publication in one lifecycle transition.
             let _mining = self.backend.lock_mining().await;
+            let staged = self.backend.prepare_memory_reset().await?;
             self.backend.commit_memory_reset(staged).await?;
             self.reset_instance_id();
             self.pool.clear();
@@ -1859,9 +1861,10 @@ impl EthApi<FoundryNetwork> {
     #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
-        // Reset and RPC URL replacement take the write lock internally after their fallible
-        // staging work. Identity and snapshot methods also lock internally to keep direct API
-        // callers safe without recursively acquiring this fair RwLock.
+        // Fork reset and RPC URL replacement take the write lock internally after their fallible
+        // remote staging work. Memory reset takes it before staging because it snapshots live
+        // state. Identity and snapshot methods also lock internally to keep direct API callers
+        // safe without recursively acquiring this fair RwLock.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
@@ -5044,6 +5047,33 @@ fn merge_pre_fork_fee_history(
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn memory_reset_stages_live_fees_after_active_mining() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        api.backend.set_base_fee(123);
+
+        // Model an in-flight miner that publishes its final fee update before completing. Reset
+        // must wait to snapshot that state until mining finishes.
+        let mining = api.backend.lock_mining().await;
+        let reset_api = api.clone();
+        let reset = tokio::spawn(async move { reset_api.anvil_reset(None).await });
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while api.lifecycle_lock.try_read().is_ok() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        api.backend.set_base_fee(456);
+        drop(mining);
+        tokio::time::timeout(Duration::from_secs(5), reset).await.unwrap().unwrap().unwrap();
+
+        assert_eq!(api.backend.evm_env().read().block_env.basefee, 456);
+        assert_eq!(api.base_fee().unwrap(), Some(U256::from(crate::eth::fees::INITIAL_BASE_FEE)));
+    }
 
     // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
     #[tokio::test(flavor = "multi_thread")]

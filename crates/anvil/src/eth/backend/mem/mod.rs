@@ -4936,6 +4936,7 @@ impl<N: Network> Backend<N> {
     pub(crate) async fn prepare_memory_reset(
         &self,
     ) -> Result<StagedMemoryReset<N>, BlockchainError> {
+        let reset_from_fork = self.is_fork();
         let genesis_timestamp = self.genesis.timestamp;
         let genesis_number = self.genesis.number;
         let mut staged_config = self.node_config.read().await.clone();
@@ -4957,7 +4958,11 @@ impl<N: Network> Backend<N> {
             (
                 staged_config.gas_limit(),
                 staged_config.get_base_fee(),
-                staged_config.base_fee.is_some(),
+                staged_config.base_fee.is_some()
+                    || staged_config
+                        .genesis
+                        .as_ref()
+                        .is_some_and(|genesis| genesis.base_fee_per_gas.is_some()),
                 staged_config.get_gas_price(),
                 staged_config.get_blob_params(),
                 staged_config.get_blob_excess_gas_and_price(),
@@ -4979,15 +4984,15 @@ impl<N: Network> Backend<N> {
         staged_fees.set_blob_params(local_blob_params);
         staged_fees.set_blob_excess_gas_and_price(local_blob_excess_gas_and_price);
 
-        // Tempo chains seed the hardfork's own fixed base fee on reset; other chains keep the
-        // pre-reset base fee for the genesis block, as before. Computed up front so the env,
-        // storage, and fee manager all agree.
-        let reset_base_fee = if local_base_fee_is_explicit {
-            None
-        } else {
-            staged_fees.tempo_hardfork().map(crate::config::tempo_default_base_fee)
-        };
-        let genesis_base_fee = local_base_fee;
+        // Explicit local configuration always wins, while Tempo configuration uses the
+        // hardfork's own seed. An implicit in-memory Ethereum chain otherwise keeps its live base
+        // fee in the reset genesis; returning from a fork restores the local default instead of
+        // leaking remote fee state. Compute this up front so the env, storage, and fee manager all
+        // agree.
+        let preserve_live_base_fee =
+            !reset_from_fork && !local_base_fee_is_explicit && local_tempo_hardfork.is_none();
+        let genesis_base_fee =
+            if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
         let mut staged_cfg = CfgEnv::default();
         staged_cfg.set_spec_and_mainnet_gas_params(local_spec);
@@ -5023,22 +5028,21 @@ impl<N: Network> Backend<N> {
             self.is_tempo(),
         );
 
-        // Seed the next block's fee state. On Tempo the genesis keeps its fixed default while the
-        // next block already follows the hardfork's rule (e.g. T7 clamps to the cap); other chains
-        // use Anvil's Ethereum default.
+        // Seed the next block's fee state. Tempo always advances through its hardfork rule, an
+        // implicit in-memory Ethereum reset restores Anvil's default, and explicit or
+        // fork-to-memory Ethereum resets retain the local configured value.
         staged_fees.set_base_fee(genesis_base_fee);
         if staged_fees.is_eip1559() {
-            let next_base_fee = match reset_base_fee {
-                Some(genesis_base_fee) => {
-                    staged_fees.set_base_fee(genesis_base_fee);
-                    staged_fees.get_next_block_base_fee_per_gas(
-                        0,
-                        staged_env.block_env.gas_limit,
-                        genesis_base_fee,
-                    )
-                }
-                None if genesis_base_fee == 0 => 0,
-                None => genesis_base_fee,
+            let next_base_fee = if staged_fees.tempo_hardfork().is_some() {
+                staged_fees.get_next_block_base_fee_per_gas(
+                    0,
+                    staged_env.block_env.gas_limit,
+                    genesis_base_fee,
+                )
+            } else if preserve_live_base_fee {
+                crate::eth::fees::INITIAL_BASE_FEE
+            } else {
+                genesis_base_fee
             };
             staged_fees.set_base_fee(next_base_fee);
         }
@@ -5067,7 +5071,7 @@ impl<N: Network> Backend<N> {
             hardfork: local_hardfork,
             storage: staged_storage,
             timestamp: genesis_timestamp,
-            flush_old_cache: self.is_fork(),
+            flush_old_cache: reset_from_fork,
         })
     }
 

@@ -83,12 +83,19 @@ async fn can_get_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_null_base_fee_before_london() {
-    let (_api, handle) =
+    let (api, handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
     let provider = handle.http_provider();
 
     let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
     assert_eq!(base_fee, None);
+
+    api.anvil_reset(None).await.unwrap();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, None);
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
