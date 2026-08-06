@@ -203,7 +203,7 @@ jobs:
                 timeout: '3600',
                 workers: '',
                 trials: '6',
-                'paired-seeds': 'true',
+                'paired-seeds': 'false',
                 'benchmark-type': 'property',
               };
               const { unknown, invalid } = parseArgs(
