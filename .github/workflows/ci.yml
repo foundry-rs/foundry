@@ -236,11 +236,14 @@ jobs:
         with:
           category: "/language:${{matrix.language}}"
 
-  scan-github-actions:
-    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@512158c4e90e42eef8aa7fc3fc3186a79b5b4648 # main
+  workflow-validation:
+    name: Workflow Validation
+    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@483bda4a2a4b5e04a51edff03768c1590d271f80 # main
     permissions:
       actions: read
       contents: read
+    with:
+      pinact: true
 
   ci-success:
     runs-on: ubuntu-latest
@@ -259,10 +262,10 @@ jobs:
       - forge-fmt
       - deny
       - codeql
-      - scan-github-actions
+      - workflow-validation
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
           jobs: ${{ toJSON(needs) }}
