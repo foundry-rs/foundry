@@ -77,7 +77,9 @@ pub enum WalletSubcommands {
         #[arg(long)]
         force: bool,
 
-        /// Also enroll the keystore for Touch ID unlock (macOS only).
+        /// Enroll the keystore for Touch ID-assisted authentication on macOS.
+        ///
+        /// The macOS login password and explicit keystore passwords remain available.
         #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
         touch_id: bool,
     },
@@ -264,7 +266,9 @@ pub enum WalletSubcommands {
         /// This is unsafe, we recommend using the default hidden password prompt
         #[arg(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
-        /// Also enroll the keystore for Touch ID unlock (macOS only).
+        /// Enroll the keystore for Touch ID-assisted authentication on macOS.
+        ///
+        /// The macOS login password and explicit keystore passwords remain available.
         #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
         touch_id: bool,
         #[command(flatten)]
@@ -522,7 +526,9 @@ impl WalletSubcommands {
                                     keystore_path.display()
                                 )?;
                                 if touch_id {
-                                    sh_status!("Touch ID unlock enabled.")?;
+                                    sh_status!(
+                                        "Touch ID-assisted unlock enrolled; password-based unlock remains available."
+                                    )?;
                                 }
                                 sh_status!("Address:    {}", wallet.address().to_checksum(None))?;
                                 if shell::verbosity() > 0 {
@@ -952,7 +958,9 @@ flag to set your key via:
                         .green()
                     )?;
                     if touch_id {
-                        sh_status!("Touch ID unlock enabled.")?;
+                        sh_status!(
+                            "Touch ID-assisted unlock enrolled; password-based unlock remains available."
+                        )?;
                     }
                 }
             }
