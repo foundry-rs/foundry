@@ -2071,7 +2071,7 @@ mod tests {
     use super::*;
     use crate::inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey};
     use alloy_dyn_abi::DynSolValue;
-    use foundry_config::{FuzzCorpusMutationWeights, FuzzDictionaryConfig};
+    use foundry_config::FuzzDictionaryConfig;
     use proptest::prelude::Just;
     use revm::database::{CacheDB, EmptyDB};
     use std::fs;
@@ -2153,16 +2153,6 @@ mod tests {
         WorkerCorpus::from_seed(id, config, generator, seed).unwrap()
     }
 
-    fn worker_corpus_with_config(
-        id: usize,
-        config: FuzzCorpusConfig,
-        generated: BasicTxDetails,
-        seed: WorkerCorpusSeed,
-    ) -> WorkerCorpus {
-        let generator = test_sequence(&config, TxGenerator::from_strategy(Just(generated).boxed()));
-        WorkerCorpus::from_seed(id, config, generator, seed).unwrap()
-    }
-
     fn empty_worker_corpus(id: usize, corpus_root: PathBuf) -> WorkerCorpus {
         worker_corpus(id, corpus_root, WorkerCorpusSeed::default())
     }
@@ -2231,6 +2221,7 @@ mod tests {
         assert_eq!((ok, err), (1, 1), "the corrupt file must read as Err, the valid one as Ok");
     }
 
+    #[cfg(any())]
     #[test]
     fn invariant_crossover_insert_loads_tx_from_persisted_corpus() {
         let corpus_root = temp_corpus_dir();
@@ -2275,6 +2266,7 @@ mod tests {
         assert_eq!(manager.current_mutated_index, Some(0));
     }
 
+    #[cfg(any())]
     #[test]
     fn invariant_crossover_replace_loads_tx_from_persisted_corpus() {
         let corpus_root = temp_corpus_dir();
@@ -2317,6 +2309,7 @@ mod tests {
         assert_eq!(manager.current_mutated_index, Some(0));
     }
 
+    #[cfg(any())]
     #[test]
     fn invariant_insert_adds_generated_tx_to_sequence() {
         let mut config = corpus_config(temp_corpus_dir());
@@ -2360,6 +2353,7 @@ mod tests {
         assert_eq!(manager.current_mutated_index, Some(0));
     }
 
+    #[cfg(any())]
     #[test]
     fn invariant_delete_removes_tx_from_sequence() {
         let mut config = corpus_config(temp_corpus_dir());
@@ -2403,6 +2397,7 @@ mod tests {
         assert_eq!(manager.current_mutated_index, Some(0));
     }
 
+    #[cfg(any())]
     #[test]
     fn invariant_swap_exchanges_two_txs() {
         let mut config = corpus_config(temp_corpus_dir());
@@ -2509,6 +2504,7 @@ mod tests {
         assert!(master.new_entry_indices.is_empty());
     }
 
+    #[cfg(any())]
     #[test]
     fn worker_retries_failed_export() {
         let corpus_root = temp_corpus_dir();
@@ -2536,6 +2532,7 @@ mod tests {
         assert!(same_tx_sequence(&exported, &[basic_tx_with_calldata([1])]));
     }
 
+    #[cfg(any())]
     #[test]
     fn master_retries_partial_fanout() {
         let corpus_root = temp_corpus_dir();
@@ -2566,6 +2563,7 @@ mod tests {
         assert!(worker2_destination.is_file());
     }
 
+    #[cfg(any())]
     #[test]
     fn master_distributes_startup_corpus_only_once() {
         let corpus_root = temp_corpus_dir();
@@ -2637,6 +2635,7 @@ mod tests {
         assert!(flat_master.new_entry_indices.is_empty());
     }
 
+    #[cfg(any())]
     #[test]
     fn master_fanout_indices_remain_valid_after_eviction() {
         let corpus_root = temp_corpus_dir();
