@@ -2331,14 +2331,17 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use crate::executors::ExecutorBuilder;
+    use foundry_cheatcodes::CheatsConfig;
     use foundry_config::FuzzDictionaryConfig;
     use foundry_evm_core::{
         backend::Backend,
         evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
     };
+    use foundry_evm_fuzz::CallDetails;
     use proptest::{prelude::any, strategy::ValueTree, test_runner::Config};
     use revm::{
         bytecode::Bytecode,
+        context::Block,
         database::{CacheDB, EmptyDB},
     };
     use serde_json::json;
@@ -2356,6 +2359,81 @@ mod tests {
         let config = Config { failure_persistence: None, ..Default::default() };
         let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
         TestRunner::new_with_rng(config, rng)
+    }
+
+    #[test]
+    fn assumption_rejection_restores_delayed_block_environment() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+            .gas_limit(1 << 24)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+            );
+        let target = Address::repeat_byte(0x11);
+        let mut code = vec![0x6e]; // PUSH15.
+        code.extend_from_slice(MAGIC_ASSUME);
+        code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x0f, 0x60, 0x11, 0xf3]);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from(code))).unwrap();
+
+        let initial_block = executor.evm_env().block_env.clone();
+        let initial_cheatcode_block =
+            executor.inspector().cheatcodes.as_ref().unwrap().block.clone();
+        let expected_timestamp = initial_block.timestamp() + U256::from(10);
+        let expected_number = initial_block.number() + U256::from(5);
+        let tx = BasicTxDetails {
+            warp: Some(U256::from(10)),
+            roll: Some(U256::from(5)),
+            sender: Address::ZERO,
+            call_details: CallDetails { target, calldata: Bytes::new(), value: None },
+        };
+        let mut state = (executor, tx);
+        let campaign = FuzzCampaign::new(FuzzCampaignMode::Invariant {
+            check_interval: 1,
+            optimization: false,
+        });
+
+        let outcome = campaign
+            .run_sequence(
+                &mut state,
+                1,
+                |state| (&mut state.0, &mut state.1),
+                |_| 0,
+                |_| false,
+                |state, event| {
+                    match event {
+                        CampaignEvent::Feedback(_) => {
+                            let block = &state.0.evm_env().block_env;
+                            assert_eq!(block.timestamp(), expected_timestamp);
+                            assert_eq!(block.number(), expected_number);
+                            let block = state
+                                .0
+                                .inspector()
+                                .cheatcodes
+                                .as_ref()
+                                .unwrap()
+                                .block
+                                .as_ref()
+                                .unwrap();
+                            assert_eq!(block.timestamp(), expected_timestamp);
+                            assert_eq!(block.number(), expected_number);
+                        }
+                        CampaignEvent::Check { kind, .. } => {
+                            assert_eq!(kind, CampaignCallKind::AssumptionRejected);
+                            return Ok(CampaignControl::Stop);
+                        }
+                        _ => {}
+                    }
+                    Ok(CampaignControl::Continue)
+                },
+            )
+            .unwrap();
+
+        assert_eq!(outcome, CampaignSequenceOutcome::Stopped);
+        assert_eq!(state.0.evm_env().block_env, initial_block);
+        assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
     }
 
     #[test]

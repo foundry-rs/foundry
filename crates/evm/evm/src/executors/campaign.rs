@@ -86,7 +86,10 @@ impl FuzzCampaign {
             let last_call = current_depth == run_depth - 1;
             let (mut result, block_snapshot) = {
                 let (executor, tx) = parts(state);
-                let snapshot = matches!(self.mode, FuzzCampaignMode::Invariant { .. })
+                let has_delay = tx.warp.is_some_and(|delay| !delay.is_zero())
+                    || tx.roll.is_some_and(|delay| !delay.is_zero());
+                let snapshot = (matches!(self.mode, FuzzCampaignMode::Invariant { .. })
+                    && has_delay)
                     .then(|| BlockSnapshot::new(executor));
                 let result = match self.mode {
                     FuzzCampaignMode::Stateless => executor.call_raw(
