@@ -100,11 +100,6 @@ impl<'a> Linker<'a> {
         Linker { root: root.into(), contracts }
     }
 
-    /// Returns a resolver that reuses artifact lookups across calls.
-    pub const fn resolver(&self) -> Resolver<'a, '_> {
-        Resolver { linker: self, index: OnceLock::new() }
-    }
-
     /// Helper method to convert [ArtifactId] to the format in which libraries are stored in
     /// [Libraries] object.
     ///
@@ -577,7 +572,7 @@ impl<'a> Linker<'a> {
         target: &'a ArtifactId,
         libraries: &Libraries,
     ) -> Result<BTreeSet<Address>, LinkerError> {
-        self.resolver().linked_library_addresses(target, libraries)
+        Resolver::new(self).linked_library_addresses(target, libraries)
     }
 
     fn linked_library_addresses_inner<'b>(
@@ -1080,7 +1075,12 @@ impl<'a> Linker<'a> {
     }
 }
 
-impl Resolver<'_, '_> {
+impl<'a, 'b> Resolver<'a, 'b> {
+    /// Creates a resolver that reuses artifact lookups across calls.
+    pub const fn new(linker: &'b Linker<'a>) -> Self {
+        Self { linker, index: OnceLock::new() }
+    }
+
     /// Returns the resolved addresses of all libraries required by `target`.
     pub fn linked_library_addresses(
         &self,
@@ -1599,7 +1599,7 @@ mod tests {
         let test = LinkerTest::new(&testdata().join("default/linking/nested"), true);
         let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
         let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
-        let resolver = linker.resolver();
+        let resolver = Resolver::new(&linker);
 
         let create2 = linker
             .link_with_create2_detailed(Libraries::default(), Address::ZERO, B256::ZERO, [consumer])

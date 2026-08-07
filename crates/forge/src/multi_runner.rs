@@ -38,7 +38,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 
-use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError};
+use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resolver};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
@@ -855,7 +855,7 @@ impl MultiContractRunnerBuilder {
             self.symbolic_artifact_replay.as_ref(),
         );
         let empty_filter = EmptyTestFilter::default();
-        let resolver = linker.resolver();
+        let resolver = Resolver::new(&linker);
 
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
