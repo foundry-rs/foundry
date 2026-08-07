@@ -8,8 +8,10 @@
 
 use path_slash::PathBufExt;
 use solar::{
-    ast::{ContractKind, DataLocation, FunctionKind, ItemKind, NatSpecKind, Visibility},
-    interface::source_map::FileName,
+    ast::{
+        ContractKind, DataLocation, FunctionKind, ItemKind, NatSpecItem, NatSpecKind, Visibility,
+    },
+    interface::{Span, source_map::FileName},
     sema::{
         Gcx,
         hir::{ContractId, FunctionId, ItemId, SourceId, VariableId},
@@ -391,7 +393,10 @@ fn doc_from_view(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
     let view = gcx.natspec_view(item);
     let mut doc = empty_natspec_doc(gcx, item);
     for natspec in view.items() {
-        let content = natspec.content().trim().to_string();
+        if continuation_parent(gcx, view.items(), natspec).is_some() {
+            continue;
+        }
+        let content = positional_description(gcx, view.items(), std::slice::from_ref(natspec));
         match natspec.kind {
             NatSpecKind::Notice => doc.notices.push(content),
             NatSpecKind::Dev => doc.devs.push(content),
@@ -401,17 +406,100 @@ fn doc_from_view(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
     if let Some(fid) = callable_function(gcx, item) {
         let function = gcx.hir.function(fid);
         for index in 0..function.parameters.len() {
-            doc.params[index] = positional_description(view.parameter(index));
+            doc.params[index] = positional_description(gcx, view.items(), view.parameter(index));
         }
         for index in 0..function.returns.len() {
-            doc.returns[index] = positional_description(view.return_(index));
+            doc.returns[index] = positional_description(gcx, view.items(), view.return_(index));
         }
     }
     doc
 }
 
-fn positional_description(items: &[solar::ast::NatSpecItem]) -> String {
-    items.iter().map(|item| item.content().trim()).collect::<Vec<_>>().join("\n")
+fn positional_description(
+    gcx: Gcx<'_>,
+    all_items: &[NatSpecItem],
+    items: &[NatSpecItem],
+) -> String {
+    items
+        .iter()
+        .map(|item| {
+            let mut content = normalized_natspec_content(gcx, item);
+            for continuation in all_items.iter().filter(|candidate| {
+                continuation_parent(gcx, all_items, candidate) == Some(Some(item.span))
+            }) {
+                content.push('\n');
+                content.push_str(&normalized_natspec_content(gcx, continuation));
+            }
+            content
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalized_natspec_content(gcx: Gcx<'_>, item: &NatSpecItem) -> String {
+    let source_map = gcx.sess.source_map();
+    let snippet = source_map.span_to_snippet(item.span).ok();
+    if snippet.as_deref().is_some_and(|snippet| snippet.starts_with("///")) {
+        return item.content().trim().to_string();
+    }
+    if snippet.as_deref().is_some_and(|snippet| snippet.starts_with("/**")) {
+        return clean_block_doc_content(item.content()).trim().to_string();
+    }
+    item.content()
+        .lines()
+        .enumerate()
+        .map(
+            |(index, line)| {
+                if index == 0 { line.to_string() } else { clean_block_doc_content(line) }
+            },
+        )
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+/// Returns the original tagged parent of a synthetic line-comment notice. The outer `Option`
+/// distinguishes a continuation from a standalone untagged notice; the inner value is `None` when
+/// Solar's resolved view omitted the parent because a local section replaced it.
+fn continuation_parent(
+    gcx: Gcx<'_>,
+    all_items: &[NatSpecItem],
+    item: &NatSpecItem,
+) -> Option<Option<Span>> {
+    if !matches!(item.kind, NatSpecKind::Notice)
+        || !gcx.sess.source_map().span_to_snippet(item.span).ok()?.starts_with("///")
+    {
+        return None;
+    }
+
+    let source_map = gcx.sess.source_map();
+    let location = source_map.lookup_char_pos(item.span.lo());
+    let mut previous_line = location.line.checked_sub(2)?;
+    loop {
+        let line = location.file.get_line(previous_line)?.trim_start();
+        let content = line.strip_prefix("///")?;
+        if content.trim().is_empty() {
+            return None;
+        }
+        let Some(tag) = content.trim_start().strip_prefix('@') else {
+            previous_line = previous_line.checked_sub(1)?;
+            continue;
+        };
+        if !matches!(tag.split_whitespace().next(), Some("notice" | "dev" | "param" | "return")) {
+            return None;
+        }
+        return Some(
+            all_items
+                .iter()
+                .find(|candidate| {
+                    let candidate_location = source_map.lookup_char_pos(candidate.span.lo());
+                    candidate_location.line == previous_line + 1
+                        && std::sync::Arc::ptr_eq(&candidate_location.file, &location.file)
+                })
+                .map(|parent| parent.span),
+        );
+    }
 }
 
 fn getter_field(gcx: Gcx<'_>, variable: VariableId, description: &str) -> GetterField {

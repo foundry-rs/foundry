@@ -376,12 +376,32 @@ contract ExplicitGetter is IValues {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ExplicitGetter.mdx"))
-            .unwrap();
-    assert!(rendered.contains("Reads a value"), "{rendered}");
-    assert!(rendered.contains("| &lt;none&gt; | `uint256` | The lookup key |"), "{rendered}");
-    assert!(rendered.contains("| &lt;none&gt; | `uint256` | The stored value |"), "{rendered}");
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.ExplicitGetter.mdx"), None,),
+        str![[r#"
+...
+### values
+
+Reads a value
+
+```solidity
+mapping(uint256 => uint256) public override values;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `uint256` | The lookup key |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `uint256` | The stored value |
+...
+"#]],
+    );
 });
 
 forgetest_init!(inheritdoc_does_not_skip_exact_custom_documentation, |prj, cmd| {
@@ -994,23 +1014,56 @@ contract Shared is Left, Right {
     );
 
     cmd.args(["doc"]).assert_success();
-    let page = |contract: &str| {
-        fs::read_to_string(prj.root().join(format!("docs/src/pages/src/contract.{contract}.mdx")))
-            .unwrap()
-    };
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Direct.mdx"), None),
+        str![[r#"
+...
+### direct
 
-    let direct = page("Direct");
-    assert!(!direct.contains("From IAlpha"), "{direct}");
-    assert!(!direct.contains("From IBeta"), "{direct}");
+```solidity
+function direct(uint256 x) external override(IAlpha, IBeta);
+```
+...
+"#]],
+    );
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Asymmetric.mdx"), None),
+        str![[r#"
+...
+### act
 
-    for contract in ["Asymmetric", "Leaf"] {
-        let rendered = page(contract);
-        assert!(!rendered.contains("A branch doc"), "{rendered}");
-        assert!(!rendered.contains("Root branch doc"), "{rendered}");
-    }
+```solidity
+function act(uint256 x) public virtual override(A, Root);
+```
+...
+"#]],
+    );
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Leaf.mdx"), None),
+        str![[r#"
+...
+### act
 
-    let shared = page("Shared");
-    assert!(shared.contains("Shared root doc"), "{shared}");
+```solidity
+function act(uint256 x) public override;
+```
+...
+"#]],
+    );
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Shared.mdx"), None),
+        str![[r#"
+...
+### shared
+
+Shared root doc
+
+```solidity
+function shared(uint256 x) public override;
+```
+...
+"#]],
+    );
 });
 
 // Point 5 (mablr review): any local NatSpec item suppresses automatic inheritance. A leaf
@@ -1524,12 +1577,26 @@ contract ExplicitPairStore is IExplicitMiddle {
     );
 
     cmd.args(["doc"]).assert_success();
-    let rendered =
-        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ExplicitPairStore.mdx"))
-            .unwrap();
-    assert!(rendered.contains("Relayed through the middle interface"), "{rendered}");
-    assert!(rendered.contains("| getterFirst | `uint256` | first relayed value |"), "{rendered}");
-    assert!(rendered.contains("| getterSecond | `uint256` | second relayed value |"), "{rendered}");
+    assert_data_eq!(
+        Data::read_from(
+            &prj.root().join("docs/src/pages/src/contract.ExplicitPairStore.mdx"),
+            None,
+        ),
+        str![[r#"
+...
+### relayedPair
+
+Relayed through the middle interface
+...
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| getterFirst | `uint256` | first relayed value |
+| getterSecond | `uint256` | second relayed value |
+...
+"#]],
+    );
 });
 
 // Getter tables use the same NatSpec sanitizer as ordinary functions, including the escaped
@@ -2043,6 +2110,119 @@ interface IMultiline {
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | result | `uint256` | The first line of return.<br/>Second line of return description. |
+...
+"#]],
+    );
+});
+
+// Inherited multiline NatSpec retains continuation lines and strips block-comment decorations.
+forgetest_init!(inherited_param_return_multiline_continuation, |prj, cmd| {
+    prj.add_source(
+        "InheritedMultiline.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IInheritedMultiline {
+    /// @param value The first explicit parameter line.
+    ///        The second explicit parameter line.
+    /// @return result The first explicit return line.
+    ///         The second explicit return line.
+    function explicitAction(uint256 value) external returns (uint256 result);
+
+    /**
+     * @param value The first implicit parameter line.
+     * The second implicit parameter line.
+     * @return result The first implicit return line.
+     * The second implicit return line.
+     */
+    function implicitAction(uint256 value) external returns (uint256 result);
+
+    /// An untagged inherited notice.
+    function untaggedNotice() external;
+
+    /// @param value The parameter description.
+    ///
+    /// A separate inherited notice.
+    function separatedNotice(uint256 value) external;
+
+    /// @param value The base parameter line.
+    ///        The base parameter continuation.
+    function replacedParameter(uint256 value) external;
+
+    /**
+     * @param value Run this code:
+     *     value += 1;
+     */
+    function indentedBlock(uint256 value) external;
+
+    /// @param value *important*
+    function markdown(uint256 value) external;
+}
+
+contract InheritedMultiline is IInheritedMultiline {
+    /// @inheritdoc IInheritedMultiline
+    function explicitAction(uint256 value) external override returns (uint256 result) {}
+
+    function implicitAction(uint256 value) external override returns (uint256 result) {}
+
+    function untaggedNotice() external override {}
+
+    function separatedNotice(uint256 value) external override {}
+
+    /// @inheritdoc IInheritedMultiline
+    /// @param value The local parameter description.
+    function replacedParameter(uint256 value) external override {}
+
+    function indentedBlock(uint256 value) external override {}
+
+    function markdown(uint256 value) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(
+            &prj.root().join("docs/src/pages/src/contract.InheritedMultiline.mdx"),
+            None,
+        ),
+        str![[r#"
+...
+### explicitAction
+...
+| value | `uint256` | The first explicit parameter line.<br/>The second explicit parameter line. |
+...
+| result | `uint256` | The first explicit return line.<br/>The second explicit return line. |
+...
+### implicitAction
+...
+| value | `uint256` | The first implicit parameter line.<br/>The second implicit parameter line. |
+...
+| result | `uint256` | The first implicit return line.<br/>The second implicit return line. |
+...
+### untaggedNotice
+
+An untagged inherited notice.
+...
+### separatedNotice
+
+A separate inherited notice.
+...
+| value | `uint256` | The parameter description. |
+...
+### replacedParameter
+...
+| value | `uint256` | The local parameter description. |
+...
+### indentedBlock
+...
+| value | `uint256` | Run this code:<br/>    value += 1; |
+...
+### markdown
+...
+| value | `uint256` | *important* |
 ...
 "#]],
     );
