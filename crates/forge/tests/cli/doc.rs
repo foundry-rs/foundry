@@ -2130,6 +2130,10 @@ interface IInheritedMultiline {
     ///         The second explicit return line.
     function explicitAction(uint256 value) external returns (uint256 result);
 
+    /// @param value The inherited parameter line.
+    ///        The inherited parameter continuation.
+    function explicitActionWithLocalNotice(uint256 value) external;
+
     /**
      * @param value The first implicit parameter line.
      * The second implicit parameter line.
@@ -2164,6 +2168,10 @@ contract InheritedMultiline is IInheritedMultiline {
     /// @inheritdoc IInheritedMultiline
     function explicitAction(uint256 value) external override returns (uint256 result) {}
 
+    /// @inheritdoc IInheritedMultiline
+    /// @notice A local notice.
+    function explicitActionWithLocalNotice(uint256 value) external override {}
+
     function implicitAction(uint256 value) external override returns (uint256 result) {}
 
     function untaggedNotice() external override {}
@@ -2195,6 +2203,12 @@ contract InheritedMultiline is IInheritedMultiline {
 | value | `uint256` | The first explicit parameter line.<br/>The second explicit parameter line. |
 ...
 | result | `uint256` | The first explicit return line.<br/>The second explicit return line. |
+...
+### explicitActionWithLocalNotice
+
+A local notice.
+...
+| value | `uint256` | The inherited parameter line.<br/>The inherited parameter continuation. |
 ...
 ### implicitAction
 ...

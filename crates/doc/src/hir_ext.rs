@@ -350,18 +350,18 @@ fn effective_natspec_doc(
     // Solar handles ordinary explicit inheritance, including positional remapping. The
     // recursive source fills only sections that Solar cannot see because they depend on
     // Foundry's implicit policy at the exact source declaration.
-    if !local_notice && local.notices.is_empty() {
+    if !local_notice {
         local.notices = inherited.notices;
     }
-    if !local_dev && local.devs.is_empty() {
+    if !local_dev {
         local.devs = inherited.devs;
     }
-    if !local_param && local.params.iter().all(String::is_empty) {
+    if !local_param {
         for (description, inherited) in local.params.iter_mut().zip(inherited.params) {
             *description = inherited;
         }
     }
-    if !local_return && local.returns.iter().all(String::is_empty) {
+    if !local_return {
         for (description, inherited) in local.returns.iter_mut().zip(inherited.returns) {
             *description = inherited;
         }
