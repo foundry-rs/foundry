@@ -1393,6 +1393,77 @@ contract Foo {
 "#]]);
 });
 
+// tests that `forge inspect <contract> transientStorageLayout` works
+forgetest!(can_inspect_transient_storage_layout, |prj, cmd| {
+    prj.add_source(
+        "Transient.sol",
+        r#"
+contract Transient {
+    uint256 transient counter;
+    address transient owner;
+}
+    "#,
+    );
+
+    cmd.arg("inspect").args(["Transient", "transientStorageLayout"]).assert_success().stdout_eq(
+        str![[r#"
+
+╭---------+---------+------+--------+-------+-----------------------------╮
+| Name    | Type    | Slot | Offset | Bytes | Contract                    |
++=========================================================================+
+| counter | uint256 | 0    | 0      | 32    | src/Transient.sol:Transient |
+|---------+---------+------+--------+-------+-----------------------------|
+| owner   | address | 1    | 0      | 20    | src/Transient.sol:Transient |
+╰---------+---------+------+--------+-------+-----------------------------╯
+
+
+"#]],
+    );
+
+    // `--json` prints the raw storage layout object.
+    cmd.forge_fuse()
+        .args(["inspect", "Transient", "transientStorageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "storage": [
+    {
+      "astId": "{...}",
+      "contract": "src/Transient.sol:Transient",
+      "label": "counter",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_uint256"
+    },
+    {
+      "astId": "{...}",
+      "contract": "src/Transient.sol:Transient",
+      "label": "owner",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_address"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]
+            .is_json(),
+        );
+});
+
 forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
     prj.add_source("A.sol", "contract A {}");
     prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);

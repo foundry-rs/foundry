@@ -91,6 +91,26 @@ pub fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
     .into_iter()
 }
 
+/// Reads every parseable corpus entry while surfacing directory and file-type failures.
+pub(crate) fn read_corpus_dir_strict(path: &Path) -> Result<Vec<CorpusDirEntry>> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Ok((uuid, timestamp)) = parse_corpus_filename(name) else {
+            continue;
+        };
+        if !entry.file_type()?.is_file() {
+            return Err(eyre!("corpus entry is not a regular file: {}", path.display()));
+        }
+        entries.push(CorpusDirEntry { path, uuid, timestamp });
+    }
+    Ok(entries)
+}
+
 /// Reads corpus files from a file, corpus directory, worker corpus directory, or generated corpus
 /// root such as `<root>/<contract>/<test>/worker0/corpus`.
 pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
