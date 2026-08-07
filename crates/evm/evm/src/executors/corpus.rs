@@ -34,7 +34,9 @@
 //! - This all happens periodically, there is no clear order in which workers export or import
 //!   entries since it doesn't matter as long as the corpus eventually syncs across all workers
 
-use super::corpus_io::{CorpusDirEntry, canonical_replay_dirs, read_corpus_dir};
+use super::corpus_io::{
+    CorpusDirEntry, canonical_replay_dirs, read_corpus_dir, read_corpus_dir_strict,
+};
 use crate::{
     executors::{Executor, RawCallResult, invariant::execute_tx},
     inspectors::{CmpOperands, EdgeIndexMap, MAX_EDGE_COUNT},
@@ -42,7 +44,7 @@ use crate::{
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
-use eyre::Result;
+use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
@@ -67,7 +69,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -228,6 +230,10 @@ fn link_corpus_file(from: &Path, to: &Path) -> bool {
     match std::fs::hard_link(from, to) {
         Ok(()) => true,
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !std::fs::symlink_metadata(to).is_ok_and(|metadata| metadata.file_type().is_file()) {
+                debug!(target: "corpus", from=?from, to=?to, "corpus destination is not a regular file");
+                return false;
+            }
             let entry = |path: &Path| CorpusDirEntry {
                 path: path.to_path_buf(),
                 uuid: Uuid::nil(),
@@ -561,6 +567,46 @@ pub(crate) struct GlobalCorpusMetrics {
     corpus_count: AtomicUsize,
     // Number of corpus entries that are favored.
     favored_items: AtomicUsize,
+}
+
+pub(crate) struct CorpusSyncCoordinator {
+    workers: usize,
+    arrived: AtomicUsize,
+    phase: AtomicUsize,
+    aborted: AtomicBool,
+}
+
+impl CorpusSyncCoordinator {
+    pub(crate) const fn new(workers: usize) -> Self {
+        Self {
+            workers,
+            arrived: AtomicUsize::new(0),
+            phase: AtomicUsize::new(0),
+            aborted: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn abort(&self) {
+        self.aborted.store(true, Ordering::Release);
+    }
+
+    fn wait(&self) -> bool {
+        if self.aborted.load(Ordering::Acquire) {
+            return false;
+        }
+
+        let phase = self.phase.load(Ordering::Acquire);
+        if self.arrived.fetch_add(1, Ordering::AcqRel) + 1 == self.workers {
+            self.arrived.store(0, Ordering::Release);
+            self.phase.fetch_add(1, Ordering::AcqRel);
+            return true;
+        }
+
+        while self.phase.load(Ordering::Acquire) == phase && !self.aborted.load(Ordering::Acquire) {
+            rayon::yield_now();
+        }
+        !self.aborted.load(Ordering::Acquire)
+    }
 }
 
 impl fmt::Display for GlobalCorpusMetrics {
@@ -1262,21 +1308,32 @@ impl WorkerCorpus {
 
     /// Imports the new corpus entries from the `sync` directory.
     /// These contain tx sequences which are replayed and used to update the history map.
-    fn load_sync_corpus(&self) -> Result<Vec<(CorpusDirEntry, Vec<BasicTxDetails>)>> {
+    fn load_sync_corpus(&self, strict: bool) -> Result<Vec<(CorpusDirEntry, Vec<BasicTxDetails>)>> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(vec![]);
         };
 
         let sync_dir = worker_dir.join(SYNC_DIR);
-        if !sync_dir.is_dir() {
+        if !strict && !sync_dir.is_dir() {
             return Ok(vec![]);
         }
 
         let mut imports = vec![];
-        for entry in read_corpus_dir(&sync_dir) {
+        let entries = if strict {
+            read_corpus_dir_strict(&sync_dir)?
+        } else {
+            read_corpus_dir(&sync_dir).collect()
+        };
+        for entry in entries {
             // A corrupt or truncated sync file must not abort the whole sync pass: skip it.
             let tx_seq = match entry.read_tx_seq() {
                 Ok(tx_seq) => tx_seq,
+                Err(err) if strict => {
+                    return Err(eyre!(
+                        "failed to read final corpus entry {}: {err}",
+                        entry.path.display()
+                    ));
+                }
                 Err(err) => {
                     warn!(target: "corpus", "skipping unreadable corpus file {}: {err}", entry.path.display());
                     let quarantine_path = entry.path.with_file_name(format!(
@@ -1293,6 +1350,9 @@ impl WorkerCorpus {
             if tx_seq.is_empty() {
                 warn!(target: "corpus", "skipping empty corpus entry: {}", entry.path.display());
                 if let Err(err) = std::fs::remove_file(&entry.path) {
+                    if strict {
+                        return Err(err.into());
+                    }
                     debug!(target: "corpus", %err, "failed to remove empty corpus file {}", entry.path.display());
                 }
                 continue;
@@ -1329,13 +1389,14 @@ impl WorkerCorpus {
         &mut self,
         executor: &Executor<FEN>,
         target: ReplayTarget<'_>,
+        strict: bool,
     ) -> Result<()> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(());
         };
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-        for (entry, tx_seq) in self.load_sync_corpus()? {
+        for (entry, tx_seq) in self.load_sync_corpus(strict)? {
             let mut history_map = self.history_map.clone();
             let mut edge_indices = self.edge_indices.clone();
             let mut sancov_history_map = self.sancov_history_map.clone();
@@ -1362,6 +1423,9 @@ impl WorkerCorpus {
                 // Move file from sync/ to corpus/ directory.
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
                 if !accept_synced_corpus_file(&entry, &tx_seq, &corpus_path) {
+                    if strict {
+                        return Err(eyre!("failed to accept final corpus entry {}", entry.name()));
+                    }
                     continue;
                 }
 
@@ -1389,6 +1453,9 @@ impl WorkerCorpus {
             } else {
                 // Remove the file as it did not generate new coverage.
                 if let Err(err) = std::fs::remove_file(&entry.path) {
+                    if strict {
+                        return Err(err.into());
+                    }
                     debug!(target: "corpus", %err, "failed to remove synced corpus from {sync_path:?}");
                     continue;
                 }
@@ -1614,7 +1681,7 @@ impl WorkerCorpus {
 
         self.sync_metrics(global_corpus_metrics);
 
-        self.calibrate(executor, target)?;
+        self.calibrate(executor, target, false)?;
         if self.id == 0 {
             self.export_to_workers(num_workers)?;
         } else {
@@ -1622,6 +1689,46 @@ impl WorkerCorpus {
         }
 
         debug!(target: "corpus", "synced");
+
+        Ok(())
+    }
+
+    /// Performs the ordered final synchronization once every worker has stopped fuzzing.
+    pub(crate) fn finalize_sync<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        target: ReplayTarget<'_>,
+        coordinator: &CorpusSyncCoordinator,
+    ) -> Result<()> {
+        if self.id != 0 {
+            self.export_to_master()?;
+            if self.worker_dir.is_some() && !self.new_entry_indices.is_empty() {
+                return Err(eyre!("worker {} failed to complete final corpus export", self.id));
+            }
+        }
+        if !coordinator.wait() {
+            return Ok(());
+        }
+
+        if self.id == 0 {
+            self.calibrate(executor, target, true)?;
+            self.export_to_workers(coordinator.workers)?;
+            if self.worker_dir.is_some()
+                && (!self.new_entry_indices.is_empty() || self.initial_export_dirs.is_some())
+            {
+                return Err(eyre!("master failed to complete final corpus fan-out"));
+            }
+        }
+        if !coordinator.wait() {
+            return Ok(());
+        }
+
+        if self.id != 0 {
+            self.calibrate(executor, target, true)?;
+        }
+        if !coordinator.wait() {
+            return Ok(());
+        }
 
         Ok(())
     }
@@ -1754,11 +1861,22 @@ fn unique_corpus_entries<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey};
+    use crate::{
+        executors::ExecutorBuilder,
+        inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey},
+    };
     use alloy_dyn_abi::DynSolValue;
     use foundry_config::FuzzDictionaryConfig;
+    use foundry_evm_core::{
+        backend::Backend,
+        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
+    };
     use proptest::prelude::Just;
-    use revm::database::{CacheDB, EmptyDB};
+    use rayon::prelude::*;
+    use revm::{
+        bytecode::Bytecode,
+        database::{CacheDB, EmptyDB},
+    };
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1841,6 +1959,49 @@ mod tests {
 
     fn empty_worker_corpus(id: usize, corpus_root: PathBuf) -> WorkerCorpus {
         worker_corpus(id, corpus_root, WorkerCorpusSeed::default())
+    }
+
+    fn sync_test_executor(corpus_root: PathBuf, target: Address) -> Executor<EthEvmNetwork> {
+        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+        );
+        executor.inspector_mut().collect_edge_coverage_with_config(&corpus_config(corpus_root));
+        // CALLDATALOAD(4); PUSH1 8; JUMPI; STOP; JUMPDEST; STOP.
+        executor
+            .set_code(
+                target,
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x60, 0x04, 0x35, 0x60, 0x08, 0x57, 0x00, 0x00, 0x5b, 0x00,
+                ])),
+            )
+            .unwrap();
+        executor
+    }
+
+    fn finalize_test_worker(
+        worker: &mut WorkerCorpus,
+        corpus_root: PathBuf,
+        target_address: Address,
+        coordinator: &CorpusSyncCoordinator,
+    ) {
+        let function = Function::parse("test(uint256)").unwrap();
+        let executor = sync_test_executor(corpus_root, target_address);
+        worker
+            .finalize_sync(
+                &executor,
+                ReplayTarget {
+                    stateless: Some(StatelessReplayTarget {
+                        function: &function,
+                        address: target_address,
+                    }),
+                    fuzzed_contracts: None,
+                    dynamic: None,
+                },
+                coordinator,
+            )
+            .unwrap();
     }
 
     fn seeded_worker_corpus(
@@ -1930,7 +2091,7 @@ mod tests {
         let corrupt_path = sync_dir.join(format!("{}-0.json", Uuid::new_v4()));
         fs::write(&corrupt_path, b"{ not valid json").unwrap();
 
-        let imports = manager.load_sync_corpus().unwrap();
+        let imports = manager.load_sync_corpus(false).unwrap();
 
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].0.timestamp, 0);
@@ -2035,6 +2196,120 @@ mod tests {
 
         assert!(master.new_entry_indices.is_empty());
         assert!(worker2_destination.is_file());
+    }
+
+    #[test]
+    fn final_sync_coordinator_yields_to_nested_rayon_workers() {
+        rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap().install(|| {
+            (0..2usize).into_par_iter().for_each(|_| {
+                let coordinator = CorpusSyncCoordinator::new(2);
+                (0..2usize).into_par_iter().for_each(|_| assert!(coordinator.wait()));
+            });
+        });
+    }
+
+    #[test]
+    fn final_calibration_rejects_non_file_corpus_entry() {
+        let corpus_root = temp_corpus_dir();
+        let mut worker = empty_worker_corpus(1, corpus_root.clone());
+        let sync_dir = corpus_root.join("worker1").join(SYNC_DIR);
+        fs::create_dir(sync_dir.join("00000000-0000-0000-0000-000000000001-1.json")).unwrap();
+        let target = Address::repeat_byte(0x11);
+        let executor = sync_test_executor(corpus_root, target);
+        let function = Function::parse("test(uint256)").unwrap();
+
+        let err = worker
+            .calibrate(
+                &executor,
+                ReplayTarget {
+                    stateless: Some(StatelessReplayTarget { function: &function, address: target }),
+                    fuzzed_contracts: None,
+                    dynamic: None,
+                },
+                true,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    #[test]
+    fn final_sync_completes_interleaved_corpus_lifecycle() {
+        let corpus_root = temp_corpus_dir();
+        let function = Function::parse("test(uint256)").unwrap();
+        let target_address = Address::repeat_byte(0x11);
+        let startup = CorpusEntry::new(vec![tx_for_function(
+            target_address,
+            &function,
+            &[DynSolValue::Uint(U256::ZERO, 256)],
+        )]);
+        let startup_name = startup.file_name(false);
+        fs::create_dir_all(corpus_root.join("worker1").join(CORPUS_DIR)).unwrap();
+        startup.write_to_disk_in(&corpus_root.join("worker1").join(CORPUS_DIR), false).unwrap();
+        let coordinator = Arc::new(CorpusSyncCoordinator::new(3));
+        let setup = Arc::new(std::sync::Barrier::new(3));
+
+        std::thread::scope(|scope| {
+            let root = corpus_root.clone();
+            let master_startup_name = startup_name.clone();
+            let master_coordinator = coordinator.clone();
+            let master_setup = setup.clone();
+            scope.spawn(move || {
+                let function = Function::parse("test(uint256)").unwrap();
+                let seed = WorkerCorpusSeed {
+                    replay_dirs: Some(canonical_replay_dirs(&root)),
+                    ..Default::default()
+                };
+                let mut master = worker_corpus(0, root.clone(), seed);
+                let periodic = CorpusEntry::new(vec![tx_for_function(
+                    target_address,
+                    &function,
+                    &[DynSolValue::Uint(U256::ZERO, 256)],
+                )]);
+                let periodic_name = periodic.file_name(false);
+                periodic.write_to_disk_in(&root.join("worker0").join(CORPUS_DIR), false).unwrap();
+                master.push_corpus_entry(periodic);
+
+                // The periodic fan-out reaches worker 1 but remains pending for worker 2.
+                let blocked = root.join("worker2").join(SYNC_DIR).join(&periodic_name);
+                fs::create_dir_all(&blocked).unwrap();
+                master.export_to_workers(3).unwrap();
+                assert_eq!(master.new_entry_indices, [0]);
+                assert!(root.join("worker2").join(SYNC_DIR).join(master_startup_name).is_file());
+                fs::remove_dir(blocked).unwrap();
+                master_setup.wait();
+
+                finalize_test_worker(&mut master, root, target_address, &master_coordinator);
+            });
+
+            for id in 1..=2 {
+                let root = corpus_root.clone();
+                let coordinator = coordinator.clone();
+                let setup = setup.clone();
+                scope.spawn(move || {
+                    let mut worker = empty_worker_corpus(id, root.clone());
+                    setup.wait();
+
+                    if id == 1 {
+                        // This old-timestamp finding appears after the last periodic sync.
+                        let function = Function::parse("test(uint256)").unwrap();
+                        let mut late = CorpusEntry::new(vec![tx_for_function(
+                            target_address,
+                            &function,
+                            &[DynSolValue::Uint(U256::from(1), 256)],
+                        )]);
+                        late.timestamp = 0;
+                        worker.push_corpus_entry(late);
+                    }
+
+                    finalize_test_worker(&mut worker, root, target_address, &coordinator);
+                });
+            }
+        });
+
+        assert_eq!(read_corpus_dir(&corpus_root.join("worker2").join(CORPUS_DIR)).count(), 2);
+        assert!(read_corpus_dir(&corpus_root.join("worker2").join(SYNC_DIR)).next().is_none());
     }
 
     #[test]

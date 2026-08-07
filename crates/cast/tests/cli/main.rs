@@ -3448,6 +3448,54 @@ interface Interface {
     ]);
 });
 
+casttest!(interface_with_function_pointer_in_struct, |prj, cmd| {
+    let abi = r#"[
+        {
+            "anonymous": false,
+            "inputs": [
+                {
+                    "components": [
+                        {"internalType": "uint256", "name": "id", "type": "uint256"},
+                        {
+                            "internalType": "function (uint256) external",
+                            "name": "callback",
+                            "type": "function"
+                        }
+                    ],
+                    "indexed": false,
+                    "internalType": "struct StructWithFunctionEvent.Action",
+                    "name": "action",
+                    "type": "tuple"
+                }
+            ],
+            "name": "ActionLogged",
+            "type": "event"
+        }
+    ]"#;
+    let path = prj.root().join("function_event_abi.json");
+    fs::write(&path, abi).unwrap();
+
+    cmd.arg("interface")
+        .arg(&path)
+        .arg("--name")
+        .arg("StructWithFunctionEvent")
+        .assert_success()
+        .stdout_eq(str![[r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface StructWithFunctionEvent {
+    struct Action {
+        uint256 id;
+        function(uint256) external callback;
+    }
+
+    event ActionLogged(Action action);
+}
+
+"#]]);
+});
+
 casttest!(interface_local_contract_does_not_write_artifacts, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
@@ -6494,12 +6542,172 @@ casttest!(abi_encode_event_no_indexed, |_prj, cmd| {
 
 // Test cast abi-encode-event with dynamic indexed parameter (string)
 casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
+    // topic1 is keccak256("hello"), matching Solidity's hashing of indexed strings.
     cmd.args(["abi-encode-event", "Log(string indexed message, uint256 data)", "hello", "42"])
         .assert_success()
         .stdout_eq(str![[r#"
 [topic0]: 0xdd970dd9b5bfe707922155b058a407655cb18288b807e2216442bca8ad83d6b5
-[topic1]: 0x984002fcc0ca639f96622add24c2edd2fe72c65e71ca3faa243e091e0bc7cdab
+[topic1]: 0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8
 [data]: 0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
+
+    // topic1 is keccak256(0xdeadbeef): raw contents, no padding or length prefix.
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Raw(bytes indexed payload)", "0xdeadbeef"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0xada02cd4e7d8ed80ea02ba8f2b0c44295aecd704d4d25ffb82af584a09f59997
+[topic1]: 0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1
+
+"#]]);
+});
+
+casttest!(abi_encode_event_indexed_arrays, |_prj, cmd| {
+    // Array topics hash the concatenated padded elements without any length prefix:
+    // topic1 is keccak256(word(1) ++ word(2)).
+    cmd.args(["abi-encode-event", "Numbers(uint256[] indexed values)", "[1,2]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x998e4b4864cb035323945d614c5aecbe49a6045c844d1e046fee480db062cc97
+[topic1]: 0xe90b7bceb6e7df5418fb78d8ee546e97c83a08bbccc01a0644d599ccd2a7c2e0
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Fixed(uint256[2] indexed values)", "[7,9]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x369112dff39fc5861d470b610421e77e5cd444efdbe9948df8de38824dffc6be
+[topic1]: 0xae6299332bcd708cd60e3a8defa55de28078a50a4cf2b3de3a546253240ff9e1
+
+"#]]);
+
+    // Nested arrays flatten into one preimage: `[[1],[2,3]]` hashes like `[1,2,3]`.
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Matrix(uint256[][] indexed rows)", "[[1],[2,3]]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x8b54144c0baafc3c0a1b743082b3378dc1f6c787fe1b6ed5067469704b5b47b9
+[topic1]: 0x6e0c627900b24bd432fe7b1f713f1b0744091a646a9fe4a65a18dfed21f2949c
+
+"#]]);
+
+    // Strings nested in arrays are right-padded to 32 bytes each.
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Names(string[] indexed names)", "[alpha,beta]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x54612034f490f8c9efbbf618b99e0dd23834387135bf603e7f77f36ab5a0dc59
+[topic1]: 0xec503acd2f5b8395d778ead6068e4dff0b21beb8f55fc559e660857d57f0c112
+
+"#]]);
+});
+
+casttest!(abi_encode_event_indexed_tuples, |_prj, cmd| {
+    // Tuple topics hash member preimages without offsets: keccak256(word(7) ++ pad32("hello")).
+    cmd.args(["abi-encode-event", "Pair((uint256,string) indexed pair)", "(7,hello)"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x9238dd7c0dba6500736bb8e584ccce3ba50e1d827893b0a66469369afa1b1ac8
+[topic1]: 0x2919104b27111a00427dc5719d616be7497d87822aa864c58817a818e17032b4
+
+"#]]);
+
+    // Nested strings longer than one word are padded to a multiple of 32 bytes: the 40-byte
+    // string occupies 64 bytes of the preimage.
+    cmd.cast_fuse()
+        .args([
+            "abi-encode-event",
+            "Entries((string,uint256) indexed entry)",
+            "(abcdefghijklmnopqrstuvwxyz0123456789abcd,1)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x55493f7db049561b9d0b263da2632368fcd86567dae4e8b4d8767f6789647dee
+[topic1]: 0x5e20f5ecd52f29dc801132b4fba26d512378bf6c068eff0f4c6e797d69ac1e2a
+
+"#]]);
+});
+
+casttest!(abi_encode_event_indexed_function, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Callback(function indexed callback)",
+        "0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xc5656f42bc03a54463abf4aa177d76f9e12a2b4c0307bd71f23e713c47e8ed2d
+[topic1]: 0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000
+
+"#]]);
+});
+
+casttest!(abi_encode_event_dynamic_tuple, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Details((uint256,string) details,uint256 nonce)",
+        "(7,hello)",
+        "9",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xaabc576555b53190a80e9ddc865e2c1a772416783d18d8e5dc1d3f80ccbbbf3e
+[data]: 0x0000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000900000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
+casttest!(abi_encode_event_dynamic_strings, |_prj, cmd| {
+    let signature = "Strings(string,string)";
+    let data = "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000005616c70686100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046265746100000000000000000000000000000000000000000000000000000000";
+
+    cmd.args(["abi-encode-event", signature, "alpha", "beta"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0xb032a34ae8575c904b71dc599fde31122ca66ed21144188304825ec5ab48652a
+[data]: 0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000005616c70686100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046265746100000000000000000000000000000000000000000000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["decode-event", "--sig", signature, data]).assert_success().stdout_eq(
+        str![[r#"
+"alpha"
+"beta"
+
+"#]],
+    );
+});
+
+casttest!(abi_encode_event_argument_count_mismatch, |_prj, cmd| {
+    cmd.args(["abi-encode-event", "Pair(uint256,uint256)", "1"]).assert_failure().stderr_eq(str![
+        [r#"
+Error: encode length mismatch: expected 2 types, got 1
+
+"#]
+    ]);
+
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Pair(uint256,uint256)", "1", "2", "3"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: encode length mismatch: expected 2 types, got 3
+
+"#]]);
+});
+
+casttest!(abi_encode_event_anonymous, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Log(uint256 indexed id,string message) anonymous",
+        "7",
+        "hello",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0x0000000000000000000000000000000000000000000000000000000000000007
+[data]: 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
 
 "#]]);
 });
