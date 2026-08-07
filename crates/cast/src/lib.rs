@@ -2932,6 +2932,14 @@ mod tests {
     }
 
     #[test]
+    fn to_base_accepts_uppercase_prefixes() {
+        assert_eq!(Cast::to_base("0B10", None, "dec").unwrap(), "2");
+        assert_eq!(Cast::to_base("0O10", None, "dec").unwrap(), "8");
+        assert_eq!(Cast::to_base("0X10", None, "dec").unwrap(), "16");
+        assert_eq!(Cast::to_base("-0X10", None, "dec").unwrap(), "-16");
+    }
+
+    #[test]
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
         let disassembled = Cast::disassemble(incomplete).unwrap();
