@@ -512,4 +512,14 @@ mod tests {
         let cleaned = clean_cmd_args(0, args);
         assert_eq!(cleaned, vec!["-v".to_string()]);
     }
+
+    #[test]
+    fn locked_survives_cleaning_watch_args() {
+        let args =
+            ["forge", "build", "--locked", "--watch", "src", "test"].map(str::to_string).to_vec();
+        assert_eq!(clean_cmd_args(2, args), ["forge", "build", "--locked"].map(str::to_string));
+
+        let args = ["forge", "build", "--watch", "src", "--locked"].map(str::to_string).to_vec();
+        assert_eq!(clean_cmd_args(1, args), ["forge", "build", "--locked"].map(str::to_string));
+    }
 }
