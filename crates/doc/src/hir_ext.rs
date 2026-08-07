@@ -3,14 +3,12 @@
 //! Pure functions over `solar`'s HIR:
 //! * `build_name_to_page`: maps contract names to their MDX page paths.
 //! * `inheritance_links`: `**Inherits:**` line for a contract page.
-//! * `resolve_inheritdoc`: pulls natspec from a base contract member.
+//! * `natspec_doc`: resolves effective NatSpec for a callable item.
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
 use path_slash::PathBufExt;
 use solar::{
-    ast::{
-        CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind, Visibility,
-    },
+    ast::{ContractKind, DataLocation, FunctionKind, ItemKind, NatSpecKind, Visibility},
     interface::source_map::FileName,
     sema::{
         Gcx,
@@ -260,443 +258,168 @@ pub struct GetterField {
     pub description: String,
 }
 
-/// Collected natspec tags from an inherited base member.
-pub struct InheritedDoc {
+/// Effective NatSpec for an item, resolved by Solar and aligned with the item's callable
+/// signature.
+pub struct NatSpecDoc {
     pub notices: Vec<String>,
     pub devs: Vec<String>,
-    pub params: Vec<(String, String)>,
-    pub returns: Vec<(String, String)>,
-    /// When inherited by a public state variable, the getter's input rows.
+    pub params: Vec<String>,
+    pub returns: Vec<String>,
     pub getter_params: Vec<GetterField>,
-    /// When inherited by a public state variable, the getter's output rows.
     pub getter_returns: Vec<GetterField>,
 }
 
-impl InheritedDoc {
-    const fn is_renderable(&self) -> bool {
-        !self.notices.is_empty()
-            || !self.devs.is_empty()
-            || !self.params.is_empty()
-            || !self.returns.is_empty()
+/// Resolves explicit NatSpec inheritance, or Foundry's conservative implicit inheritance policy.
+pub fn natspec_doc(gcx: Gcx<'_>, item: ItemId, implicit: bool) -> Option<NatSpecDoc> {
+    let mut doc = effective_natspec_doc(gcx, item, implicit, &mut HashSet::new())?;
+    let callable = callable_function(gcx, item);
+    if let Some(fid) = callable
+        && matches!(item, ItemId::Variable(_))
+    {
+        let function = gcx.hir.function(fid);
+        doc.getter_params = function
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(index, &parameter)| getter_field(gcx, parameter, &doc.params[index]))
+            .collect();
+        doc.getter_returns = function
+            .returns
+            .iter()
+            .enumerate()
+            .map(|(index, &return_)| getter_field(gcx, return_, &doc.returns[index]))
+            .collect();
     }
+    Some(doc)
 }
 
-/// Resolve `@inheritdoc BaseContract` for a function named `fn_name` inside
-/// `contract_id` (the current contract). Walks the linearized bases to find a
-/// matching function and returns its natspec if found.
-///
-/// When `param_types` is `Some`, the resolver prefers a function whose parameter
-/// type signature matches exactly; this disambiguates overloads. Ambiguous
-/// overloads are never matched by name alone.
-pub fn resolve_inheritdoc(
+fn effective_natspec_doc(
     gcx: Gcx<'_>,
-    contract_id: ContractId,
-    fn_name: &str,
-    base_name: &str,
-    param_types: Option<&[String]>,
-) -> Option<InheritedDoc> {
-    resolve_inheritdoc_source(gcx, contract_id, fn_name, base_name, param_types).map(|(_, doc)| doc)
-}
+    item: ItemId,
+    implicit: bool,
+    visited: &mut HashSet<ItemId>,
+) -> Option<NatSpecDoc> {
+    if !visited.insert(item) {
+        return None;
+    }
 
-fn resolve_inheritdoc_source(
-    gcx: Gcx<'_>,
-    contract_id: ContractId,
-    fn_name: &str,
-    base_name: &str,
-    param_types: Option<&[String]>,
-) -> Option<(FunctionId, InheritedDoc)> {
-    let contract = gcx.hir.contract(contract_id);
-
-    // Find the named base contract in the linearized hierarchy.
-    let base_id = contract
-        .linearized_bases
-        .iter()
-        .copied()
-        .find(|&bid| gcx.hir.contract(bid).name.as_str() == base_name)?;
-
-    // Search the named base and then its own linearized chain so that `@inheritdoc Base`
-    // resolves even when `Base` itself inherits the member without redeclaring NatSpec.
-    // We prefer the first level that has both a name match AND non-empty documentation.
-    let base_contract = gcx.hir.contract(base_id);
-
-    let search_contracts: Vec<ContractId> = std::iter::once(base_id)
-        .chain(base_contract.linearized_bases.iter().copied().filter(|&id| id != base_id))
-        .collect();
-
-    for search_id in &search_contracts {
-        let search_contract = gcx.hir.contract(*search_id);
-        let mut name_matches: Vec<FunctionId> = Vec::new();
-        for &item_id in search_contract.items {
-            if let ItemId::Function(fid) = item_id {
-                let f = gcx.hir.function(fid);
-                let matches = match f.kind {
-                    FunctionKind::Constructor => fn_name == "constructor",
-                    FunctionKind::Fallback => fn_name == "fallback",
-                    FunctionKind::Receive => fn_name == "receive",
-                    _ => f.name.map(|n| n.as_str() == fn_name).unwrap_or(false),
-                };
-                if matches {
-                    name_matches.push(fid);
-                }
-            }
+    let hir_item = gcx.hir.item(item);
+    let raw = gcx.hir.doc(hir_item.doc()).ast_comments();
+    let has_local = raw.iter().any(|comment| !comment.natspec.is_empty());
+    if !has_local {
+        if !implicit {
+            return Some(empty_natspec_doc(gcx, item));
         }
-        if name_matches.is_empty() {
-            continue;
-        }
-
-        // Prefer an exact signature match when overloads exist.
-        if let Some(want) = param_types
-            && name_matches.len() > 1
+        let bases = direct_base_items(gcx, item);
+        let [base] = bases.as_slice() else { return None };
+        if !implicit_edge_compatible(gcx, item, *base)
+            || (!matches!(item, ItemId::Variable(_)) && !parameter_names_equal(gcx, item, *base))
         {
-            // Try to find a signature-exact match with docs; fall through only for
-            // non-overloaded name matches below.
-            for &fid in &name_matches {
-                if let Some(got) = function_param_types(gcx, fid)
-                    && got.len() == want.len()
-                    && got.iter().zip(want).all(|(a, b)| a == b)
-                    && let Some(doc) = extract_inherited_doc(gcx, fid)
-                    && (!doc.notices.is_empty()
-                        || !doc.devs.is_empty()
-                        || !doc.params.is_empty()
-                        || !doc.returns.is_empty())
-                {
-                    return Some((fid, doc));
-                }
-            }
+            return None;
         }
-
-        if name_matches.len() > 1 {
-            continue;
-        }
-
-        // Return the first candidate that has actual documentation; if none have docs
-        // at this inheritance level continue walking up the chain.
-        for &fid in &name_matches {
-            if let Some(doc) = extract_inherited_doc(gcx, fid)
-                && (!doc.notices.is_empty()
-                    || !doc.devs.is_empty()
-                    || !doc.params.is_empty()
-                    || !doc.returns.is_empty())
-            {
-                return Some((fid, doc));
-            }
-        }
+        return effective_natspec_doc(gcx, *base, true, visited);
     }
 
-    None
-}
-
-/// Resolve `@inheritdoc BaseContract` for a **state variable** named `var_name`
-/// inside `contract_id`. Walks the linearised bases to find a matching public
-/// variable and returns its natspec if found.
-pub fn resolve_inheritdoc_var(
-    gcx: Gcx<'_>,
-    contract_id: ContractId,
-    var_name: &str,
-    base_name: &str,
-) -> Option<InheritedDoc> {
-    let contract = gcx.hir.contract(contract_id);
-    let base_id = contract
-        .linearized_bases
-        .iter()
-        .copied()
-        .find(|&bid| gcx.hir.contract(bid).name.as_str() == base_name)?;
-
-    let base_contract = gcx.hir.contract(base_id);
-    let search_contracts: Vec<ContractId> = std::iter::once(base_id)
-        .chain(base_contract.linearized_bases.iter().copied().filter(|&id| id != base_id))
-        .collect();
-
-    for search_id in &search_contracts {
-        let search_contract = gcx.hir.contract(*search_id);
-        for &item_id in search_contract.items {
-            match item_id {
-                ItemId::Variable(vid) => {
-                    let v = gcx.hir.variable(vid);
-                    if v.name.map(|n| n.as_str() == var_name).unwrap_or(false)
-                        && let Some(doc) = extract_inherited_doc_var(gcx, vid)
-                        && (!doc.notices.is_empty() || !doc.devs.is_empty())
-                    {
-                        return Some(doc);
-                    }
+    let mut local = doc_from_view(gcx, item);
+    let mut inheritdoc = None;
+    let mut local_notice = false;
+    let mut local_dev = false;
+    let mut local_param = false;
+    let mut local_return = false;
+    for comment in raw.iter() {
+        for entry in comment.natspec.iter() {
+            match entry.kind {
+                NatSpecKind::Inheritdoc { contract } if inheritdoc.is_none() => {
+                    inheritdoc = Some(contract)
                 }
-                // A public state variable can implement an interface getter declared as a
-                // zero-arg function (e.g. `function totalSupply() external view returns
-                // (uint256)`). Fall back to matching a same-name zero-parameter function so
-                // `@inheritdoc IERC20` on `uint256 public totalSupply` picks up the
-                // interface's notice/return docs.
-                ItemId::Function(fid) => {
-                    let f = gcx.hir.function(fid);
-                    if f.name.map(|n| n.as_str() == var_name).unwrap_or(false)
-                        && function_param_types(gcx, fid).map(|p| p.is_empty()).unwrap_or(false)
-                        && let Some(doc) = extract_inherited_doc(gcx, fid)
-                        && (!doc.notices.is_empty()
-                            || !doc.devs.is_empty()
-                            || !doc.returns.is_empty())
-                    {
-                        return Some(doc);
-                    }
-                }
+                NatSpecKind::Notice => local_notice = true,
+                NatSpecKind::Dev => local_dev = true,
+                NatSpecKind::Param { .. } => local_param = true,
+                NatSpecKind::Return { .. } => local_return = true,
                 _ => {}
             }
         }
     }
-    None
-}
+    let Some(alias) = inheritdoc else { return Some(local) };
+    let contract = gcx.natspec_contract(alias.name, hir_item.source())?;
+    let source = exact_override_item(gcx, item, contract, &mut HashSet::new())?;
+    let inherited = effective_natspec_doc(gcx, source, true, visited)?;
 
-// ── implicit inheritance ──────────────────────────────────────────────────────
-
-/// Whether `fid` is the function named `fn_name` (handling the special receiver kinds).
-fn function_name_matches(gcx: Gcx<'_>, fid: FunctionId, fn_name: &str) -> bool {
-    let f = gcx.hir.function(fid);
-    match f.kind {
-        FunctionKind::Constructor => fn_name == "constructor",
-        FunctionKind::Fallback => fn_name == "fallback",
-        FunctionKind::Receive => fn_name == "receive",
-        _ => f.name.map(|n| n.as_str() == fn_name).unwrap_or(false),
+    // Solar handles ordinary explicit inheritance, including positional remapping. The
+    // recursive source fills only sections that Solar cannot see because they depend on
+    // Foundry's implicit policy at the exact source declaration.
+    if !local_notice && local.notices.is_empty() {
+        local.notices = inherited.notices;
     }
-}
-
-/// The member name under which `fid` takes part in overriding: `None` for constructors and
-/// unnamed functions.
-fn function_member_name(gcx: Gcx<'_>, fid: FunctionId) -> Option<String> {
-    let f = gcx.hir.function(fid);
-    match f.kind {
-        FunctionKind::Constructor => None,
-        FunctionKind::Fallback => Some("fallback".to_string()),
-        FunctionKind::Receive => Some("receive".to_string()),
-        _ => f.name.map(|n| n.as_str().to_string()),
+    if !local_dev && local.devs.is_empty() {
+        local.devs = inherited.devs;
     }
+    if !local_param && local.params.iter().all(String::is_empty) {
+        for (description, inherited) in local.params.iter_mut().zip(inherited.params) {
+            *description = inherited;
+        }
+    }
+    if !local_return && local.returns.iter().all(String::is_empty) {
+        for (description, inherited) in local.returns.iter_mut().zip(inherited.returns) {
+            *description = inherited;
+        }
+    }
+    Some(local)
 }
 
-/// Whether `target` and `base` have identical parameter names in order. Solidity refuses
-/// automatic inheritance across an override that renames parameters.
-fn param_names_match(gcx: Gcx<'_>, target: FunctionId, base: FunctionId) -> bool {
-    let names = |fid: FunctionId| -> Vec<Option<String>> {
-        gcx.hir
-            .function(fid)
-            .parameters
-            .iter()
-            .map(|&vid| gcx.hir.variable(vid).name.map(|n| n.as_str().to_string()))
-            .collect()
-    };
-    names(target) == names(base)
-}
-
-/// The `@inheritdoc Base` contract name on `docs`, if any.
-fn inheritdoc_base_name(docs: &DocComments<'_>) -> Option<String> {
-    docs.iter().find_map(|doc| {
-        doc.natspec.iter().find_map(|item| match item.kind {
-            NatSpecKind::Inheritdoc { contract } => Some(contract.as_str().to_string()),
-            _ => None,
+fn empty_natspec_doc(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
+    let (params, returns) = callable_function(gcx, item)
+        .map(|id| {
+            let function = gcx.hir.function(id);
+            (
+                vec![String::new(); function.parameters.len()],
+                vec![String::new(); function.returns.len()],
+            )
         })
-    })
-}
-
-/// The AST doc comments of `fid`, located by span.
-fn function_doc_comments<'gcx>(gcx: Gcx<'gcx>, fid: FunctionId) -> Option<&'gcx DocComments<'gcx>> {
-    let f = gcx.hir.function(fid);
-    let ast = gcx.sources.get(f.source)?.ast.as_ref()?;
-    ast.items.iter().find_map(|item| {
-        if item.span == f.span {
-            return Some(&item.docs);
-        }
-        if let ItemKind::Contract(c) = &item.kind {
-            c.body.iter().find(|member| member.span == f.span).map(|member| &member.docs)
-        } else {
-            None
-        }
-    })
-}
-
-/// Merge base documentation into a partial local doc: a tag kind present locally wins whole,
-/// a kind absent locally is copied from the base (solc's `@inheritdoc` merge rule).
-fn merge_missing(local: InheritedDoc, base: InheritedDoc) -> InheritedDoc {
-    fn pick<T>(local: Vec<T>, base: Vec<T>) -> Vec<T> {
-        if local.is_empty() { base } else { local }
-    }
-    InheritedDoc {
-        notices: pick(local.notices, base.notices),
-        devs: pick(local.devs, base.devs),
-        params: pick(local.params, base.params),
-        returns: pick(local.returns, base.returns),
+        .unwrap_or_default();
+    NatSpecDoc {
+        notices: Vec::new(),
+        devs: Vec::new(),
+        params,
+        returns,
         getter_params: Vec::new(),
         getter_returns: Vec::new(),
     }
 }
 
-/// Resolve natspec inherited implicitly (without `@inheritdoc`) for a function named `fn_name`
-/// inside `contract_id`: the function inherits the effective documentation of the single base
-/// function it directly overrides, and only when their parameter names match.
-pub fn resolve_implicit_inheritdoc(
-    gcx: Gcx<'_>,
-    _contract_id: ContractId,
-    fn_name: &str,
-    target: Option<FunctionId>,
-) -> Option<InheritedDoc> {
-    let target = target?;
-    let base = single_direct_base(gcx, target, fn_name, false)?;
-    if !param_names_match(gcx, target, base) {
-        return None;
-    }
-    let mut doc = implicit_function_doc(gcx, base)?;
-    remap_inherited_return_names(gcx, target, &mut doc);
-    Some(doc)
-}
-
-/// The effective documentation of `fid`, resolved level by level like solc: local tags are
-/// terminal, but a local `@inheritdoc` is resolved and merged so its documentation still
-/// propagates downward; a member with no local NatSpec inherits from its single direct base.
-fn implicit_function_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> {
-    if let Some(docs) = function_doc_comments(gcx, fid)
-        && docs.iter().any(|doc| !doc.natspec.is_empty())
-    {
-        let mut local = collect_inherited_doc(docs);
-        resolve_return_names(gcx, fid, &mut local);
-        if let Some(base_name) = inheritdoc_base_name(docs)
-            && let Some(cid) = gcx.hir.function(fid).contract
-            && let Some(fn_name) = function_member_name(gcx, fid)
-        {
-            let base_doc = resolve_inheritdoc_source(
-                gcx,
-                cid,
-                &fn_name,
-                &base_name,
-                function_param_types(gcx, fid).as_deref(),
-            );
-            return match base_doc {
-                Some((source, mut base_doc)) => {
-                    resolve_return_names(gcx, source, &mut base_doc);
-                    remap_inherited_return_names(gcx, fid, &mut base_doc);
-                    Some(merge_missing(local, base_doc))
-                }
-                None => Some(local).filter(InheritedDoc::is_renderable),
-            };
-        }
-        return Some(local).filter(InheritedDoc::is_renderable);
-    }
-
-    let fn_name = function_member_name(gcx, fid)?;
-    let base = single_direct_base(gcx, fid, &fn_name, false)?;
-    if !param_names_match(gcx, fid, base) {
-        return None;
-    }
-    let mut doc = implicit_function_doc(gcx, base)?;
-    remap_inherited_return_names(gcx, fid, &mut doc);
-    Some(doc)
-}
-
-#[derive(Clone, Copy)]
-struct OverrideDomain {
-    kind: FunctionKind,
-    external_only: bool,
-}
-
-/// The single function directly overridden by `target`, if unambiguous. Mirrors solc's
-/// `baseFunctions` set: each direct-base branch contributes its nearest same-signature
-/// declaration (shadowing within the branch); distinct survivors on different branches make
-/// it ambiguous. `external_declared_only` restricts to external non-getter functions (the
-/// public state-variable getter case).
-fn single_direct_base(
-    gcx: Gcx<'_>,
-    target: FunctionId,
-    fn_name: &str,
-    external_declared_only: bool,
-) -> Option<FunctionId> {
-    let f = gcx.hir.function(target);
-    if matches!(f.kind, FunctionKind::Constructor) {
-        return None;
-    }
-    let contract = f.contract?;
-    let want = function_param_types(gcx, target)?;
-    let domain = OverrideDomain { kind: f.kind, external_only: external_declared_only };
-    match direct_base_functions(gcx, contract, fn_name, &want, domain)[..] {
-        [base] => Some(base),
-        _ => None,
-    }
-}
-
-fn direct_base_functions(
-    gcx: Gcx<'_>,
-    contract: ContractId,
-    fn_name: &str,
-    want: &[String],
-    domain: OverrideDomain,
-) -> Vec<FunctionId> {
-    let mut visited = HashSet::new();
-    let mut out = Vec::new();
-    for &base in gcx.hir.contract(contract).bases {
-        collect_branch_base(gcx, base, fn_name, want, domain, &mut visited, &mut out);
-    }
-    out
-}
-
-fn collect_branch_base(
-    gcx: Gcx<'_>,
-    contract: ContractId,
-    fn_name: &str,
-    want: &[String],
-    domain: OverrideDomain,
-    visited: &mut HashSet<ContractId>,
-    out: &mut Vec<FunctionId>,
-) {
-    if !visited.insert(contract) {
-        return;
-    }
-    let mut declared = false;
-    for &item in gcx.hir.contract(contract).items {
-        if let ItemId::Function(fid) = item {
-            let f = gcx.hir.function(fid);
-            let eligible = !f.is_yul
-                && f.visibility != Visibility::Private
-                && f.kind == domain.kind
-                && f.gettee.is_none()
-                && (!domain.external_only || f.visibility == Visibility::External);
-            if eligible
-                && function_name_matches(gcx, fid, fn_name)
-                && function_param_types(gcx, fid).as_deref() == Some(want)
-            {
-                declared = true;
-                if !out.contains(&fid) {
-                    out.push(fid);
-                }
-            }
+fn doc_from_view(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
+    let view = gcx.natspec_view(item);
+    let mut doc = empty_natspec_doc(gcx, item);
+    for natspec in view.items() {
+        let content = natspec.content().trim().to_string();
+        match natspec.kind {
+            NatSpecKind::Notice => doc.notices.push(content),
+            NatSpecKind::Dev => doc.devs.push(content),
+            _ => {}
         }
     }
-    if !declared {
-        for &base in gcx.hir.contract(contract).bases {
-            collect_branch_base(gcx, base, fn_name, want, domain, visited, out);
+    if let Some(fid) = callable_function(gcx, item) {
+        let function = gcx.hir.function(fid);
+        for index in 0..function.parameters.len() {
+            doc.params[index] = positional_description(view.parameter(index));
+        }
+        for index in 0..function.returns.len() {
+            doc.returns[index] = positional_description(view.return_(index));
         }
     }
+    doc
 }
 
-/// The compiler-generated getter of the public variable `var_name` in `contract_id`, or
-/// `None` when it has none (not public).
-fn variable_getter(gcx: Gcx<'_>, contract_id: ContractId, var_name: &str) -> Option<FunctionId> {
-    for &item_id in gcx.hir.contract(contract_id).items {
-        if let ItemId::Variable(vid) = item_id {
-            let v = gcx.hir.variable(vid);
-            if v.name.map(|n| n.as_str() == var_name).unwrap_or(false) {
-                return v.getter;
-            }
-        }
+fn positional_description(items: &[solar::ast::NatSpecItem]) -> String {
+    items.iter().map(|item| item.content().trim()).collect::<Vec<_>>().join("\n")
+}
+
+fn getter_field(gcx: Gcx<'_>, variable: VariableId, description: &str) -> GetterField {
+    GetterField {
+        name: gcx.hir.variable(variable).name.map(|name| name.as_str().to_string()),
+        ty: render_ty(gcx, gcx.type_of_item(variable.into())),
+        description: description.to_string(),
     }
-    None
-}
-
-/// Resolve natspec inherited implicitly for a public state variable: the source is the single
-/// external base *function* the generated getter directly overrides. A base variable is never
-/// an automatic source.
-pub fn resolve_implicit_inheritdoc_var(
-    gcx: Gcx<'_>,
-    contract_id: ContractId,
-    var_name: &str,
-) -> Option<InheritedDoc> {
-    let getter = variable_getter(gcx, contract_id, var_name)?;
-    let source = single_direct_base(gcx, getter, var_name, true)?;
-    let mut doc = implicit_function_doc(gcx, source).filter(InheritedDoc::is_renderable)?;
-    attach_getter_signature(gcx, &mut doc, getter, source);
-    Some(doc)
 }
 
 /// Renders a resolved type as its ABI signature string.
@@ -706,146 +429,7 @@ fn render_ty<'a>(gcx: Gcx<'a>, ty: Ty<'a>) -> String {
     out
 }
 
-fn strip_one_whitespace(s: &str) -> Option<&str> {
-    let mut chars = s.char_indices();
-    let (_, first) = chars.next()?;
-    first.is_whitespace().then(|| chars.next().map(|(index, _)| &s[index..]).unwrap_or(""))
-}
-
-/// The inherited description for the return at `index`, keyed by the source return name when
-/// there is one (solar leaves an unnamed return's name token at the start of the text).
-fn inherited_return_description(
-    doc: &InheritedDoc,
-    index: usize,
-    source_name: Option<&str>,
-) -> String {
-    if let Some(source_name) = source_name {
-        for (name, description) in &doc.returns {
-            if name == source_name {
-                return description.clone();
-            }
-            if name.is_empty()
-                && let Some(rest) = description.strip_prefix(source_name)
-                && let Some(rest) = strip_one_whitespace(rest)
-            {
-                return rest.trim_start().to_string();
-            }
-        }
-        return String::new();
-    }
-    match doc.returns.get(index) {
-        Some((name, description)) if description.is_empty() => name.clone(),
-        Some((_, description)) => description.clone(),
-        None => String::new(),
-    }
-}
-
-/// Attach the target getter's signature rows to `doc`: names and ABI types from the generated
-/// getter, descriptions from the corresponding source function entries.
-fn attach_getter_signature(
-    gcx: Gcx<'_>,
-    doc: &mut InheritedDoc,
-    getter: FunctionId,
-    source: FunctionId,
-) {
-    let getter = gcx.hir.function(getter);
-    let source = gcx.hir.function(source);
-    let var_name =
-        |vid: VariableId| gcx.hir.variable(vid).name.map(|name| name.as_str().to_string());
-    let var_type = |vid: VariableId| render_ty(gcx, gcx.type_of_item(vid.into()));
-
-    doc.getter_params = getter
-        .parameters
-        .iter()
-        .enumerate()
-        .map(|(index, &target)| {
-            let source_name = source.parameters.get(index).and_then(|&vid| var_name(vid));
-            let description = source_name
-                .as_ref()
-                .and_then(|name| doc.params.iter().find(|(candidate, _)| candidate == name))
-                .map(|(_, description)| description.clone())
-                .unwrap_or_default();
-            GetterField {
-                name: var_name(target).or(source_name),
-                ty: var_type(target),
-                description,
-            }
-        })
-        .collect();
-
-    doc.getter_returns = getter
-        .returns
-        .iter()
-        .enumerate()
-        .map(|(index, &target)| {
-            let source_name = source.returns.get(index).and_then(|&vid| var_name(vid));
-            GetterField {
-                name: var_name(target).or_else(|| source_name.clone()),
-                ty: var_type(target),
-                description: inherited_return_description(doc, index, source_name.as_deref()),
-            }
-        })
-        .collect();
-}
-
-fn extract_inherited_doc_var(gcx: Gcx<'_>, vid: VariableId) -> Option<InheritedDoc> {
-    let v = gcx.hir.variable(vid);
-    let ast_source = gcx.sources.get(v.source)?;
-    let ast = ast_source.ast.as_ref()?;
-    let var_span = v.span;
-
-    let docs = ast.items.iter().find_map(|item| {
-        if item.span == var_span {
-            return Some(&item.docs);
-        }
-        if let ItemKind::Contract(c) = &item.kind {
-            for member in c.body.iter() {
-                if member.span == var_span {
-                    return Some(&member.docs);
-                }
-            }
-        }
-        None
-    })?;
-
-    Some(collect_inherited_doc(docs))
-}
-
-/// Extract the canonical ABI parameter type strings (in source order) for a function.
-///
-/// Non-ABI-printable internal parameter types, such as mappings, fall back to their
-/// source spelling so inherited docs can still resolve without panicking.
-pub(crate) fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
-    let f = gcx.hir.function(fid);
-    let source_types = function_source_param_types(gcx, fid).map(|params| {
-        params
-            .into_iter()
-            // Compare non-ABI source spellings whitespace-insensitively so a base and an
-            // override that differ only in the spacing of a `mapping(uint => uint)` type
-            // still match.
-            .map(|param| normalize_sol_type(&param.split_whitespace().collect::<String>()))
-            .collect::<Vec<_>>()
-    });
-
-    f.parameters
-        .iter()
-        .enumerate()
-        .map(|(idx, &param)| {
-            let ty = gcx.type_of_item(param.into());
-            if ty.can_be_exported(gcx) {
-                let mut out = String::new();
-                TyAbiPrinter::new(gcx, &mut out, TyAbiPrinterMode::Signature)
-                    .print(ty)
-                    .expect("writing ABI signature type to a String cannot fail");
-                Some(out)
-            } else {
-                source_types.as_ref().and_then(|types| types.get(idx).cloned())
-            }
-        })
-        .collect()
-}
-
-/// Extract function parameter types exactly as spelled in source.
+/// Extracts function parameter types exactly as spelled in source for link anchors.
 fn function_source_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
     let f = gcx.hir.function(fid);
     let ast = gcx.sources.get(f.source)?.ast.as_ref()?;
@@ -869,21 +453,13 @@ fn function_source_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<Stri
     )
 }
 
-/// Canonicalize Solidity type aliases for generated anchors and source fallbacks.
-///
-/// Replaces every occurrence of the bare alias tokens `uint` / `int` (not
-/// followed by a digit) with their canonical ABI equivalents `uint256` /
-/// `int256`.
+/// Canonicalizes Solidity type aliases for generated link anchors.
 fn normalize_sol_type(t: &str) -> String {
-    // Walk char-by-char and replace `uint` / `int` that are not followed by a
-    // digit (i.e. are bare aliases, not `uint8`, `uint256`, etc.).
     let bytes = t.as_bytes();
     let len = bytes.len();
     let mut out = String::with_capacity(len + 8);
     let mut i = 0;
     while i < len {
-        // Try to match the longer alias first (`uint` before `int`) to avoid
-        // a prefix match of `int` inside `uint`.
         if bytes[i..].starts_with(b"uint")
             && !bytes.get(i + 4).copied().map(|b| b.is_ascii_digit()).unwrap_or(false)
         {
@@ -904,151 +480,155 @@ fn normalize_sol_type(t: &str) -> String {
     out
 }
 
-/// Resolve each collected `@return` to the function's declared return name at the same
-/// position. Solar leaves an unnamed return's name token at the start of the description;
-/// stripping it and recording the name lets rendering map the description onto a renamed
-/// override's return slot positionally instead of gluing the old name into the text.
-fn resolve_return_names(gcx: Gcx<'_>, fid: FunctionId, doc: &mut InheritedDoc) {
-    let returns = gcx.hir.function(fid).returns;
-    for (index, (name, desc)) in doc.returns.iter_mut().enumerate() {
-        if !name.is_empty() {
-            continue;
-        }
-        let Some(declared) = returns.get(index).and_then(|&vid| gcx.hir.variable(vid).name) else {
-            continue;
-        };
-        let declared = declared.as_str();
-        if let Some(rest) = desc.strip_prefix(declared).and_then(strip_one_whitespace) {
-            *desc = rest.trim_start().to_string();
-        }
-        *name = declared.to_string();
+fn callable_function(gcx: Gcx<'_>, item: ItemId) -> Option<FunctionId> {
+    match item {
+        ItemId::Function(id) => Some(id),
+        ItemId::Variable(id) => gcx.hir.variable(id).getter,
+        _ => None,
     }
 }
 
-/// Re-key inherited return descriptions to the callable at the current inheritance hop.
-///
-/// Solidity override return lists are positional, so an override rename replaces the name from
-/// the previous declaration while preserving the description in the same slot.
-fn remap_inherited_return_names(gcx: Gcx<'_>, fid: FunctionId, doc: &mut InheritedDoc) {
-    let returns = gcx.hir.function(fid).returns;
-    for (index, (name, _)) in doc.returns.iter_mut().enumerate() {
-        *name = returns
-            .get(index)
-            .and_then(|&vid| gcx.hir.variable(vid).name)
-            .map(|name| name.as_str().to_string())
-            .unwrap_or_default();
+fn exact_override_item(
+    gcx: Gcx<'_>,
+    item: ItemId,
+    owner: ContractId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<ItemId> {
+    if !visited.insert(item) {
+        return None;
+    }
+    if gcx.hir.item(item).contract() == Some(owner) {
+        return Some(item);
+    }
+    for &base in gcx.base_override_items(item) {
+        if let Some(found) = exact_override_item(gcx, base, owner, visited) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn direct_base_items(gcx: Gcx<'_>, item: ItemId) -> Vec<ItemId> {
+    let mut bases = Vec::new();
+    let mut visited = HashSet::new();
+    for &base in gcx.base_override_items(item) {
+        push_non_yul_base_items(gcx, base, &mut bases, &mut visited);
+    }
+    bases
+}
+
+fn push_non_yul_base_items(
+    gcx: Gcx<'_>,
+    item: ItemId,
+    bases: &mut Vec<ItemId>,
+    visited: &mut HashSet<ItemId>,
+) {
+    if !visited.insert(item) {
+        return;
+    }
+    if matches!(item, ItemId::Function(id) if gcx.hir.function(id).is_yul) {
+        for &base in gcx.base_override_items(item) {
+            push_non_yul_base_items(gcx, base, bases, visited);
+        }
+    } else {
+        bases.push(item);
     }
 }
 
-fn extract_inherited_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> {
-    // HIR functions store a span; we need the AST doc comments.
-    // The AST source has the doc comments on the Item.
-    // We find the source file for this function and look up the AST item by span.
-    let f = gcx.hir.function(fid);
-    let ast_source = gcx.sources.get(f.source)?;
-    let ast = ast_source.ast.as_ref()?;
-
-    let fn_span = f.span;
-    // Walk the AST to find the Item whose span matches.
-    let docs = ast.items.iter().find_map(|item| {
-        if item.span == fn_span {
-            return Some(&item.docs);
-        }
-        // Also search inside contracts.
-        if let solar::ast::ItemKind::Contract(c) = &item.kind {
-            for member in c.body.iter() {
-                if member.span == fn_span {
-                    return Some(&member.docs);
-                }
-            }
-        }
-        None
-    })?;
-
-    let mut doc = collect_inherited_doc(docs);
-    // Return-name resolution is applied only on the implicit function path
-    // (`implicit_function_doc`); doing it here would also alter the explicit `@inheritdoc` path.
-    let _ = &mut doc;
-    Some(doc)
-}
-
-fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
-    let mut result = InheritedDoc {
-        notices: Vec::new(),
-        devs: Vec::new(),
-        params: Vec::new(),
-        returns: Vec::new(),
-        getter_params: Vec::new(),
-        getter_returns: Vec::new(),
+fn parameter_names_equal(gcx: Gcx<'_>, target: ItemId, base: ItemId) -> bool {
+    let names = |item| {
+        callable_function(gcx, item).map(|id| {
+            gcx.hir
+                .function(id)
+                .parameters
+                .iter()
+                .map(|&id| gcx.hir.variable(id).name.map(|name| name.name))
+                .collect::<Vec<_>>()
+        })
     };
-    let mut prev_doc_was_blank = false;
-    #[derive(Clone, Copy)]
-    enum LastSection {
-        Notice,
-        Dev,
-        Param,
-        Return,
-    }
-    let mut last_section: Option<LastSection> = None;
+    names(target) == names(base)
+}
 
-    for doc in docs.iter() {
-        if doc.natspec.is_empty() {
-            prev_doc_was_blank = true;
-            continue;
-        }
-        for item in doc.natspec.iter() {
-            let raw = doc.natspec_content(item);
-            // For /** */ block comments Solar preserves raw ` * ` line decorations; strip them.
-            let raw: &str =
-                if doc.kind == CommentKind::Block { &clean_block_doc_content(raw) } else { raw };
-            // Solar emits lines without a `@` tag as synthetic @notice with leading whitespace.
-            let is_continuation = matches!(item.kind, NatSpecKind::Notice)
-                && raw.starts_with(|c: char| c.is_whitespace());
-            let content = raw.trim().to_string();
-            if content.is_empty() {
-                prev_doc_was_blank = true;
-                continue;
-            }
-            if is_continuation && !prev_doc_was_blank {
-                let last: Option<&mut String> = match last_section {
-                    Some(LastSection::Notice) => result.notices.last_mut(),
-                    Some(LastSection::Dev) => result.devs.last_mut(),
-                    Some(LastSection::Param) => result.params.last_mut().map(|(_, d)| d),
-                    Some(LastSection::Return) => result.returns.last_mut().map(|(_, d)| d),
-                    None => None,
-                };
-                if let Some(last) = last {
-                    last.push('\n');
-                    last.push_str(&content);
-                    continue;
-                }
-            }
-            prev_doc_was_blank = false;
-            match item.kind {
-                NatSpecKind::Notice => {
-                    result.notices.push(content);
-                    last_section = Some(LastSection::Notice);
-                }
-                NatSpecKind::Dev => {
-                    result.devs.push(content);
-                    last_section = Some(LastSection::Dev);
-                }
-                NatSpecKind::Param { name } => {
-                    result.params.push((name.as_str().to_string(), content));
-                    last_section = Some(LastSection::Param);
-                }
-                NatSpecKind::Return { name } => {
-                    result.returns.push((
-                        name.map(|name| name.as_str().to_string()).unwrap_or_default(),
-                        content,
-                    ));
-                    last_section = Some(LastSection::Return);
-                }
-                _ => {}
-            }
-        }
+fn implicit_edge_compatible(gcx: Gcx<'_>, target: ItemId, base: ItemId) -> bool {
+    let (Some(target_id), Some(base_id)) =
+        (callable_function(gcx, target), callable_function(gcx, base))
+    else {
+        return false;
+    };
+    let target_fn = gcx.hir.function(target_id);
+    let base_fn = gcx.hir.function(base_id);
+    if !base_fn.virtual_
+        || target_fn.visibility == Visibility::Private
+        || base_fn.visibility == Visibility::Private
+        || (target_fn.body.is_none() && base_fn.body.is_some())
+    {
+        return false;
     }
-    result
+    let visibility_ok = if matches!(target, ItemId::Variable(_)) {
+        base_fn.visibility == Visibility::External
+    } else {
+        target_fn.visibility == base_fn.visibility
+            || (base_fn.visibility == Visibility::External
+                && target_fn.visibility == Visibility::Public)
+    };
+    let target_mutability = match target {
+        ItemId::Variable(id) if gcx.hir.variable(id).is_constant() => {
+            solar::ast::StateMutability::Pure
+        }
+        _ => target_fn.state_mutability,
+    };
+    let mutability_ok = target_mutability == base_fn.state_mutability
+        || matches!(
+            (target_mutability, base_fn.state_mutability),
+            (
+                solar::ast::StateMutability::Pure,
+                solar::ast::StateMutability::View | solar::ast::StateMutability::NonPayable
+            ) | (solar::ast::StateMutability::View, solar::ast::StateMutability::NonPayable)
+        );
+    if !visibility_ok || !mutability_ok {
+        return false;
+    }
+    let types_equal = |left: &[VariableId], right: &[VariableId], locations: bool| {
+        left.len() == right.len()
+            && left.iter().zip(right).all(|(&left, &right)| {
+                let left = gcx.type_of_item(left.into());
+                let right = gcx.type_of_item(right.into());
+                left.peel_refs() == right.peel_refs() && (!locations || left.loc() == right.loc())
+            })
+    };
+    let external_types_equal = |left: &[VariableId], right: &[VariableId]| {
+        let normalize = |location| match location {
+            Some(DataLocation::Calldata) => Some(DataLocation::Memory),
+            location => location,
+        };
+        left.len() == right.len()
+            && left.iter().zip(right).all(|(&left, &right)| {
+                let left_variable = gcx.hir.variable(left);
+                let right_variable = gcx.hir.variable(right);
+                let left = gcx.type_of_item(left.into());
+                let right = gcx.type_of_item(right.into());
+                let left_location = left_variable.data_location.or_else(|| left.loc());
+                let right_location = right_variable.data_location.or_else(|| right.loc());
+                left.peel_refs() == right.peel_refs()
+                    && normalize(left_location) == normalize(right_location)
+            })
+    };
+    let target_returns =
+        gcx.type_of_item(target_id.into()).as_externally_callable_function(false, gcx).returns();
+    let base_returns =
+        gcx.type_of_item(base_id.into()).as_externally_callable_function(false, gcx).returns();
+    if target_returns != base_returns || !external_types_equal(target_fn.returns, base_fn.returns) {
+        return false;
+    }
+    if target_fn.kind == FunctionKind::Modifier {
+        return types_equal(target_fn.parameters, base_fn.parameters, false);
+    }
+    if base_fn.visibility == Visibility::External {
+        external_types_equal(target_fn.parameters, base_fn.parameters)
+    } else {
+        types_equal(target_fn.parameters, base_fn.parameters, true)
+            && types_equal(target_fn.returns, base_fn.returns, true)
+    }
 }
 
 /// Strip the ` * ` block-comment line decoration from each line of a `/** */` NatSpec item's

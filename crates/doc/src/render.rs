@@ -286,13 +286,18 @@ fn render_contract<'ast, 'gcx>(
                 let mut c = collect_comments(docs, name_to_page, page_path, local);
                 // Explicit `@inheritdoc` merges into a partial local doc; implicit
                 // inheritance only runs when the variable has no local NatSpec at all.
-                let inherited = match inheritdoc_base(docs) {
-                    Some(base) => hir_id
-                        .and_then(|cid| hir_ext::resolve_inheritdoc_var(gcx, cid, &vname, &base)),
-                    None if !has_local_natspec(docs) => hir_id
-                        .and_then(|cid| hir_ext::resolve_implicit_inheritdoc_var(gcx, cid, &vname)),
-                    None => None,
-                };
+                let vid = hir_id.and_then(|cid| {
+                    gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
+                        hir::ItemId::Variable(id) if gcx.hir.variable(id).span == *span => Some(id),
+                        _ => None,
+                    })
+                });
+                let inherited = vid.and_then(|id| {
+                    let explicit = inheritdoc_base(docs).is_some();
+                    (explicit || !has_local_natspec(docs))
+                        .then(|| hir_ext::natspec_doc(gcx, id.into(), !explicit))
+                        .flatten()
+                });
                 let sanitize =
                     |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                 if let Some(ref base_doc) = inherited {
@@ -316,11 +321,6 @@ fn render_contract<'ast, 'gcx>(
                                 .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
                         );
                         c.devs.extend(inherited_devs);
-                    }
-                    for (name, desc) in &base_doc.returns {
-                        if !c.returns.iter().any(|(n, _)| n == name) {
-                            c.returns.push((name.clone(), sanitize(desc)));
-                        }
                     }
                 }
                 write_comment_block(out, &c);
@@ -386,20 +386,17 @@ fn render_contract<'ast, 'gcx>(
                     })
                 });
                 match inheritdoc_base(docs) {
-                    Some(base) => {
+                    Some(_) => {
                         if hir_id.is_some() && fid.is_none() {
                             let _ = sh_warn!(
                                 "forge doc: failed to find HIR function for `{}.{fname}` while resolving @inheritdoc",
                                 c.name
                             );
                         }
-                        let param_types = fid.and_then(|fid| hir_ext::function_param_types(gcx, fid));
-                        hir_id.and_then(|cid| {
-                            hir_ext::resolve_inheritdoc(gcx, cid, fname, &base, param_types.as_deref())
-                        })
+                        fid.and_then(|id| hir_ext::natspec_doc(gcx, id.into(), false))
                     }
-                    None if !has_local_natspec(docs) => hir_id
-                        .and_then(|cid| hir_ext::resolve_implicit_inheritdoc(gcx, cid, fname, fid)),
+                    None if !has_local_natspec(docs) =>
+                        fid.and_then(|id| hir_ext::natspec_doc(gcx, id.into(), true)),
                     None => None,
                 }
             });
@@ -656,7 +653,7 @@ fn render_function_section(
     name_to_page: &NameToPage,
     page_path: &Path,
     local: Option<&hir_ext::LocalMembers>,
-    inherited: Option<&hir_ext::InheritedDoc>,
+    inherited: Option<&hir_ext::NatSpecDoc>,
 ) {
     let heading = function_heading(f);
     if let Some(anchor) = function_signature_anchor(f, ctx) {
@@ -689,19 +686,24 @@ fn render_function_section(
                     .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
             );
         }
-        for (name, desc) in &inherited.params {
-            let name = inherited_param_name_for_current_function(
-                name,
-                &f.header.parameters,
-                &inherited.params,
-            );
-            if !c.params.iter().any(|(n, _)| n == &name) {
-                c.params.push((name, sanitize(desc)));
+        if c.params.is_empty() {
+            for (index, desc) in inherited.params.iter().enumerate() {
+                if let Some(name) = f.header.parameters.get(index).and_then(|param| param.name) {
+                    c.params.push((name.as_str().to_string(), sanitize(desc)));
+                }
             }
         }
-        for (name, desc) in &inherited.returns {
-            if !c.returns.iter().any(|(n, _)| n == name) {
-                c.returns.push((name.clone(), sanitize(desc)));
+        if c.returns.is_empty() {
+            for (index, desc) in inherited.returns.iter().enumerate() {
+                let name = f
+                    .header
+                    .returns
+                    .as_ref()
+                    .and_then(|returns| returns.get(index))
+                    .and_then(|return_| return_.name)
+                    .map(|name| name.as_str().to_string())
+                    .unwrap_or_default();
+                c.returns.push((name, sanitize(desc)));
             }
         }
     }
@@ -712,45 +714,6 @@ fn render_function_section(
     write_param_table(out, "Parameters", &f.header.parameters, &c, ctx);
     if let Some(returns) = &f.header.returns {
         write_param_table(out, "Returns", returns, &c, ctx);
-    }
-}
-
-fn inherited_param_name_for_current_function(
-    inherited_name: &str,
-    params: &ParameterList<'_>,
-    inherited_params: &[(String, String)],
-) -> String {
-    if params
-        .iter()
-        .any(|param| param.name.map(|name| name.as_str() == inherited_name).unwrap_or(false))
-    {
-        return inherited_name.to_string();
-    }
-
-    let normalized_inherited = inherited_name.trim_matches('_');
-    if normalized_inherited.is_empty() {
-        return inherited_name.to_string();
-    }
-
-    if inherited_params
-        .iter()
-        .filter(|(name, _)| name.trim_matches('_') == normalized_inherited)
-        .take(2)
-        .count()
-        != 1
-    {
-        return inherited_name.to_string();
-    }
-
-    let mut candidates = params.iter().filter_map(|param| {
-        let name = param.name?;
-        let name = name.as_str();
-        (name.trim_matches('_') == normalized_inherited).then(|| name.to_string())
-    });
-
-    match (candidates.next(), candidates.next()) {
-        (Some(name), None) => name,
-        _ => inherited_name.to_string(),
     }
 }
 

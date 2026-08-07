@@ -286,6 +286,292 @@ function deposit(uint256 amount) external override returns (uint256 shares);
     );
 });
 
+forgetest_init!(inheritdoc_uses_effective_positional_natspec, |prj, cmd| {
+    prj.add_source(
+        "IRoot.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IRoot {
+    /// @notice Root notice
+    /// @dev Root dev
+    /// @param first Root first
+    /// @param second Root second
+    /// @return firstResult Root first result
+    /// @return secondResult Root second result
+    function run(uint256 first, uint256 second)
+        external
+        returns (uint256 firstResult, uint256 secondResult);
+}
+"#,
+    );
+    prj.add_source(
+        "Effective.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {IRoot as RootAlias} from "./IRoot.sol";
+
+interface IMid is RootAlias {
+    /// @inheritdoc RootAlias
+    /// @dev Mid dev
+    function run(uint256 left, uint256 right)
+        external
+        override
+        returns (uint256 leftResult, uint256 rightResult);
+}
+
+contract Effective is IMid {
+    /// @inheritdoc IMid
+    /// @param currentLeft Local left
+    function run(uint256 currentLeft, uint256 currentRight)
+        external
+        override
+        returns (uint256 currentLeftResult, uint256 currentRightResult)
+    {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Effective.mdx")).unwrap();
+    assert!(rendered.contains("Root notice"), "{rendered}");
+    assert!(rendered.contains("Mid dev"), "{rendered}");
+    assert!(!rendered.contains("Root dev"), "{rendered}");
+    assert!(rendered.contains("| currentLeft | `uint256` | Local left |"), "{rendered}");
+    assert!(rendered.contains("| currentRight | `uint256` |  |"), "{rendered}");
+    assert!(!rendered.contains("| currentRight | `uint256` | Root second |"), "{rendered}");
+    assert!(
+        rendered.contains("| currentLeftResult | `uint256` | Root first result |"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("| currentRightResult | `uint256` | Root second result |"),
+        "{rendered}"
+    );
+});
+
+forgetest_init!(inheritdoc_mapping_getter_uses_generated_signature, |prj, cmd| {
+    prj.add_source(
+        "ExplicitGetter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IValues {
+    /// @notice Reads a value
+    /// @param key The lookup key
+    /// @return value The stored value
+    function values(uint256 key) external view returns (uint256 value);
+}
+
+contract ExplicitGetter is IValues {
+    /// @inheritdoc IValues
+    mapping(uint256 => uint256) public override values;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ExplicitGetter.mdx"))
+            .unwrap();
+    assert!(rendered.contains("Reads a value"), "{rendered}");
+    assert!(rendered.contains("| &lt;none&gt; | `uint256` | The lookup key |"), "{rendered}");
+    assert!(rendered.contains("| &lt;none&gt; | `uint256` | The stored value |"), "{rendered}");
+});
+
+forgetest_init!(inheritdoc_does_not_skip_exact_custom_documentation, |prj, cmd| {
+    prj.add_source(
+        "Exact.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract Root {
+    /// @notice Must not leak through Mid
+    function run(uint256 value) public virtual {}
+}
+
+abstract contract Mid is Root {
+    /// @custom:audit reviewed
+    function run(uint256 value) public virtual override {}
+}
+
+contract Exact is Mid {
+    /// @inheritdoc Mid
+    function run(uint256 value) public override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Exact.mdx")).unwrap();
+    assert!(!rendered.contains("Must not leak"), "{rendered}");
+});
+
+forgetest_init!(implicit_inheritance_requires_compatible_override, |prj, cmd| {
+    prj.add_source(
+        "Compatibility.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract CompatibilityBase {
+    /// @notice Must not inherit from a non-virtual function
+    function nonVirtual() public {}
+
+    /// @notice Must not inherit across visibility changes
+    function visibilityChange() public virtual {}
+
+    /// @notice Must not inherit across mutability changes
+    function mutabilityChange() public view virtual {}
+
+    /// @notice Must not inherit across return type changes
+    function returnChange() public virtual returns (uint256) {}
+}
+
+contract Compatibility is CompatibilityBase {
+    function nonVirtual() public override {}
+    function visibilityChange() external override {}
+    function mutabilityChange() public override {}
+    function returnChange() public override returns (address) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.Compatibility.mdx"))
+            .unwrap();
+    assert!(!rendered.contains("Must not inherit"), "{rendered}");
+});
+
+forgetest_init!(inheritdoc_getter_handles_malformed_return_arity, |prj, cmd| {
+    prj.add_source(
+        "MalformedGetter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IFlag {
+    /// @notice Reads the flag
+    function flag() external view;
+}
+
+contract MalformedGetter is IFlag {
+    /// @inheritdoc IFlag
+    uint256 public override flag;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.MalformedGetter.mdx"))
+            .unwrap();
+    assert!(rendered.contains("Reads the flag"), "{rendered}");
+});
+
+forgetest_init!(inheritdoc_uses_first_duplicate_target, |prj, cmd| {
+    prj.add_source(
+        "DuplicateInheritdoc.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract RootA {
+    /// @notice First target
+    function run() public virtual {}
+}
+
+abstract contract A is RootA {
+    function run() public virtual override {}
+}
+
+abstract contract RootB {
+    /// @notice Second target
+    function run() public virtual {}
+}
+
+abstract contract B is RootB {
+    function run() public virtual override {}
+}
+
+contract DuplicateInheritdoc is A, B {
+    /// @inheritdoc A
+    /// @inheritdoc B
+    function run() public override(A, B) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.DuplicateInheritdoc.mdx"))
+            .unwrap();
+    assert!(rendered.contains("First target"), "{rendered}");
+    assert!(!rendered.contains("Second target"), "{rendered}");
+});
+
+forgetest_init!(implicit_inheritance_matches_constant_getter_mutability, |prj, cmd| {
+    prj.add_source(
+        "ConstantGetter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IConstant {
+    /// @notice The constant value
+    function VALUE() external pure returns (uint256);
+}
+
+contract ConstantGetter is IConstant {
+    uint256 public constant override VALUE = 1;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ConstantGetter.mdx"))
+            .unwrap();
+    assert!(rendered.contains("The constant value"), "{rendered}");
+});
+
+forgetest_init!(implicit_inheritance_rejects_external_return_location_mismatch, |prj, cmd| {
+    prj.add_source(
+        "ReturnLocation.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract ReturnBase {
+    /// @notice Must not cross a return-location mismatch
+    function data() external view virtual returns (bytes memory);
+}
+
+contract ReturnLocation is ReturnBase {
+    bytes private stored;
+
+    function data() public view override returns (bytes storage value) {
+        value = stored;
+    }
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    let rendered =
+        fs::read_to_string(prj.root().join("docs/src/pages/src/contract.ReturnLocation.mdx"))
+            .unwrap();
+    assert!(!rendered.contains("Must not cross"), "{rendered}");
+});
+
 // NatSpec text must never reach the MDX page as executable ESM: MDX runs a line whose first
 // token is `import`/`export` as code. The text can even be inherited from another contract
 // through `@inheritdoc`, so a dependency's doc comment could inject into the derived page.
@@ -1024,7 +1310,16 @@ contract YulMid is YulRoot {
     }
 }
 
-contract YulLeaf is YulMid {
+contract YulMid2 is YulMid {
+    function helper2(uint256 input) public pure returns (uint256 output) {
+        assembly {
+            function yulCandidate(shadow) -> result { result := shadow }
+            output := yulCandidate(input)
+        }
+    }
+}
+
+contract YulLeaf is YulMid2 {
     function yulCandidate(uint256 value) public override {}
 }
 "#,
@@ -1267,7 +1562,7 @@ contract UnsafeGetter is IUnsafeGetter {
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| key | `uint256` | Locate &lt;amount> with `Reference` |
+| &lt;none&gt; | `uint256` | Locate &lt;amount> with `Reference` |
 
 **Returns**
 
@@ -1882,9 +2177,9 @@ function mint(address recipient_, uint256 _amount) external override;
     );
 });
 
-// If two inherited params normalize to the same underscore-trimmed name, fuzzy matching must not
-// let the first inherited param steal the exact current param's docs.
-forgetest_init!(inheritdoc_does_not_fuzzy_match_ambiguous_inherited_params, |prj, cmd| {
+// Explicit inheritance maps parameters positionally, even when an override renames one to a name
+// that would have been ambiguous under the old fuzzy name matching.
+forgetest_init!(inheritdoc_maps_ambiguous_renames_positionally, |prj, cmd| {
     prj.add_source(
         "I.sol",
         r#"
@@ -1933,7 +2228,7 @@ function update(uint256 other, uint256 _amount) external override;
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| other | `uint256` |  |
+| other | `uint256` | Docs for first param. |
 | _amount | `uint256` | Docs for second param. |
 ...
 "#]],
@@ -2426,7 +2721,7 @@ uint256 public totalSupply;
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| &lt;none&gt; | `uint256` |  The total supply. |
+| &lt;none&gt; | `uint256` | The total supply. |
 ...
 "#]],
     );
