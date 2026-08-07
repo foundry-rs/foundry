@@ -130,6 +130,13 @@ async fn test_load_state_equal_height_fork_keeps_fork_anchor() {
     // The fork source: one block mined on the wall-clock timeline, same height as the state.
     let (api_remote, handle_remote) = spawn(NodeConfig::test()).await;
     api_remote.mine_one().await.unwrap();
+    let remote_head_timestamp = api_remote
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
 
     // Fork the remote head (height 1) and load the state (best height 1 as well): the
     // canonical head keeps being the fork block, so its time anchor must be preserved.
@@ -153,6 +160,11 @@ async fn test_load_state_equal_height_fork_keeps_fork_anchor() {
         new_head_timestamp < one_year_ahead,
         "block after load_state jumped to the loaded state's timeline instead of keeping the \
          fork anchor: {new_head_timestamp} >= {one_year_ahead}"
+    );
+    assert!(
+        new_head_timestamp >= remote_head_timestamp,
+        "block after load_state went back in time: {new_head_timestamp} < \
+         {remote_head_timestamp}"
     );
 }
 
@@ -209,13 +221,13 @@ async fn test_load_state_fork_rollback_reanchors_time_to_fork_head() {
     // The fork source: one block mined on the wall-clock timeline.
     let (api_remote, handle_remote) = spawn(NodeConfig::test()).await;
     api_remote.mine_one().await.unwrap();
-    let remote_head_hash = api_remote
+    let remote_head = api_remote
         .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
         .await
         .unwrap()
         .unwrap()
         .header
-        .hash;
+        .clone();
 
     // Fork the remote head (height 1), then mine a local block one year ahead of wall-clock.
     let (api, _handle) =
@@ -235,7 +247,7 @@ async fn test_load_state_fork_rollback_reanchors_time_to_fork_head() {
         .unwrap()
         .header
         .clone();
-    assert_eq!(head.hash, remote_head_hash, "canonical head must return to the exact fork head");
+    assert_eq!(head.hash, remote_head.hash, "canonical head must return to the exact fork head");
 
     // The next block continues from the fork head's timeline, not from the discarded
     // future-dated local block.
@@ -247,7 +259,13 @@ async fn test_load_state_fork_rollback_reanchors_time_to_fork_head() {
         .unwrap()
         .header
         .clone();
-    assert_eq!(new_head.parent_hash, remote_head_hash);
+    assert_eq!(new_head.parent_hash, remote_head.hash);
+    assert!(
+        new_head.timestamp >= remote_head.timestamp,
+        "block after fork rollback went back in time: {} < {}",
+        new_head.timestamp,
+        remote_head.timestamp
+    );
     assert!(
         new_head.timestamp < one_year_ahead,
         "block after the fork rollback reused the discarded local timeline: {} >= {}",
