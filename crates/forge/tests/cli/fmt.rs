@@ -139,6 +139,59 @@ Diff in src/FmtTest.sol:
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/5686>
+forgetest!(fmt_uses_nearest_config, |prj, cmd| {
+    let source = r#"contract Test {
+    function test(uint256 a, uint256 b) public returns (uint256) { return a + b; }
+}
+"#;
+    let first = prj.create_file("first/src/Test.sol", source);
+    let second = prj.create_file("second/src/Test.sol", source);
+    let ignored = prj.create_file("first/src/Ignored.sol", source);
+    prj.create_file(
+        "foundry.toml",
+        r#"[fmt]
+ignore = ["first/src/Test.sol"]
+"#,
+    );
+    prj.create_file(
+        "first/foundry.toml",
+        r#"[fmt]
+multiline_func_header = "params_first"
+tab_width = 2
+ignore = ["src/Ignored.sol"]
+"#,
+    );
+    prj.create_file(
+        "second/foundry.toml",
+        r#"[fmt]
+multiline_func_header = "attributes_first"
+tab_width = 6
+"#,
+    );
+
+    cmd.args(["fmt", "--use-nearest-config", "."]).assert_success();
+
+    assert!(std::fs::read_to_string(first).unwrap().contains("  function test(\n"));
+    assert!(
+        std::fs::read_to_string(second)
+            .unwrap()
+            .contains("      function test(uint256 a, uint256 b)")
+    );
+    assert_eq!(std::fs::read_to_string(ignored).unwrap(), source);
+});
+
+forgetest!(fmt_nearest_config_rejects_config_env, |prj, cmd| {
+    prj.create_file("src/Test.sol", "contract Test {}\n");
+    cmd.env("FOUNDRY_CONFIG", "custom.toml");
+    cmd.args(["fmt", "--use-nearest-config", "src/Test.sol"]).assert_failure().stderr_eq(str![[
+        r#"
+Error: `--use-nearest-config` cannot be used when `FOUNDRY_CONFIG` is set
+
+"#
+    ]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/12000
 forgetest_init!(fmt_only_cmnts_file, |prj, cmd| {
     // Only line breaks
