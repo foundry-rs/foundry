@@ -18,13 +18,13 @@ pub type DepMap = HashMap<PathBuf, DepIdentifier>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LockfileMismatch {
     /// An installed dependency is not recorded in the lockfile.
-    MissingLockEntry { path: PathBuf, actual: String },
+    MissingLockEntry { path: PathBuf, actual: Option<String> },
     /// A lockfile entry does not have a corresponding dependency submodule.
     MissingSubmodule { path: PathBuf, expected: String },
     /// The index contains a dependency gitlink without a `.gitmodules` mapping.
     MissingSubmoduleMapping { path: PathBuf },
     /// A dependency submodule has not been initialized.
-    Uninitialized { path: PathBuf, expected: String },
+    Uninitialized { path: PathBuf, expected: Option<String> },
     /// A dependency submodule has merge conflicts.
     Conflicted { path: PathBuf },
     /// The installed revision differs from the locked revision.
@@ -48,8 +48,11 @@ impl LockfileMismatch {
 impl std::fmt::Display for LockfileMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingLockEntry { path, actual } => {
+            Self::MissingLockEntry { path, actual: Some(actual) } => {
                 write!(f, "{}: missing from foundry.lock (found {actual})", path.display())
+            }
+            Self::MissingLockEntry { path, actual: None } => {
+                write!(f, "{}: missing from foundry.lock", path.display())
             }
             Self::MissingSubmodule { path, expected } => write!(
                 f,
@@ -59,11 +62,14 @@ impl std::fmt::Display for LockfileMismatch {
             Self::MissingSubmoduleMapping { path } => {
                 write!(f, "{}: dependency submodule is missing from .gitmodules", path.display())
             }
-            Self::Uninitialized { path, expected } => write!(
+            Self::Uninitialized { path, expected: Some(expected) } => write!(
                 f,
                 "{}: dependency submodule is not initialized (expected {expected})",
                 path.display()
             ),
+            Self::Uninitialized { path, expected: None } => {
+                write!(f, "{}: dependency submodule is not initialized", path.display())
+            }
             Self::Conflicted { path } => {
                 write!(f, "{}: dependency submodule has merge conflicts", path.display())
             }
@@ -177,7 +183,8 @@ impl<'a> Lockfile<'a> {
 
     /// Checks whether the lockfile matches dependency submodules without modifying either.
     pub(crate) fn check(&mut self) -> Result<Vec<LockfileMismatch>> {
-        if self.exists() {
+        let lockfile_exists = self.exists();
+        if lockfile_exists {
             self.read().wrap_err("Failed to read foundry.lock")?;
         } else {
             self.deps.clear();
@@ -186,7 +193,16 @@ impl<'a> Lockfile<'a> {
         let git = self.git.ok_or_eyre("Git is required to check foundry.lock")?;
         let project_root =
             dunce::canonicalize(self.lockfile_path.parent().expect("lockfile path has a parent"))?;
-        let git_root = Git::root_of(git.root)?;
+        let git_root = match Git::root_of(git.root) {
+            Ok(root) => root,
+            Err(_)
+                if !lockfile_exists
+                    && !project_root.ancestors().any(|root| root.join(".git").exists()) =>
+            {
+                return Ok(Vec::new());
+            }
+            Err(err) => return Err(err),
+        };
         let project_prefix = project_root.strip_prefix(&git_root).map_err(|_| {
             eyre::eyre!("Project root is not contained in Git root {}", git_root.display())
         })?;
@@ -213,7 +229,7 @@ impl<'a> Lockfile<'a> {
                 SubmoduleCheckoutStatus::Uninitialized => {
                     mismatches.push(LockfileMismatch::Uninitialized {
                         path: path.clone(),
-                        expected: expected.to_string(),
+                        expected: Some(expected.to_string()),
                     });
                 }
                 SubmoduleCheckoutStatus::Conflicted => {
@@ -235,13 +251,33 @@ impl<'a> Lockfile<'a> {
                 SubmoduleCheckoutStatus::Current | SubmoduleCheckoutStatus::Modified => {}
             }
         }
-        mismatches.extend(submodules.into_iter().map(|(path, submodule)| {
-            if submodule.status() == SubmoduleCheckoutStatus::MissingMapping {
-                LockfileMismatch::MissingSubmoduleMapping { path }
-            } else {
-                LockfileMismatch::MissingLockEntry { path, actual: submodule.rev().to_string() }
+        for (path, submodule) in submodules {
+            match submodule.status() {
+                SubmoduleCheckoutStatus::MissingMapping => {
+                    mismatches.push(LockfileMismatch::MissingSubmoduleMapping { path });
+                }
+                SubmoduleCheckoutStatus::Uninitialized => {
+                    mismatches.push(LockfileMismatch::MissingLockEntry {
+                        path: path.clone(),
+                        actual: None,
+                    });
+                    mismatches.push(LockfileMismatch::Uninitialized { path, expected: None });
+                }
+                SubmoduleCheckoutStatus::Conflicted => {
+                    mismatches.push(LockfileMismatch::MissingLockEntry {
+                        path: path.clone(),
+                        actual: None,
+                    });
+                    mismatches.push(LockfileMismatch::Conflicted { path });
+                }
+                SubmoduleCheckoutStatus::Current | SubmoduleCheckoutStatus::Modified => {
+                    mismatches.push(LockfileMismatch::MissingLockEntry {
+                        path,
+                        actual: Some(submodule.rev().to_string()),
+                    });
+                }
             }
-        }));
+        }
         mismatches.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(mismatches)
     }

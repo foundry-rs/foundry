@@ -76,11 +76,11 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Bind(cmd) => cmd.run(),
-        ForgeSubcommand::Build(cmd) => {
-            if cmd.is_watch() {
-                global.block_on(watch::watch_build(cmd))
+        ForgeSubcommand::Build { args, locked } => {
+            if args.is_watch() {
+                global.block_on(watch::watch_build(args))
             } else {
-                global.block_on(cmd.run()).map(drop)
+                global.block_on(args.run(locked)).map(drop)
             }
         }
         ForgeSubcommand::VerifyContract(mut args) => {
@@ -97,7 +97,6 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Create(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Update(cmd) => cmd.run(),
         ForgeSubcommand::Install(cmd) => global.block_on(cmd.run()),
-        ForgeSubcommand::Lock(cmd) => cmd.run(),
         ForgeSubcommand::Remove(cmd) => cmd.run(),
         ForgeSubcommand::Remappings(cmd) => cmd.run(),
         ForgeSubcommand::Init(cmd) => global.block_on(cmd.run()),

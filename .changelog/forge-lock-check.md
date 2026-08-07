@@ -3,4 +3,4 @@ forge: minor
 foundry-cli: patch
 ---
 
-Added `forge lock --check` to detect divergence between `foundry.lock` and installed Git dependencies without modifying the project.
+Added `forge build --locked` to fail before installation or compilation when `foundry.lock` diverges from direct Git dependency submodules.
