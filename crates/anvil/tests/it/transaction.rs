@@ -215,13 +215,20 @@ async fn can_replace_transaction() {
 
     tx.set_gas_price(gas_price);
     // send transaction with lower gas price
-    let _lower_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+    let lower_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+    let lower_tx_hash = *lower_priced_pending_tx.tx_hash();
 
     tx.set_gas_price(gas_price + 1);
     // send the same transaction with higher gas price
     let higher_priced_pending_tx = provider.send_transaction(tx).await.unwrap();
 
     let higher_tx_hash = *higher_priced_pending_tx.tx_hash();
+    let error = provider.get_transaction_receipt(lower_tx_hash).await.unwrap_err();
+    let response = error.as_error_resp().unwrap();
+    assert_eq!(response.code, -32000);
+    assert_eq!(response.message, "transaction dropped from mempool");
+    assert!(provider.get_transaction_receipt(higher_tx_hash).await.unwrap().is_none());
+
     // mine exactly one block
     api.mine_one().await.unwrap();
 

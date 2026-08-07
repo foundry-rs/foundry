@@ -3395,7 +3395,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<FoundryTxReceipt>> {
         node_info!("eth_getTransactionReceipt");
-        self.backend.transaction_receipt(hash).await
+        if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
+            return Ok(Some(receipt));
+        }
+        if self.pool.is_dropped(&hash) {
+            return Err(BlockchainError::RpcError(RpcError {
+                code: ErrorCode::ServerError(-32000),
+                message: "transaction dropped from mempool".into(),
+                data: Some(serde_json::Value::String(hash.to_string())),
+            }));
+        }
+        Ok(None)
     }
 
     /// Returns block receipts by block number.

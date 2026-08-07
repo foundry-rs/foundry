@@ -9,8 +9,8 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
-use alloy_provider::{Provider, ext::TxPoolApi};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
+use alloy_provider::{PendingTransactionBuilder, Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
     anvil::{
@@ -1165,6 +1165,53 @@ async fn failed_anvil_mine_preserves_interval_adjustment() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn dropped_transaction_receipt_returns_terminal_error() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_no_mining(true).with_transaction_block_keeper(Some(1usize)))
+            .await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let tx = TransactionRequest::default()
+        .from(accounts[0].address())
+        .to(accounts[1].address())
+        .value(U256::from(1));
+
+    let pending = provider.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
+    let tx_hash = *pending.tx_hash();
+    assert!(provider.get_transaction_receipt(tx_hash).await.unwrap().is_none());
+    assert!(
+        provider.get_transaction_receipt(B256::repeat_byte(0x42)).await.unwrap().is_none(),
+        "unknown transaction hashes must continue to return null",
+    );
+
+    assert_eq!(api.anvil_drop_transaction(tx_hash).await.unwrap(), Some(tx_hash));
+    let error = provider.get_transaction_receipt(tx_hash).await.unwrap_err();
+    assert_eq!(error.tx_hash_data(), Some(tx_hash));
+    let response = error.as_error_resp().unwrap();
+    assert_eq!(response.code, -32000);
+    assert_eq!(response.message, "transaction dropped from mempool");
+
+    let receipt = PendingTransactionBuilder::new(provider.root().clone(), tx_hash).get_receipt();
+    let error = tokio::time::timeout(Duration::from_secs(1), receipt)
+        .await
+        .expect("receipt polling should stop on a dropped transaction")
+        .unwrap_err();
+    assert!(error.to_string().contains("transaction dropped from mempool"));
+
+    // Reaccepting the same transaction clears its dropped state, and mining it still yields the
+    // normal receipt.
+    let reaccepted = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    assert_eq!(*reaccepted.tx_hash(), tx_hash);
+    assert!(provider.get_transaction_receipt(tx_hash).await.unwrap().is_none());
+    api.mine_one().await.unwrap();
+    assert_eq!(reaccepted.get_receipt().await.unwrap().transaction_hash, tx_hash);
+
+    // Once the retained receipt is pruned, the mined transaction must not look dropped.
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(tx_hash).await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn instant_mining_reselects_from_live_pool_after_failure() {
     for drop_failed_transaction in [false, true] {
         let config = NodeConfig::test()
@@ -1205,8 +1252,12 @@ async fn instant_mining_reselects_from_live_pool_after_failure() {
         })
         .await
         .unwrap();
-        let first_receipt = provider.get_transaction_receipt(first_hash).await.unwrap();
-        assert_eq!(first_receipt.is_some(), !drop_failed_transaction);
+        if drop_failed_transaction {
+            let error = provider.get_transaction_receipt(first_hash).await.unwrap_err();
+            assert_eq!(error.as_error_resp().unwrap().code, -32000);
+        } else {
+            assert!(provider.get_transaction_receipt(first_hash).await.unwrap().is_some());
+        }
     }
 }
 

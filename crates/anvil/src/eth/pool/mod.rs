@@ -37,7 +37,7 @@ use crate::{
     mem::storage::MinedBlockOutcome,
 };
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{Receiver, Sender, channel};
@@ -45,6 +45,46 @@ use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
 
 pub mod transactions;
+
+const DROPPED_TRANSACTION_LIMIT: usize = 10_000;
+
+/// A bounded index of transactions that left the pool without being mined.
+#[derive(Debug, Default)]
+struct DroppedTransactions {
+    hashes: HashSet<TxHash>,
+    order: VecDeque<TxHash>,
+}
+
+impl DroppedTransactions {
+    fn insert(&mut self, hash: TxHash) {
+        if !self.hashes.insert(hash) {
+            return;
+        }
+        self.order.push_back(hash);
+
+        while self.order.len() > DROPPED_TRANSACTION_LIMIT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.hashes.remove(&oldest);
+            }
+        }
+    }
+
+    fn extend(&mut self, hashes: impl IntoIterator<Item = TxHash>) {
+        for hash in hashes {
+            self.insert(hash);
+        }
+    }
+
+    fn remove(&mut self, hash: &TxHash) {
+        if self.hashes.remove(hash) {
+            self.order.retain(|entry| entry != hash);
+        }
+    }
+
+    fn contains(&self, hash: &TxHash) -> bool {
+        self.hashes.contains(hash)
+    }
+}
 
 /// Transaction pool that performs validation.
 pub struct Pool<T> {
@@ -95,6 +135,11 @@ impl<T> Pool<T> {
         self.inner.read().contains(tx_hash)
     }
 
+    /// Returns true if the transaction recently left the pool without being mined.
+    pub fn is_dropped(&self, tx_hash: &TxHash) -> bool {
+        self.inner.read().dropped_transactions.contains(tx_hash)
+    }
+
     /// Returns true if this pool contains a transaction from `sender` with `nonce`.
     pub fn contains_sender_nonce(&self, sender: Address, nonce: u64) -> bool
     where
@@ -128,18 +173,7 @@ impl<T> Pool<T> {
     ///
     /// **Note**: this will also drop any transaction that depend on the `tx`
     pub fn drop_transaction(&self, tx: TxHash) -> Option<Arc<PoolTransaction<T>>> {
-        trace!(target: "txpool", "Dropping transaction: [{:?}]", tx);
-        let removed = {
-            let mut pool = self.inner.write();
-            pool.ready_transactions.remove_with_markers(vec![tx], None)
-        };
-        trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
-
-        if removed.is_empty() {
-            None
-        } else {
-            removed.into_iter().find(|t| *t.pending_transaction.hash() == tx)
-        }
+        self.inner.write().drop_transaction(tx)
     }
 
     /// Notifies listeners if the transaction was added to the ready queue.
@@ -193,13 +227,30 @@ impl<T: Transaction> Pool<T> {
     /// This will remove the transactions from the pool.
     pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
         let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
+        debug!(target: "txpool", ?block_number, "pruning transactions");
+        let res = {
+            let mut pool = self.inner.write();
+            let included_hashes = included.iter().map(|tx| tx.hash()).collect::<HashSet<_>>();
 
-        // remove invalid transactions from the pool
-        self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
+            // Remove invalid transactions and prune markers supplied by mined transactions while
+            // holding one lock, so membership and dropped-state transitions remain atomic.
+            pool.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
+            let res = pool.prune_markers(included.iter().flat_map(|tx| tx.provides.clone()));
 
-        // prune all the markers the mined transactions provide
-        let res = self
-            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+            pool.dropped_transactions.extend(
+                res.pruned
+                    .iter()
+                    .map(|tx| tx.hash())
+                    .filter(|hash| !included_hashes.contains(hash)),
+            );
+            for hash in included_hashes {
+                pool.dropped_transactions.remove(&hash);
+            }
+            res
+        };
+        for tx in &res.promoted {
+            self.notify_ready(tx);
+        }
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
 
         // Re-notify the miner about not-yet-valid transactions so they'll be retried.
@@ -254,11 +305,16 @@ impl<T: Transaction> Pool<T> {
 struct PoolInner<T> {
     ready_transactions: ReadyTransactions<T>,
     pending_transactions: PendingTransactions<T>,
+    dropped_transactions: DroppedTransactions,
 }
 
 impl<T> Default for PoolInner<T> {
     fn default() -> Self {
-        Self { ready_transactions: Default::default(), pending_transactions: Default::default() }
+        Self {
+            ready_transactions: Default::default(),
+            pending_transactions: Default::default(),
+            dropped_transactions: Default::default(),
+        }
     }
 }
 
@@ -272,8 +328,14 @@ impl<T> PoolInner<T> {
 
     /// Clears
     fn clear(&mut self) {
+        let hashes = self
+            .ready_transactions()
+            .chain(self.pending_transactions.transactions())
+            .map(|tx| tx.hash())
+            .collect::<Vec<_>>();
         self.ready_transactions.clear();
         self.pending_transactions.clear();
+        self.dropped_transactions.extend(hashes);
     }
 
     /// Returns an iterator over all transactions in the pool filtered by the sender
@@ -312,6 +374,8 @@ impl<T> PoolInner<T> {
 
         trace!(target: "txpool", "Removed invalid transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
 
+        self.dropped_transactions.extend(removed.iter().map(|tx| tx.hash()));
+
         removed
     }
 
@@ -331,7 +395,18 @@ impl<T> PoolInner<T> {
 
         trace!(target: "txpool", "Removed transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
 
+        self.dropped_transactions.extend(removed.iter().map(|tx| tx.hash()));
+
         removed
+    }
+
+    fn drop_transaction(&mut self, tx: TxHash) -> Option<Arc<PoolTransaction<T>>> {
+        trace!(target: "txpool", "Dropping transaction: [{:?}]", tx);
+        let removed = self.ready_transactions.remove_with_markers(vec![tx], None);
+        trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
+
+        self.dropped_transactions.extend(removed.iter().map(|tx| tx.hash()));
+        removed.into_iter().find(|removed_tx| removed_tx.hash() == tx)
     }
 }
 
@@ -354,9 +429,10 @@ impl<T: Transaction> PoolInner<T> {
         &mut self,
         tx: PoolTransaction<T>,
     ) -> Result<AddedTransaction<T>, PoolError> {
-        if self.contains(&tx.hash()) {
-            debug!(target: "txpool", "[{:?}] Already imported", tx.hash());
-            return Err(PoolError::AlreadyImported(tx.hash()));
+        let submitted_hash = tx.hash();
+        if self.contains(&submitted_hash) {
+            debug!(target: "txpool", "[{:?}] Already imported", submitted_hash);
+            return Err(PoolError::AlreadyImported(submitted_hash));
         }
 
         let tx = PendingPoolTransaction::new(tx, self.ready_transactions.provided_markers());
@@ -366,15 +442,19 @@ impl<T: Transaction> PoolInner<T> {
         if !tx.is_ready() {
             let hash = tx.transaction.hash();
             self.pending_transactions.add_transaction(tx)?;
+            self.dropped_transactions.remove(&hash);
             return Ok(AddedTransaction::Pending { hash });
         }
-        self.add_ready_transaction(tx)
+        let added = self.add_ready_transaction(tx, submitted_hash)?;
+        self.dropped_transactions.remove(&submitted_hash);
+        Ok(added)
     }
 
     /// Adds the transaction to the ready queue
     fn add_ready_transaction(
         &mut self,
         tx: PendingPoolTransaction<T>,
+        submitted_hash: TxHash,
     ) -> Result<AddedTransaction<T>, PoolError> {
         let hash = tx.transaction.hash();
         trace!(target: "txpool", "adding ready transaction [{:?}]", hash);
@@ -399,6 +479,12 @@ impl<T: Transaction> PoolInner<T> {
                         ready.promoted.push(current_hash);
                     }
                     // tx removed from ready pool
+                    self.dropped_transactions.extend(
+                        replaced_transactions
+                            .iter()
+                            .map(|tx| tx.hash())
+                            .filter(|hash| *hash != submitted_hash),
+                    );
                     ready.removed.extend(replaced_transactions);
                 }
                 Err(err) => {
@@ -408,6 +494,7 @@ impl<T: Transaction> PoolInner<T> {
         err);
                         return Err(err);
                     }
+                    self.dropped_transactions.insert(current_hash);
                     ready.discarded.push(current_hash);
                 }
             }
@@ -418,7 +505,10 @@ impl<T: Transaction> PoolInner<T> {
         // added while removing current transaction. in which case we move this transaction back to
         // the pending queue
         if ready.removed.iter().any(|tx| *tx.hash() == hash) {
-            self.ready_transactions.clear_transactions(&ready.promoted);
+            let rolled_back = self.ready_transactions.clear_transactions(&ready.promoted);
+            self.dropped_transactions.extend(
+                rolled_back.into_iter().map(|tx| tx.hash()).filter(|hash| *hash != submitted_hash),
+            );
             return Err(PoolError::CyclicTransaction);
         }
 
@@ -444,10 +534,11 @@ impl<T: Transaction> PoolInner<T> {
         let mut failed = vec![];
         for tx in imports {
             let hash = tx.transaction.hash();
-            match self.add_ready_transaction(tx) {
+            match self.add_ready_transaction(tx, hash) {
                 Ok(res) => promoted.push(res),
                 Err(e) => {
                     warn!(target: "txpool", "Failed to promote tx [{:?}] : {:?}", hash, e);
+                    self.dropped_transactions.insert(hash);
                     failed.push(hash)
                 }
             }
