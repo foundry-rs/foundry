@@ -5689,25 +5689,20 @@ where
 
     /// Returns all transaction receipts of the block
     pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
-        let (block, transactions, hash) = {
-            let storage = self.blockchain.storage.read();
-            let hash = match id.into() {
-                BlockId::Hash(hash) => hash.block_hash,
-                BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch)?,
-            };
-            let block = storage.blocks.get(&hash)?.clone();
-            let transactions = block
-                .body
-                .transactions
-                .iter()
-                .map(|transaction| storage.transactions.get(&transaction.hash()).cloned())
-                .collect::<Option<Vec<_>>>()?;
-            (block, transactions, hash)
+        let storage = self.blockchain.storage.read();
+        let hash = match id.into() {
+            BlockId::Hash(hash) => hash.block_hash,
+            BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch)?,
         };
+        let block = storage.blocks.get(&hash)?.clone();
 
-        if transactions.iter().enumerate().any(|(index, transaction)| {
-            transaction.block_hash != hash || transaction.info.transaction_index as usize != index
+        if block.body.transactions.iter().enumerate().any(|(index, transaction)| {
+            storage.transactions.get(&transaction.hash()).is_none_or(|transaction| {
+                transaction.block_hash != hash
+                    || transaction.info.transaction_index as usize != index
+            })
         }) {
+            drop(storage);
             return block
                 .body
                 .transactions
@@ -5721,9 +5716,16 @@ where
         let mut receipts = Vec::with_capacity(block.body.transactions.len());
         let mut next_log_index = 0;
 
-        for transaction in transactions {
+        for block_transaction in &block.body.transactions {
+            let transaction = storage.transactions.get(&block_transaction.hash())?;
             let log_count = transaction.receipt.logs().len();
-            let receipt = self.build_mined_transaction_receipt(transaction, &block, next_log_index);
+            let receipt = self.build_mined_transaction_receipt(
+                &transaction.info,
+                transaction.receipt.clone(),
+                transaction.block_hash,
+                &block,
+                next_log_index,
+            );
             receipts.push(receipt.inner);
             next_log_index += log_count;
         }
@@ -5743,16 +5745,24 @@ where
         let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        Some(self.build_mined_transaction_receipt(transaction, &block, next_log_index))
+        let MinedTransaction { info, receipt, block_hash, .. } = transaction;
+        Some(self.build_mined_transaction_receipt(
+            &info,
+            receipt,
+            block_hash,
+            &block,
+            next_log_index,
+        ))
     }
 
     fn build_mined_transaction_receipt(
         &self,
-        transaction: MinedTransaction<N>,
+        info: &TransactionInfo,
+        tx_receipt: FoundryReceiptEnvelope,
+        block_hash: B256,
         block: &Block,
         next_log_index: usize,
     ) -> MinedTransactionReceipt<FoundryNetwork> {
-        let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } = transaction;
         let transaction = block.body.transactions[info.transaction_index as usize].clone();
 
         // Cancun specific
@@ -5815,7 +5825,7 @@ where
                 inner = inner.with_fee_token(fee_token);
             }
         }
-        MinedTransactionReceipt { inner, out: info.out }
+        MinedTransactionReceipt { inner, out: info.out.clone() }
     }
 
     /// Returns the blocks receipts for the given number
