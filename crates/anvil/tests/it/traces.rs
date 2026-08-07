@@ -1479,8 +1479,9 @@ async fn test_trace_filter() {
     assert!(traces.is_err());
 
     // Test after and count
+    let from_block = provider.get_block_number().await.unwrap() + 1;
     let tracer = TraceFilter {
-        from_block: Some(provider.get_block_number().await.unwrap()),
+        from_block: Some(from_block),
         to_block: None,
         from_address: vec![],
         to_address: vec![],
@@ -1497,6 +1498,10 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
+    assert_eq!(
+        traces.iter().map(|trace| trace.block_number.unwrap()).collect::<Vec<_>>(),
+        (from_block + 3..from_block + 8).collect::<Vec<_>>()
+    );
 }
 
 #[cfg(feature = "js-tracer")]
