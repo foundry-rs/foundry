@@ -39,7 +39,7 @@ use crate::{
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_rpc_types::txpool::TxpoolStatus;
-use anvil_core::eth::transaction::PendingTransaction;
+use anvil_core::eth::transaction::{AnvilTransactionStatus, PendingTransaction};
 use futures::channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -135,9 +135,16 @@ impl<T> Pool<T> {
         self.inner.read().contains(tx_hash)
     }
 
-    /// Returns true if the transaction recently left the pool without being mined.
-    pub fn is_dropped(&self, tx_hash: &TxHash) -> bool {
-        self.inner.read().dropped_transactions.contains(tx_hash)
+    /// Returns the transaction's current mempool lifecycle status, if known.
+    pub fn transaction_status(&self, tx_hash: &TxHash) -> Option<AnvilTransactionStatus> {
+        let pool = self.inner.read();
+        if pool.contains(tx_hash) {
+            Some(AnvilTransactionStatus::Pending)
+        } else if pool.dropped_transactions.contains(tx_hash) {
+            Some(AnvilTransactionStatus::Dropped)
+        } else {
+            None
+        }
     }
 
     /// Returns true if this pool contains a transaction from `sender` with `nonce`.
@@ -441,7 +448,9 @@ impl<T: Transaction> PoolInner<T> {
         // If all markers are not satisfied import to future
         if !tx.is_ready() {
             let hash = tx.transaction.hash();
-            self.pending_transactions.add_transaction(tx)?;
+            if let Some(replaced) = self.pending_transactions.add_transaction(tx)? {
+                self.dropped_transactions.insert(replaced.hash());
+            }
             self.dropped_transactions.remove(&hash);
             return Ok(AddedTransaction::Pending { hash });
         }

@@ -80,7 +80,7 @@ use anvil_core::{
     eth::{
         EthRequest,
         block::{BlockInfo, canonical_block},
-        transaction::{MaybeImpersonatedTransaction, PendingTransaction},
+        transaction::{AnvilTransactionStatus, MaybeImpersonatedTransaction, PendingTransaction},
     },
     types::{ReorgOptions, TransactionData},
 };
@@ -1958,6 +1958,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::GetBlobByTransactionHash(hash) => {
                 self.anvil_get_blob_by_tx_hash(hash).to_rpc_result()
             }
+            EthRequest::GetTransactionStatus(hash) => {
+                self.anvil_get_transaction_status(hash).await.to_rpc_result()
+            }
             EthRequest::GetGenesisTime(()) => self.anvil_get_genesis_time().to_rpc_result(),
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
@@ -3258,6 +3261,19 @@ impl EthApi<FoundryNetwork> {
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
     }
 
+    /// Handler for RPC call: `anvil_getTransactionStatus`.
+    pub async fn anvil_get_transaction_status(
+        &self,
+        hash: B256,
+    ) -> Result<Option<AnvilTransactionStatus>> {
+        node_info!("anvil_getTransactionStatus");
+        let pool_status = self.pool.transaction_status(&hash);
+        if self.backend.transaction_receipt(hash).await?.is_some() {
+            return Ok(Some(AnvilTransactionStatus::Mined));
+        }
+        Ok(pool_status)
+    }
+
     /// Get transaction by its hash.
     ///
     /// This will check the storage for a matching transaction, if no transaction exists in storage
@@ -3395,17 +3411,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<FoundryTxReceipt>> {
         node_info!("eth_getTransactionReceipt");
-        if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
-            return Ok(Some(receipt));
-        }
-        if self.pool.is_dropped(&hash) {
-            return Err(BlockchainError::RpcError(RpcError {
-                code: ErrorCode::ServerError(-32000),
-                message: "transaction dropped from mempool".into(),
-                data: Some(serde_json::Value::String(hash.to_string())),
-            }));
-        }
-        Ok(None)
+        self.backend.transaction_receipt(hash).await
     }
 
     /// Returns block receipts by block number.

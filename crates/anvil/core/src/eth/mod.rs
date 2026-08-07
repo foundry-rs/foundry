@@ -268,6 +268,10 @@ pub enum EthRequest {
     #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
     GetBlobByTransactionHash(TxHash),
 
+    /// Returns the lifecycle status of a transaction known to Anvil.
+    #[serde(rename = "anvil_getTransactionStatus", with = "sequence")]
+    GetTransactionStatus(TxHash),
+
     /// Returns the genesis time for the chain
     #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
     GetGenesisTime(()),

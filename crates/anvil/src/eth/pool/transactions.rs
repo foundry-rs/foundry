@@ -273,24 +273,25 @@ impl<T> PendingTransactions<T> {
 
 impl<T: Transaction> PendingTransactions<T> {
     /// Adds a transaction to Pending queue of transactions
-    pub fn add_transaction(&mut self, tx: PendingPoolTransaction<T>) -> Result<(), PoolError> {
+    pub fn add_transaction(
+        &mut self,
+        tx: PendingPoolTransaction<T>,
+    ) -> Result<Option<Arc<PoolTransaction<T>>>, PoolError> {
         assert!(!tx.is_ready(), "transaction must not be ready");
         assert!(
             !self.waiting_queue.contains_key(&tx.transaction.hash()),
             "transaction is already added"
         );
 
-        if let Some(replace) = self
-            .waiting_markers
-            .get(&tx.transaction.provides)
-            .and_then(|hash| self.waiting_queue.get(hash))
-        {
+        let replaced_hash = self.waiting_markers.get(&tx.transaction.provides).copied();
+        if let Some(replace) = replaced_hash.and_then(|hash| self.waiting_queue.get(&hash)) {
             // check if underpriced
             if tx.transaction.max_fee_per_gas() <= replace.transaction.max_fee_per_gas() {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(tx.transaction.hash()));
             }
         }
+        let replaced = replaced_hash.and_then(|hash| self.remove(vec![hash]).pop());
 
         // add all missing markers
         for marker in &tx.missing_markers {
@@ -302,7 +303,7 @@ impl<T: Transaction> PendingTransactions<T> {
         // add tx to the queue
         self.waiting_queue.insert(tx.transaction.hash(), tx);
 
-        Ok(())
+        Ok(replaced)
     }
 }
 

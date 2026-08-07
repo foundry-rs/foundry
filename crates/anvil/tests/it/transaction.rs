@@ -223,11 +223,41 @@ async fn can_replace_transaction() {
     let higher_priced_pending_tx = provider.send_transaction(tx).await.unwrap();
 
     let higher_tx_hash = *higher_priced_pending_tx.tx_hash();
-    let error = provider.get_transaction_receipt(lower_tx_hash).await.unwrap_err();
-    let response = error.as_error_resp().unwrap();
-    assert_eq!(response.code, -32000);
-    assert_eq!(response.message, "transaction dropped from mempool");
+    let status = provider
+        .raw_request::<_, Option<String>>("anvil_getTransactionStatus".into(), (lower_tx_hash,))
+        .await
+        .unwrap();
+    assert_eq!(status.as_deref(), Some("dropped"));
+    let status = provider
+        .raw_request::<_, Option<String>>("anvil_getTransactionStatus".into(), (higher_tx_hash,))
+        .await
+        .unwrap();
+    assert_eq!(status.as_deref(), Some("pending"));
     assert!(provider.get_transaction_receipt(higher_tx_hash).await.unwrap().is_none());
+
+    // Replacements in the queued pool must remove the old hash as well.
+    let mut queued_tx =
+        WithOtherFields::new(TransactionRequest::default().to(to).from(from).nonce(nonce + 2));
+    queued_tx.set_gas_price(gas_price);
+    let lower_priced_queued_tx = provider.send_transaction(queued_tx.clone()).await.unwrap();
+    let lower_queued_hash = *lower_priced_queued_tx.tx_hash();
+    queued_tx.set_gas_price(gas_price + 1);
+    let higher_priced_queued_tx = provider.send_transaction(queued_tx).await.unwrap();
+    let higher_queued_hash = *higher_priced_queued_tx.tx_hash();
+
+    let status = provider
+        .raw_request::<_, Option<String>>("anvil_getTransactionStatus".into(), (lower_queued_hash,))
+        .await
+        .unwrap();
+    assert_eq!(status.as_deref(), Some("dropped"));
+    let status = provider
+        .raw_request::<_, Option<String>>(
+            "anvil_getTransactionStatus".into(),
+            (higher_queued_hash,),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.as_deref(), Some("pending"));
 
     // mine exactly one block
     api.mine_one().await.unwrap();

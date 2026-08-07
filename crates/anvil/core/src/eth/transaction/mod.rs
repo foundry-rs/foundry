@@ -15,6 +15,18 @@ use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
+/// The lifecycle status of a transaction known to Anvil.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AnvilTransactionStatus {
+    /// The transaction is currently in the mempool.
+    Pending,
+    /// The transaction has been mined and its receipt is still available.
+    Mined,
+    /// The transaction recently left the mempool without being mined.
+    Dropped,
+}
+
 /// A wrapper for a transaction envelope that allows impersonating accounts.
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash

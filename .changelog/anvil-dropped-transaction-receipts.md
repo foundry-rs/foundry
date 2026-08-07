@@ -2,4 +2,4 @@
 anvil: patch
 ---
 
-Anvil now reports when an accepted transaction was dropped from the mempool instead of leaving receipt consumers polling indefinitely.
+Added `anvil_getTransactionStatus` to report whether a transaction is pending, mined, or recently dropped without changing standard receipt behavior.
