@@ -198,6 +198,10 @@ impl SymbolicExecutor {
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
             parent.inherit_branch_target_progress(&outcome.state);
+            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
+            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
+            parent.inherit_mapping_hook_provenance(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -577,6 +581,76 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::ContinueData(
                     self.accesses_return_data_for_target(state, target)?,
                 ));
+            }
+            registerSloadHookCall::SELECTOR | registerSstoreHookCall::SELECTOR => {
+                let target = read_abi_address_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic storage hook target",
+                )?;
+                let callback: [u8; 4] = state
+                    .memory
+                    .read_concrete(&mut self.cx, args_offset + 32, 4)?
+                    .try_into()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic storage hook callback"))?;
+                let hook = SymbolicStorageHook {
+                    callback_target: state.address,
+                    callback_selector: callback,
+                };
+                if selector == registerSloadHookCall::SELECTOR {
+                    state.storage_load_hooks.insert(target, hook);
+                } else {
+                    if state
+                        .mapping_storage_store_hooks
+                        .keys()
+                        .any(|(address, _)| *address == target)
+                    {
+                        return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                            &mut self.cx,
+                            "cannot register raw SSTORE hook: mapping SSTORE hooks already exist for target",
+                        )));
+                    }
+                    state.storage_store_hooks.insert(target, hook);
+                }
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            registerMappingSstoreHookCall::SELECTOR => {
+                let target = read_abi_address_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic mapping storage hook target",
+                )?;
+                let root = read_abi_concrete_word_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic mapping storage hook root",
+                )?;
+                let callback: [u8; 4] = state
+                    .memory
+                    .read_concrete(&mut self.cx, args_offset + 64, 4)?
+                    .try_into()
+                    .map_err(|_| {
+                        SymbolicError::Unsupported("symbolic mapping storage hook callback")
+                    })?;
+                let hook = SymbolicStorageHook {
+                    callback_target: state.address,
+                    callback_selector: callback,
+                };
+                if state.storage_store_hooks.contains_key(&target) {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        "cannot register mapping SSTORE hook: raw SSTORE hook already exists for target",
+                    )));
+                }
+                state.mapping_hook_keccak_preimages.retain(|(account, _), _| *account != target);
+                state.mapping_storage_store_hooks.insert((target, root), hook);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getRecordedLogsCall::SELECTOR => {
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();

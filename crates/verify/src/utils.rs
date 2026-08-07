@@ -16,7 +16,10 @@ use foundry_common::{
     ignore_metadata_hash, shell,
 };
 use foundry_compilers::{
+    Graph,
     artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
+    compilers::ParsedSource,
+    multi::{MultiCompilerLanguage, MultiCompilerParser},
     utils::canonicalize,
 };
 use foundry_config::Config;
@@ -97,8 +100,26 @@ pub fn build_project(
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
 
-    if let Some(path) = args.contract.path() {
-        let target_path = canonicalize(project.root().join(path))?;
+    let target_path = match args.contract.path() {
+        Some(path) => Some(canonicalize(project.root().join(path))?),
+        None => Graph::<MultiCompilerParser>::resolve(&project.paths).ok().and_then(|graph| {
+            if graph
+                .nodes
+                .iter()
+                .any(|node| matches!(node.data.language(), MultiCompilerLanguage::Vyper(_)))
+            {
+                return None;
+            }
+            let mut matches = graph.nodes.iter().filter(|node| {
+                node.data.contract_names().iter().any(|name| name == &args.contract.name)
+            });
+            let target = matches.next()?;
+            (matches.next().is_none()
+                && graph.input_nodes().any(|input| input.path() == target.path()))
+            .then(|| target.path().to_path_buf())
+        }),
+    };
+    if let Some(target_path) = target_path {
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
         let artifact =
             find_matching_contract_artifact(&mut output, &target_path, Some(&args.contract.name))?;
@@ -446,16 +467,22 @@ pub fn wrap_verifier_url_error(
 ) -> eyre::Error {
     let Some(verifier_url) = verifier_url else { return err };
     let url = match Url::parse(verifier_url) {
-        Ok(url) => url,
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            url
+        }
         Err(url_err) => {
-            return err.wrap_err(format!("Invalid URL {verifier_url} provided: {url_err}"));
+            return err.wrap_err(format!("Invalid verifier URL provided: {url_err}"));
         }
     };
     if is_host_only(&url) && using_etherscan {
         return err.wrap_err(format!(
-            "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{verifier_url}`.\n\
+            "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{url}`.\n\
              Fixes (pick one):\n\
-             - Append the API path, e.g. `--verifier-url {verifier_url}/api`\n\
+             - Append the API path, e.g. `--verifier-url {url}api`\n\
              - Switch verifier, e.g. `--verifier sourcify` (works with host-only URLs)"
         ));
     }
@@ -584,6 +611,22 @@ contract Broken {
         let err = eyre::eyre!("upstream failure");
         let wrapped = wrap_verifier_url_error(err, Some("not a url"), true);
         let msg = format!("{wrapped:#}");
-        assert!(msg.contains("Invalid URL"), "message: {msg}");
+        assert!(msg.contains("Invalid verifier URL"), "message: {msg}");
+        assert!(!msg.contains("not a url"), "message: {msg}");
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_redacts_credentials_and_query() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(
+            err,
+            Some("https://user:secret@example.com?api_key=secret"),
+            true,
+        );
+        let msg = format!("{wrapped:#}");
+        assert!(msg.contains("https://example.com/"));
+        assert!(!msg.contains("user"));
+        assert!(!msg.contains("secret"));
+        assert!(!msg.contains("api_key"));
     }
 }

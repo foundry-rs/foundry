@@ -5,8 +5,7 @@ use crate::{
     progress::TestsProgress,
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
-        ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
-        count_runnable_invariant_campaign_anchors,
+        ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
     },
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
@@ -15,8 +14,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
-    ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, TestFunctionKind,
-    get_contract_name,
+    ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
+    TestFunctionKind, get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -39,7 +38,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 
-use foundry_linking::{LinkOutput, Linker, LinkerError};
+use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
@@ -433,12 +432,23 @@ pub struct ShowmapConfig {
 
 pub type FuzzMinimizeEdgeIndices = Arc<Mutex<BTreeMap<String, Arc<Mutex<EdgeIndexMap>>>>>;
 
+/// Replay behavior required by a fuzz minimization command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FuzzMinimizeMode {
+    /// Replay complete entries so corpus minimization observes all coverage and failures.
+    Cmin,
+    /// Stop at the campaign boundary so transaction minimization ignores unreachable suffixes.
+    Tmin,
+}
+
 /// CLI-only options that switch fuzz/invariant tests into single-entry replay
 /// mode for corpus minimization.
 #[derive(Clone, Debug)]
 pub struct FuzzMinimizeConfig {
     /// Entry to replay.
     pub input: Arc<[BasicTxDetails]>,
+    /// Whether replay serves corpus or transaction minimization.
+    pub mode: FuzzMinimizeMode,
     /// Shared edge-index assignments for all candidate replays in this minimization invocation,
     /// namespaced by matched target.
     pub evm_edge_indices: FuzzMinimizeEdgeIndices,
@@ -791,7 +801,7 @@ impl MultiContractRunnerBuilder {
         let configured_libraries = self.config.libraries_with_remappings()?;
         let create2_deployer_available = self.create2_deployer_available(&evm_opts);
         let create2 = if create2_deployer_available {
-            match linker.link_with_create2(
+            match linker.link_with_create2_detailed(
                 configured_libraries.clone(),
                 evm_opts.create2_deployer,
                 self.config.create2_library_salt,
@@ -804,30 +814,37 @@ impl MultiContractRunnerBuilder {
         } else {
             None
         };
-        let (LinkOutput { libraries, library_addresses, libs_to_deploy }, library_deployment) =
-            if let Some(output) = create2 {
-                let deployment = if output.libs_to_deploy.is_empty() {
-                    LibraryDeployment::Nonce
-                } else {
-                    LibraryDeployment::Create2 {
-                        deployer: evm_opts.create2_deployer,
-                        salt: self.config.create2_library_salt,
-                    }
-                };
-                (output, deployment)
+        let (
+            DetailedLinkOutput {
+                output: LinkOutput { libraries, library_addresses, libs_to_deploy },
+                artifact_libraries,
+                ..
+            },
+            library_deployment,
+        ) = if let Some(output) = create2 {
+            let deployment = if output.output.libs_to_deploy.is_empty() {
+                LibraryDeployment::Nonce
             } else {
-                (
-                    linker.link_with_nonce_or_address(
-                        configured_libraries,
-                        LIBRARY_DEPLOYER,
-                        0,
-                        linker.contracts.keys(),
-                    )?,
-                    LibraryDeployment::Nonce,
-                )
+                LibraryDeployment::Create2 {
+                    deployer: evm_opts.create2_deployer,
+                    salt: self.config.create2_library_salt,
+                }
             };
+            (output, deployment)
+        } else {
+            (
+                linker.link_with_nonce_or_address_detailed(
+                    configured_libraries,
+                    LIBRARY_DEPLOYER,
+                    0,
+                    linker.contracts.keys(),
+                )?,
+                LibraryDeployment::Nonce,
+            )
+        };
 
-        let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
+        let linked_contracts = linker
+            .get_linked_artifacts_cow_with_artifact_libraries(&libraries, &artifact_libraries)?;
         let inline_config = self.inline_config;
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
@@ -854,7 +871,8 @@ impl MultiContractRunnerBuilder {
                     continue;
                 };
 
-                let library_addresses = linker.linked_library_addresses(id, &libraries)?;
+                let artifact_libraries = artifact_libraries.get(id).unwrap_or(&libraries);
+                let library_addresses = linker.linked_library_addresses(id, artifact_libraries)?;
 
                 deployable_contracts.insert(
                     id.clone(),

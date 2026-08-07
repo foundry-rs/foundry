@@ -37,11 +37,13 @@ pub async fn check_tx_status<N: Network>(
     provider: &RootProvider<N>,
     hash: TxHash,
     timeout: u64,
+    confirmations: u64,
 ) -> (TxHash, Result<TxStatus<N::ReceiptResponse>, eyre::Report>) {
     let result = retry::Retry::new_no_delay(3)
         .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)
                 .with_timeout(Some(Duration::from_secs(timeout)))
+                .with_required_confirmations(confirmations)
                 .get_receipt()
                 .await
             {
@@ -305,7 +307,8 @@ mod tests {
         });
 
         let result =
-            tokio::time::timeout(Duration::from_secs(2), check_tx_status(&provider, hash, 0)).await;
+            tokio::time::timeout(Duration::from_secs(2), check_tx_status(&provider, hash, 0, 1))
+                .await;
         null_responder.abort();
 
         let (returned_hash, status) = result.expect(
@@ -330,7 +333,7 @@ mod tests {
             asserter.push_failure_msg("lookup unavailable");
         }
 
-        let (_, status) = check_tx_status(&provider, hash, 0).await;
+        let (_, status) = check_tx_status(&provider, hash, 0, 1).await;
         let err = match status {
             Ok(_) => panic!("transaction lookup errors should not be marked as dropped"),
             Err(err) => err.to_string(),
@@ -361,7 +364,7 @@ mod tests {
         // guarantees the test fails fast if the watcher ever hangs again.
         let (returned_hash, status) = tokio::time::timeout(
             CHECK_TX_TIMEOUT,
-            check_tx_status::<Ethereum>(&provider, unknown_hash, 1),
+            check_tx_status::<Ethereum>(&provider, unknown_hash, 1, 1),
         )
         .await
         .expect("check_tx_status hung on an unknown tx hash");
@@ -402,7 +405,7 @@ mod tests {
         let watcher = tokio::spawn(async move {
             tokio::time::timeout(
                 CHECK_TX_TIMEOUT,
-                check_tx_status::<Ethereum>(&provider, tx_hash, 1),
+                check_tx_status::<Ethereum>(&provider, tx_hash, 1, 1),
             )
             .await
         });
@@ -445,7 +448,7 @@ mod tests {
         let provider = signer_provider.root().clone();
         let (returned_hash, status) = tokio::time::timeout(
             CHECK_TX_TIMEOUT,
-            check_tx_status::<Ethereum>(&provider, tx_hash, 5),
+            check_tx_status::<Ethereum>(&provider, tx_hash, 5, 1),
         )
         .await
         .expect("check_tx_status hung on a mined tx");
@@ -456,5 +459,37 @@ mod tests {
             matches!(status, TxStatus::Success(_)),
             "expected TxStatus::Success for a mined ETH transfer",
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_tx_status_waits_for_confirmations() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_no_mining(true)).await;
+        let signer_provider =
+            ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+
+        let mut wallets = handle.dev_wallets();
+        let from = wallets.next().unwrap().address();
+        let to = wallets.next().unwrap().address();
+        let tx =
+            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+
+        let pending = signer_provider.send_transaction(tx).await.unwrap();
+        let tx_hash = *pending.tx_hash();
+        api.mine_one().await.unwrap();
+
+        let provider = signer_provider.root().clone();
+        let mut watcher =
+            tokio::spawn(
+                async move { check_tx_status::<Ethereum>(&provider, tx_hash, 5, 3).await },
+            );
+
+        assert!(tokio::time::timeout(Duration::from_millis(500), &mut watcher).await.is_err());
+
+        api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+        let (returned_hash, status) =
+            tokio::time::timeout(CHECK_TX_TIMEOUT, watcher).await.unwrap().unwrap();
+
+        assert_eq!(returned_hash, tx_hash);
+        assert!(matches!(status.unwrap(), TxStatus::Success(_)));
     }
 }

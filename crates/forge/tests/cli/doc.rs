@@ -255,7 +255,6 @@ contract Example is IExample {
     );
 
     cmd.args(["doc"]).assert_success();
-
     let doc_path = prj.root().join("docs/src/pages/src/contract.Example.mdx");
     assert_data_eq!(
         Data::read_from(&doc_path, None),
@@ -283,6 +282,76 @@ function deposit(uint256 amount) external override returns (uint256 shares);
 | ---- | ---- | ----------- |
 | shares | `uint256` | The amount of shares minted |
 ...
+"#]],
+    );
+});
+
+// NatSpec text must never reach the MDX page as executable ESM: MDX runs a line whose first
+// token is `import`/`export` as code. The text can even be inherited from another contract
+// through `@inheritdoc`, so a dependency's doc comment could inject into the derived page.
+forgetest_init!(natspec_neutralizes_esm_statement_lines, |prj, cmd| {
+    prj.add_source(
+        "EsmBase.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IEsm {
+    /// @notice export const injected = 1
+    function act(uint256 v) external;
+}
+"#,
+    );
+    prj.add_source(
+        "EsmChild.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./EsmBase.sol";
+
+/// @notice import somesecret from the outside
+contract EsmChild is IEsm {
+    /// @inheritdoc IEsm
+    function act(uint256 v) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.EsmChild.mdx"), None),
+        str![[r#"
+---
+title: "EsmChild"
+description: "import somesecret from the outside"
+---
+
+# EsmChild
+
+**Inherits:** [IEsm](/src/interface.IEsm)
+
+&#105;&#109;port somesecret from the outside
+
+## Functions
+
+<a id="act-uint256"></a>
+
+### act
+
+&#101;xport const injected = 1
+
+```solidity
+function act(uint256 v) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| v | `uint256` |  |
+
+
 "#]],
     );
 });

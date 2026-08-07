@@ -52,7 +52,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
-use foundry_wallets::WalletOpts;
+use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -89,7 +89,7 @@ pub struct CallArgs {
     #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
-    /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
+    /// Raw hex-encoded data for the transaction. Used instead of `SIG` and `ARGS`.
     #[arg(
         long,
         conflicts_with_all = &["sig", "args"]
@@ -145,6 +145,9 @@ pub struct CallArgs {
 
     #[command(flatten)]
     wallet: WalletOpts,
+
+    #[command(flatten)]
+    browser: BrowserWalletOpts,
 
     #[arg(
         short,
@@ -202,6 +205,9 @@ impl CallArgs {
 
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
+            if self.browser.browser {
+                eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
+            }
             return self.run_curl().await;
         }
 
@@ -258,7 +264,8 @@ impl CallArgs {
         let mut config = load_config_from_provider(figment)?;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
-        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        let tracing = config.tracing.clone();
 
         let Self {
             to,
@@ -273,6 +280,7 @@ impl CallArgs {
             data,
             with_local_artifacts,
             wallet,
+            browser,
             ..
         } = self;
 
@@ -281,7 +289,11 @@ impl CallArgs {
         }
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
-        let sender = SenderKind::from_wallet_opts(wallet).await?;
+        let sender = if let Some(browser) = browser.run::<FEN::Network>().await? {
+            browser.address().into()
+        } else {
+            SenderKind::from_wallet_opts(wallet).await?
+        };
         let from = sender.address();
 
         let code = if let Some(CallSubcommands::Create {

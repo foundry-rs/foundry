@@ -124,6 +124,10 @@ impl SymbolicExecutor {
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
             parent.inherit_branch_target_progress(&outcome.state);
+            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
+            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
+            parent.inherit_mapping_hook_provenance(&outcome.state);
             parent.return_data = SymReturnData::empty(&mut self.cx);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
@@ -234,6 +238,15 @@ impl SymbolicExecutor {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
+            if std::mem::take(&mut state.pending_storage_hook_revert) {
+                *completed_paths += 1;
+                outcomes.push(ExternalCallOutcome {
+                    status: TopLevelCallStatus::Revert,
+                    return_data: state.return_data.clone(),
+                    state,
+                });
+                continue;
+            }
 
             loop {
                 self.check_timeout()?;
@@ -246,7 +259,7 @@ impl SymbolicExecutor {
                     GuardedOpcode::End => {
                         *completed_paths += 1;
                         outcomes.push(ExternalCallOutcome {
-                            status: if state.expectations_satisfied() {
+                            status: if state.storage_hook_active || state.expectations_satisfied() {
                                 TopLevelCallStatus::Success
                             } else {
                                 TopLevelCallStatus::Failure
@@ -270,7 +283,9 @@ impl SymbolicExecutor {
                             halted.constraints = out_of_bounds_constraints;
                             *completed_paths += 1;
                             outcomes.push(ExternalCallOutcome {
-                                status: if halted.expectations_satisfied() {
+                                status: if halted.storage_hook_active
+                                    || halted.expectations_satisfied()
+                                {
                                     TopLevelCallStatus::Success
                                 } else {
                                     TopLevelCallStatus::Failure
@@ -302,7 +317,7 @@ impl SymbolicExecutor {
                     StepOutcome::Halt => {
                         *completed_paths += 1;
                         outcomes.push(ExternalCallOutcome {
-                            status: if state.expectations_satisfied() {
+                            status: if state.storage_hook_active || state.expectations_satisfied() {
                                 TopLevelCallStatus::Success
                             } else {
                                 TopLevelCallStatus::Failure

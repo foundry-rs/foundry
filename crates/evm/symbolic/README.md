@@ -217,6 +217,96 @@ Current modeling notes:
 Stateless symbolic tests use ordinary ABI parameters. The executor creates
 symbolic calldata from the function ABI and explores feasible EVM paths.
 
+Storage hooks can maintain revert-aware ghost state for raw storage accesses.
+Register a callback during `setUp` for each target and access kind:
+
+```solidity
+function setUp() public {
+    vm.registerSloadHook(address(vault), this.onLoad.selector);
+    vm.registerSstoreHook(address(vault), this.onStore.selector);
+}
+
+function onLoad(address account, bytes32 slot, bytes32 value) external {
+    require(msg.sender == address(vm), "only storage hook");
+    // Update ghost state from the observed load.
+}
+
+function onStore(
+    address account,
+    bytes32 slot,
+    bytes32 oldValue,
+    bytes32 newValue
+) external {
+    require(msg.sender == address(vm), "only storage hook");
+    // Update ghost state from the observed write.
+}
+```
+
+Concrete and symbolic execution use the same callback contract. Re-registering
+an access kind replaces its callback for that target. Callback reverts propagate
+through the post-operation callback. Registration survives EVM reverts, while
+callback state follows the enclosing EVM context and rolls back with it. Hooks
+use the effective storage account, so a `delegatecall` is attributed to the
+caller's storage context. Hooks are suppressed throughout the callback's call
+subtree. Callback execution is hidden from mocks, expectations, recorded logs,
+and storage-access recording, while its EVM state writes and hook registrations
+are retained. Callbacks do not inherit staticness, so they can update ghost state
+for storage reads beneath `STATICCALL`; the observed target remains subject to
+normal static-call restrictions. The slot is the computed effective slot;
+mapping roots and decoded keys are not included. Callbacks are ordinary external
+functions, so they must authenticate `msg.sender` as `address(vm)` before
+updating ghost state. Registered callback selectors are excluded from default
+invariant targets, but explicit selector configuration can still target them.
+The callback runs as an ordinary call frame, so it consumes one of the 1024
+protocol call-depth slots; a storage access at the maximum legal call depth
+that would otherwise succeed can have its callback rejected as too deep, which
+propagates as a failure of the storage operation.
+
+Aggregate ghosts such as `ghost = ghost - oldValue + newValue` require an
+initialization model consistent with the ghost's starting value. Use
+`symbolic.storage_layout = "zero_init"` when the ghost starts from zero and
+unwritten symbolic mapping entries should be zero. With the default `solidity`
+layout, a previously unwritten symbolic key has an unknown base value, so the
+ghost must already account for that value. Known nonzero setup state must
+likewise be included in the initial ghost. These raw hooks cannot distinguish
+one mapping family from another without mapping-root provenance.
+
+### Mapping SSTORE hooks and ERC20 accounting
+
+`registerMappingSstoreHook` can maintain a ghost aggregate for one mapping root without reacting
+to unrelated storage. For an ERC20 whose `balances` mapping is at slot zero:
+
+```solidity
+function setUp() public {
+    token = new Token();
+    vm.registerMappingSstoreHook(address(token), bytes32(0), this.onBalanceWrite.selector);
+}
+
+function onBalanceWrite(
+    address account,
+    bytes32,
+    bytes32 root,
+    bytes32[] calldata keys,
+    bytes32 oldValue,
+    bytes32 newValue
+) external {
+    require(msg.sender == address(vm) && account == address(token));
+    require(root == bytes32(0) && keys.length == 1);
+    ghostSupply = ghostSupply - uint256(oldValue) + uint256(newValue);
+}
+```
+
+With `symbolic.storage_layout = "zero_init"`, initialize `ghostSupply` to zero and assert it equals
+`totalSupply` after symbolic mint, transfer, and burn operations. Allowance writes use a different
+root and do not affect the ghost. Both target writes and callback ghost updates roll back when the
+enclosing operation reverts. Mapping hooks require complete, exact 64-byte Keccak chains computed
+after the latest mapping-hook registration for that target in the current top-level execution.
+Resolution follows the complete chain to its terminal root instead of stopping at a registered
+intermediate hash; offsets, incomplete provenance, hashes computed before registration, and hashes
+from earlier top-level executions do not match. Hashes computed after registration remain usable by
+later calls in the same top-level execution. The contract that calls `registerMappingSstoreHook`
+receives the callback.
+
 ```solidity
 contract RiddleTest is Test {
     function check_riddle(uint256 x) external pure {

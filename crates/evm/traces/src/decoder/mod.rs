@@ -776,6 +776,19 @@ impl CallTraceDecoder {
                 return_data: self.decode_function_output(trace, contract_functions).await,
             }
         } else {
+            // Calls to the cheatcode address with a known selector must not fall back to raw
+            // calldata rendering: even malformed calldata can contain sensitive inputs like
+            // private keys that the custom cheatcode decoding redacts.
+            if trace.address == CHEATCODE_ADDRESS
+                && let Some(selector) = cdata.first_chunk().map(Selector::from)
+                && let Some([func, ..]) = self.functions_for_selector(trace.address, &selector)
+            {
+                return DecodedCallTrace {
+                    label,
+                    call_data: Some(self.decode_function_input(trace, func)),
+                    return_data: self.default_return_data(trace).await,
+                };
+            }
             DecodedCallTrace {
                 label,
                 call_data: self.fallback_call_data(trace),
@@ -867,7 +880,8 @@ impl CallTraceDecoder {
                         .collect(),
                 )
             }
-            "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
+            "addr" | "createEd25519Key" | "createWallet" | "deriveKey" | "publicKeyEd25519" |
+            "publicKeyP256" | "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
             }
@@ -881,21 +895,49 @@ impl CallTraceDecoder {
                 // getNonce(Wallet)
                 (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
-            "sign" | "signP256" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+            "sign" | "signCompact" | "signP256" | "signKeychain" | "signKeychainAdmin" => {
+                // Fail closed: when the arguments of a key-taking cheatcode cannot be
+                // decoded, redact everything instead of deferring to generic rendering.
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
 
-                // Redact private key and replace in trace
-                // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32)
+                // Redact private key and replace in trace when the first parameter is a raw
+                // private key (uint256) or a Wallet struct (tuple); digest-only and
+                // signer-address overloads carry no key material and are left as-is.
                 if !decoded.is_empty() &&
                     (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
                 {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
 
-                Some(decoded.iter().map(format_token).collect())
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
+            }
+            "signWithNonceUnsafe" => {
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
+                // Redact private key and nonce and replace in trace for
+                // signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce).
+                // The nonce is the raw ECDSA k value: together with the digest and the
+                // returned signature it allows recovering the private key.
+                decoded[0] = DynSolValue::String("<pk>".to_string());
+                decoded[2] = DynSolValue::String("<nonce>".to_string());
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
+            }
+            "signEd25519" => {
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
+                // Redact private key and replace in trace for
+                // signEd25519(bytes namespace, bytes message, bytes32 privateKey)
+                decoded[2] = DynSolValue::String("<pk>".to_string());
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
             }
             "signDelegation" | "signAndAttachDelegation" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
                 // Redact private key and replace in trace for
                 // signAndAttachDelegation(address implementation, uint256 privateKey)
                 // signDelegation(address implementation, uint256 privateKey)
@@ -1021,7 +1063,7 @@ impl CallTraceDecoder {
     fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
-            "createWallet" | "deriveKey" => Some("<pk>"),
+            "createEd25519Key" | "createWallet" | "deriveKey" => Some("<pk>"),
             "promptSecret" | "promptSecretUint" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
@@ -1483,7 +1525,8 @@ mod tests {
 
     #[test]
     fn test_should_redact() {
-        let decoder = CallTraceDecoder::new();
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.labels.insert(Address::from([0x22; 20]), "signer".to_string());
 
         let expected_revert_bytes4 = vec![0xde, 0xad, 0xbe, 0xef];
         let expect_revert_bytes4_data = Function::parse("expectRevert(bytes4)")
@@ -1594,12 +1637,15 @@ mod tests {
             ),
             // Should redact private key from traces in all cases:
             ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createEd25519Key(bytes32)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
             ("deriveKey(string,string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("publicKeyEd25519(bytes32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("publicKeyP256(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("rememberKey(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             //
             // Should redact private key from traces in specific cases with exceptions:
@@ -1642,6 +1688,166 @@ mod tests {
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
                         .to_string(),
                 ]),
+            ),
+            (
+                "signCompact(uint256,bytes32)",
+                hex!(
+                    "
+                    cc2a781f
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // signCompact(Wallet,bytes32)
+                "signCompact((address,uint256,uint256,uint256),bytes32)",
+                hex!(
+                    "
+                    3d0e292f
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000002
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // Ignore: `private key` is not passed, digest is signed by the script signer.
+                "signCompact(bytes32)",
+                hex!(
+                    "
+                    a282dc4b
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // Ignore: `signer` is a public address.
+                "signCompact(address,bytes32)",
+                hex!(
+                    "
+                    8e2f97bf
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "0x1111111111111111111111111111111111111111".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                "signWithNonceUnsafe(uint256,bytes32,uint256)",
+                hex!(
+                    "
+                    2012783a
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000001
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                    "\"<nonce>\"".to_string(),
+                ]),
+            ),
+            (
+                "signKeychain(uint256,address,bytes32)",
+                hex!(
+                    "
+                    5804c690
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x1111111111111111111111111111111111111111".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                "signKeychainAdmin(uint256,address,bytes32)",
+                hex!(
+                    "
+                    bc5fb2f7
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000001111111111111111111111111111111111111111
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x1111111111111111111111111111111111111111".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // Labels are applied to address arguments while the key is redacted.
+                "signKeychain(uint256,address,bytes32)",
+                hex!(
+                    "
+                    5804c690
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000002222222222222222222222222222222222222222
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "signer: [0x2222222222222222222222222222222222222222]".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "signEd25519(bytes,bytes,bytes32)" "0x6e73" "0x6d7367"
+                // 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                "signEd25519(bytes,bytes,bytes32)",
+                hex!(
+                    "
+                    ef609c65
+                    0000000000000000000000000000000000000000000000000000000000000060
+                    00000000000000000000000000000000000000000000000000000000000000a0
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000002
+                    6e73000000000000000000000000000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000003
+                    6d73670000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec!["0x6e73".to_string(), "0x6d7367".to_string(), "\"<pk>\"".to_string()]),
             ),
             (
                 // cast calldata "createFork(string)" "https://eth-mainnet.g.alchemy.com/v2/api_key"
@@ -1917,6 +2123,7 @@ mod tests {
         // [function_signature, expected]
         let cheatcode_output_test_cases = vec![
             // Should redact private key on output in all cases:
+            ("createEd25519Key(bytes32)", Some("<pk>".to_string())),
             ("createWallet(string)", Some("<pk>".to_string())),
             ("deriveKey(string,uint32)", Some("<pk>".to_string())),
             // Should redact RPC URL if defined, except if referenced by an alias:
@@ -1936,6 +2143,57 @@ mod tests {
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
             assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_should_redact_end_to_end() {
+        let decoder = CallTraceDecoder::new();
+        let pk_hex = "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
+        let pk = hex!("7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6");
+        let cheatcode_trace = |data: Vec<u8>| CallTrace {
+            address: CHEATCODE_ADDRESS,
+            data: data.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        // Well-formed sign(uint256,bytes32) resolves through selector lookup and redacts the
+        // private key.
+        let call = Vm::sign_1Call { privateKey: U256::from_be_bytes(pk), digest: B256::ZERO };
+        let decoded = decoder.decode_function(&cheatcode_trace(call.abi_encode())).await;
+        let call_data = decoded.call_data.expect("sign should decode");
+        assert_eq!(call_data.signature, "sign(uint256,bytes32)");
+        assert_eq!(call_data.args[0], "\"<pk>\"");
+        assert!(!call_data.args.join(",").contains(pk_hex));
+
+        // signEd25519 redacts the trailing private key argument.
+        let call = Vm::signEd25519Call {
+            namespace: b"ns".to_vec().into(),
+            message: b"msg".to_vec().into(),
+            privateKey: B256::from(pk),
+        };
+        let decoded = decoder.decode_function(&cheatcode_trace(call.abi_encode())).await;
+        let call_data = decoded.call_data.expect("signEd25519 should decode");
+        assert_eq!(call_data.signature, "signEd25519(bytes,bytes,bytes32)");
+        assert_eq!(call_data.args[2], "\"<pk>\"");
+        assert!(!call_data.args.join(",").contains(pk_hex));
+
+        // Malformed calldata (nonzero trailing byte fails the ABI shape heuristic) must not
+        // fall back to raw calldata rendering.
+        let call = Vm::sign_1Call { privateKey: U256::from_be_bytes(pk), digest: B256::ZERO };
+        let mut data = call.abi_encode();
+        data.push(0xff);
+        let decoded = decoder.decode_function(&cheatcode_trace(data)).await;
+        let call_data = decoded.call_data.expect("malformed calldata must not fall back to raw");
+        assert_eq!(call_data.signature, "sign(uint256,bytes32)");
+        assert!(!call_data.args.join(",").contains(pk_hex));
+
+        // Truncated calldata cannot be decoded at all and fails closed.
+        let data = Vm::sign_1Call::SELECTOR.iter().copied().chain(pk).collect::<Vec<u8>>();
+        let decoded = decoder.decode_function(&cheatcode_trace(data)).await;
+        let call_data = decoded.call_data.expect("truncated calldata must not fall back to raw");
+        assert_eq!(call_data.signature, "sign(uint256,bytes32)");
+        assert_eq!(call_data.args, vec!["<redacted>".to_string()]);
     }
 
     #[tokio::test]

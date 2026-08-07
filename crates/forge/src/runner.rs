@@ -5,8 +5,8 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{
-        FuzzMinimizeObservation, LibraryDeployment, TestContract, TestFunctionMatcher,
-        TestRunnerConfig, is_generated_symbolic_regression_contract,
+        FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment, TestContract,
+        TestFunctionMatcher, TestRunnerConfig, is_generated_symbolic_regression_contract,
     },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
@@ -29,7 +29,9 @@ use alloy_primitives::{
     Address, B256, Bytes, Selector, U256, address, hex, keccak256, map::HashMap,
 };
 use eyre::Result;
-use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
+use foundry_common::{
+    LIBRARY_DEPLOYER, TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress,
+};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
@@ -86,13 +88,6 @@ use std::{
 };
 use tokio::signal;
 use tracing::Span;
-
-/// When running tests, we deploy all external libraries present in the project. To avoid additional
-/// libraries affecting nonces of senders used in tests, we are using separate address to
-/// predeploy libraries.
-///
-/// `address(uint160(uint256(keccak256("foundry library deployer"))))`
-pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
@@ -1519,11 +1514,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self.cr.mcr.revert_decoder
     }
 
-    /// Returns whether verbose symbolic diagnostics should be rendered after progress clears.
-    fn should_defer_symbolic_diagnostics(&self) -> bool {
-        self.cr.progress.is_some() && self.config.symbolic.dump_smt
-    }
-
     fn fuzz_minimize_target_id(&self, test_name: &str) -> String {
         let network = self
             .cr
@@ -2564,7 +2554,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
-        if self.should_defer_symbolic_diagnostics() {
+        // Progress rendering must finish before verbose SMT diagnostics are printed.
+        if self.cr.progress.is_some() && self.config.symbolic.dump_smt {
             symbolic.capture_diagnostics();
         }
         let result = symbolic.run(SymbolicRunInput {
@@ -3765,6 +3756,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &invariant_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: None,
@@ -4902,6 +4894,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: minimize.input.as_ref(),
                     evm_edge_indices: &mut evm_edge_indices,
                     corpus: &fuzz_config.corpus,
+                    stop_at_campaign_end: matches!(minimize.mode, FuzzMinimizeMode::Tmin),
                 },
                 ShowmapReplayTarget {
                     stateless: Some(StatelessReplayTarget {
@@ -5263,7 +5256,6 @@ struct InvariantPersistedFailure {
     failure_site: Option<SymbolicInvariantFailureSite>,
 }
 
-type CheckSequenceResult = eyre::Result<CheckSequenceOutcome>;
 type HandlerFailureKey = (Address, Selector);
 type HandlerFailureStorageKey = (Address, Selector, B256);
 type HandlerFailureMap = std::collections::HashMap<HandlerFailureKey, InvariantFuzzError>;
@@ -5334,11 +5326,6 @@ fn invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
     canonicalized(failure_dir.join("invariants").join(&invariant.name))
 }
 
-/// Returns the legacy invariant failure cache path.
-fn legacy_invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
-    canonicalized(failure_dir.join(&invariant.name))
-}
-
 /// Loads a persisted invariant failure from the new cache path, falling back to the legacy path.
 fn persisted_invariant_failure(
     failure_dir: &Path,
@@ -5347,7 +5334,8 @@ fn persisted_invariant_failure(
 ) -> Option<InvariantPersistedFailure> {
     persisted_call_sequence(invariant_failure_file(failure_dir, invariant).as_path(), current_settings)
         .or_else(|| {
-            let legacy_path = legacy_invariant_failure_file(failure_dir, invariant);
+            // Older Foundry versions stored invariant failures directly under the failure root.
+            let legacy_path = canonicalized(failure_dir.join(&invariant.name));
             let persisted = persisted_call_sequence(legacy_path.as_path(), current_settings)?;
             let _ = sh_warn!(
                 "Using legacy invariant failure cache at {}; new failures will be persisted under {}/invariants.",
@@ -5443,7 +5431,7 @@ fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
     call_sequence: &mut [BaseCounterExample],
     expect_assertion_failure: bool,
     storage: &[SymbolicStorageAssignment],
-) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
+) -> (Vec<BasicTxDetails>, eyre::Result<CheckSequenceOutcome>) {
     let txes = base_counterexamples_to_txes(ctx, call_sequence);
     if let Err(err) = apply_symbolic_storage_assignments(&mut executor, storage) {
         return (txes, Err(err));

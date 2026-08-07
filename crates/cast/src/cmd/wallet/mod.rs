@@ -18,7 +18,7 @@ use foundry_cli::{
 };
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
-use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
 use serde_json::json;
 use std::path::Path;
@@ -38,8 +38,12 @@ use session::SessionArgs;
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    /// Create a new random keypair.
-    #[command(visible_alias = "n")]
+    /// Create a new random keypair
+    ///
+    /// Examples:
+    /// - cast wallet new (print a new private key and address)
+    /// - cast wallet new ~/.foundry/keystores dev (save to an encrypted keystore)
+    #[command(verbatim_doc_comment, visible_alias = "n")]
     New {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
         path: Option<String>,
@@ -99,10 +103,17 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// Derive accounts from a mnemonic
-    #[command(visible_alias = "d")]
+    ///
+    /// Examples:
+    /// - cast wallet derive "test test test test test test test test test test test junk"
+    /// - cast wallet derive "$MNEMONIC" --accounts 5
+    #[command(verbatim_doc_comment, visible_alias = "d")]
     Derive {
         /// The accounts will be derived from the specified mnemonic phrase.
         #[arg(value_name = "MNEMONIC")]
@@ -117,8 +128,13 @@ pub enum WalletSubcommands {
         insecure: bool,
     },
 
-    /// Sign a message or typed data.
-    #[command(visible_alias = "s")]
+    /// Sign a message or typed data
+    ///
+    /// Examples:
+    /// - cast wallet sign "hello" --account dev
+    /// - cast wallet sign "hello" --private-key $PK
+    /// - cast wallet sign --data --from-file typed_data.json --ledger
+    #[command(verbatim_doc_comment, visible_alias = "s")]
     Sign {
         /// The message, typed data, or hash to sign.
         ///
@@ -149,6 +165,9 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// EIP-7702 sign authorization.
@@ -176,8 +195,12 @@ pub enum WalletSubcommands {
         wallet: WalletOpts,
     },
 
-    /// Verify the signature of a message.
-    #[command(visible_alias = "v")]
+    /// Verify the signature of a message
+    ///
+    /// Examples:
+    /// - cast wallet verify --address $ADDRESS "hello" $SIGNATURE
+    /// - cast wallet verify --address $ADDRESS --no-hash $HASH $SIGNATURE
+    #[command(verbatim_doc_comment, visible_alias = "v")]
     Verify {
         /// The original message.
         ///
@@ -214,8 +237,13 @@ pub enum WalletSubcommands {
         no_hash: bool,
     },
 
-    /// Import a private key into an encrypted keystore.
-    #[command(visible_alias = "i")]
+    /// Import a private key into an encrypted keystore
+    ///
+    /// Examples:
+    /// - cast wallet import dev --interactive (prompt for the private key)
+    /// - cast wallet import dev --private-key $PK
+    /// - cast wallet import dev --mnemonic "$MNEMONIC" --mnemonic-index 1
+    #[command(verbatim_doc_comment, visible_alias = "i")]
     Import {
         /// The name for the account in the keystore.
         #[arg(value_name = "ACCOUNT_NAME")]
@@ -259,7 +287,12 @@ pub enum WalletSubcommands {
     },
 
     /// Derives private key from mnemonic
-    #[command(name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
+    ///
+    /// Examples:
+    /// - cast wallet private-key "test test test test test test test test test test test junk"
+    /// - cast wallet private-key "$MNEMONIC" 1 (derive the key at index 1)
+    /// - cast wallet private-key "$MNEMONIC" "m/44'/60'/0'/0/1" (use a custom path)
+    #[command(verbatim_doc_comment, name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
     PrivateKey {
         /// If provided, the private key will be derived from the specified mnemonic phrase.
         #[arg(value_name = "MNEMONIC")]
@@ -541,16 +574,20 @@ impl WalletSubcommands {
             Self::Vanity(cmd) => {
                 cmd.run()?;
             }
-            Self::Address { wallet, private_key_override } => {
-                let wallet = private_key_override
-                    .map(|pk| WalletOpts {
+            Self::Address { wallet, browser, private_key_override } => {
+                let addr = if let Some(pk) = private_key_override {
+                    WalletOpts {
                         raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
-                    })
-                    .unwrap_or(wallet)
+                    }
                     .signer()
-                    .await?;
-                let addr = wallet.address();
+                    .await?
+                    .address()
+                } else if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                    browser.address()
+                } else {
+                    wallet.signer().await?.address()
+                };
                 print_scalar(addr.to_checksum(None))?;
             }
             Self::Derive { mnemonic, accounts, insecure } => {
@@ -622,9 +659,12 @@ impl WalletSubcommands {
 
                 print_scalar(format!("0x{}", hex::encode(public_key)))?;
             }
-            Self::Sign { message, data, from_file, no_hash, wallet } => {
-                let wallet = wallet.signer().await?;
-                let sig = if data {
+            Self::Sign { message, data, from_file, no_hash, wallet, browser } => {
+                if browser.browser && no_hash {
+                    eyre::bail!("Raw hash signing is not supported with a browser wallet");
+                }
+
+                let typed_data = if data {
                     let typed_data: TypedData = if from_file {
                         // data is a file name, read json from file
                         foundry_common::fs::read_json_file(message.as_ref())?
@@ -632,24 +672,42 @@ impl WalletSubcommands {
                         // data is a json string
                         serde_json::from_str(&message)?
                     };
-                    wallet.sign_dynamic_typed_data(&typed_data).await?
-                } else if no_hash {
-                    wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
+                    Some(typed_data)
                 } else {
-                    wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
+                    None
                 };
+
+                let (sig, address) =
+                    if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                        let sig = if let Some(typed_data) = &typed_data {
+                            browser.sign_dynamic_typed_data(typed_data).await?
+                        } else {
+                            browser.sign_message(&Self::hex_str_to_bytes(&message)?).await?
+                        };
+                        (sig, browser.address())
+                    } else {
+                        let wallet = wallet.signer().await?;
+                        let sig = if let Some(typed_data) = &typed_data {
+                            wallet.sign_dynamic_typed_data(typed_data).await?
+                        } else if no_hash {
+                            wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
+                        } else {
+                            wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
+                        };
+                        (sig, wallet.address())
+                    };
 
                 if shell::verbosity() > 0 {
                     if shell::is_json() {
                         print_json_success(json!({
                             "message": message,
-                            "address": wallet.address(),
+                            "address": address,
                             "signature": hex::encode(sig.as_bytes()),
                         }))?;
                     } else {
                         sh_status!("Successfully signed!")?;
                         sh_status!("   Message: {message}")?;
-                        sh_status!("   Address: {}", wallet.address())?;
+                        sh_status!("   Address: {address}")?;
                         sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
                     }
                 } else {

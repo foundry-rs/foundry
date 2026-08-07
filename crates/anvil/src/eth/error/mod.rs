@@ -69,6 +69,8 @@ pub enum BlockchainError {
     EvmOverrideError(String),
     #[error("Invalid url {0:?}")]
     InvalidUrl(String),
+    #[error("unsupported fork network for chain {chain_id}: {reason}")]
+    UnsupportedForkNetwork { chain_id: u64, reason: &'static str },
     #[error("Internal error: {0:?}")]
     Internal(String),
     #[error("BlockOutOfRangeError: block height is {0} but requested was {1}")]
@@ -226,7 +228,7 @@ pub enum PoolError {
 pub enum FeeHistoryError {
     #[error("requested block range is out of bounds")]
     InvalidBlockRange,
-    #[error("could not find newest block number requested: {0}")]
+    #[error("could not find block number requested: {0}")]
     BlockNotFound(BlockNumberOrTag),
 }
 
@@ -449,9 +451,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
                 }
-                BlockchainError::TransactionConfirmationTimeout { .. } => {
-                    RpcError::internal_error_with("Transaction confirmation timeout")
-                }
+                BlockchainError::TransactionConfirmationTimeout { hash, .. } => RpcError {
+                    code: ErrorCode::ServerError(4),
+                    message: "Transaction confirmation timeout".into(),
+                    data: Some(serde_json::Value::String(hash.to_string())),
+                },
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error
@@ -535,6 +539,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::InvalidUrl(_) => RpcError::invalid_params(err.to_string()),
+                err @ BlockchainError::UnsupportedForkNetwork { .. } => {
+                    RpcError::invalid_params(err.to_string())
+                }
                 BlockchainError::Internal(err) => RpcError::internal_error_with(err),
                 err @ BlockchainError::BlockOutOfRange(_, _) => {
                     RpcError::invalid_params(err.to_string())

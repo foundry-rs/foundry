@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 #[tokio::test(flavor = "multi_thread")]
 async fn erigon_get_header_by_number() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let res0 = api.erigon_get_header_by_number(0.into()).await.unwrap().unwrap();
     assert_eq!(res0.header.number, 0);
@@ -167,7 +167,7 @@ async fn ots_has_code() {
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let contract_address = sender.create(0);
 
@@ -364,7 +364,7 @@ async fn ots_get_block_transactions() {
         hashes.push_back(*pending_receipt.tx_hash());
     }
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let page_size = 3;
     for page in 0..4 {

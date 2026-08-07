@@ -48,12 +48,6 @@ pub struct RevertDiagnostic {
 }
 
 impl RevertDiagnostic {
-    /// Returns the effective target address whose code would be executed.
-    /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
-    const fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
-        if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
-    }
-
     /// Derives the revert reason based on the cached data. Should only be called after a revert.
     const fn reason(&self) -> Option<DetailedRevertReason> {
         if let Some((addr, scheme, _)) = self.non_contract_call {
@@ -176,7 +170,12 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
             return None;
         }
 
-        let target = self.code_target_address(inputs);
+        // Delegate calls execute the callee's code in the caller's storage context.
+        let target = if is_delegatecall(inputs.scheme) {
+            inputs.bytecode_address
+        } else {
+            inputs.target_address
+        };
 
         if IGNORE.contains(&target) || ctx.journal_ref().precompile_addresses().contains(&target) {
             return None;

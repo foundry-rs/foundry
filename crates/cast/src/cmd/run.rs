@@ -1,10 +1,14 @@
 use crate::{
+    MAX_CONCURRENT_RPC_REQUESTS,
     debug::handle_traces,
     rpc_trace::{
         call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
     },
     traces::TraceKind,
-    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+    utils::{
+        apply_chain_and_block_specific_env_changes, apply_chain_specific_tx_replay_env_changes,
+        block_env_from_header,
+    },
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
@@ -48,7 +52,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
-use futures::TryFutureExt;
+use futures::{StreamExt, TryFutureExt};
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
 /// CLI arguments for `cast run`.
@@ -170,7 +174,8 @@ impl RunArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = load_config_from_provider(figment)?;
         self.tracing.labels.append(&mut self.legacy_labels);
-        let tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        let tracing = config.tracing.clone();
 
         let with_local_artifacts = self.with_local_artifacts;
         let debug = self.debug;
@@ -365,6 +370,7 @@ impl RunArgs {
                 config.networks,
             );
         }
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
 
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)
@@ -582,14 +588,20 @@ pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
 ) -> Result<AddressHashMap<Bytes>> {
     let mut contracts_bytecode = AddressHashMap::default();
     if let Some(ref traces) = result.traces {
-        for addr in gather_trace_addresses(traces) {
-            match provider.get_code_at(addr).block_id(block).await {
+        let mut requests =
+            futures::stream::iter(gather_trace_addresses(traces))
+                .map(|address| async move {
+                    (address, provider.get_code_at(address).block_id(block).await)
+                })
+                .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
+        while let Some((address, code)) = requests.next().await {
+            match code {
                 Ok(code) if !code.is_empty() => {
-                    contracts_bytecode.insert(addr, code);
+                    contracts_bytecode.insert(address, code);
                 }
                 Ok(_) => {}
                 Err(err) => {
-                    let _ = sh_warn!("Failed to fetch code for {addr}: {err}");
+                    let _ = sh_warn!("Failed to fetch code for {address}: {err}");
                 }
             }
         }
@@ -633,11 +645,17 @@ async fn fetch_transaction_contracts_bytecode_via_rpc<N: Network, P: Provider<N>
     }
 
     if let Some(ref traces) = result.traces {
-        for address in gather_trace_addresses(traces) {
-            if contracts_bytecode.contains_key(&address) {
-                continue;
-            }
-            match provider.get_code_at(address).block_id(block).await {
+        let missing_addresses = gather_trace_addresses(traces)
+            .filter(|address| !contracts_bytecode.contains_key(address))
+            .collect::<Vec<_>>();
+        let mut requests =
+            futures::stream::iter(missing_addresses)
+                .map(|address| async move {
+                    (address, provider.get_code_at(address).block_id(block).await)
+                })
+                .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
+        while let Some((address, code)) = requests.next().await {
+            match code {
                 Ok(code) if !code.is_empty() => {
                     contracts_bytecode.insert(address, code);
                 }

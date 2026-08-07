@@ -226,6 +226,7 @@ pub struct Config {
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
     /// Remappings to use for this repo
+    #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
@@ -1114,8 +1115,11 @@ impl Config {
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
 
-        self.remappings =
-            self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
+        self.remappings = self
+            .remappings
+            .into_iter()
+            .map(|r| relative_remapping_preserving_context_boundary(r.into(), &root))
+            .collect();
 
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
@@ -1367,6 +1371,21 @@ impl Config {
         }
 
         let project = builder.build(self.compiler()?)?;
+
+        // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
+        // directory boundary with the native separator so a later `Remapping::to_string` does not
+        // discard it while converting the context back to slash-separated solc syntax.
+        #[cfg(windows)]
+        let mut project = project;
+        #[cfg(windows)]
+        for remapping in &mut project.paths.remappings {
+            if let Some(context) = &mut remapping.context
+                && context.ends_with('/')
+            {
+                context.pop();
+                context.push(std::path::MAIN_SEPARATOR);
+            }
+        }
 
         if self.force {
             // Warnings are intentionally dropped here because `sh_warn!` is a circular
@@ -2418,19 +2437,24 @@ impl Config {
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
         if let Some(cache_dir) = Self::foundry_rpc_cache_dir() {
             let mut cache = Cache { chains: vec![] };
-            if !cache_dir.exists() {
+            let Some(entries) = Self::ignore_not_found(cache_dir.read_dir())? else {
                 return Ok(cache);
-            }
-            if let Ok(entries) = cache_dir.as_path().read_dir() {
-                for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
-                        cache.chains.push(Self::list_foundry_chain_cache(chain)?);
-                    }
+            };
+            for entry in entries {
+                let Some(entry) = Self::ignore_not_found(entry)? else {
+                    continue;
+                };
+                let Some(metadata) = Self::ignore_not_found(fs::metadata(entry.path()))? else {
+                    continue;
+                };
+                if !metadata.is_dir() {
+                    continue;
                 }
-                Ok(cache)
-            } else {
-                eyre::bail!("failed to access foundry_cache_dir");
+                if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
+                    cache.chains.push(Self::list_foundry_chain_cache(chain)?);
+                }
             }
+            Ok(cache)
         } else {
             eyre::bail!("failed to get foundry_cache_dir");
         }
@@ -2461,44 +2485,109 @@ impl Config {
     /// The path provided to this function should point to a cached chain folder.
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
-        if !chain_path.exists() {
+        let Some(entries) = Self::ignore_not_found(chain_path.read_dir())? else {
             return Ok(blocks);
-        }
-        for block in chain_path.read_dir()?.flatten() {
-            let file_type = block.file_type()?;
-            let file_name = block.file_name();
-            let filepath = if file_type.is_dir() {
-                block.path().join("storage.json")
-            } else if file_type.is_file()
-                && file_name.to_string_lossy().chars().all(char::is_numeric)
-            {
-                block.path()
-            } else {
+        };
+        for block in entries {
+            let Some(block) = Self::ignore_not_found(block)? else {
                 continue;
             };
-            blocks.push((file_name.to_string_lossy().into_owned(), fs::metadata(filepath)?.len()));
+            if let Some(block) = Self::get_cached_block(block)? {
+                blocks.push(block);
+            }
         }
         Ok(blocks)
     }
 
+    fn get_cached_block(block: fs::DirEntry) -> eyre::Result<Option<(String, u64)>> {
+        let file_name = block.file_name();
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(block.path()))? else {
+            return Ok(None);
+        };
+        let size = if metadata.is_dir() {
+            let Some(cache_files) = Self::ignore_not_found(block.path().read_dir())? else {
+                return Ok(None);
+            };
+            let mut size = 0;
+            for cache_file in cache_files {
+                let Some(cache_file) = Self::ignore_not_found(cache_file)? else {
+                    continue;
+                };
+                size += Self::get_cache_file_size(cache_file)?.unwrap_or_default();
+            }
+            if size == 0 {
+                return Ok(None);
+            }
+            size
+        } else if metadata.is_file() && file_name.to_string_lossy().chars().all(char::is_numeric) {
+            metadata.len()
+        } else {
+            return Ok(None);
+        };
+        Ok(Some((file_name.to_string_lossy().into_owned(), size)))
+    }
+
+    fn get_cache_file_size(cache_file: fs::DirEntry) -> eyre::Result<Option<u64>> {
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(cache_file.path()))?
+        else {
+            return Ok(None);
+        };
+        let cache_file_name = cache_file.file_name();
+        let cache_file_name = cache_file_name.to_string_lossy();
+        if !metadata.is_file()
+            || (cache_file_name != "storage.json"
+                && !cache_file_name
+                    .strip_prefix("storage-")
+                    .and_then(|name| name.strip_suffix(".json"))
+                    .is_some_and(|hash| {
+                        hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                    }))
+        {
+            return Ok(None);
+        }
+        Ok(Some(metadata.len()))
+    }
+
     /// The path provided to this function should point to the etherscan cache for a chain.
     fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
-        if !chain_path.exists() {
+        let Some(entries) = Self::ignore_not_found(fs::read_dir(chain_path))? else {
             return Ok(0);
-        }
+        };
+        Self::get_cached_dir_size(entries)
+    }
 
-        fn dir_size_recursive(mut dir: fs::ReadDir) -> eyre::Result<u64> {
-            dir.try_fold(0, |acc, file| {
-                let file = file?;
-                let size = match file.metadata()? {
-                    data if data.is_dir() => dir_size_recursive(fs::read_dir(file.path())?)?,
-                    data => data.len(),
-                };
-                Ok(acc + size)
-            })
+    fn get_cached_dir_size(entries: fs::ReadDir) -> eyre::Result<u64> {
+        let mut size = 0;
+        for entry in entries {
+            let Some(entry) = Self::ignore_not_found(entry)? else {
+                continue;
+            };
+            size += Self::get_cached_entry_size(entry)?.unwrap_or_default();
         }
+        Ok(size)
+    }
 
-        dir_size_recursive(fs::read_dir(chain_path)?)
+    fn get_cached_entry_size(entry: fs::DirEntry) -> eyre::Result<Option<u64>> {
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(entry.path()))? else {
+            return Ok(None);
+        };
+        if metadata.is_dir() {
+            let Some(entries) = Self::ignore_not_found(fs::read_dir(entry.path()))? else {
+                return Ok(None);
+            };
+            Ok(Some(Self::get_cached_dir_size(entries)?))
+        } else {
+            Ok(Some(metadata.len()))
+        }
+    }
+
+    /// Treats cache entries removed during enumeration as absent.
+    fn ignore_not_found<T>(result: io::Result<T>) -> eyre::Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err.into()),
+        }
     }
 
     fn merge_toml_provider(
@@ -3004,7 +3093,11 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "remappings_serde::serialize"
+    )]
     pub remappings: Vec<RelativeRemapping>,
     /// The active non-Ethereum network (e.g. `"tempo"`).
     #[serde(skip)]
@@ -3033,11 +3126,11 @@ impl BasicConfig {
             let mut endpoints = toml::value::Table::new();
             endpoints.insert(
                 "tempo".to_string(),
-                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::TEMPO_RPC_URL.to_string()),
             );
             endpoints.insert(
                 "moderato".to_string(),
-                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+                toml::Value::String(crate::endpoints::MODERATO_RPC_URL.to_string()),
             );
             document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
         }
@@ -3046,6 +3139,46 @@ impl BasicConfig {
         Ok(format!(
             "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
+    }
+}
+
+mod remappings_serde {
+    use foundry_compilers::artifacts::remappings::RelativeRemapping;
+    #[cfg(windows)]
+    use path_slash::PathExt as _;
+    use serde::{Serialize, Serializer};
+    #[cfg(windows)]
+    use std::path::Path;
+
+    #[cfg(windows)]
+    fn slash_context(context: &str) -> String {
+        let has_trailing_separator =
+            context.as_bytes().last().is_some_and(|c| *c == b'/' || *c == b'\\');
+        let mut context = Path::new(context).to_slash_lossy().into_owned();
+        if has_trailing_separator && !context.ends_with('/') {
+            context.push('/');
+        }
+        context
+    }
+
+    pub fn serialize<S>(remappings: &[RelativeRemapping], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        remappings
+            .iter()
+            .map(|remapping| {
+                let Some(context) = &remapping.context else { return remapping.to_string() };
+                let mut remapping = remapping.clone();
+                remapping.context = None;
+                #[cfg(windows)]
+                let context = slash_context(context);
+                #[cfg(not(windows))]
+                let context = context.as_str();
+                format!("{context}:{remapping}")
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
     }
 }
 
@@ -3099,7 +3232,11 @@ mod tests {
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write, num::NonZeroUsize};
+    use std::{
+        fs::File,
+        io::{self, Write},
+        num::NonZeroUsize,
+    };
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -4870,6 +5007,38 @@ mod tests {
     }
 
     #[test]
+    fn config_serialization_preserves_context_directory_boundary() {
+        let remapping = "lib/outer/:inner/=lib/outer/lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_serialization_preserves_verbatim_unc_context() {
+        let remapping = r"\\?\UNC\server\share\project\:inner/=lib/inner/";
+        let expected = r"\\?\UNC\server\share/project/:inner/=lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
+    }
+
+    #[test]
     fn test_fs_permissions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -5615,6 +5784,18 @@ mod tests {
             writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
         }
 
+        fn fake_endpoint_block_cache(
+            chain_path: &Path,
+            block_number: &str,
+            endpoint: &str,
+            size_bytes: usize,
+        ) {
+            let block_path = chain_path.join(block_number);
+            let file_path = block_path.join(format!("storage-{endpoint}.json"));
+            let mut file = File::create(file_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
+        }
+
         fn fake_block_cache_block_path_as_file(
             chain_path: &Path,
             block_number: &str,
@@ -5628,6 +5809,13 @@ mod tests {
         let chain_dir = tempdir()?;
 
         fake_block_cache(chain_dir.path(), "1", 100);
+        fake_endpoint_block_cache(
+            chain_dir.path(),
+            "1",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            50,
+        );
+        fake_endpoint_block_cache(chain_dir.path(), "1", "backup", 75);
         fake_block_cache(chain_dir.path(), "2", 500);
         fake_block_cache_block_path_as_file(chain_dir.path(), "3", 900);
         // Pollution file that should not show up in the cached block
@@ -5642,13 +5830,107 @@ mod tests {
         let block3 = &result.iter().find(|x| x.0 == "3").unwrap();
 
         assert_eq!(block1.0, "1");
-        assert_eq!(block1.1, 100);
+        assert_eq!(block1.1, 150);
         assert_eq!(block2.0, "2");
         assert_eq!(block2.1, 500);
         assert_eq!(block3.0, "3");
         assert_eq!(block3.1, 900);
 
         chain_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn list_cached_blocks_ignores_removed_entries() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let block_path = chain_dir.path().join("1");
+        fs::create_dir(&block_path)?;
+        File::create(block_path.join("storage.json"))?;
+
+        let block = fs::read_dir(chain_dir.path())?.next().unwrap()?;
+        let cache_file = fs::read_dir(&block_path)?.next().unwrap()?;
+        fs::remove_dir_all(block_path)?;
+
+        assert!(Config::get_cached_block(block)?.is_none());
+        assert!(Config::get_cache_file_size(cache_file)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ignore_not_found_propagates_other_errors() {
+        assert!(
+            Config::ignore_not_found::<()>(Err(io::Error::from(io::ErrorKind::NotFound)))
+                .unwrap()
+                .is_none()
+        );
+
+        let err =
+            Config::ignore_not_found::<()>(Err(io::Error::from(io::ErrorKind::PermissionDenied)))
+                .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn cache_listing_propagates_not_a_directory() -> eyre::Result<()> {
+        let cache_file = tempfile::NamedTempFile::new()?;
+
+        let err = Config::get_cached_blocks(cache_file.path()).unwrap_err();
+        assert_eq!(err.downcast_ref::<io::Error>().unwrap().kind(), io::ErrorKind::NotADirectory);
+
+        let err = Config::get_cached_block_explorer_data(cache_file.path()).unwrap_err();
+        assert_eq!(err.downcast_ref::<io::Error>().unwrap().kind(), io::ErrorKind::NotADirectory);
+        Ok(())
+    }
+
+    #[test]
+    fn list_cached_blocks_uses_replaced_entry_type() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let block_path = chain_dir.path().join("1");
+        File::create(&block_path)?;
+        let block = fs::read_dir(chain_dir.path())?.next().unwrap()?;
+
+        fs::remove_file(&block_path)?;
+        fs::create_dir(&block_path)?;
+        fs::write(block_path.join("storage.json"), [0; 10])?;
+
+        assert_eq!(Config::get_cached_block(block)?, Some(("1".to_string(), 10)));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_cached_blocks_ignores_symlinks() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let target_dir = tempdir()?;
+        fs::write(target_dir.path().join("storage.json"), [0; 10])?;
+        std::os::unix::fs::symlink(target_dir.path(), chain_dir.path().join("1"))?;
+
+        let block_path = chain_dir.path().join("2");
+        fs::create_dir(&block_path)?;
+        let target_file = tempfile::NamedTempFile::new()?;
+        fs::write(target_file.path(), [0; 10])?;
+        std::os::unix::fs::symlink(target_file.path(), block_path.join("storage.json"))?;
+
+        assert!(Config::get_cached_blocks(chain_dir.path())?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn list_etherscan_cache_ignores_removed_entries() -> eyre::Result<()> {
+        let cache_dir = tempdir()?;
+        let sources_path = cache_dir.path().join("sources");
+        fs::create_dir(&sources_path)?;
+        File::create(sources_path.join("metadata.json"))?;
+
+        let sources = fs::read_dir(cache_dir.path())?.next().unwrap()?;
+        let metadata = fs::read_dir(&sources_path)?.next().unwrap()?;
+        fs::remove_dir_all(sources_path)?;
+
+        assert!(Config::get_cached_entry_size(sources)?.is_none());
+        assert!(Config::get_cached_entry_size(metadata)?.is_none());
         Ok(())
     }
 
@@ -5931,6 +6213,7 @@ mod tests {
                 compact_labels = true
                 trace_depth = 3
                 decode_internal = true
+                external_identification_timeout = 9
 
                 [tracing.labels]
                 0x0000000000000000000000000000000000000002 = "Bob"
@@ -5944,6 +6227,7 @@ mod tests {
             assert_eq!(config.tracing.trace_depth, Some(3));
             assert!(config.tracing.decode_internal);
             assert!(config.tracing.compact_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 9);
             let labels = AddressHashMap::from_iter(vec![(
                 address!("0x0000000000000000000000000000000000000002"),
                 "Bob".to_string(),
@@ -5967,6 +6251,18 @@ mod tests {
     }
 
     #[test]
+    fn test_external_identification_timeout_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT", "0");
+
+            let config = Config::load().unwrap();
+
+            assert_eq!(config.tracing.external_identification_timeout, 0);
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_global_and_tracing_verbosity_are_independent() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -5984,6 +6280,7 @@ mod tests {
             assert_eq!(config.verbosity, 4);
             assert_eq!(config.tracing.verbosity, 0);
             assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.external_identification_timeout, 5);
 
             Ok(())
         });

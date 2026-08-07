@@ -145,6 +145,16 @@ casttest!(selectors_json_envelope, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(selectors_exclude_fallback_dispatch, |_prj, cmd| {
+    // Bytecode with ABI-dispatched selector 0x11111111 and fallback-dispatched selector 0x22222222.
+    let bytecode = "5f3560e01c806322222222146025576004361060215780631111111114602357005b005b005b00";
+
+    cmd.args(["selectors", bytecode]).assert_success().stdout_eq(str![[r#"
+0x11111111		payable
+
+"#]]);
+});
+
 casttest!(abi_encode_event_json_envelope, |_prj, cmd| {
     cmd.args([
         "abi-encode-event",
@@ -184,6 +194,28 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":["78","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
 
 "#]]);
+});
+
+casttest!(function_pointer_in_event_tuple, |_prj, cmd| {
+    let signature = "ActionLogged((uint256,function))";
+    let function = "0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90";
+    let action = format!("(1337,{function})");
+    let data = "0x000000000000000000000000000000000000000000000000000000000000053929088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000";
+
+    cmd.args(["abi-encode-event", signature, &action])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x413ec73c547fcf364943e3f9182965c6662c9bb75c94568d39ebb9f66d2cff4b
+[data]: 0x000000000000000000000000000000000000000000000000000000000000053929088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["decode-event", "--sig", signature, data]).assert_success().stdout_eq(
+        str![[r#"
+(1337, 0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90)
+
+"#]],
+    );
 });
 
 // tests cast can decode event with Openchain API

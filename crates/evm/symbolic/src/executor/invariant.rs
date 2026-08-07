@@ -114,6 +114,7 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
         state.world.clear_transaction_scoped_state();
+        state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.origin = sender;
@@ -139,6 +140,15 @@ impl SymbolicExecutor {
         while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+            }
+            if std::mem::take(&mut state.pending_storage_hook_revert) {
+                *completed_paths += 1;
+                outcomes.push(TopLevelCallOutcome {
+                    status: TopLevelCallStatus::Revert,
+                    return_data: state.return_data.clone(),
+                    state,
+                });
+                continue;
             }
             let _path_span =
                 trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())

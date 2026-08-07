@@ -450,6 +450,9 @@ interface Vm {
     function readLink(string calldata linkPath) external view returns (string memory targetPath);
     function record() external;
     function recordLogs() external;
+    function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;
+    function registerSloadHook(address target, bytes4 callback) external;
+    function registerSstoreHook(address target, bytes4 callback) external;
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
     function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
     function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);

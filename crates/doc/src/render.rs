@@ -5,6 +5,7 @@ use crate::{
     utils::Deployment,
 };
 use foundry_common::sh_warn;
+use markdown::{ParseOptions, mdast::Node, to_mdast};
 use solar::{
     ast::{
         CommentKind, ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError,
@@ -20,6 +21,7 @@ use solar::{
 use std::{
     collections::HashMap,
     fmt::Write as _,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -1054,36 +1056,132 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
+/// Byte ranges that MDX parses as code. An HTML entity would render literally inside these ranges,
+/// so neutralization skips them. If malformed MDX cannot be parsed, returning no ranges favors
+/// neutralizing possible ESM over preserving an invalid code example byte-for-byte.
+fn code_regions(text: &str) -> Vec<Range<usize>> {
+    let Ok(tree) = to_mdast(text, &ParseOptions::mdx()) else { return Vec::new() };
+    let mut regions = Vec::new();
+    collect_code_regions(&tree, &mut regions);
+    regions
+}
+
+/// Collect fenced and inline code positions from the MDX-aware syntax tree.
+fn collect_code_regions(node: &Node, regions: &mut Vec<Range<usize>>) {
+    if matches!(node, Node::Code(_) | Node::InlineCode(_))
+        && let Some(position) = node.position()
+    {
+        regions.push(position.start.offset..position.end.offset);
+    }
+    if let Some(children) = node.children() {
+        for child in children {
+            collect_code_regions(child, regions);
+        }
+    }
+}
+
+/// Logical lines and their byte offsets in the original text. CRLF is one separator; lone CR and
+/// LF are separators too. The separator bytes are excluded from the returned slices and preserved
+/// in the source string.
+fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let bytes = text.as_bytes();
+    let mut offset = 0;
+    std::iter::from_fn(move || {
+        if offset >= bytes.len() {
+            return None;
+        }
+        let start = offset;
+        let end = bytes[start..]
+            .iter()
+            .position(|&byte| byte == b'\n' || byte == b'\r')
+            .map_or(bytes.len(), |position| start + position);
+        offset = if end == bytes.len() {
+            end
+        } else if bytes[end] == b'\r' && bytes.get(end + 1) == Some(&b'\n') {
+            end + 2
+        } else {
+            end + 1
+        };
+        Some((start, &text[start..end]))
+    })
+}
+
+/// Check a position against sorted, merged ranges while advancing monotonically.
+fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize) -> bool {
+    while regions.get(*cursor).is_some_and(|region| region.end <= position) {
+        *cursor += 1;
+    }
+    regions.get(*cursor).is_some_and(|region| region.start <= position)
+}
+
+/// Neutralize any line MDX would parse as an ESM statement (`import ` or `export ` at column one):
+/// the keyword's prefix becomes HTML entities, so the line renders the same but no longer
+/// begins with an ESM token. NatSpec text can be inherited from a dependency via `@inheritdoc`, so
+/// this must run wherever displayed prose is assembled. A keyword that falls inside a Markdown
+/// code span or fenced code block is left untouched (see `code_regions`): the entity would render
+/// literally and corrupt the example, and MDX would not execute it there.
+fn neutralize_esm(text: &str) -> String {
+    let regions = code_regions(text);
+    let mut region_cursor = 0;
+    let mut copied = 0;
+    let mut out = String::with_capacity(text.len());
+
+    for (line_start, line) in logical_lines(text) {
+        let replacement = if line.starts_with("import ") {
+            Some(("&#105;&#109;", 2))
+        } else if line.starts_with("export ") {
+            Some(("&#101;", 1))
+        } else {
+            None
+        };
+        let Some((entity, prefix_len)) = replacement else { continue };
+        if region_contains(&regions, &mut region_cursor, line_start) {
+            continue;
+        }
+        out.push_str(&text[copied..line_start]);
+        out.push_str(entity);
+        copied = line_start + prefix_len;
+    }
+
+    out.push_str(&text[copied..]);
+    out
+}
+
 fn write_comment_block(out: &mut String, data: &CommentData) {
+    let mut block = String::new();
     if !data.titles.is_empty() {
         let label = if data.titles.len() == 1 { "Title" } else { "Titles" };
-        writeln!(out, "**{label}:** {}", data.titles.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.titles.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.authors.is_empty() {
         let label = if data.authors.len() == 1 { "Author" } else { "Authors" };
-        writeln!(out, "**{label}:** {}", data.authors.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.authors.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     // Render descriptions in source order (notices and devs interleaved, continuations joined).
     // `@dev` paragraphs are wrapped in `_..._` per paragraph so each multi-line block renders
     // as a single italic span (markdown emphasis cannot cross blank lines).
     for desc in &data.descriptions {
         match desc.kind {
-            DescKind::Notice => writeln!(out, "{}", desc.content).unwrap(),
-            DescKind::Dev => writeln!(out, "{}", italicize_dev(&desc.content)).unwrap(),
+            DescKind::Notice => writeln!(block, "{}", desc.content).unwrap(),
+            DescKind::Dev => writeln!(block, "{}", italicize_dev(&desc.content)).unwrap(),
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.customs.is_empty() {
         let label = if data.customs.len() == 1 { "Note" } else { "Notes" };
-        writeln!(out, "**{label}:**").unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:**").unwrap();
+        writeln!(block).unwrap();
         for (tag, content) in &data.customs {
-            writeln!(out, "- **{tag}:** {content}").unwrap();
+            writeln!(block, "- **{tag}:** {content}").unwrap();
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
+    // Neutralize the fully assembled block once: fence state stays continuous across the
+    // whole block, and every displayed line (authors, notices, custom notes), not just
+    // descriptions, is covered.
+    out.push_str(&neutralize_esm(&block));
 }
 
 fn write_code_block(out: &mut String, snippet: &str) {
@@ -1293,4 +1391,153 @@ fn dedent(s: &str) -> String {
         .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim() })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::neutralize_esm;
+    use markdown::{MdxSignal, ParseOptions, mdast::Node, to_mdast};
+
+    fn parse_mdx(text: &str) -> Node {
+        let mut options = ParseOptions::mdx();
+        options.mdx_esm_parse = Some(Box::new(|_| MdxSignal::Ok));
+        to_mdast(text, &options).unwrap()
+    }
+
+    fn contains_mdx_esm(node: &Node) -> bool {
+        matches!(node, Node::MdxjsEsm(_))
+            || node.children().is_some_and(|children| children.iter().any(contains_mdx_esm))
+    }
+
+    #[test]
+    fn preserves_line_endings_while_neutralizing_esm() {
+        assert_eq!(
+            neutralize_esm("Intro.\r\rexport const afterCarriageReturn = 1"),
+            "Intro.\r\r&#101;xport const afterCarriageReturn = 1"
+        );
+        for (input, expected) in [
+            (
+                "```\rimport inside\r```\rexport outside",
+                "```\rimport inside\r```\r&#101;xport outside",
+            ),
+            (
+                "```\r\nimport inside\r\n```\r\nexport outside",
+                "```\r\nimport inside\r\n```\r\n&#101;xport outside",
+            ),
+            (
+                "`example:\rimport inside`\rexport outside",
+                "`example:\rimport inside`\r&#101;xport outside",
+            ),
+            (
+                "`example:\r\nimport inside`\r\nexport outside",
+                "`example:\r\nimport inside`\r\n&#101;xport outside",
+            ),
+            (
+                "    ```\r    import inside\r    ```\rexport outside",
+                "    ```\r    import inside\r    ```\r&#101;xport outside",
+            ),
+            ("```\rinside\r    ```\rexport outside", "```\rinside\r    ```\r&#101;xport outside"),
+        ] {
+            assert_eq!(neutralize_esm(input), expected);
+        }
+        assert_eq!(
+            neutralize_esm("Intro.\r\nimport outside"),
+            "Intro.\r\n&#105;&#109;port outside"
+        );
+        assert_eq!(
+            neutralize_esm("export first\r\npréface `span:\rimport inside`\r\nimport last"),
+            "&#101;xport first\r\npréface `span:\rimport inside`\r\n&#105;&#109;port last"
+        );
+    }
+
+    #[test]
+    fn traverses_sorted_code_regions() {
+        let input = "`first`\n    ```\n    import inside fence\n    ```\n`last`\nexport outside";
+        let expected =
+            "`first`\n    ```\n    import inside fence\n    ```\n`last`\n&#101;xport outside";
+        assert_eq!(neutralize_esm(input), expected);
+    }
+
+    #[test]
+    fn preserves_code_across_mdx_edge_cases() {
+        for (input, expected) in [
+            (
+                "```\nimport inside\n```\nexport outside",
+                "```\nimport inside\n```\n&#101;xport outside",
+            ),
+            (
+                "```\n~~~\nimport inside\n```\nexport outside",
+                "```\n~~~\nimport inside\n```\n&#101;xport outside",
+            ),
+            (
+                "````\n```\nimport inside\n```\n````\nexport outside",
+                "````\n```\nimport inside\n```\n````\n&#101;xport outside",
+            ),
+            (
+                "```\nimport inside\n```suffix\nexport inside\n```\nimport outside",
+                "```\nimport inside\n```suffix\nexport inside\n```\n&#105;&#109;port outside",
+            ),
+            (
+                "`example:\nimport inside`\nexport outside",
+                "`example:\nimport inside`\n&#101;xport outside",
+            ),
+            (
+                "```\ninside\n    ```\n```\nimport inside second\n```\nexport outside",
+                "```\ninside\n    ```\n```\nimport inside second\n```\n&#101;xport outside",
+            ),
+            (
+                "- ```\n  import inside list\n  ```\n\nexport outside",
+                "- ```\n  import inside list\n  ```\n\n&#101;xport outside",
+            ),
+            (
+                "    ```\n    import inside indented\n    ```\nexport outside",
+                "    ```\n    import inside indented\n    ```\n&#101;xport outside",
+            ),
+            ("    ```\n    import inside unclosed", "    ```\n    import inside unclosed"),
+        ] {
+            assert_eq!(neutralize_esm(input), expected, "input:\n{input}");
+        }
+    }
+
+    #[test]
+    fn neutralized_output_contains_no_mdx_esm() {
+        let input = "import injected from \"x\"\n\n```js\nexport const example = 1\n```";
+        assert!(contains_mdx_esm(&parse_mdx(input)));
+
+        let output = neutralize_esm(input);
+        assert_eq!(
+            output,
+            "&#105;&#109;port injected from \"x\"\n\n```js\nexport const example = 1\n```"
+        );
+
+        let tree = parse_mdx(&output);
+        assert!(!contains_mdx_esm(&tree), "{tree:#?}");
+        assert!(tree.children().is_some_and(|children| {
+            children.iter().any(
+                |node| matches!(node, Node::Code(code) if code.value == "export const example = 1"),
+            )
+        }));
+    }
+
+    #[test]
+    fn leaves_non_esm_prefixes_unchanged() {
+        let input = "important\nexporter\nimport_\nexport$\nImport value\nExport value\n    import value\n\t export value\nimport(value)\nexport: value\nimport\tvalue";
+        assert_eq!(neutralize_esm(input), input);
+    }
+
+    #[test]
+    fn neutralizes_only_exact_mdx_esm_prefixes() {
+        assert_eq!(
+            neutralize_esm("import value\nexport value\nimport  value\nexport  value"),
+            "&#105;&#109;port value\n&#101;xport value\n&#105;&#109;port  value\n&#101;xport  value"
+        );
+    }
+
+    #[test]
+    fn neutralizes_many_candidates_across_many_code_regions() {
+        let input = "`code`\nexport outside\n".repeat(10_000);
+        let output = neutralize_esm(&input);
+        assert_eq!(output.matches("`code`").count(), 10_000);
+        assert_eq!(output.matches("&#101;xport outside").count(), 10_000);
+    }
 }

@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         erc20::build_provider_with_signer,
-        send::{cast_send, cast_send_with_access_key},
+        send::{cast_send, cast_send_raw, cast_send_with_tempo_wallet},
         tip20::mine,
     },
     tempo,
@@ -163,12 +163,17 @@ async fn register(
     let (signer, tempo_access_key) =
         tempo::resolve_session_or_wallet_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id())
             .await?;
-    let signer = signer.ok_or_else(|| {
-        eyre::eyre!("cast vaddr create requires a signer (for example --private-key or --from)")
-    })?;
-
-    let sender =
-        tempo_access_key.as_ref().map(|ak| ak.wallet_address).unwrap_or_else(|| signer.address());
+    let sender = match &tempo_access_key {
+        Some(wallet) => wallet.account(),
+        None => signer
+            .as_ref()
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "cast vaddr create requires a signer (for example --private-key or --from)"
+                )
+            })?
+            .address(),
+    };
 
     if sender != owner {
         eyre::bail!(
@@ -186,7 +191,7 @@ async fn register(
     sh_status!("Submitting registerVirtualMaster({salt})...")?;
 
     if let Some(ref access_key) = tempo_access_key {
-        tempo::fill_access_key_transaction(
+        let prepared = tempo::fill_access_key_transaction(
             &provider,
             &mut tx,
             access_key,
@@ -195,50 +200,44 @@ async fn register(
         )
         .await?;
         if shell::is_json() {
-            // JSON mode bypasses `cast_send_with_access_key`, so report the selection here.
+            // JSON mode bypasses `cast_send_with_tempo_wallet`, so report the selection here.
             let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(access_key.wallet_address),
+                Some(prepared.account()),
             )
             .await?;
             maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
-            let raw_tx = tx
-                .sign_with_access_key(
+            let raw_tx = tx.sign_with_tempo_wallet(&prepared).await?;
+            let (tx_hash, _) = cast_send_raw(&provider, &raw_tx, send_tx.sync).await?;
+            if !send_tx.sync {
+                wait_for_receipt_if_needed(
                     &provider,
-                    &signer,
-                    access_key.wallet_address,
-                    access_key.key_address,
-                    access_key.key_authorization.as_ref(),
+                    tx_hash,
+                    send_tx.cast_async,
+                    send_tx.confirmations,
+                    timeout,
                 )
                 .await?;
-            let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-            wait_for_receipt_if_needed(
-                &provider,
-                tx_hash,
-                send_tx.cast_async,
-                send_tx.confirmations,
-                timeout,
-            )
-            .await?;
+            }
             Ok(tx_hash)
         } else {
-            cast_send_with_access_key(
+            cast_send_with_tempo_wallet(
                 &provider,
                 tx,
-                &signer,
-                access_key,
+                &prepared,
                 Some(chain),
                 None,
                 send_tx.cast_async,
+                send_tx.sync,
                 send_tx.confirmations,
                 timeout,
                 !config.eth_rpc_curl,
             )
             .await
         }
-    } else {
+    } else if let Some(signer) = signer {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         // Fill only the fees; the provider fills nonce and gas limit.
         fill_transaction_gas_fees(
@@ -289,6 +288,10 @@ async fn register(
             )
             .await
         }
+    } else {
+        Err(eyre::eyre!(
+            "cast vaddr create requires a signer (for example --private-key or --from)"
+        ))
     }
 }
 

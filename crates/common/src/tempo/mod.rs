@@ -20,7 +20,6 @@ use tempo_primitives::TempoAddressExt;
 
 mod keystore;
 mod lane;
-mod registry;
 mod session;
 mod session_policy;
 #[cfg(test)]
@@ -42,7 +41,7 @@ pub use tip20::{
 };
 
 #[cfg(test)]
-pub(crate) use test_utils::{test_env_mutex, with_tempo_home};
+pub(crate) use test_utils::test_env_mutex;
 
 #[cfg(test)]
 mod tests;
@@ -51,17 +50,6 @@ mod tests;
 fn redacted_debug(value: &str) -> &'static str {
     if value.trim().is_empty() { "<empty>" } else { "<redacted>" }
 }
-
-/// Conservative gas buffer for browser wallet transactions on Tempo chains.
-///
-/// Browser wallets may sign with P256 or WebAuthn instead of secp256k1, which costs more gas
-/// for signature verification. Since we can't determine the signature type before signing,
-/// we add the worst-case (WebAuthn) overhead:
-///   - P256: +5,000 gas (P256 precompile cost minus ecrecover savings)
-///   - WebAuthn: ~6,500 gas (P256 cost + calldata for webauthn_data)
-///
-/// See <https://github.com/tempoxyz/tempo/blob/6ebf1a8/crates/revm/src/handler.rs#L108-L124>
-pub const TEMPO_BROWSER_GAS_BUFFER: u64 = 7_000;
 
 /// Reserved Tempo TIP20 fee-token addresses created during Foundry genesis.
 ///
@@ -227,7 +215,7 @@ fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
-const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
+pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
     match fee_token {
         PATH_USD_ADDRESS => Some("PathUSD"),
         ALPHA_USD_ADDRESS => Some("AlphaUSD"),

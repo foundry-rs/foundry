@@ -6,8 +6,12 @@ use foundry_compilers::{
     solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
 use foundry_config::Config;
+#[cfg(windows)]
+use path_slash::PathExt as _;
 use rayon::prelude::*;
 use solar::{interface::MIN_SOLIDITY_VERSION, sema::ParsingContext};
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt as _;
 use std::{
     collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -266,6 +270,22 @@ pub fn configure_pcx_from_compile_output(
     Ok(())
 }
 
+/// Converts a Windows path to Solar's slash form while retaining path prefixes and trailing
+/// directory boundaries.
+#[cfg(windows)]
+fn solar_slash_path(path: &Path) -> String {
+    let has_trailing_separator = path
+        .as_os_str()
+        .encode_wide()
+        .last()
+        .is_some_and(|c| c == u16::from(b'/') || c == u16::from(b'\\'));
+    let mut path = path.to_slash_lossy().into_owned();
+    if has_trailing_separator && !path.ends_with('/') {
+        path.push('/');
+    }
+    path
+}
+
 /// Configures a [`ParsingContext`] from [`ProjectPathsConfig`] and [`SolcVersionedInput`].
 ///
 /// - Configures include paths, remappings.
@@ -283,7 +303,11 @@ pub fn configure_pcx_from_solc(
             .sources
             .par_iter()
             .filter_map(|(path, source)| {
-                pcx.sess.source_map().new_source_file(path.clone(), source.content.as_str()).ok()
+                #[cfg(windows)]
+                let path = PathBuf::from(solar_slash_path(path));
+                #[cfg(not(windows))]
+                let path = path.clone();
+                pcx.sess.source_map().new_source_file(path, source.content.as_str()).ok()
             })
             .collect::<Vec<_>>();
         pcx.add_files(sources);
@@ -298,11 +322,33 @@ fn configure_pcx_from_solc_cli(
     pcx.file_resolver
         .set_current_dir(cli_settings.base_path.as_ref().unwrap_or(&project_paths.root));
     for remapping in &project_paths.remappings {
+        let context = remapping.context.clone().unwrap_or_default();
+        // Solar compares the context directly with the parent source path. Match the slash form
+        // used above instead of allowing mixed Windows separators to change prefix semantics.
+        #[cfg(windows)]
+        let context = solar_slash_path(Path::new(&context));
         pcx.file_resolver.add_import_remapping(solar::sema::interface::config::ImportRemapping {
-            context: remapping.context.clone().unwrap_or_default(),
+            context,
             prefix: remapping.name.clone(),
             path: remapping.path.clone(),
         });
     }
     pcx.file_resolver.add_include_paths(cli_settings.include_paths.iter().cloned());
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn solar_slash_path_preserves_windows_prefixes_and_boundaries() {
+        for (path, expected) in [
+            (r"lib\outer\", "lib/outer/"),
+            (r"\\server\share\project/", r"\\server\share/project/"),
+            (r"\\?\C:\project/", r"\\?\C:/project/"),
+            (r"\\?\UNC\server\share\project/", r"\\?\UNC\server\share/project/"),
+        ] {
+            assert_eq!(solar_slash_path(Path::new(path)), expected);
+        }
+    }
 }

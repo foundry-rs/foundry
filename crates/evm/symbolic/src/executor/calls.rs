@@ -810,6 +810,12 @@ impl SymbolicExecutor {
                 {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
+                    CheatcodeOutcome::Revert(ret) => {
+                        state.return_data = ret;
+                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        return Ok(StepOutcome::Continue);
+                    }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
                 }
@@ -857,11 +863,16 @@ impl SymbolicExecutor {
             }
         }
 
+        if matches!(kind, CallKind::DelegateCall) && state.prank.has_active() {
+            return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
+        }
+        let (call_caller, call_caller_word, pranked_origin) = state.prank_for_next_call();
         if matches!(kind, CallKind::Call)
             && !self.prepare_value_transfer(
                 executor,
                 state,
                 worklist,
+                call_caller,
                 value.clone(),
                 out_offset.clone(),
                 &out_size,
@@ -882,6 +893,7 @@ impl SymbolicExecutor {
                     worklist,
                     kind,
                     to,
+                    call_caller,
                     value,
                     out_offset,
                     &out_size,
@@ -899,7 +911,7 @@ impl SymbolicExecutor {
                 Some(return_data) => {
                     state.return_data = return_data;
                     if matches!(kind, CallKind::Call) {
-                        state.world.transfer(&mut self.cx, executor, state.address, to, value);
+                        state.world.transfer(&mut self.cx, executor, call_caller, to, value);
                     }
                     state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
                     state.stack.push(SymExpr::one(&mut self.cx))?;
@@ -916,7 +928,7 @@ impl SymbolicExecutor {
         let child_code = state.world.extcode(&mut self.cx, executor, code_address)?;
         if child_code.is_empty() {
             if matches!(kind, CallKind::Call) {
-                state.world.transfer(&mut self.cx, executor, state.address, to, value);
+                state.world.transfer(&mut self.cx, executor, call_caller, to, value);
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
@@ -935,10 +947,6 @@ impl SymbolicExecutor {
                     .cloned()
             })
             .unwrap_or_else(|| SymExpr::constant(&mut self.cx, address_word(to)));
-        if matches!(kind, CallKind::DelegateCall) && state.prank.has_active() {
-            return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
-        }
-        let (pranked_caller, pranked_caller_word, pranked_origin) = state.prank_for_next_call();
         let frame = match kind {
             CallKind::Call => {
                 let mut frame = CallFrame::new(
@@ -946,13 +954,13 @@ impl SymbolicExecutor {
                     to,
                     code_address,
                     to,
-                    pranked_caller,
+                    call_caller,
                     value.clone(),
                     state.is_static,
                     calldata,
                 );
                 frame.address_word = callee_address_word;
-                frame.caller_word = pranked_caller_word;
+                frame.caller_word = call_caller_word;
                 frame
             }
             CallKind::StaticCall => {
@@ -962,13 +970,13 @@ impl SymbolicExecutor {
                     to,
                     code_address,
                     to,
-                    pranked_caller,
+                    call_caller,
                     value,
                     true,
                     calldata,
                 );
                 frame.address_word = callee_address_word;
-                frame.caller_word = pranked_caller_word;
+                frame.caller_word = call_caller_word;
                 frame
             }
             CallKind::DelegateCall => {
@@ -992,13 +1000,13 @@ impl SymbolicExecutor {
                     state.address,
                     code_address,
                     state.storage_address,
-                    pranked_caller,
+                    call_caller,
                     value.clone(),
                     state.is_static,
                     calldata,
                 );
                 frame.address_word = state.address_word.clone();
-                frame.caller_word = pranked_caller_word;
+                frame.caller_word = call_caller_word;
                 frame
             }
         };
@@ -1010,7 +1018,7 @@ impl SymbolicExecutor {
             child.origin_word = origin_word;
         }
         if matches!(kind, CallKind::Call) {
-            child.world.transfer(&mut self.cx, executor, state.address, to, value);
+            child.world.transfer(&mut self.cx, executor, call_caller, to, value);
         }
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
@@ -1025,6 +1033,10 @@ impl SymbolicExecutor {
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
             parent.inherit_branch_target_progress(&outcome.state);
+            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
+            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
+            parent.inherit_mapping_hook_provenance(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -1126,6 +1138,7 @@ impl SymbolicExecutor {
         worklist: &mut VecDeque<PathState>,
         kind: CallKind,
         to: Address,
+        call_caller: Address,
         value: SymExpr,
         out_offset: SymExpr,
         out_size: &BoundedCopySize,
@@ -1134,7 +1147,15 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         if let Some(outcome) = kzg_constrained_outcome(&mut self.cx, state, &input, &input_len)? {
             self.apply_precompile_outcome(
-                executor, state, kind, to, value, out_offset, out_size, outcome,
+                executor,
+                state,
+                kind,
+                to,
+                call_caller,
+                value,
+                out_offset,
+                out_size,
+                outcome,
             )?;
             return Ok(StepOutcome::Continue);
         }
@@ -1167,6 +1188,7 @@ impl SymbolicExecutor {
                     &mut failure,
                     kind,
                     to,
+                    call_caller,
                     value.clone(),
                     out_offset.clone(),
                     out_size,
@@ -1181,6 +1203,7 @@ impl SymbolicExecutor {
                     state,
                     kind,
                     to,
+                    call_caller,
                     value,
                     out_offset,
                     out_size,
@@ -1196,6 +1219,7 @@ impl SymbolicExecutor {
                     state,
                     kind,
                     to,
+                    call_caller,
                     value,
                     out_offset,
                     out_size,
@@ -1206,7 +1230,15 @@ impl SymbolicExecutor {
             (false, true) => {
                 state.constraints = failure_constraints;
                 self.apply_precompile_outcome(
-                    executor, state, kind, to, value, out_offset, out_size, None,
+                    executor,
+                    state,
+                    kind,
+                    to,
+                    call_caller,
+                    value,
+                    out_offset,
+                    out_size,
+                    None,
                 )?;
                 Ok(StepOutcome::Continue)
             }
@@ -1222,6 +1254,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         kind: CallKind,
         to: Address,
+        call_caller: Address,
         value: SymExpr,
         out_offset: SymExpr,
         out_size: &BoundedCopySize,
@@ -1231,7 +1264,7 @@ impl SymbolicExecutor {
             Some(return_data) => {
                 state.return_data = return_data;
                 if matches!(kind, CallKind::Call) {
-                    state.world.transfer(&mut self.cx, executor, state.address, to, value);
+                    state.world.transfer(&mut self.cx, executor, call_caller, to, value);
                 }
                 state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
                 state.stack.push(SymExpr::one(&mut self.cx))?;
@@ -1245,11 +1278,13 @@ impl SymbolicExecutor {
         Ok(())
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn prepare_value_transfer<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
+        from: Address,
         value: SymExpr,
         out_offset: SymExpr,
         out_size: &BoundedCopySize,
@@ -1258,7 +1293,7 @@ impl SymbolicExecutor {
             return Ok(true);
         }
 
-        let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
+        let balance = state.world.balance_word_for_address(&mut self.cx, executor, from);
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
@@ -1410,24 +1445,23 @@ impl SymbolicExecutor {
             let mut branch = state.clone();
             branch.constraints = outside_constraints;
 
+            if matches!(kind, CallKind::DelegateCall) && branch.prank.has_active() {
+                return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
+            }
+            let (call_caller, _, _) = branch.prank_for_next_call();
             if matches!(kind, CallKind::Call) {
                 if self.prepare_value_transfer(
                     executor,
                     &mut branch,
                     &mut parents,
+                    call_caller,
                     value.clone(),
                     out_offset.clone(),
                     &out_size,
                 )? {
                     let symbolic_target = target;
                     let to = branch.world.symbolic_address_slot(symbolic_target);
-                    branch.world.transfer(
-                        &mut self.cx,
-                        executor,
-                        branch.address,
-                        to,
-                        value.clone(),
-                    );
+                    branch.world.transfer(&mut self.cx, executor, call_caller, to, value.clone());
                     branch.return_data = SymReturnData::empty(&mut self.cx);
                     branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     branch.stack.push(SymExpr::one(&mut self.cx))?;

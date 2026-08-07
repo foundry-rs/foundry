@@ -752,7 +752,7 @@ async fn test_debug_trace_call_tx_index() {
         let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
     }
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block_number = provider.get_block_number().await.unwrap();
 
     let get_value = simple_storage_contract.getValue();
@@ -780,6 +780,60 @@ async fn test_debug_trace_call_tx_index() {
             _ => unreachable!(),
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_reports_transaction_gas() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+
+    let first = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(to).value(U256::from(1)).nonce(nonce),
+        ))
+        .await
+        .unwrap();
+    let second = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(to).value(U256::from(2)).nonce(nonce + 1),
+        ))
+        .await
+        .unwrap();
+
+    api.mine_one().await.unwrap();
+    let first_receipt = first.get_receipt().await.unwrap();
+    let second_receipt = second.get_receipt().await.unwrap();
+    assert_eq!(first_receipt.block_hash, second_receipt.block_hash);
+
+    let default_trace = api
+        .debug_trace_transaction(
+            second_receipt.transaction_hash,
+            GethDebugTracingOptions::default(),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(default_frame) = default_trace else {
+        unreachable!("expected default trace")
+    };
+    assert_eq!(default_frame.gas, second_receipt.gas_used);
+
+    let call_trace = api
+        .debug_trace_transaction(
+            second_receipt.transaction_hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+    let GethTrace::CallTracer(call_frame) = call_trace else { unreachable!("expected call trace") };
+    assert_eq!(call_frame.gas_used, U256::from(second_receipt.gas_used));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1809,7 +1863,7 @@ async fn test_trace_replay_block_transactions_local() {
     let tx2 = WithOtherFields::new(tx2);
     let pending_tx2 = provider.send_transaction(tx2).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let receipt1 = pending_tx1.get_receipt().await.unwrap();
     let receipt2 = pending_tx2.get_receipt().await.unwrap();
 

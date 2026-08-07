@@ -1,12 +1,13 @@
 use crate::{
     EvmEnv, FoundryBlock, FoundryTransaction,
     constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::CreateFork,
+    fork::{CreateFork, ResolvedFork},
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
-use alloy_network::{AnyNetwork, BlockResponse, Network};
+use alloy_eips::BlockNumHash;
+use alloy_network::{AnyNetwork, BlockResponse, Network, primitives::HeaderResponse};
 use alloy_primitives::{Address, B256, BlockNumber, ChainId, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, anvil::NodeInfo};
@@ -128,6 +129,19 @@ impl EvmOpts {
         Ok(self.fork_block_number)
     }
 
+    /// Resolves the configured fork selector without changing it.
+    pub async fn resolve_fork(&self) -> eyre::Result<Option<ResolvedFork>> {
+        let Some(fork_url) = &self.fork_url else { return Ok(None) };
+        let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
+        let (_, block) = self.resolve_fork_block(&provider).await?;
+        Ok(Some(ResolvedFork::new(
+            fork_url,
+            self.fork_headers.as_deref(),
+            self.fork_block_number,
+            block,
+        )))
+    }
+
     /// Returns whether the configured CREATE2 deployer can be used for library linking.
     ///
     /// Locally Foundry can only install its canonical deployer. On forks, any deployer with code
@@ -146,6 +160,45 @@ impl EvmOpts {
             .block_id(BlockId::number(block))
             .await?
             .is_empty())
+    }
+
+    /// Returns whether the configured CREATE2 deployer existed at the resolved fork block.
+    pub async fn can_use_create2_deployer_resolved(
+        &self,
+        fork: Option<&ResolvedFork>,
+    ) -> eyre::Result<bool> {
+        let Some(_) = &self.fork_url else {
+            eyre::ensure!(fork.is_none(), "resolved fork provided without a configured fork");
+            return Ok(self.create2_deployer == DEFAULT_CREATE2_DEPLOYER);
+        };
+        let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
+        let provider = self.provider_for_resolved_fork::<AnyNetwork>(fork)?;
+        Ok(!provider
+            .get_code_at(self.create2_deployer)
+            .block_id(fork.exact_block_id())
+            .await?
+            .is_empty())
+    }
+
+    /// Returns whether `fork` was resolved from the currently configured source and selector.
+    pub fn resolved_fork_matches(&self, fork: &ResolvedFork) -> bool {
+        self.fork_url.as_deref().is_some_and(|fork_url| {
+            fork.matches(fork_url, self.fork_headers.as_deref(), self.fork_block_number)
+        })
+    }
+
+    /// Returns a provider configured for an already resolved fork.
+    pub fn provider_for_resolved_fork<N: Network>(
+        &self,
+        fork: &ResolvedFork,
+    ) -> eyre::Result<RootProvider<N>> {
+        eyre::ensure!(
+            self.resolved_fork_matches(fork),
+            "resolved fork does not match the configured source and selector"
+        );
+        self.fork_provider_with_url(
+            self.fork_url.as_deref().expect("a matching resolved fork requires a fork URL"),
+        )
     }
 
     /// Returns a `RootProvider` for the given fork URL configured with options in `self` and
@@ -210,14 +263,59 @@ impl EvmOpts {
     >(
         &self,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX, Option<BlockNumber>)> {
+        let (evm_env, tx, fork) = self.env_resolved().await?;
+        Ok((evm_env, tx, fork.as_ref().map(ResolvedFork::number)))
+    }
+
+    /// Returns the EVM and transaction environments with their resolved fork context.
+    pub async fn env_resolved<
+        SPEC: Into<SpecId> + Default + Copy,
+        BLOCK: FoundryBlock + Default,
+        TX: FoundryTransaction + Default,
+    >(
+        &self,
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX, Option<ResolvedFork>)> {
         if let Some(ref fork_url) = self.fork_url {
             let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
-            let ((evm_env, block_number), tx) =
-                tokio::try_join!(self.fork_evm_env(&provider), self.fork_tx_env(&provider))?;
-            Ok((evm_env, tx, Some(block_number)))
+            let ((evm_env, block), tx) = tokio::try_join!(
+                self.fork_evm_env_resolved(&provider),
+                self.fork_tx_env(&provider)
+            )?;
+            Ok((
+                evm_env,
+                tx,
+                Some(ResolvedFork::new(
+                    fork_url,
+                    self.fork_headers.as_deref(),
+                    self.fork_block_number,
+                    block,
+                )),
+            ))
         } else {
             Ok((self.local_evm_env(), self.local_tx_env(), None))
         }
+    }
+
+    /// Returns the EVM and transaction environments at an already resolved fork.
+    pub async fn env_with_resolved_fork<
+        SPEC: Into<SpecId> + Default + Copy,
+        BLOCK: FoundryBlock + Default,
+        TX: FoundryTransaction + Default,
+    >(
+        &self,
+        fork: Option<&ResolvedFork>,
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX)> {
+        let Some(_) = &self.fork_url else {
+            eyre::ensure!(fork.is_none(), "resolved fork provided without a configured fork");
+            return Ok((self.local_evm_env(), self.local_tx_env()));
+        };
+        let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
+        let provider = self.provider_for_resolved_fork::<AnyNetwork>(fork)?;
+        let (evm_env, tx) = tokio::try_join!(
+            self.fork_evm_env_at_resolved(&provider, fork),
+            self.fork_tx_env(&provider)
+        )?;
+        Ok((evm_env, tx))
     }
 
     /// Returns the [`EvmEnv`] (cfg + block) and [`BlockNumber`] fetched from the fork endpoint via
@@ -231,6 +329,20 @@ impl EvmOpts {
         &self,
         provider: &P,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, BlockNumber)> {
+        let (evm_env, block) = self.fork_evm_env_resolved(provider).await?;
+        Ok((evm_env, block.number))
+    }
+
+    /// Returns the EVM environment and block identity fetched from the fork endpoint.
+    async fn fork_evm_env_resolved<
+        SPEC: Into<SpecId> + Default + Copy,
+        BLOCK: FoundryBlock + Default,
+        N: Network,
+        P: Provider<N>,
+    >(
+        &self,
+        provider: &P,
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, BlockNumHash)> {
         trace!(
             memory_limit = %self.memory_limit,
             override_chain_id = ?self.env.chain_id,
@@ -242,32 +354,39 @@ impl EvmOpts {
             "creating fork environment"
         );
 
-        let bn = match self.fork_block_number {
-            Some(bn) => BlockNumberOrTag::Number(bn),
+        let (chain_id, (block, fork_block)) = tokio::try_join!(
+            async {
+                option_try_or_else(self.env.chain_id, async || provider.get_chain_id().await)
+                    .await
+                    .wrap_err_with(|| self.fork_env_error_context())
+            },
+            self.resolve_fork_block(provider)
+        )?;
+
+        Ok((self.fork_env_from_block::<SPEC, BLOCK, N>(chain_id, &block), fork_block))
+    }
+
+    async fn resolve_fork_block<N: Network, P: Provider<N>>(
+        &self,
+        provider: &P,
+    ) -> eyre::Result<(N::BlockResponse, BlockNumHash)> {
+        let block_number = match self.fork_block_number {
+            Some(block_number) => BlockNumberOrTag::Number(block_number),
             None => BlockNumberOrTag::Latest,
         };
-
-        let (chain_id, block) = tokio::try_join!(
-            option_try_or_else(self.env.chain_id, async || provider.get_chain_id().await),
-            provider.get_block_by_number(bn)
-        )
-        .wrap_err_with(|| {
-            let mut msg = "could not instantiate forked environment".to_string();
-            if let Some(fork_url) = self.fork_url.as_deref()
-                && let Ok(url) = Url::parse(fork_url)
-                && let Some(host) = url.host()
-            {
-                write!(msg, " with provider {host}").unwrap();
-            }
-            msg
-        })?;
+        let block = provider
+            .get_block_by_number(block_number)
+            .await
+            .wrap_err_with(|| self.fork_env_error_context())?;
 
         let Some(block) = block else {
-            let bn_msg = match bn {
-                BlockNumberOrTag::Number(bn) => format!("block number: {bn}"),
-                bn => format!("{bn} block"),
+            let block_number_message = match block_number {
+                BlockNumberOrTag::Number(block_number) => {
+                    format!("block number: {block_number}")
+                }
+                block_number => format!("{block_number} block"),
             };
-            let latest_msg = if let Ok(latest_block) = provider.get_block_number().await {
+            let latest_message = if let Ok(latest_block) = provider.get_block_number().await {
                 if let Some(block_number) = self.fork_block_number
                     && block_number <= latest_block
                 {
@@ -277,18 +396,67 @@ impl EvmOpts {
             } else {
                 Default::default()
             };
-            eyre::bail!("failed to get {bn_msg}{latest_msg}");
+            eyre::bail!("failed to get {block_number_message}{latest_message}");
         };
 
-        let block_number = block.header().number();
+        let fork_block = BlockNumHash::new(block.header().number(), block.header().hash());
+        Ok((block, fork_block))
+    }
+
+    fn fork_env_error_context(&self) -> String {
+        let mut message = "could not instantiate forked environment".to_string();
+        if let Some(fork_url) = self.fork_url.as_deref()
+            && let Ok(url) = Url::parse(fork_url)
+            && let Some(host) = url.host()
+        {
+            write!(message, " with provider {host}").unwrap();
+        }
+        message
+    }
+
+    async fn fork_evm_env_at_resolved<
+        SPEC: Into<SpecId> + Default + Copy,
+        BLOCK: FoundryBlock + Default,
+        N: Network,
+        P: Provider<N>,
+    >(
+        &self,
+        provider: &P,
+        expected: &ResolvedFork,
+    ) -> eyre::Result<EvmEnv<SPEC, BLOCK>> {
+        let (chain_id, block) = tokio::try_join!(
+            option_try_or_else(self.env.chain_id, async || provider.get_chain_id().await),
+            provider.get_block_by_hash(expected.hash())
+        )
+        .wrap_err("could not instantiate resolved fork environment")?;
+        let block =
+            block.ok_or_else(|| eyre::eyre!("failed to get block hash: {}", expected.hash()))?;
+        let actual = BlockNumHash::new(block.header().number(), block.header().hash());
+        eyre::ensure!(
+            actual == expected.block(),
+            "resolved fork block changed: expected {expected:?}, got {actual:?}"
+        );
+
+        Ok(self.fork_env_from_block::<SPEC, BLOCK, N>(chain_id, &block))
+    }
+
+    fn fork_env_from_block<
+        SPEC: Into<SpecId> + Default + Copy,
+        BLOCK: FoundryBlock + Default,
+        N: Network,
+    >(
+        &self,
+        chain_id: ChainId,
+        block: &N::BlockResponse,
+    ) -> EvmEnv<SPEC, BLOCK> {
         let mut evm_env = EvmEnv {
             cfg_env: self.cfg_env(chain_id),
             block_env: block_env_from_header(block.header()),
         };
 
-        apply_chain_and_block_specific_env_changes::<N, _, _>(&mut evm_env, &block, self.networks);
+        apply_chain_and_block_specific_env_changes::<N, _, _>(&mut evm_env, block, self.networks);
 
-        Ok((evm_env, block_number))
+        evm_env
     }
 
     /// Returns the [`EvmEnv`] configured with only local settings.
@@ -495,6 +663,10 @@ async fn option_try_or_else<T, E>(
 
 #[cfg(test)]
 mod tests {
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::bytes;
+    use alloy_rpc_types::TransactionRequest;
+    use alloy_serde::WithOtherFields;
     use revm::context::{BlockEnv, TxEnv};
 
     use super::*;
@@ -557,6 +729,91 @@ mod tests {
 
         let err = evm_opts.can_use_create2_deployer(None).await.unwrap_err();
         assert!(err.to_string().contains("fork block must be resolved"));
+    }
+
+    #[test]
+    fn resolved_fork_matches_source_headers_and_selector() {
+        let headers = vec!["Authorization: one".to_string()];
+        let fork = ResolvedFork::new(
+            "http://127.0.0.1:1",
+            Some(&headers),
+            None,
+            BlockNumHash::new(1, B256::ZERO),
+        );
+        let mut evm_opts = EvmOpts {
+            fork_url: Some("http://127.0.0.1:1".to_string()),
+            fork_headers: Some(headers),
+            ..Default::default()
+        };
+
+        assert!(evm_opts.resolved_fork_matches(&fork));
+        let debug = format!("{fork:?}");
+        assert!(!debug.contains("127.0.0.1"));
+        assert!(!debug.contains("Authorization"));
+        assert!(!debug.contains("one"));
+
+        evm_opts.fork_headers = Some(vec!["Authorization: two".to_string()]);
+        assert!(!evm_opts.resolved_fork_matches(&fork));
+
+        evm_opts.fork_headers = Some(vec!["Authorization: one".to_string()]);
+        evm_opts.fork_block_number = Some(1);
+        assert!(!evm_opts.resolved_fork_matches(&fork));
+
+        evm_opts.fork_block_number = None;
+        evm_opts.fork_url = Some("http://127.0.0.1:2".to_string());
+        assert!(!evm_opts.resolved_fork_matches(&fork));
+
+        let fork =
+            ResolvedFork::new("http://127.0.0.1:1", None, None, BlockNumHash::new(1, B256::ZERO));
+        evm_opts.fork_url = Some("http://127.0.0.1:1".to_string());
+        evm_opts.fork_headers = Some(Vec::new());
+        assert!(evm_opts.resolved_fork_matches(&fork));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create2_deployer_preflight_uses_exact_fork_hash() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+
+        let init_code = bytes!("6001600c60003960016000f300");
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).with_deploy_code(init_code),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let deployer = receipt.contract_address.unwrap();
+        let block_number = receipt.block_number.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(block_number),
+            create2_deployer: deployer,
+            ..Default::default()
+        };
+        let (_, _, fork) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let fork = fork.unwrap();
+        assert!(evm_opts.can_use_create2_deployer_resolved(Some(&fork)).await.unwrap());
+
+        provider
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        let replacement = provider.get_block_by_number(block_number.into()).await.unwrap().unwrap();
+        assert_ne!(replacement.header().hash(), fork.hash());
+        assert!(
+            !evm_opts.can_use_create2_deployer(Some(block_number)).await.unwrap(),
+            "the replacement block must not contain the deployer"
+        );
+
+        assert!(
+            !matches!(evm_opts.can_use_create2_deployer_resolved(Some(&fork)).await, Ok(false)),
+            "the exact lookup fell back to the replacement block"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

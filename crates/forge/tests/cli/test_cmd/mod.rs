@@ -3,6 +3,7 @@
 use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, U256};
 use anvil::{NodeConfig, spawn};
+use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, rpc_endpoints},
@@ -10,6 +11,8 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
+#[cfg(unix)]
+use std::fs;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod brutalize;
@@ -463,6 +466,138 @@ forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
         .stdout_eq(file!["../../fixtures/SimpleContractTestNonVerbose.json": Json]);
 });
 
+forgetest!(can_write_json_results_without_changing_stdout, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
+
+    let json_path = prj.root().join("test-results.json");
+    cmd.forge_fuse().args(["test", "--json-file"]).arg(&json_path).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Simple.t.sol:SimpleContractTest
+[PASS] test() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+
+    let results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&json_path).unwrap()).unwrap();
+    let result = &results["src/Simple.t.sol:SimpleContractTest"]["test_results"]["test()"];
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["logs"], serde_json::json!([]));
+
+    let json_stdout = cmd
+        .forge_fuse()
+        .args(["test", "-vvvv", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    cmd.forge_fuse().args(["test", "-vvvv", "--json-file"]).arg(&json_path).assert_success();
+    let mut stdout_results: serde_json::Value = serde_json::from_slice(&json_stdout).unwrap();
+    let mut file_results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&json_path).unwrap()).unwrap();
+    for results in [&mut stdout_results, &mut file_results] {
+        let suite = &mut results["src/Simple.t.sol:SimpleContractTest"];
+        suite.as_object_mut().unwrap().remove("duration");
+        suite["test_results"]["test()"].as_object_mut().unwrap().remove("duration");
+    }
+    assert_eq!(file_results, stdout_results);
+
+    prj.add_test(
+        "Failing.t.sol",
+        r#"
+contract FailingTest {
+    function testFail() public pure {
+        require(false, "boom");
+    }
+}
+"#,
+    );
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "testFail", "--json-file"])
+        .arg(&json_path)
+        .assert_failure();
+    let failed_results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(json_path).unwrap()).unwrap();
+    assert_eq!(
+        failed_results["test/Failing.t.sol:FailingTest"]["test_results"]["testFail()"]["status"],
+        "Failure"
+    );
+});
+
+forgetest!(json_file_fail_fast_preserves_completed_suites, |prj, cmd| {
+    prj.add_test(
+        "Failing.t.sol",
+        r#"
+interface VmFail {
+    function sleep(uint256 milliseconds) external;
+}
+
+contract FailingTest {
+    VmFail constant vm = VmFail(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testBreaks() public {
+        // Let both suites start, but finish this one first.
+        vm.sleep(100);
+        require(false, "boom");
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Passing.t.sol",
+        r#"
+interface VmPass {
+    function sleep(uint256 milliseconds) external;
+}
+
+contract PassingTest {
+    VmPass constant vm = VmPass(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testPass() public {
+        // Complete after the failing suite has stopped console output.
+        vm.sleep(500);
+    }
+}
+"#,
+    );
+
+    let json_path = prj.root().join("test-results.json");
+    let output = cmd
+        .args(["test", "--fail-fast", "-j", "2", "--json-file"])
+        .arg(&json_path)
+        .assert_failure();
+
+    assert!(
+        json_path.exists(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.get_output().stdout),
+        String::from_utf8_lossy(&output.get_output().stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(!stdout.contains("Ran 1 test for test/Passing.t.sol:PassingTest"));
+    assert!(stdout.contains("Encountered a total of 1 failing tests, 0 tests succeeded"));
+
+    let results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(json_path).unwrap()).unwrap();
+    assert_eq!(
+        results["test/Failing.t.sol:FailingTest"]["test_results"]["testBreaks()"]["status"],
+        "Failure"
+    );
+    assert_eq!(
+        results["test/Passing.t.sol:PassingTest"]["test_results"]["testPass()"]["status"],
+        "Success"
+    );
+});
+
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
@@ -591,7 +726,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-forgetest_init!(rejects_library_key_collisions_across_versions, |prj, cmd| {
+forgetest_init!(links_library_artifacts_across_versions, |prj, cmd| {
     prj.wipe_contracts();
     prj.update_config(|config| config.solc = None);
 
@@ -640,16 +775,189 @@ contract OldTest {{
         ),
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
-Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
-
-"#]]);
+    cmd.arg("test").assert_success();
 
     prj.update_config(|config| config.create2_deployer = Address::ZERO);
-    cmd.forge_fuse().arg("test").assert_failure().stderr_eq(str![[r#"
-Error: multiple library artifacts resolve to the same key src/Lib.sol:Lib
+    cmd.forge_fuse().arg("test").assert_success();
+});
 
-"#]]);
+forgetest_init!(links_library_artifacts_across_compiler_profiles, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "Lib.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+library Lib {
+    function identity(uint256 value) external pure returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Prod.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import "src/Lib.sol";
+
+contract Prod {
+    function identity(uint256 value) external view returns (uint256) {
+        return Lib.identity(value);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Profiles.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import "src/Lib.sol";
+import "src/Prod.sol";
+
+contract ProfilesTest {
+    function testProfiles() public {
+        require(Lib.identity(1) == 1);
+        require(new Prod().identity(2) == 2);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "prod".to_string(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: Some(true),
+            optimizer_runs: Some(1),
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: GlobMatcher::from_str("src/Prod.sol").unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: Some(1),
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+
+    cmd.arg("test").assert_success();
+    assert!(prj.artifacts().join("Lib.sol/Lib.json").exists());
+    assert!(prj.artifacts().join("Lib.sol/Lib.prod.json").exists());
+
+    prj.update_config(|config| config.create2_deployer = Address::ZERO);
+    cmd.forge_fuse().arg("test").assert_success();
+});
+
+#[cfg(unix)]
+forgetest_init!(links_libraries_through_workspace_symlinks, |prj, cmd| {
+    let workspace = prj.root().join("workspace");
+    let airdrops = workspace.join("airdrops");
+    let libraries = workspace.join("library/src/libraries");
+    let package_scope = workspace.join("node_modules/@workspace");
+    fs::create_dir_all(airdrops.join("src")).unwrap();
+    fs::create_dir_all(airdrops.join("test")).unwrap();
+    fs::create_dir_all(&libraries).unwrap();
+    fs::create_dir_all(&package_scope).unwrap();
+    std::os::unix::fs::symlink("../../library", package_scope.join("library")).unwrap();
+
+    fs::write(
+        airdrops.join("foundry.toml"),
+        r#"
+[profile.default]
+allow_paths = ["../"]
+src = "src"
+test = "test"
+out = "out"
+remappings = ["@workspace/=../node_modules/@workspace/"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        libraries.join("Math.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+library Math {
+    function increment(uint256 value) external pure returns (uint256) {
+        return value + 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        libraries.join("Helpers.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Math} from "./Math.sol";
+
+library Helpers {
+    function addTwo(uint256 value) external pure returns (uint256) {
+        return Math.increment(Math.increment(value));
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        airdrops.join("src/Consumer.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Helpers} from "@workspace/library/src/libraries/Helpers.sol";
+
+contract Consumer {
+    function addTwo(uint256 value) external pure returns (uint256) {
+        return Helpers.addTwo(value);
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        airdrops.join("test/Consumer.t.sol"),
+        r#"
+pragma solidity >=0.8.0;
+
+import {Consumer} from "../src/Consumer.sol";
+
+contract ConsumerTest {
+    function testAddTwo() external {
+        Consumer consumer = new Consumer();
+        require(consumer.addTwo(1) == 3);
+    }
+}
+"#,
+    )
+    .unwrap();
+    cmd.current_dir(&airdrops).arg("build").assert_success();
+    cmd.forge_fuse().current_dir(&airdrops).arg("test").assert_success();
+    cmd.forge_fuse()
+        .current_dir(&airdrops)
+        .args(["test", "--create2-deployer", "0x0000000000000000000000000000000000000000"])
+        .assert_success();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(airdrops.join("foundry.toml")).unwrap(),
+        "libraries = [\"../library/src/libraries/Helpers.sol:Helpers:0x1111111111111111111111111111111111111111\"]"
+    )
+    .unwrap();
+    let stdout = cmd
+        .forge_fuse()
+        .current_dir(&airdrops)
+        .args(["test", "-vvvv"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("0x1111111111111111111111111111111111111111"), "{stdout}");
 });
 
 forgetest_init!(create2_factory_is_installed_after_constructor_when_no_libraries, |prj, cmd| {
@@ -975,6 +1283,29 @@ contract BlobForkTest is Test {
     );
 
     cmd.args(["test", "-vvvv"]).assert_success();
+});
+
+// https://github.com/foundry-rs/foundry/issues/10689
+forgetest_init!(flaky_roll_fork_arbitrum_priority_fee_above_max_fee, |prj, cmd| {
+    let endpoint = "https://arb-mainnet.g.alchemy.com/public";
+
+    prj.add_test(
+        "ArbitrumFork.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ArbitrumForkTest is Test {
+    function test_rollFork() public {
+        uint256 forkId = vm.createFork("<url>");
+        bytes32 txHash = 0x2e43e9ececcbb9cd08ce061edc3b4d39ca2b0ba480034e5f4650ba0065bf6b62;
+        vm.rollFork(forkId, txHash);
+    }
+}
+    "#
+        .replace("<url>", endpoint),
+    );
+
+    cmd.arg("test").assert_success();
 });
 
 // https://github.com/foundry-rs/foundry/issues/6579
@@ -1863,6 +2194,133 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(failed_fuzz_test_shows_only_failure_logs, |prj, cmd| {
+    let persist_dir = prj.cache().parent().unwrap().join("persist");
+    prj.update_config(|config| {
+        config.fuzz.runs = 5;
+        config.fuzz.show_logs = false;
+        config.fuzz.failure_persist_dir = Some(persist_dir);
+    });
+    prj.add_test(
+        "FuzzLogs.t.sol",
+        r#"
+contract FuzzLogsTest {
+    event log_named_uint(string key, uint256 value);
+
+    function testFuzzLogs(uint256 value) public {
+        if (value == 154) {
+            emit log_named_uint("FAILING CASE", value);
+            revert("target value");
+        }
+        emit log_named_uint("SUCCESSFUL CASE", value);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--match-test",
+        "testFuzzLogs",
+        "--fuzz-seed",
+        "1",
+        "--threads",
+        "1",
+        "-vv",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  FAILING CASE: 154
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    prj.update_config(|config| config.fuzz.runs = 128);
+    prj.add_test(
+        "FuzzLogs.t.sol",
+        r#"
+interface Vm {
+    function sleep(uint256 duration) external;
+}
+
+contract FuzzLogsTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    event log_named_uint(string key, uint256 value);
+
+    function testFuzzLogs(uint256 value) public {
+        if (value == 154) {
+            emit log_named_uint("FAILING CASE", value);
+            vm.sleep(100);
+            revert("target value");
+        }
+        emit log_named_uint("SUCCESSFUL CASE", value);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzzLogs",
+            "--fuzz-seed",
+            "1",
+            "--threads",
+            "2",
+            "-vv",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: [..], [AVG_GAS])
+Logs:
+  FAILING CASE: 154
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/FuzzLogs.t.sol:FuzzLogsTest
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: [..], [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+});
+
 // tests that `forge test` with inline config `show_logs = false` for fuzz tests will
 // still display `console.log` from the last run at verbosity >= 2 (issue #11039)
 forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
@@ -2373,7 +2831,7 @@ Traces:
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [558957] PauseTracingTest::test()
+  [558945] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
     ├─ [48460] TraceGenerator::generate()
@@ -2842,8 +3300,8 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
 
     cmd.args(["test", "--junit"]).assert_failure().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="6" failures="2" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0" errors="0" failures="2" time="[..]">
+<testsuites name="Test run" tests="6" skipped="2" failures="2" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" skipped="0" errors="0" failures="2" time="[..]">
         <testcase name="test_junit_assert_fail()" time="[..]">
             <failure message="panic: assertion failed (0x01)"/>
             <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
@@ -2854,7 +3312,7 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
-    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" disabled="2" errors="0" failures="0" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" skipped="2" errors="0" failures="0" time="[..]">
         <testcase name="test_junit_pass()" time="[..]">
             <system-out>[PASS] test_junit_pass() ([GAS])</system-out>
         </testcase>
@@ -2895,8 +3353,8 @@ contract JunitReportTest is Test {
 
     cmd.args(["test", "--junit", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="1" failures="0" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0" failures="0" time="[..]">
+<testsuites name="Test run" tests="1" skipped="0" failures="0" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" skipped="0" errors="0" failures="0" time="[..]">
         <testcase name="test_junit_with_logs()" time="[..]">
             <system-out>[PASS] test_junit_with_logs() ([GAS])/nLogs:/n  Step1/n  Step2/n  Step3/n</system-out>
         </testcase>

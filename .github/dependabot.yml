@@ -2,6 +2,10 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    labels:
+      - dependencies
+      - github_actions
+      - L-ignore
     schedule:
       interval: weekly
       day: monday
