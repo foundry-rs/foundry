@@ -132,6 +132,11 @@ enum MutationType {
     Suffix,
     Abi,
     Cmp,
+    CrossoverInsert,
+    CrossoverReplace,
+    Insert,
+    Delete,
+    Swap,
 }
 
 impl SequenceGenerator {
@@ -192,6 +197,11 @@ impl SequenceGenerator {
             weights.mutation_weight_suffix,
             weights.mutation_weight_abi,
             weights.mutation_weight_cmp,
+            weights.mutation_weight_crossover_insert,
+            weights.mutation_weight_crossover_replace,
+            weights.mutation_weight_insert,
+            weights.mutation_weight_delete,
+            weights.mutation_weight_swap,
         ];
         let mutations =
             WeightedIndex::new(all).map_err(|e| eyre!("invalid corpus mutation weights: {e}"))?;
@@ -323,7 +333,12 @@ impl SequenceGenerator {
             3 => MutationType::Prefix,
             4 => MutationType::Suffix,
             5 => MutationType::Abi,
-            _ => MutationType::Cmp,
+            6 => MutationType::Cmp,
+            7 => MutationType::CrossoverInsert,
+            8 => MutationType::CrossoverReplace,
+            9 => MutationType::Insert,
+            10 => MutationType::Delete,
+            _ => MutationType::Swap,
         };
         let a = runner.rng().random_range(0..corpus_len);
         let b = runner.rng().random_range(0..corpus_len);
@@ -415,6 +430,55 @@ impl SequenceGenerator {
                             )?
                         }
                     }
+                }
+                (seq, i)
+            }
+            MutationType::CrossoverInsert | MutationType::CrossoverReplace => {
+                let i = if runner.rng().random() { a } else { b };
+                let base = if i == a { primary } else { secondary };
+                let donor = if i == a { secondary } else { primary };
+                let mut seq = base.transactions.to_vec();
+                let donor = donor.transactions
+                    [runner.rng().random_range(0..donor.transactions.len())]
+                .clone();
+                if matches!(kind, MutationType::CrossoverInsert) {
+                    let index = runner.rng().random_range(0..=seq.len());
+                    seq.insert(index, donor);
+                } else {
+                    let index = runner.rng().random_range(0..seq.len());
+                    seq[index] = donor;
+                }
+                (seq, i)
+            }
+            MutationType::Insert => {
+                let i = if runner.rng().random() { a } else { b };
+                let base = if i == a { primary } else { secondary };
+                let mut seq = base.transactions.to_vec();
+                let index = runner.rng().random_range(0..=seq.len());
+                seq.insert(index, self.tx.next_tx(runner)?);
+                (seq, i)
+            }
+            MutationType::Delete => {
+                let i = if runner.rng().random() { a } else { b };
+                let base = if i == a { primary } else { secondary };
+                let mut seq = base.transactions.to_vec();
+                if seq.len() > 1 {
+                    let index = runner.rng().random_range(0..seq.len());
+                    seq.remove(index);
+                }
+                (seq, i)
+            }
+            MutationType::Swap => {
+                let i = if runner.rng().random() { a } else { b };
+                let base = if i == a { primary } else { secondary };
+                let mut seq = base.transactions.to_vec();
+                if seq.len() >= 2 {
+                    let first = runner.rng().random_range(0..seq.len());
+                    let mut second = runner.rng().random_range(0..seq.len() - 1);
+                    if second >= first {
+                        second += 1;
+                    }
+                    seq.swap(first, second);
                 }
                 (seq, i)
             }
@@ -661,6 +725,11 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
         };
         match kind {
             0 => weights.mutation_weight_splice = 1,
@@ -669,7 +738,12 @@ mod tests {
             3 => weights.mutation_weight_prefix = 1,
             4 => weights.mutation_weight_suffix = 1,
             5 => weights.mutation_weight_abi = 1,
-            _ => weights.mutation_weight_cmp = 1,
+            6 => weights.mutation_weight_cmp = 1,
+            7 => weights.mutation_weight_crossover_insert = 1,
+            8 => weights.mutation_weight_crossover_replace = 1,
+            9 => weights.mutation_weight_insert = 1,
+            10 => weights.mutation_weight_delete = 1,
+            _ => weights.mutation_weight_swap = 1,
         }
         weights
     }
@@ -940,6 +1014,11 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 1,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
         };
         let generator = SequenceGenerator::invariant(
             generator_tx(9),
