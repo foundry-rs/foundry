@@ -158,6 +158,13 @@ forgetest!(testdata, |_prj, cmd| {
     orig_assert.success();
 });
 
+#[cfg(feature = "monad")]
+forgetest!(monad_testdata, |_prj, cmd| {
+    setup_testdata_cmd(&mut cmd);
+    cmd.args(["test", "--network", "monad", "--mc=(MonadStakingTest|MonadReserveBalanceTest)"])
+        .assert_success();
+});
+
 // Run flaky testdata contracts excluded from the main `testdata` test above.
 // Picked up by the nightly `test-flaky` workflow via `cargo nextest run --profile flaky`.
 forgetest!(flaky_testdata, |_prj, cmd| {
@@ -4455,7 +4462,7 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; HTTP error 401 with body: [..]
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; failed to determine network family from endpoint; HTTP error 401 with body: [..]
 
 ...
 

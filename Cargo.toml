@@ -537,6 +537,17 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "76908150fc56bc6
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "76908150fc56bc6dcb91ecbb8a424939f8acef4c" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "76908150fc56bc6dcb91ecbb8a424939f8acef4c" }
 
+# Monad
+alloy-monad-evm = { version = "0.5.0", default-features = false, features = [
+    "std",
+    "memory_limit",
+] }
+monad-revm = { version = "0.5.1", default-features = false, features = [
+    "std",
+    "serde",
+    "memory_limit",
+] }
+
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # testing

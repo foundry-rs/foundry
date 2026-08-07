@@ -1,5 +1,7 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
+#[cfg(feature = "monad")]
+use std::collections::BTreeSet;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -27,6 +29,8 @@ use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
     StateSnapshot,
 };
+#[cfg(feature = "monad")]
+use foundry_evm::hardfork::MonadHardfork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
@@ -47,6 +51,16 @@ use crate::mem::storage::MinedTransaction;
 
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
 pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
+
+/// Execution inputs needed to replay a locally stored Monad block faithfully.
+#[cfg(feature = "monad")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonadBlockReplayProfile {
+    /// Chain ID active when the block was executed.
+    pub execution_chain_id: u64,
+    /// Monad hardfork active when the block was executed.
+    pub hardfork: MonadHardfork,
+}
 
 /// Inserts a block hash, discards entries outside the EVM-visible cache, and returns its head.
 pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, hash: B256) -> U256 {
@@ -706,6 +720,17 @@ pub struct SerializableState {
     pub blocks: Vec<SerializableBlock>,
     #[serde(default)]
     pub transactions: Vec<SerializableTransaction>,
+    /// Authoritative Monad senders and EIP-7702 authorities for locally stored blocks.
+    ///
+    /// This metadata can differ from transaction-body recovery when signature impersonation was
+    /// used, so it is preserved even while the corresponding transaction bodies are retained.
+    #[cfg(feature = "monad")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub monad_block_participants: BTreeMap<B256, BTreeSet<Address>>,
+    /// Execution profile used for each locally stored Monad block.
+    #[cfg(feature = "monad")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub monad_block_replay_profiles: BTreeMap<B256, MonadBlockReplayProfile>,
     /// Historical states of accounts and storage at particular block hashes.
     ///
     /// Note: This is an Option for backwards compatibility.

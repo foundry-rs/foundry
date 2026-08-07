@@ -141,7 +141,7 @@ fn append_deposit_requests(
 pub struct FoundryReceiptBuilder;
 
 impl FoundryReceiptBuilder {
-    fn wrap_receipt(
+    const fn wrap_receipt(
         tx_type: FoundryTxType,
         receipt: ReceiptWithBloom<Receipt>,
     ) -> FoundryReceiptEnvelope {
@@ -153,7 +153,7 @@ impl FoundryReceiptBuilder {
             FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
             #[cfg(feature = "optimism")]
             FoundryTxType::Deposit => {
-                unreachable!("deposit receipts require fork-specific metadata")
+                panic!("deposit receipts require fork-specific metadata")
             }
             #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
@@ -306,6 +306,54 @@ impl<E> AnvilBlockExecutor<E> {
     }
 }
 
+impl<E> AnvilBlockExecutor<E>
+where
+    E: Evm<
+            DB: StateDB,
+            Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
+        >,
+{
+    /// Executes a transaction without committing it, using the supplied network-specific
+    /// transaction entry point.
+    pub(crate) fn execute_transaction_without_commit_with<T, F>(
+        &mut self,
+        tx: T,
+        transact: F,
+    ) -> Result<AnvilTxResult<E::HaltReason>, BlockExecutionError>
+    where
+        T: ExecutableTx<Self>,
+        F: FnOnce(
+            &mut E,
+            E::Tx,
+            B256,
+        ) -> Result<ResultAndState<E::HaltReason>, BlockExecutionError>,
+    {
+        let (tx_env, tx) = tx.into_parts();
+
+        let block_available_gas = self.evm.block().gas_limit() - self.gas_used;
+        if tx.tx().gas_limit() > block_available_gas {
+            return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                transaction_gas_limit: tx.tx().gas_limit(),
+                block_available_gas,
+            }
+            .into());
+        }
+
+        let sender = *tx.signer();
+        let transaction_hash = tx.tx().trie_hash();
+        let result = transact(&mut self.evm, tx_env, transaction_hash)?;
+
+        Ok(AnvilTxResult {
+            inner: EthTxResult {
+                result,
+                blob_gas_used: tx.tx().blob_gas_used().unwrap_or_default(),
+                tx_type: tx.tx().tx_type(),
+            },
+            sender,
+        })
+    }
+}
+
 impl<E> BlockExecutor for AnvilBlockExecutor<E>
 where
     E: Evm<
@@ -361,31 +409,8 @@ where
         &mut self,
         tx: impl ExecutableTx<Self>,
     ) -> Result<Self::Result, BlockExecutionError> {
-        let (tx_env, tx) = tx.into_parts();
-
-        let block_available_gas = self.evm.block().gas_limit() - self.gas_used;
-        if tx.tx().gas_limit() > block_available_gas {
-            return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                transaction_gas_limit: tx.tx().gas_limit(),
-                block_available_gas,
-            }
-            .into());
-        }
-
-        let sender = *tx.signer();
-
-        let result = self.evm.transact(tx_env).map_err(|err| {
-            let hash = tx.tx().trie_hash();
-            BlockExecutionError::evm(err, hash)
-        })?;
-
-        Ok(AnvilTxResult {
-            inner: EthTxResult {
-                result,
-                blob_gas_used: tx.tx().blob_gas_used().unwrap_or_default(),
-                tx_type: tx.tx().tx_type(),
-            },
-            sender,
+        self.execute_transaction_without_commit_with(tx, |evm, tx_env, transaction_hash| {
+            evm.transact(tx_env).map_err(|err| BlockExecutionError::evm(err, transaction_hash))
         })
     }
 
@@ -509,12 +534,35 @@ pub struct PoolTxGasConfig {
     pub is_cancun: bool,
 }
 
+/// Hooks invoked around each candidate transaction's execution.
+pub struct PoolTransactionHooks<BeforeTransaction, ExecuteTransaction, OnExecutionError> {
+    /// Runs after validation and immediately before execution.
+    pub before_transaction: BeforeTransaction,
+    /// Executes the candidate through the network-specific transaction entry point.
+    pub execute_transaction: ExecuteTransaction,
+    /// Runs when execution fails before the candidate can be included.
+    pub on_execution_error: OnExecutionError,
+}
+
+/// Executes a pool candidate through the block executor's ordinary transaction entry point.
+pub(crate) fn execute_pool_transaction<B>(
+    executor: &mut B,
+    tx_env: <B::Evm as Evm>::Tx,
+    recovered: Recovered<B::Transaction>,
+    _is_replay: bool,
+) -> Result<B::Result, BlockExecutionError>
+where
+    B: BlockExecutor,
+{
+    executor.execute_transaction_without_commit((tx_env, recovered))
+}
+
 /// Executes pool transactions against a block executor, handling validation,
 /// execution, commit, inspector drain, and result collection.
 ///
 /// This is the shared core of `do_mine_block` and `with_pending_block`.
 #[allow(clippy::type_complexity)]
-pub fn execute_pool_transactions<B>(
+pub fn execute_pool_transactions<B, BeforeTransaction, ExecuteTransaction, OnExecutionError>(
     executor: &mut B,
     pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
     gas_config: &PoolTxGasConfig,
@@ -524,6 +572,7 @@ pub fn execute_pool_transactions<B>(
         &PoolTransaction<B::Transaction>,
         &AccountInfo,
     ) -> Result<(), InvalidTransactionError>,
+    hooks: &mut PoolTransactionHooks<BeforeTransaction, ExecuteTransaction, OnExecutionError>,
 ) -> ExecutedPoolTransactions<B::Transaction>
 where
     B: BlockExecutor<
@@ -533,6 +582,14 @@ where
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
     <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
+    BeforeTransaction: FnMut(&mut B::Evm, &<B::Evm as Evm>::Tx),
+    ExecuteTransaction: FnMut(
+        &mut B,
+        <B::Evm as Evm>::Tx,
+        Recovered<B::Transaction>,
+        bool,
+    ) -> Result<B::Result, BlockExecutionError>,
+    OnExecutionError: FnMut(&mut B::Evm),
 {
     let gas_limit = executor.evm().block().gas_limit();
 
@@ -602,9 +659,10 @@ where
 
         let nonce = account.nonce;
 
+        (hooks.before_transaction)(executor.evm_mut(), &tx_env);
         let recovered = Recovered::new_unchecked(pending.transaction.as_ref().clone(), sender);
         trace!(target: "backend", "[{:?}] executing", pool_tx.hash());
-        match executor.execute_transaction_without_commit((tx_env, recovered)) {
+        match (hooks.execute_transaction)(executor, tx_env, recovered, pool_tx.is_replay) {
             Ok(result) => {
                 let exec_result = result.result().result.clone();
                 let gas_used = result.result().result.tx_gas_used();
@@ -663,6 +721,8 @@ where
                 transactions.push(pending.transaction.clone());
             }
             Err(err) => {
+                (hooks.on_execution_error)(executor.evm_mut());
+                executor.evm_mut().inspector_mut().discard_transaction(inspector_config);
                 if err.as_validation().is_some() {
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
                     invalid.push(pool_tx.clone());

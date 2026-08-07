@@ -955,6 +955,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(NetworkVariant::Ethereum) => {
                     SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?
                 }
+                #[cfg(feature = "monad")]
+                Some(NetworkVariant::Monad) => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
                 // Without an explicit `--network` override, decode with the Foundry envelope,
                 // which dispatches on the EIP-2718 type byte for the transaction types compiled
                 // into `FoundryNetwork`, including Tempo txs (`0x76`).
