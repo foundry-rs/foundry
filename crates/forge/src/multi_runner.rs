@@ -855,6 +855,7 @@ impl MultiContractRunnerBuilder {
             self.symbolic_artifact_replay.as_ref(),
         );
         let empty_filter = EmptyTestFilter::default();
+        let resolver = linker.resolver();
 
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
@@ -872,7 +873,8 @@ impl MultiContractRunnerBuilder {
                 };
 
                 let artifact_libraries = artifact_libraries.get(id).unwrap_or(&libraries);
-                let library_addresses = linker.linked_library_addresses(id, artifact_libraries)?;
+                let library_addresses =
+                    resolver.linked_library_addresses(id, artifact_libraries)?;
 
                 deployable_contracts.insert(
                     id.clone(),
