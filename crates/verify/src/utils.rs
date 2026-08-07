@@ -223,12 +223,13 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64)
-        || (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
+    // The only caller reaches this with a `Config` from `load_config`, which has run
+    // `normalize_optimizer_settings`, so `optimizer_runs` is always set by now.
+    if let Some(local_runs) = local_settings.optimizer_runs
+        && etherscan_settings.runs != local_runs as u64
     {
         let str = format!(
-            "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
+            "Optimizer runs mismatch: local={local_runs}, onchain={}",
             etherscan_settings.runs
         );
         mismatches.push(str);
