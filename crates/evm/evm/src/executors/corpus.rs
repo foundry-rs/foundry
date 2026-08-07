@@ -419,7 +419,6 @@ fn accept_synced_corpus_file(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CorpusInsertionMode {
     Live,
-    MemoryOnly,
     WorkerSync,
 }
 
@@ -1156,7 +1155,7 @@ impl WorkerCorpus {
         edges_covered: Vec<usize>,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
-        let _ = self.process_inputs_inner(
+        self.process_inputs_inner(
             inputs,
             cmp_seq,
             new_coverage,
@@ -1176,7 +1175,7 @@ impl WorkerCorpus {
         edges_covered: Vec<usize>,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
-        let _ = self.process_inputs_inner(
+        self.process_inputs_inner(
             inputs,
             cmp_seq,
             new_coverage,
@@ -1195,8 +1194,6 @@ impl WorkerCorpus {
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
         insertion_mode: CorpusInsertionMode,
     ) {
-        let persist_now =
-            matches!(insertion_mode, CorpusInsertionMode::Live | CorpusInsertionMode::WorkerSync);
         // Check if this run improved the optimization value.
         let improved_optimization = optimization.as_ref().is_some_and(|(value, _)| {
             self.optimization_best_value.is_none_or(|best| *value > best)
@@ -1207,9 +1204,7 @@ impl WorkerCorpus {
         {
             self.optimization_best_value = Some(value);
             self.optimization_best_sequence = best_seq;
-            if persist_now {
-                self.persist_optimization_state();
-            }
+            self.persist_optimization_state();
         }
 
         if !self.config.is_coverage_guided() {
@@ -1254,9 +1249,7 @@ impl WorkerCorpus {
     }
 
     fn insert_corpus_entry(&mut self, corpus: CorpusEntry, insertion_mode: CorpusInsertionMode) {
-        if matches!(insertion_mode, CorpusInsertionMode::Live | CorpusInsertionMode::WorkerSync)
-            && let Some(worker_dir) = &self.worker_dir
-        {
+        if let Some(worker_dir) = &self.worker_dir {
             let worker_corpus = worker_dir.join(CORPUS_DIR);
             let disk_entry = CorpusDirEntry {
                 path: worker_corpus.join(corpus.file_name(self.config.corpus_gzip)),
@@ -1402,38 +1395,28 @@ impl WorkerCorpus {
     pub(crate) fn time_since_new_edge(&self) -> Option<Duration> {
         self.last_new_edge_at.map(|at| at.elapsed())
     }
-    /// Converts replayable observed sub-calls into one normal multi-transaction corpus entry.
-    ///
-    /// This captures calls shaped by a handler or another target call and lets the existing corpus
-    /// machinery mutate, evict, sync, and persist them like any other interesting sequence.
-    pub fn hoist_observed_calls(
+    /// Adds replayable observed calls to the generation dictionary without promoting them to the
+    /// coverage corpus.
+    pub(crate) fn observe_calls(
         &mut self,
         observed: &[ObservedCall],
-        parent_tx: &BasicTxDetails,
         targeted_contracts: &FuzzRunIdentifiedContracts,
-        insertion_mode: CorpusInsertionMode,
-    ) {
+        depth: ObservedCallDepth,
+    ) -> usize {
         if !self.config.is_coverage_guided() || observed.is_empty() {
-            return;
+            return 0;
         }
 
-        let tx_seq = {
+        let calls = {
             let targets = targeted_contracts.targets();
-            sequence_from_observed(
-                observed,
-                &targets,
-                ObservedCallDepth::All,
-                Some((parent_tx.warp, parent_tx.roll)),
-            )
+            sequence_from_observed(observed, &targets, depth, None)
         };
-
-        self.push_observed_sequence(tx_seq, insertion_mode)
+        calls.into_iter().filter(|call| self.sequence_generator.observe_call(call.clone())).count()
     }
 
-    /// Seeds the corpus from sibling zero-input unit tests by replaying them on a clone of the
-    /// post-setUp executor and keeping the direct replayable calls made by each test.
+    /// Seeds the observed-call dictionary from sibling zero-input unit tests.
     ///
-    /// Returns the number of test-derived corpus entries added.
+    /// Returns the number of test-derived calls added. These are not corpus entries.
     pub fn seed_from_test_traces<FEN: FoundryEvmNetwork>(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
@@ -1445,6 +1428,12 @@ impl WorkerCorpus {
         }
 
         let mut added = 0;
+        // Test traces may nominate useful observed-call shapes, but they are not campaign
+        // executions. Keep their coverage accounting isolated so a later fuzzed execution can
+        // still discover and persist the same coverage.
+        let mut test_history_map = self.history_map.clone();
+        let mut test_edge_indices = self.edge_indices.clone();
+        let mut test_sancov_history_map = self.sancov_history_map.clone();
 
         for func in invariant_contract.abi.functions() {
             if !func.is_unit_test() {
@@ -1465,53 +1454,42 @@ impl WorkerCorpus {
 
             let exec = executor.clone();
 
-            let raw = match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO)
-            {
-                Ok(raw) => raw,
-                Err(_) => continue,
-            };
+            let mut raw =
+                match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO) {
+                    Ok(raw) => raw,
+                    Err(_) => continue,
+                };
             if raw.reverted {
                 continue;
             }
 
+            // Retain only shapes that add coverage to the test-seed snapshot. Do not merge that
+            // coverage into the campaign state: otherwise subsequent fuzzed calls are no longer
+            // novel and never enter the persisted corpus.
+            let (new_coverage, _) = raw.merge_all_coverage_with_edges_into(
+                &mut test_history_map,
+                &mut test_edge_indices,
+                &mut test_sancov_history_map,
+                SANCOV_EDGE_OFFSET,
+                &mut Vec::new(),
+            );
+            if !new_coverage {
+                continue;
+            }
             let observed = raw.observed_calls;
             if observed.is_empty() {
                 continue;
             }
 
-            let seq = {
-                let targets = targeted_contracts.targets();
-                sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
-            };
-
-            let insertion_mode = if self.id == 0 {
-                CorpusInsertionMode::Live
-            } else {
-                CorpusInsertionMode::MemoryOnly
-            };
-            let len_before = self.in_memory_corpus.len();
-            let _ = self.push_observed_sequence(seq, insertion_mode);
-            if self.in_memory_corpus.len() > len_before {
-                debug!(target: "corpus", test = %func.name, "seeded corpus sequence from test trace");
-                added += 1;
+            let count =
+                self.observe_calls(&observed, targeted_contracts, ObservedCallDepth::DirectOnly);
+            if count > 0 {
+                debug!(target: "corpus", test = %func.name, count, "seeded observed calls from test trace");
+                added += count;
             }
         }
 
         Ok(added)
-    }
-
-    fn push_observed_sequence(
-        &mut self,
-        tx_seq: Vec<BasicTxDetails>,
-        insertion_mode: CorpusInsertionMode,
-    ) {
-        if !self.config.is_coverage_guided() || tx_seq.is_empty() {
-            return;
-        }
-
-        let corpus = CorpusEntry::new(tx_seq);
-
-        self.insert_corpus_entry(corpus, insertion_mode)
     }
 
     /// Flush non-favored entries from memory when the corpus size exceeds the minimum.
@@ -2046,7 +2024,7 @@ impl WorkerCorpus {
 }
 
 #[derive(Clone, Copy)]
-enum ObservedCallDepth {
+pub(crate) enum ObservedCallDepth {
     DirectOnly,
     All,
 }
@@ -3334,10 +3312,9 @@ mod tests {
     }
 
     #[test]
-    fn hoist_observed_calls_bundles_replayable_subcalls_into_one_corpus_entry() {
+    fn observed_calls_seed_generation_without_entering_corpus() {
         let target = Address::from([0x42; 20]);
         let other = Address::from([0x43; 20]);
-        let sender = Address::from([0xaa; 20]);
         let observed_caller = Address::from([0xbb; 20]);
         let foo = Function::parse("foo(uint256)").unwrap();
         let bar = Function::parse("bar()").unwrap();
@@ -3393,48 +3370,34 @@ mod tests {
                 value: None,
             },
         ];
-        let parent_tx = BasicTxDetails {
-            warp: Some(U256::from(123)),
-            roll: Some(U256::from(456)),
-            sender,
-            call_details: CallDetails {
-                target: Address::from([0x99; 20]),
-                calldata: Bytes::new(),
-                value: None,
-            },
-        };
         let mut manager = empty_worker_corpus(0, temp_corpus_dir());
 
-        manager.hoist_observed_calls(
-            &observed,
-            &parent_tx,
-            &targeted_contracts,
-            CorpusInsertionMode::Live,
+        assert_eq!(
+            manager.observe_calls(&observed, &targeted_contracts, ObservedCallDepth::All),
+            2
         );
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(manager.metrics.corpus_count, 1);
+        assert!(manager.in_memory_corpus.is_empty());
+        assert_eq!(manager.metrics.corpus_count, 0);
+        assert_eq!(manager.sequence_generator.observed_call_count(), 2);
 
-        let entry = manager.in_memory_corpus.last().unwrap();
-        assert_eq!(entry.tx_seq.len(), 2);
-        let tx = &entry.tx_seq[0];
-        assert_eq!(tx.warp, parent_tx.warp);
-        assert_eq!(tx.roll, parent_tx.roll);
-        assert_eq!(tx.sender, observed_caller);
-        assert_eq!(tx.call_details.target, target);
-        assert_eq!(&tx.call_details.calldata[..4], &foo_selector[..]);
-        assert_eq!(tx.call_details.value, None);
-
-        let tx = &entry.tx_seq[1];
+        let mut runner = TestRunner::deterministic();
+        let tx = (0..100)
+            .map(|_| manager.new_sequence(&mut runner).unwrap().into_first())
+            .find(|tx| tx.sender == observed_caller)
+            .expect("observed call should be sampled");
         assert_eq!(tx.warp, None);
         assert_eq!(tx.roll, None);
         assert_eq!(tx.sender, observed_caller);
         assert_eq!(tx.call_details.target, target);
-        assert_eq!(&tx.call_details.calldata[..4], &bar_selector[..]);
-        assert_eq!(tx.call_details.value, None);
+        assert!(
+            [foo_selector, bar_selector]
+                .iter()
+                .any(|selector| tx.call_details.calldata[..4] == selector[..])
+        );
     }
 
     #[test]
-    fn hoist_observed_calls_persists_immediately() {
+    fn observed_calls_are_not_persisted() {
         let target = Address::from([0x42; 20]);
         let foo = Function::parse("foo()").unwrap();
         let selector = foo.selector();
@@ -3450,19 +3413,15 @@ mod tests {
         let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        manager.hoist_observed_calls(
-            &observed,
-            &basic_tx(),
-            &targeted_contracts,
-            CorpusInsertionMode::Live,
-        );
+        manager.observe_calls(&observed, &targeted_contracts, ObservedCallDepth::All);
 
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 1);
+        assert!(manager.in_memory_corpus.is_empty());
+        assert_eq!(manager.sequence_generator.observed_call_count(), 1);
+        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 0);
     }
 
     #[test]
-    fn hoist_observed_calls_skips_empty_or_non_coverage_guided_inputs() {
+    fn observed_calls_skip_empty_or_non_coverage_guided_inputs() {
         let target = Address::from([0x42; 20]);
         let foo = Function::parse("foo()").unwrap();
         let selector = foo.selector();
@@ -3482,22 +3441,14 @@ mod tests {
         let mut manager =
             WorkerCorpus::from_seed(0, no_corpus_config, generator, WorkerCorpusSeed::default())
                 .unwrap();
-        manager.hoist_observed_calls(
-            &observed,
-            &basic_tx(),
-            &targeted_contracts,
-            CorpusInsertionMode::Live,
-        );
+        manager.observe_calls(&observed, &targeted_contracts, ObservedCallDepth::All);
         assert!(manager.in_memory_corpus.is_empty());
+        assert_eq!(manager.sequence_generator.observed_call_count(), 0);
 
         let mut manager = empty_worker_corpus(0, temp_corpus_dir());
-        manager.hoist_observed_calls(
-            &[],
-            &basic_tx(),
-            &targeted_contracts,
-            CorpusInsertionMode::Live,
-        );
+        manager.observe_calls(&[], &targeted_contracts, ObservedCallDepth::All);
         assert!(manager.in_memory_corpus.is_empty());
+        assert_eq!(manager.sequence_generator.observed_call_count(), 0);
     }
 
     #[test]
@@ -3554,23 +3505,6 @@ mod tests {
         assert_eq!(seq[0].sender, sender);
         assert_eq!(seq[0].call_details.target, target);
         assert_eq!(&seq[0].call_details.calldata[..4], &foo_selector[..]);
-    }
-
-    #[test]
-    fn push_observed_sequence_persists_for_every_worker() {
-        let corpus_root = temp_corpus_dir();
-        let worker0_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
-        let mut manager = empty_worker_corpus(0, corpus_root.clone());
-
-        manager.push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::Live);
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker0_corpus_dir).count(), 1);
-
-        let mut manager = empty_worker_corpus(1, corpus_root.clone());
-        let worker1_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
-        manager.push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::Live);
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(read_corpus_dir(&worker1_corpus_dir).count(), 1);
     }
 
     #[test]
@@ -3654,24 +3588,6 @@ mod tests {
         assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
         assert_eq!(manager.disk_corpus.cache.len(), 1);
         assert_eq!(manager.disk_corpus.cache[0].uuid, non_favored_uuid);
-    }
-
-    #[test]
-    fn invariant_insertions_do_not_disable_culling() {
-        let mut live = empty_worker_corpus(0, temp_corpus_dir());
-        let mut memory_only = empty_worker_corpus(1, temp_corpus_dir());
-
-        for idx in 0..32 {
-            let tx = basic_tx_with_calldata(vec![idx]);
-            live.process_inputs(std::slice::from_ref(&tx), &[], true, vec![1], None);
-            memory_only.push_observed_sequence(vec![tx], CorpusInsertionMode::MemoryOnly);
-        }
-
-        for manager in [&live, &memory_only] {
-            assert_eq!(manager.in_memory_corpus.len(), 1);
-            assert_eq!(manager.metrics.corpus_count, manager.in_memory_corpus.len());
-            assert!(manager.pending_sync_uuids.is_empty());
-        }
     }
 
     #[test]
