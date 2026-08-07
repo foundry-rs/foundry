@@ -3000,37 +3000,6 @@ impl<N: Network> Backend<N> {
             )));
         }
 
-        // Fork-backed blocks are fetched concurrently below. Local traces are immediately
-        // available, so paginate them as each block is visited and stop once the page is full.
-        if let Some(count) = filter.count
-            && self.get_fork().is_none()
-        {
-            let mut after = filter.after.unwrap_or_default() as usize;
-            let count = count as usize;
-            let mut filtered_traces = Vec::new();
-            if count == 0 {
-                return Ok(filtered_traces);
-            }
-
-            for num in start..=end {
-                for trace in self.trace_block(num.into()).await? {
-                    if !matcher.matches(&trace.trace) {
-                        continue;
-                    }
-                    if after > 0 {
-                        after -= 1;
-                        continue;
-                    }
-                    filtered_traces.push(trace);
-                    if filtered_traces.len() == count {
-                        return Ok(filtered_traces);
-                    }
-                }
-            }
-
-            return Ok(filtered_traces);
-        }
-
         // Accumulate tasks for block range
         let mut trace_tasks = vec![];
         for num in start..=end {
