@@ -884,29 +884,31 @@ forgetest!(build_locked_rejects_lockfile_outside_git_repository, |prj, cmd| {
 });
 
 forgetest!(build_locked_honors_git_environment, |prj, cmd| {
-    let repository = tempfile::tempdir().unwrap();
-    git(repository.path(), &["init"]);
-    git(repository.path(), &["config", "user.email", "foundry@example.com"]);
-    git(repository.path(), &["config", "user.name", "Foundry"]);
-    git(repository.path(), &["commit", "--allow-empty", "-m", "initial"]);
-    let head = git(repository.path(), &["rev-parse", "HEAD"]);
+    let repository = prj.root().join("repository");
+    fs::create_dir(&repository).unwrap();
+    git(&repository, &["init"]);
+    git(&repository, &["config", "user.email", "foundry@example.com"]);
+    git(&repository, &["config", "user.name", "Foundry"]);
+    git(&repository, &["commit", "--allow-empty", "-m", "initial"]);
+    let head = git(&repository, &["rev-parse", "HEAD"]);
 
     fs::write(
         prj.root().join(".gitmodules"),
         "[submodule \"lib/dep\"]\n\tpath = lib/dep\n\turl = ../dep\n",
     )
     .unwrap();
-    let git_dir = repository.path().join(".git");
+    let git_dir = Path::new("repository/.git");
     let output = Command::new("git")
-        .env("GIT_DIR", &git_dir)
-        .env("GIT_WORK_TREE", prj.root())
+        .current_dir(prj.root())
+        .env("GIT_DIR", git_dir)
+        .env("GIT_WORK_TREE", ".")
         .args(["update-index", "--add", "--cacheinfo", "160000", &head, "lib/dep"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 
     cmd.env("GIT_DIR", git_dir);
-    cmd.env("GIT_WORK_TREE", prj.root());
+    cmd.env("GIT_WORK_TREE", ".");
     cmd.args(["build", "--locked"]).assert_failure().stderr_eq(str![[r#"
 Error: foundry.lock does not match installed dependencies:
   lib/dep: missing from foundry.lock

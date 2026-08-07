@@ -207,7 +207,7 @@ impl<'a> Lockfile<'a> {
             eyre::eyre!("Project root is not contained in Git root {}", git_root.display())
         })?;
 
-        let git = git.root(&git_root);
+        let git = if project_prefix.as_os_str().is_empty() { *git } else { git.root(&git_root) };
         let git_submodules = git.submodules_in(Path::new("."))?;
         let mut submodules = BTreeMap::new();
         for submodule in &git_submodules {
