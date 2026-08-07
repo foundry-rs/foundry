@@ -5689,12 +5689,43 @@ where
 
     /// Returns all transaction receipts of the block
     pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
-        let mut receipts = Vec::new();
-        let block = self.get_block(id)?;
+        let (block, transactions, hash) = {
+            let storage = self.blockchain.storage.read();
+            let hash = match id.into() {
+                BlockId::Hash(hash) => hash.block_hash,
+                BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch)?,
+            };
+            let block = storage.blocks.get(&hash)?.clone();
+            let transactions = block
+                .body
+                .transactions
+                .iter()
+                .map(|transaction| storage.transactions.get(&transaction.hash()).cloned())
+                .collect::<Option<Vec<_>>>()?;
+            (block, transactions, hash)
+        };
 
-        for transaction in block.body.transactions {
-            let receipt = self.mined_transaction_receipt(transaction.hash())?;
+        if transactions.iter().enumerate().any(|(index, transaction)| {
+            transaction.block_hash != hash || transaction.info.transaction_index as usize != index
+        }) {
+            return block
+                .body
+                .transactions
+                .into_iter()
+                .map(|transaction| {
+                    self.mined_transaction_receipt(transaction.hash()).map(|receipt| receipt.inner)
+                })
+                .collect();
+        }
+
+        let mut receipts = Vec::with_capacity(block.body.transactions.len());
+        let mut next_log_index = 0;
+
+        for transaction in transactions {
+            let log_count = transaction.receipt.logs().len();
+            let receipt = self.build_mined_transaction_receipt(transaction, &block, next_log_index);
             receipts.push(receipt.inner);
+            next_log_index += log_count;
         }
 
         Some(receipts)
@@ -5705,12 +5736,24 @@ where
         &self,
         hash: B256,
     ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
-        let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
-            self.blockchain.get_transaction_by_hash(&hash)?;
+        let transaction = self.blockchain.get_transaction_by_hash(&hash)?;
 
-        let index = info.transaction_index as usize;
-        let block = self.blockchain.get_block_by_hash(&block_hash)?;
-        let transaction = block.body.transactions[index].clone();
+        let index = transaction.info.transaction_index as usize;
+        let block = self.blockchain.get_block_by_hash(&transaction.block_hash)?;
+        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
+        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
+
+        Some(self.build_mined_transaction_receipt(transaction, &block, next_log_index))
+    }
+
+    fn build_mined_transaction_receipt(
+        &self,
+        transaction: MinedTransaction<N>,
+        block: &Block,
+        next_log_index: usize,
+    ) -> MinedTransactionReceipt<FoundryNetwork> {
+        let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } = transaction;
+        let transaction = block.body.transactions[info.transaction_index as usize].clone();
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas();
@@ -5719,9 +5762,6 @@ where
         let blob_gas_used = transaction.blob_gas_used();
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
-
-        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
-        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
         let tx_receipt = tx_receipt.convert_logs_rpc(
             BlockNumHash::new(block.header.number(), block_hash),
@@ -5775,7 +5815,7 @@ where
                 inner = inner.with_fee_token(fee_token);
             }
         }
-        Some(MinedTransactionReceipt { inner, out: info.out })
+        MinedTransactionReceipt { inner, out: info.out }
     }
 
     /// Returns the blocks receipts for the given number
