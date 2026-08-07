@@ -5895,21 +5895,21 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
         let mut selected_head = None;
         let mut selected_header = None;
         let mut checkpoint = None;
+        let fork_head = self.get_fork().map(|f| (f.block_number(), f.block_hash(), f.timestamp()));
         if let Some(block) = &mut block_env {
             if self.is_tempo() && self.is_fork() && block.beneficiary.is_zero() {
                 block.beneficiary = TIP_FEE_MANAGER_ADDRESS;
             }
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
-            let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
-
             let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
-            let (selected_best_number, selected_best_hash) = if let Some((number, hash)) =
-                fork_num_and_hash
+            let (selected_best_number, selected_best_hash) = if let Some((number, hash, _)) =
+                fork_head
             {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
@@ -5991,7 +5991,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
         // Apply the prepared chain data atomically so concurrent readers never observe blocks
         // without their transactions or a partially updated head.
-        {
+        let canonical_timestamp = {
             let mut storage = self.blockchain.storage.write();
             storage.load_blocks(std::mem::take(&mut state.blocks));
             storage.load_transactions(std::mem::take(&mut state.transactions));
@@ -6003,6 +6003,22 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 storage.best_number = number;
                 storage.best_hash = hash;
             }
+
+            // Re-anchor block time to the canonical head selected above so the next blocks
+            // continue its timeline: the saved one when the loaded head stays canonical, the
+            // fork's when the state file is at or below the fork block. Resolving the head by
+            // identity also keeps the timeline of stale blocks a state file can carry above
+            // its own best block out of the anchor. A head rolled back to the fork block has
+            // no header in local storage, so take the fork timestamp, as `reset_fork` does.
+            match fork_head {
+                Some((_, fork_hash, fork_timestamp)) if storage.best_hash == fork_hash => {
+                    Some(fork_timestamp)
+                }
+                _ => storage.blocks.get(&storage.best_hash).map(|b| b.header.timestamp),
+            }
+        };
+        if let Some(timestamp) = canonical_timestamp {
+            self.time.reset(timestamp);
         }
 
         if let Some(mut block) = block_env {
