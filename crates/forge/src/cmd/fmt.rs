@@ -37,7 +37,7 @@ pub struct FmtArgs {
 
     /// Use each input file's nearest `foundry.toml` for formatter settings.
     #[arg(long, conflicts_with = "root")]
-    use_nearest_config: bool,
+    nearest: bool,
 
     /// Run in 'check' mode.
     ///
@@ -58,10 +58,10 @@ impl_figment_convert_basic!(FmtArgs);
 
 impl FmtArgs {
     pub fn run(self) -> Result<()> {
-        if self.use_nearest_config {
+        if self.nearest {
             for var in ["FOUNDRY_CONFIG", "FOUNDRY_ROOT", "DAPP_ROOT"] {
                 if std::env::var_os(var).is_some() {
-                    eyre::bail!("`--use-nearest-config` cannot be used when `{var}` is set");
+                    eyre::bail!("`--nearest` cannot be used when `{var}` is set");
                 }
             }
         }
@@ -98,7 +98,7 @@ impl FmtArgs {
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
                     .filter(|p| {
-                        !((!self.use_nearest_config
+                        !((!self.nearest
                             && (ignored.contains(p)
                                 || ignored.contains(&cwd.join(p))
                                 || is_under_dir(p, &ignored)))
@@ -112,7 +112,7 @@ impl FmtArgs {
                 let mut inputs = Vec::with_capacity(paths.len());
                 for path in paths {
                     // Check if path is in ignored directories
-                    if !self.use_nearest_config
+                    if !self.nearest
                         && !ignored.is_empty()
                         && ((path.is_absolute() && ignored.contains(path))
                             || ignored.contains(&cwd.join(path)))
@@ -126,7 +126,7 @@ impl FmtArgs {
                         inputs.extend(
                             foundry_compilers::utils::source_files_iter(path, SOLC_EXTENSIONS)
                                 .filter(|p| {
-                                    !((!self.use_nearest_config
+                                    !((!self.nearest
                                         && (ignored.contains(p)
                                             || ignored.contains(&cwd.join(p))
                                             || is_under_dir(p, &ignored)))
@@ -144,9 +144,9 @@ impl FmtArgs {
             }
         };
 
-        let nearest_fmt_configs = if self.use_nearest_config {
+        let nearest_fmt_configs = if self.nearest {
             let Input::Paths(paths) = &mut input else {
-                eyre::bail!("`--use-nearest-config` cannot be used with stdin");
+                eyre::bail!("`--nearest` cannot be used with stdin");
             };
             let mut root_configs: HashMap<PathBuf, (Arc<FormatterConfig>, Vec<PathBuf>)> =
                 HashMap::new();

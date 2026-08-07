@@ -170,7 +170,7 @@ tab_width = 6
 "#,
     );
 
-    cmd.args(["fmt", "--use-nearest-config", "."]).assert_success();
+    cmd.args(["fmt", "--nearest", "."]).assert_success();
 
     assert!(std::fs::read_to_string(first).unwrap().contains("  function test(\n"));
     assert!(
@@ -184,12 +184,10 @@ tab_width = 6
 forgetest!(fmt_nearest_config_rejects_config_env, |prj, cmd| {
     prj.create_file("src/Test.sol", "contract Test {}\n");
     cmd.env("FOUNDRY_CONFIG", "custom.toml");
-    cmd.args(["fmt", "--use-nearest-config", "src/Test.sol"]).assert_failure().stderr_eq(str![[
-        r#"
-Error: `--use-nearest-config` cannot be used when `FOUNDRY_CONFIG` is set
+    cmd.args(["fmt", "--nearest", "src/Test.sol"]).assert_failure().stderr_eq(str![[r#"
+Error: `--nearest` cannot be used when `FOUNDRY_CONFIG` is set
 
-"#
-    ]]);
+"#]]);
 });
 
 // https://github.com/foundry-rs/foundry/issues/12000
