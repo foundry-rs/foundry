@@ -5,7 +5,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, map::HashMap as AlloyHashMap};
 use foundry_compilers::{
     Artifact, ArtifactId,
     artifacts::{CompactBytecode, CompactContractBytecodeCow, Libraries},
@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::OnceLock,
 };
 
 /// Errors that can occur during linking.
@@ -38,8 +39,11 @@ pub enum LinkerError {
 pub struct Linker<'a> {
     /// Root of the project, used to determine whether artifact/library path can be stripped.
     pub root: PathBuf,
-    /// Compilation artifacts.
+    /// Compilation artifacts. Mutating this after the first library lookup invalidates the
+    /// internal lookup index; create a new [`Linker`] instead.
     pub contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
+    /// Artifact IDs keyed by their project-relative path and unversioned library name.
+    artifacts_by_lib_path: OnceLock<AlloyHashMap<PathBuf, AlloyHashMap<String, Vec<ArtifactId>>>>,
 }
 
 /// Output of the `link_with_nonce_or_address`
@@ -88,7 +92,7 @@ impl<'a> Linker<'a> {
         root: impl Into<PathBuf>,
         contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
     ) -> Self {
-        Linker { root: root.into(), contracts }
+        Linker { root: root.into(), contracts, artifacts_by_lib_path: OnceLock::new() }
     }
 
     /// Helper method to convert [ArtifactId] to the format in which libraries are stored in
@@ -119,6 +123,19 @@ impl<'a> Linker<'a> {
         }
 
         path.to_path_buf()
+    }
+
+    fn artifacts_by_lib_path(
+        &self,
+    ) -> &AlloyHashMap<PathBuf, AlloyHashMap<String, Vec<ArtifactId>>> {
+        self.artifacts_by_lib_path.get_or_init(|| {
+            let mut artifacts = AlloyHashMap::<_, AlloyHashMap<_, Vec<_>>>::default();
+            for id in self.contracts.keys() {
+                let (path, name) = self.convert_artifact_id_to_lib_path(id);
+                artifacts.entry(path).or_default().entry(name).or_default().push(id.clone());
+            }
+            artifacts
+        })
     }
 
     /// Resolves `path` against the project root and canonicalizes it for comparison only.
@@ -198,7 +215,8 @@ impl<'a> Linker<'a> {
     /// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
     /// library path in the form of "./path/to/Lib.sol:Lib"
     ///
-    /// Optionally accepts solc version, and if present, only compares artifacts with given version.
+    /// Exact paths use the lookup index. Canonical paths retain the fallback scan required for
+    /// symlinked library aliases.
     fn find_artifact_id_by_library_path(
         &'a self,
         file: &str,
@@ -207,15 +225,12 @@ impl<'a> Linker<'a> {
     ) -> Result<Option<&'a ArtifactId>, LinkerError> {
         let library_path = self.project_relative_path(Path::new(file));
         let candidates = self
-            .contracts
-            .keys()
-            .filter(|id| {
-                if id.version != target.version {
-                    return false;
-                }
-                let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
-                artifact_name == *name && artifact_path == library_path
-            })
+            .artifacts_by_lib_path()
+            .get(&library_path)
+            .and_then(|artifacts| artifacts.get(name))
+            .into_iter()
+            .flatten()
+            .filter(|id| id.version == target.version)
             .collect::<Vec<_>>();
         let candidates = if candidates.is_empty() {
             let canonical_library_path = self.canonical_path(&library_path);
@@ -1018,7 +1033,6 @@ mod tests {
         solc::{Solc, SolcCompiler},
     };
     use semver::Version;
-    use std::sync::OnceLock;
 
     fn testdata() -> &'static Path {
         static CACHE: OnceLock<PathBuf> = OnceLock::new();
