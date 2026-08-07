@@ -243,8 +243,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         let worker_ids = self.worker_ids();
         debug!(n = worker_ids.len(), "spawning workers");
-        let final_sync =
-            (worker_ids.len() > 1).then(|| Arc::new(CorpusSyncCoordinator::new(worker_ids.len())));
+        let final_sync = (worker_ids.len() > 1 && self.config.corpus.corpus_dir.is_some())
+            .then(|| Arc::new(CorpusSyncCoordinator::new(worker_ids.len())));
         let workers = worker_ids
             .into_par_iter()
             .map(|worker_id| {
