@@ -810,6 +810,12 @@ impl SymbolicExecutor {
                 {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
+                    CheatcodeOutcome::Revert(ret) => {
+                        state.return_data = ret;
+                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        return Ok(StepOutcome::Continue);
+                    }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
                 }
@@ -1029,6 +1035,8 @@ impl SymbolicExecutor {
             parent.inherit_branch_target_progress(&outcome.state);
             parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
             parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
+            parent.inherit_mapping_hook_provenance(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)

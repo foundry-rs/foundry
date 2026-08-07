@@ -460,7 +460,21 @@ impl Cheatcode for registerSloadHookCall {
 impl Cheatcode for registerSstoreHookCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, callback } = *self;
+        if ccx.state.has_mapping_storage_store_hooks(target) {
+            bail!("cannot register raw SSTORE hook: mapping SSTORE hooks already exist for target");
+        }
         ccx.state.register_storage_store_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerMappingSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, rootSlot, callback } = *self;
+        if !ccx.state.register_mapping_storage_store_hook(target, rootSlot, ccx.caller, callback.0)
+        {
+            bail!("cannot register mapping SSTORE hook: raw SSTORE hook already exists for target");
+        }
         Ok(Default::default())
     }
 }

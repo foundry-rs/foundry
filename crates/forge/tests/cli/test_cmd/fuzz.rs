@@ -4980,6 +4980,59 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(expected_output);
 });
 
+forgetest_init!(test_fuzz_run_replays_calldata_failure_after_rejects, |prj, cmd| {
+    prj.add_test(
+        "FuzzReplayTest.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import {Test} from "forge-std/Test.sol";
+
+contract FuzzReplayTest is Test {
+    function testFuzz_replayAfterReject(uint256 x) public pure {
+        vm.assume(x != 0);
+        assert(x != 1);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--fuzz-seed", "1", "--mt", "testFuzz_replayAfterReject", "-j1"])
+        .assert_failure();
+
+    let failure_file =
+        prj.root().join("cache/fuzz/failures/FuzzReplayTest/testFuzz_replayAfterReject");
+    let persisted_failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert_eq!(persisted_failure.fuzz.run, Some(4));
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-run",
+            "2",
+            "--mt",
+            "testFuzz_replayAfterReject",
+            "-j1",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-run",
+            "4",
+            "--mt",
+            "testFuzz_replayAfterReject",
+            "-j1",
+        ])
+        .assert_failure();
+});
+
 forgetest_init!(test_fuzz_rerun_replays_random_uint_failure_without_seed, |prj, cmd| {
     prj.add_test(
         "RandomFuzzTest.t.sol",

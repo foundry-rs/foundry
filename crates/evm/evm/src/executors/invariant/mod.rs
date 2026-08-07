@@ -2051,11 +2051,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let Some(cheatcodes) = self.executor.inspector().cheatcodes.as_deref() else {
             return Ok(());
         };
-        let callbacks = cheatcodes
-            .storage_load_hooks()
-            .chain(cheatcodes.storage_store_hooks())
-            .map(|(_, hook)| (hook.callback_target, Selector::from(hook.callback_selector)))
-            .collect::<HashSet<_>>();
+        let callbacks =
+            cheatcodes
+                .storage_load_hooks()
+                .chain(cheatcodes.storage_store_hooks())
+                .map(|(_, hook)| (hook.callback_target, Selector::from(hook.callback_selector)))
+                .chain(cheatcodes.mapping_storage_store_hooks().map(|(_, _, hook)| {
+                    (hook.callback_target, Selector::from(hook.callback_selector))
+                }))
+                .collect::<HashSet<_>>();
 
         for (target, selector) in callbacks {
             let Some(contract) = targeted_contracts.get_mut(&target) else { continue };

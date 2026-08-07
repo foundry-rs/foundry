@@ -162,6 +162,10 @@ jobs:
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-targets: false
+          cache-bin: false
+          prefix-key: v1-rust-forge-fmt-no-target
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
@@ -199,11 +203,14 @@ jobs:
         with:
           category: "/language:${{matrix.language}}"
 
-  scan-github-actions:
-    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@512158c4e90e42eef8aa7fc3fc3186a79b5b4648 # main
+  workflow-validation:
+    name: Workflow Validation
+    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@483bda4a2a4b5e04a51edff03768c1590d271f80 # main
     permissions:
       actions: read
       contents: read
+    with:
+      pinact: true
 
   ci-success:
     runs-on: ubuntu-latest
@@ -221,10 +228,10 @@ jobs:
       - forge-fmt
       - deny
       - codeql
-      - scan-github-actions
+      - workflow-validation
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
           jobs: ${{ toJSON(needs) }}
