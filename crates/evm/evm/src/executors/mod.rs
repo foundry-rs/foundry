@@ -45,8 +45,9 @@ use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
-    context::{Block, Transaction},
+    context::{Block, Cfg, Transaction},
     context_interface::{
+        cfg::gas_params::Eip2780TxInfo,
         result::{ExecutionResult, Output, ResultAndState},
         transaction::SignedAuthorization,
     },
@@ -1350,7 +1351,16 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
     }
 }
 
-/// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
+fn calculate_stipend(tx_env: &impl Transaction, spec: SpecId, eip2780_enabled: bool) -> u64 {
+    let eip2780 = eip2780_enabled.then(|| Eip2780TxInfo {
+        value: tx_env.value(),
+        is_self_transfer: matches!(tx_env.kind(), TxKind::Call(to) if to == tx_env.caller()),
+    });
+    revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, spec, eip2780)
+        .initial_total_gas()
+}
+
+/// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
 fn convert_executed_result<FEN: FoundryEvmNetwork>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
@@ -1371,9 +1381,10 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
             (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
+    let stipend = calculate_stipend(
         &tx_env,
         evm_env.cfg_env.spec.into(),
+        evm_env.cfg_env.is_amsterdam_eip2780_enabled(),
     );
 
     let result = match &out {
@@ -1417,7 +1428,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         result,
         gas_used,
         gas_refunded,
-        stipend: gas.initial_total_gas(),
+        stipend,
         logs,
         labels,
         traces,
@@ -1579,11 +1590,11 @@ mod tests {
     use alloy_primitives::B256;
     use foundry_cheatcodes::{
         CheatsConfig,
-        Vm::{blobhashesCall, revertToStateCall, snapshotStateCall},
+        Vm::{blobhashesCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall},
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
-    use revm::context::{Cfg, TxEnv};
+    use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
@@ -1699,6 +1710,121 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn calculate_stipend_uses_eip2780_transaction_context() {
+        let caller = Address::repeat_byte(0x11);
+        let recipient = Address::repeat_byte(0x22);
+        let mut tx = TxEnv { caller, kind: TxKind::Call(recipient), ..Default::default() };
+
+        assert_eq!(
+            calculate_stipend(&tx, SpecId::AMSTERDAM, true),
+            revm::primitives::eip2780::TX_BASE_COST
+                + revm::primitives::eip8038::COLD_ACCOUNT_ACCESS
+        );
+        assert_eq!(
+            calculate_stipend(&tx, SpecId::AMSTERDAM, false),
+            revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM).tx_base_stipend()
+        );
+
+        tx.kind = TxKind::Call(caller);
+        assert_eq!(
+            calculate_stipend(&tx, SpecId::AMSTERDAM, true),
+            revm::primitives::eip2780::TX_BASE_COST
+        );
+    }
+
+    #[test]
+    fn amsterdam_intercepted_create_refunds_state_gas() {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .spec_id(SpecId::AMSTERDAM)
+            .gas_limit(1_000_000)
+            .build(EvmEnv::default(), TxEnv::default(), backend);
+
+        let target = Address::repeat_byte(0x11);
+        // PUSH0; PUSH0; PUSH0; CREATE; POP; STOP.
+        executor
+            .set_code(
+                target,
+                Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x5f, 0x5f, 0xf0, 0x50, 0x00])),
+            )
+            .unwrap();
+        executor.inspector_mut().cheatcodes.as_mut().unwrap().intercept_next_create_call = true;
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+
+        assert!(!result.reverted);
+        assert!(
+            result.gas_used
+                < revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM)
+                    .create_state_gas(),
+            "failed CREATE retained its conditional state-gas charge"
+        );
+    }
+
+    #[test]
+    fn amsterdam_mocked_call_revert_refunds_state_gas() {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .spec_id(SpecId::AMSTERDAM)
+            .gas_limit(1_000_000)
+            .build(EvmEnv::default(), TxEnv::default(), backend);
+
+        let target = Address::repeat_byte(0x11);
+        let mocked = Address::repeat_byte(0x22);
+        executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                mockCallRevert_1Call {
+                    callee: mocked,
+                    msgValue: U256::from(1),
+                    data: Bytes::new(),
+                    revertData: Bytes::new(),
+                }
+                .abi_encode()
+                .into(),
+                U256::ZERO,
+            )
+            .unwrap();
+        executor.set_code(mocked, Bytecode::default()).unwrap();
+        executor.set_balance(target, U256::from(1)).unwrap();
+
+        // PUSH0 x4; PUSH1 1; PUSH20 <mocked>; GAS; CALL; POP; STOP.
+        let mut code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x60, 0x01, 0x73];
+        code.extend_from_slice(mocked.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1, 0x50, 0x00]);
+        executor.set_code(target, Bytecode::new_raw(code.into())).unwrap();
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+
+        assert!(!result.reverted);
+        assert!(
+            result.gas_used
+                < revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM)
+                    .new_account_state_gas(),
+            "reverted mocked CALL retained its conditional state-gas charge"
+        );
     }
 
     #[test]
