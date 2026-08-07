@@ -454,6 +454,7 @@ impl VerifyBytecodeArgs {
         .transpose()?
         .or(self.encoded_constructor_args.clone().map(hex::decode).transpose()?);
 
+        let args_from_user = provided_constructor_args.is_some();
         let mut constructor_args = if let Some(provided) = provided_constructor_args {
             provided.into()
         } else if let Some(source_code) = &source_code {
@@ -665,8 +666,15 @@ impl VerifyBytecodeArgs {
         // happens, try extracting arguments ourselves.
         if !maybe_creation_code.ends_with(&constructor_args) {
             trace!("mismatch of constructor args with etherscan");
-            // If local bytecode is longer than on-chain one, this is probably not a match.
-            if maybe_creation_code.len() >= local_bytecode.len() {
+            if args_from_user {
+                // Keep user-supplied args: substituting them with the onchain tail would make
+                // the creation comparison vacuous and let a deployment with different
+                // constructor args (and immutables) verify clean.
+                if !shell::is_json() {
+                    sh_warn!("Provided constructor args do not match the ones used at deployment")?;
+                }
+            } else if maybe_creation_code.len() >= local_bytecode.len() {
+                // If local bytecode is longer than on-chain one, this is probably not a match.
                 constructor_args =
                     Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
                 trace!(
