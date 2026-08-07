@@ -884,6 +884,8 @@ forgetest!(build_locked_rejects_lockfile_outside_git_repository, |prj, cmd| {
 });
 
 forgetest!(build_locked_honors_git_environment, |prj, cmd| {
+    let project = prj.root().join("nested");
+    fs::create_dir(&project).unwrap();
     let repository = prj.root().join("repository");
     fs::create_dir(&repository).unwrap();
     git(&repository, &["init"]);
@@ -894,22 +896,22 @@ forgetest!(build_locked_honors_git_environment, |prj, cmd| {
 
     fs::write(
         prj.root().join(".gitmodules"),
-        "[submodule \"lib/dep\"]\n\tpath = lib/dep\n\turl = ../dep\n",
+        "[submodule \"nested/lib/dep\"]\n\tpath = nested/lib/dep\n\turl = ../dep\n",
     )
     .unwrap();
-    let git_dir = Path::new("repository/.git");
+    let git_dir = Path::new("../repository/.git");
     let output = Command::new("git")
-        .current_dir(prj.root())
+        .current_dir(&project)
         .env("GIT_DIR", git_dir)
-        .env("GIT_WORK_TREE", ".")
-        .args(["update-index", "--add", "--cacheinfo", "160000", &head, "lib/dep"])
+        .env("GIT_WORK_TREE", "..")
+        .args(["update-index", "--add", "--cacheinfo", "160000", &head, "nested/lib/dep"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 
     cmd.env("GIT_DIR", git_dir);
-    cmd.env("GIT_WORK_TREE", ".");
-    cmd.args(["build", "--locked"]).assert_failure().stderr_eq(str![[r#"
+    cmd.env("GIT_WORK_TREE", "..");
+    cmd.args(["build", "--locked", "--root", "nested"]).assert_failure().stderr_eq(str![[r#"
 Error: foundry.lock does not match installed dependencies:
   lib/dep: missing from foundry.lock
   lib/dep: dependency submodule is not initialized

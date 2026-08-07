@@ -207,12 +207,12 @@ impl<'a> Lockfile<'a> {
             eyre::eyre!("Project root is not contained in Git root {}", git_root.display())
         })?;
 
-        let git = if project_prefix.as_os_str().is_empty() { *git } else { git.root(&git_root) };
-        let git_submodules = git.submodules_in(Path::new("."))?;
+        let repository_path = relative_path(&git_root, &project_root);
+        let git_submodules =
+            git.submodules_in_worktree(&repository_path, &git_root, project_prefix)?;
         let mut submodules = BTreeMap::new();
         for submodule in &git_submodules {
-            let path = relative_path(submodule.path(), project_prefix);
-            submodules.insert(path, submodule);
+            submodules.insert(submodule.path().clone(), submodule);
         }
 
         let mut mismatches = Vec::new();

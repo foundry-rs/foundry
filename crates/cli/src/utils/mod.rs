@@ -791,13 +791,24 @@ ignore them in the `.gitignore` file."
 
     /// Returns submodules at or below `path`, with paths relative to this Git root.
     pub fn submodules_in(&self, path: &Path) -> Result<Vec<SubmoduleCheckout>> {
+        self.submodules_in_worktree(path, self.root, Path::new(""))
+    }
+
+    /// Returns submodules at or below `path`, with paths relative to this Git root, using mappings
+    /// from the enclosing worktree.
+    pub fn submodules_in_worktree(
+        &self,
+        path: &Path,
+        worktree_root: &Path,
+        worktree_prefix: &Path,
+    ) -> Result<Vec<SubmoduleCheckout>> {
         let pathspec = if path.as_os_str().is_empty() { Path::new(".") } else { path };
         let output = self
             .cmd()
             .args(["--literal-pathspecs", "ls-files", "--stage", "-z", "--"])
             .arg(pathspec)
             .exec()?;
-        let (_, mappings) = self.submodule_mappings()?;
+        let (_, mappings) = self.submodule_mappings_at(worktree_root)?;
         let mut gitlinks = BTreeMap::new();
         for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
             let Some(separator) = entry.iter().position(|byte| *byte == b'\t') else {
@@ -821,7 +832,9 @@ ignore them in the `.gitignore` file."
             }
 
             let submodule_path = PathBuf::from(std::str::from_utf8(&entry[separator + 1..])?);
-            if !mappings.contains(&submodule_path) {
+            let worktree_path =
+                foundry_common::fs::normalize_path(&worktree_prefix.join(&submodule_path));
+            if !mappings.contains(&worktree_path) {
                 gitlinks.insert(
                     submodule_path.clone(),
                     SubmoduleCheckout {
@@ -887,7 +900,11 @@ ignore them in the `.gitignore` file."
     }
 
     fn submodule_mappings(self) -> Result<(BTreeSet<PathBuf>, BTreeSet<PathBuf>)> {
-        let gitmodules = self.root.join(".gitmodules");
+        self.submodule_mappings_at(self.root)
+    }
+
+    fn submodule_mappings_at(self, root: &Path) -> Result<(BTreeSet<PathBuf>, BTreeSet<PathBuf>)> {
+        let gitmodules = root.join(".gitmodules");
         if !gitmodules.exists() {
             return Ok(Default::default());
         }
