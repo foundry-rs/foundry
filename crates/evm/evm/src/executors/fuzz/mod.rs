@@ -1,6 +1,9 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
-    corpus::{GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget, WorkerCorpus},
+    corpus::{
+        CorpusSyncCoordinator, GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget,
+        WorkerCorpus,
+    },
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -240,6 +243,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         let worker_ids = self.worker_ids();
         debug!(n = worker_ids.len(), "spawning workers");
+        let final_sync =
+            (worker_ids.len() > 1).then(|| Arc::new(CorpusSyncCoordinator::new(worker_ids.len())));
         let workers = worker_ids
             .into_par_iter()
             .map(|worker_id| {
@@ -254,7 +259,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     rd,
                     &shared_state,
                     progress,
+                    final_sync.as_deref(),
                 );
+                if r.is_err()
+                    && let Some(final_sync) = &final_sync
+                {
+                    final_sync.abort();
+                }
                 debug!("finished in {:?}", timer.elapsed());
                 r
             })
@@ -614,6 +625,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         rd: &RevertDecoder,
         shared_state: &SharedFuzzState,
         progress: Option<&ProgressBar>,
+        final_sync: Option<&CorpusSyncCoordinator>,
     ) -> Result<WorkerState<FEN>> {
         // Prepare
         let fuzz_seed = shared_state.state.fork();
@@ -920,6 +932,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     }
                 },
             }
+        }
+
+        if let Some(final_sync) = final_sync {
+            corpus.finalize_sync(&executor, replay_target, final_sync)?;
         }
 
         if worker_id == 0 {
