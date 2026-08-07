@@ -128,7 +128,7 @@ impl BuildArgs {
                 config
                     .code_size_limit
                     .map(ContractSizeLimits::with_runtime_limit)
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| ContractSizeLimits::for_spec_id(config.evm_spec_id())),
             )
             .bail(!format_json)
             .compile(&project)?;

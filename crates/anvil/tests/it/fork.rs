@@ -115,7 +115,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         .await
         .unwrap();
     let expected_hashes = [*first.tx_hash(), *second.tx_hash(), *reverted.tx_hash()];
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     assert!(
         !origin_provider
             .get_transaction_receipt(expected_hashes[2])
@@ -252,7 +252,7 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
         ))
         .await
         .unwrap();
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, source_timestamp);
@@ -281,7 +281,7 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     assert_eq!(replayed.header.timestamp, source.header.timestamp);
     assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
 
-    fork_api.mine_one().await;
+    fork_api.mine_one().await.unwrap();
     let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
     assert!(next.header.timestamp > source.header.timestamp);
 }
@@ -312,7 +312,7 @@ async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
         .await
         .unwrap();
     let target_hash = *target.tx_hash();
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, SHANGHAI_ERA_TIMESTAMP);
@@ -371,7 +371,7 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
         .await
         .unwrap();
     let target_hash = *target.tx_hash();
-    origin_api.mine_one().await;
+    origin_api.mine_one().await.unwrap();
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, CANCUN_ERA_TIMESTAMP);
@@ -646,6 +646,72 @@ async fn test_spawn_fork() {
     assert_eq!(head, U256::from(BLOCK_NUMBER))
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn validates_fork_source_chain_instead_of_local_chain_id() {
+    for chain_id in [NamedChain::ZkSyncTestnet, NamedChain::ZkSync] {
+        let (_origin_api, origin_handle) =
+            spawn(NodeConfig::test().with_chain_id(Some(chain_id as u64))).await;
+
+        let result = try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+                .with_chain_id(Some(31_337u64)),
+        )
+        .await;
+        let Err(error) = result else { panic!("expected zkSync fork startup to fail") };
+        let message = format!("{error:?}");
+        assert!(message.contains("cannot execute native EraVM bytecode"), "{message}");
+        assert!(message.contains("anvil-zksync"), "{message}");
+    }
+
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_chain_id(Some(NamedChain::ZkSync as u64)),
+    )
+    .await;
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::ZkSync as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn validates_every_fork_url_uses_the_same_supported_network() {
+    let (_mainnet_api, mainnet_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_fork_urls(vec![mainnet_handle.http_endpoint(), zksync_handle.http_endpoint()]),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected zkSync fallback URL to be rejected") };
+    assert!(format!("{error:?}").contains("cannot execute native EraVM bytecode"));
+
+    let (_sepolia_api, sepolia_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_fork_urls(vec![mainnet_handle.http_endpoint(), sepolia_handle.http_endpoint()]),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected mixed fork networks to be rejected") };
+    assert!(format!("{error:?}").contains("fork endpoints must use the same chain ID"));
+
+    let result = try_spawn(
+        NodeConfig::test()
+            .with_fork_urls(vec![mainnet_handle.http_endpoint(), sepolia_handle.http_endpoint()])
+            .with_fork_chain_id(Some(U256::from(NamedChain::Mainnet as u64))),
+    )
+    .await;
+    let Err(error) = result else { panic!("expected unverifiable offline fallbacks to fail") };
+    assert!(format!("{error:?}").contains("multiple fork URLs cannot be validated"));
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9743>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_set_storage_visible_to_call() {
@@ -812,14 +878,62 @@ async fn test_fork_optimism_with_transaction_hash() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_fee_history() {
-    let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.http_provider();
+    let (api, _handle) = spawn(fork_config()).await;
+    let fork = api.get_fork().unwrap();
 
     let count = 10u64;
-    let _history =
+    let history =
         api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
-    let _provider_history =
-        provider.get_fee_history(count, BlockNumberOrTag::Latest, &[]).await.unwrap();
+    let upstream_history =
+        fork.fee_history(count, BlockNumberOrTag::Number(BLOCK_NUMBER), &[]).await.unwrap();
+
+    assert_eq!(history, upstream_history);
+}
+
+// Regression test for a fork-range bug in `eth_feeHistory`: when the requested range straddles
+// the fork boundary (newest block post-fork, oldest block pre-fork), the cache fallback must not
+// call `backend.get_block` on the pre-fork blocks — local storage has none, which made the call
+// hard-error. The pre-fork portion is served by the fork provider and merged with the locally
+// computed post-fork portion. The earlier guard only covers fully pre-fork ranges, so this needs
+// local blocks mined above the fork block to be exercised.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_fee_history_across_fork_boundary() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine local blocks so `latest` sits above the fork block.
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+
+    // latest = fork + 3, count = 10 => oldest = fork - 6 (pre-fork), newest = fork + 3 (post-fork).
+    let count = 10u64;
+    let history =
+        api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+
+    // The oldest block must be the true range start (latest - count + 1); a split that mistook the
+    // whole range for pre-fork would shift it and return more entries than requested.
+    let latest = api.block_number().unwrap().to::<u64>();
+    assert_eq!(history.oldest_block, latest - count + 1, "wrong oldest_block");
+
+    // Full range covered: per-block arrays have `count` entries; base_fee_per_gas has one more.
+    assert_eq!(history.gas_used_ratio.len(), count as usize, "incomplete gas_used_ratio");
+    assert_eq!(
+        history.base_fee_per_gas.len(),
+        count as usize + 1,
+        "incomplete base_fee_per_gas across the fork boundary"
+    );
+
+    // The pre-fork segment here is pre-Cancun, so the fork provider may return empty blob-fee
+    // arrays. They must still be padded to stay aligned with the gas arrays, otherwise the merged
+    // response is short and misaligned.
+    assert_eq!(
+        history.blob_gas_used_ratio.len(),
+        count as usize,
+        "incomplete blob_gas_used_ratio across the fork boundary"
+    );
+    assert_eq!(
+        history.base_fee_per_blob_gas.len(),
+        count as usize + 1,
+        "incomplete base_fee_per_blob_gas across the fork boundary"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1414,7 +1528,7 @@ async fn test_fork_init_base_fee() {
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
     assert_eq!(init_base_fee, 63739886069);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1682,8 +1796,8 @@ async fn test_total_difficulty_fork() {
     assert_eq!(block.header.total_difficulty, Some(total_difficulty));
     assert_eq!(block.header.difficulty, difficulty);
 
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let next_total_difficulty = total_difficulty + difficulty;
 
@@ -1810,7 +1924,7 @@ async fn test_fork_reset_basefee() {
     // <https://etherscan.io/block/18835000>
     let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(18835000u64))).await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
@@ -1821,7 +1935,7 @@ async fn test_fork_reset_basefee() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
@@ -1860,7 +1974,7 @@ async fn flaky_test_arb_fork_mining() {
     let init_blk_num = api.block_number().unwrap().to::<u64>();
 
     // Mine one
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined_blk_num = api.block_number().unwrap().to::<u64>();
 
     assert_eq!(mined_blk_num, init_blk_num + 1);
@@ -1895,7 +2009,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let snapshot_state = api.evm_snapshot().await.unwrap();
 
     // mine new block and check block number returned by `eth_blockNumber`
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number + 1);
 
@@ -2250,7 +2364,7 @@ async fn test_fork_reset_reuses_cached_remote_state() {
     let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
 
     assert_eq!(provider.get_balance(address).await.unwrap(), balance);
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     for _ in 0..2 {
         api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
@@ -2340,10 +2454,10 @@ async fn test_fork_reset_does_not_reuse_cache_for_new_rpc_url() {
             .with_genesis_timestamp(Some(timestamp))
             .with_funded_accounts([(address, second_balance)].into_iter().collect());
         let (second_origin_api, second_origin_handle) = spawn(second_origin).await;
-        first_origin_api.mine_one().await;
-        first_origin_api.mine_one().await;
-        second_origin_api.mine_one().await;
-        second_origin_api.mine_one().await;
+        first_origin_api.mine_one().await.unwrap();
+        first_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
+        second_origin_api.mine_one().await.unwrap();
         let fork_config = NodeConfig::test()
             .with_chain_id(Some(chain_id))
             .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()))
@@ -2883,6 +2997,21 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_rpc_url_rejects_zksync_source_atomically() {
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let origin_url = origin_handle.http_endpoint();
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+    let error = api.anvil_set_rpc_url(zksync_handle.http_endpoint()).await.unwrap_err();
+
+    assert!(error.to_string().contains("cannot execute native EraVM bytecode"));
+    assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_with_url_updates_fork_urls() {
     // Spawn an origin node and fork off it
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
@@ -2906,4 +3035,99 @@ async fn test_anvil_reset_with_url_updates_fork_urls() {
         vec![new_url.clone()],
         "ClientForkConfig.fork_urls should reflect the new URL after anvil_reset"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_updates_inferred_chain_id() {
+    let (_mainnet_api, mainnet_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(mainnet_handle.http_endpoint()))).await;
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::Mainnet as u64);
+
+    let (_sepolia_api, sepolia_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(sepolia_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::Sepolia as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_replaces_offline_fork_chain_id() {
+    let (_mainnet_api, mainnet_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(mainnet_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64))
+            .with_fork_chain_id(Some(U256::from(NamedChain::Mainnet as u64))),
+    )
+    .await;
+
+    let (_sepolia_api, sepolia_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(sepolia_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), NamedChain::Sepolia as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_rejects_zksync_source_atomically() {
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let origin_url = origin_handle.http_endpoint();
+    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+    let original_block = handle.http_provider().get_block_number().await.unwrap();
+    let original_instance_id = api.instance_id();
+
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+    let error = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(zksync_handle.http_endpoint()),
+            block_number: None,
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot execute native EraVM bytecode"));
+    let fork = api.backend.get_fork().unwrap();
+    assert_eq!(fork.eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), original_block);
+    assert_eq!(api.instance_id(), original_instance_id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_from_local_node_rejects_zksync_source_atomically() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await.unwrap();
+    let original_block = handle.http_provider().get_block_number().await.unwrap();
+    let original_chain_id = handle.http_provider().get_chain_id().await.unwrap();
+    let original_instance_id = api.instance_id();
+
+    let (_zksync_api, zksync_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::ZkSync as u64))).await;
+    let error = api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(zksync_handle.http_endpoint()),
+            block_number: None,
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot execute native EraVM bytecode"));
+    assert!(!api.is_fork());
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), original_block);
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), original_chain_id);
+    assert_eq!(api.instance_id(), original_instance_id);
 }

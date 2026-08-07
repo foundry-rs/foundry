@@ -98,15 +98,13 @@ impl TxGenerator {
                     }
                     selector.select(planned.calls.iter()).clone()
                 };
-                let warp = optional_delay(config.max_time_delay.is_some());
-                let roll = optional_delay(config.max_block_delay.is_some());
+                let warp = optional_delay(config.max_time_delay);
+                let roll = optional_delay(config.max_block_delay);
                 (warp, roll, sender, call)
             })
             .prop_map(move |(warp, roll, sender, call_details)| BasicTxDetails {
-                warp: warp
-                    .map(|value| value % U256::from(config.max_time_delay.unwrap_or_default())),
-                roll: roll
-                    .map(|value| value % U256::from(config.max_block_delay.unwrap_or_default())),
+                warp,
+                roll,
                 sender,
                 call_details,
             })
@@ -142,8 +140,12 @@ impl TxGenerator {
     }
 }
 
-fn optional_delay(enabled: bool) -> BoxedStrategy<Option<U256>> {
-    if enabled { any::<U256>().prop_map(Some).boxed() } else { Just(None).boxed() }
+fn optional_delay(max: Option<u32>) -> BoxedStrategy<Option<U256>> {
+    if let Some(max) = max.filter(|max| *max > 0) {
+        any::<U256>().prop_map(move |value| Some(value % U256::from(max))).boxed()
+    } else {
+        Just(None).boxed()
+    }
 }
 
 fn select_sender(
@@ -177,6 +179,17 @@ mod tests {
     use alloy_json_abi::JsonAbi;
     use foundry_config::FuzzDictionaryConfig;
     use revm::database::{CacheDB, EmptyDB};
+
+    #[test]
+    fn zero_delay_is_disabled() {
+        let mut runner = TestRunner::deterministic();
+        assert_eq!(optional_delay(Some(0)).new_tree(&mut runner).unwrap().current(), None);
+        assert_eq!(
+            optional_delay(Some(1)).new_tree(&mut runner).unwrap().current(),
+            Some(U256::ZERO)
+        );
+    }
+
     #[test]
     fn stateless_generator_has_fixed_metadata() {
         let target = Address::with_last_byte(1);

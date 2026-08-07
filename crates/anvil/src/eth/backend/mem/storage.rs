@@ -464,8 +464,8 @@ impl<N: Network> BlockchainStorage<N> {
 
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in &serializable_blocks {
-            let block: Block = serializable_block.clone().into();
+        for serializable_block in serializable_blocks {
+            let block: Block = serializable_block.into();
             self.insert_block(block);
         }
     }
@@ -502,8 +502,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> 
 
     /// Deserialize and add all transactions data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
-        for serializable_transaction in &serializable_transactions {
-            let transaction: MinedTransaction<N> = serializable_transaction.clone().into();
+        for serializable_transaction in serializable_transactions {
+            let transaction: MinedTransaction<N> = serializable_transaction.into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }

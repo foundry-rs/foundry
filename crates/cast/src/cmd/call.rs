@@ -52,7 +52,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
-use foundry_wallets::WalletOpts;
+use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -146,6 +146,9 @@ pub struct CallArgs {
     #[command(flatten)]
     wallet: WalletOpts,
 
+    #[command(flatten)]
+    browser: BrowserWalletOpts,
+
     #[arg(
         short,
         long,
@@ -202,6 +205,9 @@ impl CallArgs {
 
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
+            if self.browser.browser {
+                eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
+            }
             return self.run_curl().await;
         }
 
@@ -274,6 +280,7 @@ impl CallArgs {
             data,
             with_local_artifacts,
             wallet,
+            browser,
             ..
         } = self;
 
@@ -282,7 +289,11 @@ impl CallArgs {
         }
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
-        let sender = SenderKind::from_wallet_opts(wallet).await?;
+        let sender = if let Some(browser) = browser.run::<FEN::Network>().await? {
+            browser.address().into()
+        } else {
+            SenderKind::from_wallet_opts(wallet).await?
+        };
         let from = sender.address();
 
         let code = if let Some(CallSubcommands::Create {

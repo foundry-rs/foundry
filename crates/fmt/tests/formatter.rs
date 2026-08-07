@@ -234,6 +234,7 @@ fmt_tests! {
     MethodChainCallOptions,
     ModifierDefinition,
     NamedCallArgsInChain,
+    NestedNamedCallArgumentChain,
     NamedFunctionCallExpression,
     NonKeywords,
     NumberLiteralUnderscore,

@@ -39,7 +39,7 @@ jobs:
           script: |
             const usage = [
               '**Usage:** `derek bench <subcommand> [args]` (also `decofe bench ...`).\n',
-              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`\n',
+              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [trials=N] [paired-seeds=true|false] [benchmark-type=property|optimization]`\n',
               '- `bench symex [compare-ref=REF] [timeout=N]`\n',
               '- `bench test [compare-ref=REF] [timeout=N] [isolate=true|false]`\n',
               '- `bench build [compare-ref=REF] [timeout=N] [cache=true|false]`\n',
@@ -202,13 +202,18 @@ jobs:
                 'compare-ref': 'master',
                 timeout: '3600',
                 workers: '',
+                trials: '6',
+                'paired-seeds': 'false',
                 'benchmark-type': 'property',
               };
               const { unknown, invalid } = parseArgs(
                 opts,
                 new Set(['compare-ref']),
-                new Set(['timeout', 'workers']),
-                { 'benchmark-type': new Set(['property', 'optimization']) },
+                new Set(['timeout', 'workers', 'trials']),
+                {
+                  'benchmark-type': new Set(['property', 'optimization']),
+                  'paired-seeds': new Set(['true', 'false']),
+                },
               );
 
               const safeRef = /^[A-Za-z0-9._/-]{1,128}$/;
@@ -224,6 +229,10 @@ jobs:
                 if (!Number.isInteger(workers) || workers < 1 || workers > 256) {
                   invalid.push('`workers` must be between 1 and 256');
                 }
+              }
+              const trials = Number(opts.trials);
+              if (!Number.isInteger(trials) || trials < 1 || trials > 20) {
+                invalid.push('`trials` must be between 1 and 20');
               }
 
               const errors = [];
@@ -250,6 +259,8 @@ jobs:
                   benchmark_type: opts['benchmark-type'],
                   timeout_seconds: opts.timeout,
                   workers: opts.workers,
+                  trials: opts.trials,
+                  paired_seeds: opts['paired-seeds'],
                 },
               };
 
@@ -259,6 +270,8 @@ jobs:
                 `compare-ref: \`${opts['compare-ref']}\``,
                 `timeout: \`${opts.timeout}s\``,
                 opts.workers ? `workers: \`${opts.workers}\`` : 'workers: `default`',
+                `trials: \`${opts.trials}\``,
+                `paired-seeds: \`${opts['paired-seeds']}\``,
                 `benchmark-type: \`${opts['benchmark-type']}\``,
               ].join(', ');
             }

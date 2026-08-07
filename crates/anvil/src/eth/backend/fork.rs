@@ -1,6 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
+use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{
@@ -44,6 +45,18 @@ use parking_lot::{
 use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
+
+/// Ensures the fork network can be executed by Anvil's EVM backend.
+pub(crate) fn ensure_fork_network_supported(chain_id: u64) -> Result<(), BlockchainError> {
+    if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::ZkSync | NamedChain::ZkSyncTestnet))
+    {
+        return Err(BlockchainError::UnsupportedForkNetwork {
+            chain_id,
+            reason: "Anvil's EVM backend cannot execute native EraVM bytecode; use `anvil-zksync` for zkSync Era forks",
+        });
+    }
+    Ok(())
+}
 
 /// Represents a fork of a remote client
 ///
@@ -427,6 +440,7 @@ impl<N: Network> ClientFork<N> {
         block_number: impl Into<BlockId>,
     ) -> Result<(), BlockchainError> {
         let block_number = block_number.into();
+        self.prepare_reset(urls.clone(), block_number).await?;
         {
             self.database
                 .write()
@@ -434,8 +448,6 @@ impl<N: Network> ClientFork<N> {
                 .maybe_reset(urls.clone(), block_number)
                 .map_err(BlockchainError::Internal)?;
         }
-
-        self.prepare_reset(urls, block_number).await?;
 
         let number = self.block_number();
         let block_hash = self.block_hash();
@@ -450,18 +462,13 @@ impl<N: Network> ClientFork<N> {
         urls: Vec<String>,
         block_number: BlockId,
     ) -> Result<(), BlockchainError> {
-        if !urls.is_empty() {
-            self.config.write().update_urls(urls)?;
-            let override_chain_id = self.config.read().override_chain_id;
-            let chain_id = if let Some(chain_id) = override_chain_id {
-                chain_id
-            } else {
-                self.provider().get_chain_id().await?
-            };
-            self.config.write().chain_id = chain_id;
-        }
-
-        let provider = self.provider();
+        let (provider, source_chain_id) = if urls.is_empty() {
+            (self.provider(), None)
+        } else {
+            let config = self.config.read().clone();
+            let (provider, source_chain_id) = config.validated_provider_for_urls(&urls).await?;
+            (provider, Some(source_chain_id))
+        };
         let block =
             provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
         let block_hash = block.header().hash();
@@ -470,7 +477,15 @@ impl<N: Network> ClientFork<N> {
         let total_difficulty = block.header().difficulty();
 
         let number = block.header().number();
-        self.config.write().update_block(
+        let mut config = self.config.write();
+        if let Some(source_chain_id) = source_chain_id {
+            if config.override_chain_id.is_none() {
+                config.chain_id = source_chain_id;
+            }
+            config.provider = provider;
+            config.fork_urls = urls;
+        }
+        config.update_block(
             number,
             block_hash,
             timestamp,
@@ -895,12 +910,15 @@ impl<N: Network> ClientForkConfig<N> {
         self.fork_urls.first().map(|s| s.as_str())
     }
 
-    /// Updates the provider URLs
+    /// Builds a provider for the given URLs without changing the active fork configuration.
     ///
     /// # Errors
     ///
     /// This will fail if no new provider could be established (erroneous URL)
-    fn update_urls(&mut self, urls: Vec<String>) -> Result<(), BlockchainError> {
+    pub(crate) fn provider_for_urls(
+        &self,
+        urls: &[String],
+    ) -> Result<Arc<RetryProvider<N>>, BlockchainError> {
         let primary = urls.first().ok_or_else(|| {
             BlockchainError::InvalidUrl("at least one fork URL required".to_string())
         })?;
@@ -912,16 +930,41 @@ impl<N: Network> ClientForkConfig<N> {
             .compute_units_per_second(self.compute_units_per_second)
             .headers(self.headers.clone());
 
-        self.provider = Arc::new(if urls.len() > 1 {
+        let provider = if urls.len() > 1 {
             builder
-                .build_fallback(urls.clone())
+                .build_fallback(urls.to_vec())
                 .map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
         } else {
             builder.build().map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
-        });
-        trace!(target: "fork", "Updated fork urls: {:?}", urls);
-        self.fork_urls = urls;
-        Ok(())
+        };
+        Ok(Arc::new(provider))
+    }
+
+    /// Builds a provider after validating that every URL belongs to the same supported network.
+    pub(crate) async fn validated_provider_for_urls(
+        &self,
+        urls: &[String],
+    ) -> Result<(Arc<RetryProvider<N>>, u64), BlockchainError> {
+        let mut source_chain_id = None;
+        for url in urls {
+            let provider = self.provider_for_urls(std::slice::from_ref(url))?;
+            let chain_id = provider.get_chain_id().await?;
+            ensure_fork_network_supported(chain_id)?;
+            if let Some(source_chain_id) = source_chain_id
+                && chain_id != source_chain_id
+            {
+                return Err(BlockchainError::UnsupportedForkNetwork {
+                    chain_id,
+                    reason: "fork endpoints must use the same chain ID",
+                });
+            }
+            source_chain_id = Some(chain_id);
+        }
+
+        let source_chain_id = source_chain_id.ok_or_else(|| {
+            BlockchainError::InvalidUrl("at least one fork URL required".to_string())
+        })?;
+        Ok((self.provider_for_urls(urls)?, source_chain_id))
     }
 
     /// Updates the block forked off `(block number, block hash, timestamp)`

@@ -10,6 +10,7 @@ use foundry_test_utils::{
     rpc::{next_etherscan_api_key, next_http_archive_rpc_url},
     util::OutputExt,
 };
+use std::fs;
 
 #[expect(clippy::too_many_arguments)]
 async fn test_verify_bytecode(
@@ -422,6 +423,9 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
         .expect("contract address in `forge create` output")
         .to_string();
 
+    // Bare contract names should compile only their uniquely resolved source.
+    prj.add_source("Broken", "contract Broken { uint256 public value = doesNotExist; }");
+
     // The local anvil chain has no block explorer: the command must still verify the runtime
     // bytecode and only warn about the unavailable explorer data.
     cmd.forge_fuse();
@@ -437,6 +441,19 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
 
     assert!(stdout.contains("Runtime code matched"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+
+    // Dependencies and projects with Vyper sources retain full-project compilation. The unrelated
+    // invalid source therefore makes both builds fail.
+    prj.create_file("lib/Dependency.sol", "contract Dependency {}");
+    prj.add_source("UsesDependency", "import '../lib/Dependency.sol'; contract UsesDependency {}");
+    cmd.forge_fuse()
+        .args(["verify-bytecode", &address, "Dependency", "--rpc-url", rpc.as_str()])
+        .assert_failure();
+    let vyper_source = prj.add_raw_source("Counter.vy", "invalid Vyper source");
+    cmd.forge_fuse()
+        .args(["verify-bytecode", &address, "Counter", "--rpc-url", rpc.as_str()])
+        .assert_failure();
+    fs::remove_file(vyper_source).unwrap();
 
     // `--ignore runtime` must skip the runtime fallback as well: with no creation data either,
     // there is nothing left to verify.
