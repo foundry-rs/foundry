@@ -68,11 +68,16 @@ impl FmtArgs {
         let config = self.load_config()?;
         let cwd = std::env::current_dir()?;
 
-        // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
-            .iter()
-            .flat_map(fs::canonicalize_path)
-            .collect::<Vec<_>>();
+        // Expand ignore globs and canonicalize from the get go. In nearest mode, ignores are
+        // expanded from the config nearest each input file instead.
+        let ignored = if self.nearest {
+            Vec::new()
+        } else {
+            expand_globs(&config.root, config.fmt.ignore.iter())?
+                .iter()
+                .flat_map(fs::canonicalize_path)
+                .collect::<Vec<_>>()
+        };
 
         // Expand lib globs separately - we only exclude these during discovery, not explicit paths
         let libs = expand_globs(&config.root, config.libs.iter().filter_map(|p| p.to_str()))?
@@ -160,6 +165,11 @@ impl FmtArgs {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
                         let nearest_config = Config::load_with_root(entry.key())?.sanitized();
+                        if entry.key() != &config.root {
+                            for warning in &nearest_config.warnings {
+                                let _ = sh_warn!("{warning}");
+                            }
+                        }
                         let ignored =
                             expand_globs(&nearest_config.root, nearest_config.fmt.ignore.iter())?
                                 .iter()
@@ -168,6 +178,8 @@ impl FmtArgs {
                         entry.insert((Arc::new(nearest_config.fmt), ignored))
                     }
                 };
+                // Both the input path and expanded ignore paths are canonicalized above, so a
+                // component-wise prefix check correctly covers ignored files and directories.
                 if ignored.iter().any(|ignored| path.starts_with(ignored)) {
                     continue;
                 }

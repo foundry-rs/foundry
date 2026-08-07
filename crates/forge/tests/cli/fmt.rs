@@ -151,7 +151,7 @@ forgetest!(fmt_uses_nearest_config, |prj, cmd| {
     prj.create_file(
         "foundry.toml",
         r#"[fmt]
-ignore = ["first/src/Test.sol"]
+ignore = ["first/src/Test.sol", "["]
 "#,
     );
     prj.create_file(
@@ -170,7 +170,14 @@ tab_width = 6
 "#,
     );
 
-    cmd.args(["fmt", "--nearest", "."]).assert_success();
+    let output = cmd.args(["fmt", "--nearest", "--check", "."]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("Diff in first/src/Test.sol"), "{stdout}");
+    assert!(stdout.contains("|+  function test("), "{stdout}");
+    assert!(stdout.contains("Diff in second/src/Test.sol"), "{stdout}");
+    assert!(stdout.contains("|+      function test(uint256 a, uint256 b)"), "{stdout}");
+
+    cmd.forge_fuse().args(["fmt", "--nearest", "."]).assert_success();
 
     assert!(std::fs::read_to_string(first).unwrap().contains("  function test(\n"));
     assert!(
@@ -179,6 +186,53 @@ tab_width = 6
             .contains("      function test(uint256 a, uint256 b)")
     );
     assert_eq!(std::fs::read_to_string(ignored).unwrap(), source);
+});
+
+forgetest!(fmt_without_nearest_uses_invocation_config, |prj, cmd| {
+    let file = prj.create_file(
+        "nested/src/Test.sol",
+        r#"contract Test {
+    function test(uint256 a, uint256 b) public returns (uint256) { return a + b; }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        r#"[fmt]
+multiline_func_header = "params_first"
+tab_width = 4
+"#,
+    );
+    prj.create_file(
+        "nested/foundry.toml",
+        r#"[fmt]
+multiline_func_header = "attributes_first"
+tab_width = 2
+"#,
+    );
+
+    cmd.args(["fmt", "nested/src/Test.sol"]).assert_success();
+
+    assert!(std::fs::read_to_string(file).unwrap().contains("    function test(\n"));
+});
+
+forgetest!(fmt_nearest_config_emits_nested_warnings, |prj, cmd| {
+    prj.create_file("nested/src/Test.sol", "contract Test {}\n");
+    prj.create_file(
+        "nested/foundry.toml",
+        r#"[default]
+src = "src"
+"#,
+    );
+
+    cmd.args(["fmt", "--nearest", "nested/src/Test.sol"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Found unknown config section in nested/foundry.toml: [default]
+This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
+Please use [profile.default] instead or run `forge config --fix`.
+
+"#]]);
 });
 
 forgetest!(fmt_nearest_config_rejects_config_env, |prj, cmd| {
