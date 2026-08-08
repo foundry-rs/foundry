@@ -3181,7 +3181,7 @@ fn solver_polynomial_normalization_preserves_wrapping_models() {
     let z = SymExpr::var(&mut cx, "z");
     let x_plus_y = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
     let original = SymExpr::binop(&mut cx, SymBinOp::Mul, x_plus_y, z);
-    let normalized = normalize_expr_for_solver(&mut cx, original.clone());
+    let normalized = normalize_polynomial_for_solver(&mut cx, original.clone());
 
     let edge_values = [
         U256::ZERO,
@@ -3216,7 +3216,7 @@ fn solver_polynomial_normalization_stops_at_factor_limit() {
         expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
     }
 
-    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
 }
 
 #[test]
@@ -3230,7 +3230,7 @@ fn solver_polynomial_normalization_stops_at_term_limit() {
     let factor = SymExpr::var(&mut cx, "factor");
     expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
 
-    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
 }
 
 #[test]
@@ -3248,7 +3248,7 @@ fn solver_polynomial_normalization_stops_at_product_limit() {
     }
     let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, left, right);
 
-    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
 }
 
 #[test]
@@ -3258,7 +3258,21 @@ fn solver_polynomial_normalization_skips_single_product() {
     let y = SymExpr::var(&mut cx, "y");
     let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, x, y);
 
-    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_keeps_non_identity_equality_shape() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let expected = SymExpr::var(&mut cx, "expected");
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, sum, z);
+    let equality = SymBoolExpr::eq(&mut cx, product, expected);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, equality.clone()), equality);
 }
 
 #[test]

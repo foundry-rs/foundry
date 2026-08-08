@@ -591,9 +591,15 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
 
     match expr.kind() {
         SymBoolExprKind::Cmp(op, left, right) => {
-            let normalize_polynomial = *op == SymCmpOp::Eq;
-            let left = normalize_expr_for_solver_inner(cx, left.clone(), normalize_polynomial);
-            let right = normalize_expr_for_solver_inner(cx, right.clone(), normalize_polynomial);
+            let left = normalize_expr_for_solver(cx, left.clone());
+            let right = normalize_expr_for_solver(cx, right.clone());
+            if *op == SymCmpOp::Eq {
+                let polynomial_left = normalize_polynomial_for_solver(cx, left.clone());
+                let polynomial_right = normalize_polynomial_for_solver(cx, right.clone());
+                if polynomial_left == polynomial_right {
+                    return normalize_cmp_for_solver(cx, *op, polynomial_left, polynomial_right);
+                }
+            }
             let normalized = normalize_cmp_for_solver(cx, *op, left, right);
             normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
         }
@@ -978,17 +984,11 @@ fn nonzero_bound<'a>(expr: &'a SymExpr, value: &'a SymExpr) -> Option<(&'a SymEx
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_expr_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-    normalize_expr_for_solver_inner(cx, expr, true)
+    if expr.contains_ite() { expr.fold(cx, &mut normalize_expr_node_for_solver) } else { expr }
 }
 
-fn normalize_expr_for_solver_inner(
-    cx: &mut SymCx,
-    expr: SymExpr,
-    normalize_polynomial: bool,
-) -> SymExpr {
-    let expr =
-        if expr.contains_ite() { expr.fold(cx, &mut normalize_expr_node_for_solver) } else { expr };
-    if !normalize_polynomial || !polynomial_normalization_can_help(&expr) {
+pub(crate) fn normalize_polynomial_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
+    if !polynomial_normalization_can_help(&expr) {
         return expr;
     }
     Polynomial::from_expr(&expr).map_or(expr, |polynomial| polynomial.into_expr(cx))

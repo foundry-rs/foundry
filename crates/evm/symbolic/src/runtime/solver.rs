@@ -16,7 +16,9 @@ use monotonic_product::{product_monotonic_unsat_normalized, remove_implied_monot
 pub(crate) use opt::normalize_constraints_for_solver;
 use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_smt_assertions};
 #[cfg(test)]
-pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
+pub(crate) use opt::{
+    normalize_bool_for_solver, normalize_expr_for_solver, normalize_polynomial_for_solver,
+};
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
