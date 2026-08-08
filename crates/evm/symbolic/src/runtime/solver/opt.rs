@@ -995,6 +995,30 @@ pub(crate) fn normalize_polynomial_for_solver(cx: &mut SymCx, expr: SymExpr) -> 
 }
 
 fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
+    fn is_sum(expr: &SymExpr) -> bool {
+        matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Sub, ..))
+    }
+
+    fn is_product(expr: &SymExpr) -> bool {
+        matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Mul, ..))
+            || matches!(
+                expr.kind(),
+                SymExprKind::BinOp(SymBinOp::Shl, _, shift)
+                    if shift.as_const().is_some_and(|shift| shift < U256::from(256))
+            )
+    }
+
+    let crosses_sum_product_boundary = match expr.kind() {
+        SymExprKind::BinOp(SymBinOp::Mul, left, right) => is_sum(left) || is_sum(right),
+        SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Sub, left, right) => {
+            is_product(left) || is_product(right)
+        }
+        _ => false,
+    };
+    if !crosses_sum_product_boundary {
+        return false;
+    }
+
     fn ring_shape(expr: &SymExpr) -> Option<(usize, usize)> {
         match expr.kind() {
             SymExprKind::Const(_) | SymExprKind::Var(_) => Some((0, 0)),

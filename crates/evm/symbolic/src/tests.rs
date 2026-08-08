@@ -3163,12 +3163,11 @@ fn solver_normalizes_wrapping_polynomial_distributivity() {
 fn solver_normalizes_wrapping_polynomial_cancellation() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
-    let y = SymExpr::var(&mut cx, "y");
     let max = SymExpr::constant(&mut cx, U256::MAX);
     let negated_x = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), max);
-    let cancelled_x = SymExpr::binop(&mut cx, SymBinOp::Add, x, negated_x);
-    let expression = SymExpr::binop(&mut cx, SymBinOp::Add, cancelled_x, y.clone());
-    let equality = SymBoolExpr::eq(&mut cx, expression, y);
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Add, x, negated_x);
+    let zero = SymExpr::zero(&mut cx);
+    let equality = SymBoolExpr::eq(&mut cx, expression, zero);
 
     assert_eq!(normalize_bool_for_solver(&mut cx, equality), SymBoolExpr::constant(&mut cx, true));
 }
