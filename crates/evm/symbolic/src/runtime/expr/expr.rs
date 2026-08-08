@@ -587,6 +587,19 @@ impl SymExpr {
                 (SymExprKind::Const(value), _) if value.is_zero() => right,
                 // `a + 0 => a`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                // `bool_word(c) + MAX => ite(c, 0, MAX)`.
+                (SymExprKind::Const(value), _) | (_, SymExprKind::Const(value))
+                    if *value == U256::MAX
+                        && let Some(condition) = if left.as_const() == Some(U256::MAX) {
+                            right.bitwise_bool_word_condition(cx)
+                        } else {
+                            left.bitwise_bool_word_condition(cx)
+                        } =>
+                {
+                    let zero = Self::zero(cx);
+                    let max = Self::constant(cx, U256::MAX);
+                    Self::ite(cx, condition, zero, max)
+                }
                 _ => Self::commutative_binop(cx, binop, left, right),
             },
             SymBinOp::Sub => match (left.kind(), right.kind()) {
@@ -598,6 +611,15 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a - a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `bool_word(c) - 1 => ite(c, 0, MAX)`.
+                (_, SymExprKind::Const(value))
+                    if *value == U256::ONE
+                        && let Some(condition) = left.bitwise_bool_word_condition(cx) =>
+                {
+                    let zero = Self::zero(cx);
+                    let max = Self::constant(cx, U256::MAX);
+                    Self::ite(cx, condition, zero, max)
+                }
                 _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
             SymBinOp::Mul => match (left.kind(), right.kind()) {
@@ -707,6 +729,12 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a | a => a`.
                 _ if left == right => left,
+                _ if let Some(value) = Self::or_with_absorbing_ite(cx, &left, right.clone()) => {
+                    value
+                }
+                _ if let Some(value) = Self::or_with_absorbing_ite(cx, &right, left.clone()) => {
+                    value
+                }
                 _ => Self::or(cx, left, right),
             },
             SymBinOp::Xor => match (left.kind(), right.kind()) {
@@ -861,6 +889,23 @@ impl SymExpr {
             return rebuilt;
         }
         Self::commutative_binop(cx, SymBinOp::Or, left, right)
+    }
+
+    fn or_with_absorbing_ite(cx: &mut SymCx, conditional: &Self, other: Self) -> Option<Self> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_some_and(|value| value.is_zero())
+            && else_expr.as_const() == Some(U256::MAX)
+        {
+            return Some(Self::ite(cx, condition.clone(), other, else_expr.clone()));
+        }
+        if then_expr.as_const() == Some(U256::MAX)
+            && else_expr.as_const().is_some_and(|value| value.is_zero())
+        {
+            return Some(Self::ite(cx, condition.clone(), then_expr.clone(), other));
+        }
+        None
     }
 
     fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
@@ -1263,6 +1308,19 @@ impl SymExpr {
             return None;
         };
         Self::bool_word_condition_from_parts(condition, then_expr, else_expr)
+    }
+
+    pub(in crate::runtime) fn bitwise_bool_word_condition(
+        &self,
+        cx: &mut SymCx,
+    ) -> Option<SymBoolExpr> {
+        if let Some(condition) = self.bool_word_condition() {
+            return Some(condition);
+        }
+        let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() else { return None };
+        let left = left.bitwise_bool_word_condition(cx)?;
+        let right = right.bitwise_bool_word_condition(cx)?;
+        Some(SymBoolExpr::or(cx, vec![left, right]))
     }
 
     fn bool_word_condition_from_parts(
