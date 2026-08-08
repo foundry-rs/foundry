@@ -315,7 +315,29 @@ impl SymBoolExpr {
             let condition = Self::not_bool(cx, condition.clone());
             return Some(Self::or(cx, vec![condition, then_matches]));
         }
+        if expected.as_const().is_some()
+            && Self::ite_has_only_constant_leaves(then_expr)
+            && Self::ite_has_only_constant_leaves(else_expr)
+        {
+            let then_matches = Self::eq(cx, then_expr.clone(), expected.clone());
+            let else_matches = Self::eq(cx, else_expr.clone(), expected.clone());
+            let then_selected = Self::and(cx, vec![condition.clone(), then_matches]);
+            let condition = Self::not_bool(cx, condition.clone());
+            let else_selected = Self::and(cx, vec![condition, else_matches]);
+            return Some(Self::or(cx, vec![then_selected, else_selected]));
+        }
         None
+    }
+
+    fn ite_has_only_constant_leaves(expr: &SymExpr) -> bool {
+        match expr.kind() {
+            SymExprKind::Const(_) => true,
+            SymExprKind::Ite(_, then_expr, else_expr) => {
+                Self::ite_has_only_constant_leaves(then_expr)
+                    && Self::ite_has_only_constant_leaves(else_expr)
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn as_const(&self) -> Option<bool> {
