@@ -3183,16 +3183,27 @@ fn solver_polynomial_normalization_preserves_wrapping_models() {
     let original = SymExpr::binop(&mut cx, SymBinOp::Mul, x_plus_y, z);
     let normalized = normalize_expr_for_solver(&mut cx, original.clone());
 
-    for (x, y, z) in [
-        (U256::ZERO, U256::ZERO, U256::ZERO),
-        (U256::MAX, U256::ONE, U256::MAX),
-        (U256::MAX, U256::MAX, U256::from(2)),
-    ] {
-        let model = symbolic_model(
-            &mut cx,
-            [("x".to_string(), x), ("y".to_string(), y), ("z".to_string(), z)],
-        );
-        assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
+    let edge_values = [
+        U256::ZERO,
+        U256::ONE,
+        U256::from(2),
+        U256::from(u128::MAX),
+        U256::MAX - U256::ONE,
+        U256::MAX,
+    ];
+    for &x in &edge_values {
+        for &y in &edge_values {
+            for &z in &edge_values {
+                let model = symbolic_model(
+                    &mut cx,
+                    [("x".to_string(), x), ("y".to_string(), y), ("z".to_string(), z)],
+                );
+                assert_eq!(
+                    original.eval_model(&model).unwrap(),
+                    normalized.eval_model(&model).unwrap()
+                );
+            }
+        }
     }
 }
 
@@ -3204,6 +3215,38 @@ fn solver_polynomial_normalization_stops_at_factor_limit() {
         let factor = SymExpr::var(&mut cx, &format!("x_{index}"));
         expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
     }
+
+    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_stops_at_term_limit() {
+    let mut cx = SymCx::new();
+    let mut expression = SymExpr::zero(&mut cx);
+    for index in 0..33 {
+        let term = SymExpr::var(&mut cx, &format!("x_{index}"));
+        expression = SymExpr::binop(&mut cx, SymBinOp::Add, expression, term);
+    }
+    let factor = SymExpr::var(&mut cx, "factor");
+    expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
+
+    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_stops_at_product_limit() {
+    let mut cx = SymCx::new();
+    let mut left = SymExpr::zero(&mut cx);
+    for index in 0..17 {
+        let term = SymExpr::var(&mut cx, &format!("left_{index}"));
+        left = SymExpr::binop(&mut cx, SymBinOp::Add, left, term);
+    }
+    let mut right = SymExpr::zero(&mut cx);
+    for index in 0..16 {
+        let term = SymExpr::var(&mut cx, &format!("right_{index}"));
+        right = SymExpr::binop(&mut cx, SymBinOp::Add, right, term);
+    }
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, left, right);
 
     assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
 }
