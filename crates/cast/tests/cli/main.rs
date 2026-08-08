@@ -1396,6 +1396,29 @@ casttest!(wallet_derive_mnemonic, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(wallet_derive_mnemonic_file, |prj, cmd| {
+    let mnemonic = "test test test test test test test test test test test junk";
+    let expected = cmd
+        .args(["wallet", "derive", "--accounts", "3", "--json", mnemonic])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let path = prj.root().join("mnemonic.txt");
+    fs::write(&path, mnemonic.replace(' ', " \n")).unwrap();
+    let actual = cmd
+        .cast_fuse()
+        .args(["wallet", "derive", "--accounts", "3", "--json"])
+        .arg(path)
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(actual, expected);
+});
+
 // tests that `cast wallet derive` with insecure flag outputs the addresses and private keys of the
 // accounts derived from the mnemonic
 casttest!(wallet_derive_mnemonic_insecure, |_prj, cmd| {
