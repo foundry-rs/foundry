@@ -4291,6 +4291,146 @@ async fn deploy_counter_and_set_number(
         .tx_hash()
 }
 
+// `cast run` must replay a transaction's block prefix without changing the trace requested for the
+// selected transaction. A single block covers a deployment in the first position, a revert in the
+// middle, and an internally traced state change in the last position.
+forgetest_async!(cast_run_fork_traces_only_target_transaction, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ReplayTarget",
+        r#"
+contract ReplayTarget {
+    uint256 public number;
+
+    constructor() {
+        number = 1;
+    }
+
+    function revertingIncrement() external {
+        number++;
+        revert("expected revert");
+    }
+
+    function increment() external {
+        _increment();
+    }
+
+    function _increment() internal {
+        number++;
+    }
+}
+"#,
+    );
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "ReplayTarget", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let bytecode = Bytes::from_str(bytecode.trim()).unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    let target = sender.create(nonce);
+    let deployment = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .with_deploy_code(bytecode)
+                .nonce(nonce)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let revert = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(target)
+                .with_input(Bytes::copy_from_slice(&keccak256(b"revertingIncrement()")[..4]))
+                .nonce(nonce + 1)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let increment = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(target)
+                .with_input(Bytes::copy_from_slice(&keccak256(b"increment()")[..4]))
+                .nonce(nonce + 2)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let tx_hashes = [*deployment.tx_hash(), *revert.tx_hash(), *increment.tx_hash()];
+    api.mine_one().await.unwrap();
+
+    for (index, tx_hash) in tx_hashes.iter().enumerate() {
+        let block_tx = api
+            .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(index))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(block_tx.tx_hash(), *tx_hash);
+    }
+    assert!(!api.transaction_receipt(tx_hashes[1]).await.unwrap().unwrap().status());
+
+    cmd.set_current_dir(prj.root());
+    let deployment_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[0].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(deployment_output.contains("new ReplayTarget"));
+    assert!(deployment_output.contains("Transaction successfully executed."));
+
+    let revert_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[1].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(revert_output.contains("ReplayTarget::revertingIncrement()"));
+    assert!(revert_output.contains("expected revert"));
+
+    let increment_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[2].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(increment_output.contains("ReplayTarget::increment()"));
+    assert!(increment_output.contains("Transaction successfully executed."));
+
+    let decoded_output = cmd
+        .cast_fuse()
+        .args([
+            "run",
+            &tx_hashes[2].to_string(),
+            "--rpc-url",
+            &endpoint,
+            "--with-local-artifacts",
+            "--decode-internal",
+            "-vvvvv",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(decoded_output.contains("ReplayTarget::_increment()"));
+    assert!(decoded_output.contains("@ 0: 1 → 2"));
+});
+
 // `cast run --prestate-tracer` uses the prestate tracer when the node exposes the debug API
 // (Anvil does), skipping the block replay while still producing correct traces. The block replay
 // message must be absent from stderr.
