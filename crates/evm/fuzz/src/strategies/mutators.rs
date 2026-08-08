@@ -482,6 +482,7 @@ fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
 
     for i in (0..bytes.len()).rev() {
         let byte_val = bytes[i] as f64;
+        #[allow(clippy::suboptimal_flops)]
         let scaled = (byte_val + carry_down * 256.0) * scale_factor;
 
         if i == 0 && scaled >= 256.0 {

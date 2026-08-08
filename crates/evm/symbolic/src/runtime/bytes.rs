@@ -505,7 +505,6 @@ impl SymBytes {
                 if len > take {
                     out.resize(out.len() + len - take, 0);
                 }
-                Ok(())
             }
             SymBytesKind::Exprs(bytes) => {
                 for idx in 0..len {
@@ -518,7 +517,6 @@ impl SymBytes {
                     };
                     out.push(byte.to::<u8>());
                 }
-                Ok(())
             }
             SymBytesKind::Concat(values) => {
                 for bytes in values {
@@ -541,7 +539,6 @@ impl SymBytes {
                 if len != 0 {
                     out.resize(out.len() + len, 0);
                 }
-                Ok(())
             }
             SymBytesKind::Slice { bytes, offset: base_offset, len: slice_len } => {
                 if offset >= *slice_len {
@@ -562,13 +559,12 @@ impl SymBytes {
                     let bytes = self.slice_concrete(cx, offset, len).materialize(cx);
                     out.extend(concrete_expr_bytes(&bytes, reason)?);
                 }
-                Ok(())
             }
             _ => {
                 let bytes = self.slice_concrete(cx, offset, len).materialize(cx);
                 out.extend(concrete_expr_bytes(&bytes, reason)?);
-                Ok(())
             }
         }
+        Ok(())
     }
 }

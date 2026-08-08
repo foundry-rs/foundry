@@ -403,6 +403,7 @@ enum FetcherKind {
     Sourcify,
 }
 
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 trait ExternalFetcherT: Send + Sync {
     fn kind(&self) -> FetcherKind;
