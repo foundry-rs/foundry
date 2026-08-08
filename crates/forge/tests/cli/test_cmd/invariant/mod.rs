@@ -2452,6 +2452,147 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
+// Verifies that a persisted secondary failure does not suppress the current predicate after its
+// implementation changes.
+forgetest_init!(secondary_persisted_revalidates_after_code_change, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    let test = r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract PersistedSecondaryTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_anchor() public pure {
+        require(true);
+    }
+
+    function invariant_secondary() public view {
+        require(counter.cond() < 2, "old secondary");
+    }
+}
+   "#;
+    prj.add_test("PersistedSecondaryTest.t.sol", test);
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj
+        .root()
+        .join("cache/invariant/failures/PersistedSecondaryTest/invariants/invariant_secondary");
+    let persisted_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    assert_eq!(persisted_json["call_sequence"].as_array().unwrap().len(), 2);
+
+    prj.add_test(
+        "PersistedSecondaryTest.t.sol",
+        &test.replace(
+            "counter.cond() < 2, \"old secondary\"",
+            "counter.cond() != 3, \"new secondary\"",
+        ),
+    );
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: new secondary] invariant_secondary
+...
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    let persisted_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(persisted).unwrap()).unwrap();
+    assert_eq!(persisted_json["call_sequence"].as_array().unwrap().len(), 3);
+});
+
+// Verifies that a compatible persisted secondary remains in the report while the campaign
+// continues to discover another predicate failure.
+forgetest_init!(secondary_persisted_continues_campaign, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 3;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    let test = r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+
+contract PersistedSecondaryContinuationTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_anchor() public pure {
+        require(true);
+    }
+
+    function invariant_secondary() public view {
+        require(counter.cond() < 2, "secondary broken");
+    }
+
+    function invariant_later() public view {
+        require(counter.cond() < 100, "later broken");
+    }
+}
+   "#;
+    prj.add_test("PersistedSecondaryContinuationTest.t.sol", test);
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj.root().join(
+        "cache/invariant/failures/PersistedSecondaryContinuationTest/invariants/invariant_secondary",
+    );
+    assert!(persisted.is_file());
+
+    prj.add_test(
+        "PersistedSecondaryContinuationTest.t.sol",
+        &test.replace(
+            "counter.cond() < 100, \"later broken\"",
+            "counter.cond() != 3, \"later broken\"",
+        ),
+    );
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: secondary broken] invariant_secondary
+...
+[FAIL: later broken] invariant_later
+...
+PersistedSecondaryContinuationTest invariants: 2/3 invariants broken
+...
+"#]]);
+});
+
 // Verifies that when the campaign anchor passes but another selected predicate fails, the report
 // doesn't render a hollow `[FAIL]` header for the primary and the suite roll-up counts only the
 // actually-broken invariants.
