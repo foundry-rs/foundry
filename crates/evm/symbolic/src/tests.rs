@@ -3144,6 +3144,81 @@ fn solver_does_not_invert_guarded_zero_self_division() {
 }
 
 #[test]
+fn solver_normalizes_wrapping_polynomial_distributivity() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let x_plus_y = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
+    let factored = SymExpr::binop(&mut cx, SymBinOp::Mul, x_plus_y, z.clone());
+    let xz = SymExpr::binop(&mut cx, SymBinOp::Mul, x, z.clone());
+    let yz = SymExpr::binop(&mut cx, SymBinOp::Mul, y, z);
+    let expanded = SymExpr::binop(&mut cx, SymBinOp::Add, xz, yz);
+    let equality = SymBoolExpr::eq(&mut cx, factored, expanded);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, equality), SymBoolExpr::constant(&mut cx, true));
+}
+
+#[test]
+fn solver_normalizes_wrapping_polynomial_cancellation() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let negated_x = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), max);
+    let cancelled_x = SymExpr::binop(&mut cx, SymBinOp::Add, x, negated_x);
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Add, cancelled_x, y.clone());
+    let equality = SymBoolExpr::eq(&mut cx, expression, y);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, equality), SymBoolExpr::constant(&mut cx, true));
+}
+
+#[test]
+fn solver_polynomial_normalization_preserves_wrapping_models() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let x_plus_y = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
+    let original = SymExpr::binop(&mut cx, SymBinOp::Mul, x_plus_y, z);
+    let normalized = normalize_expr_for_solver(&mut cx, original.clone());
+
+    for (x, y, z) in [
+        (U256::ZERO, U256::ZERO, U256::ZERO),
+        (U256::MAX, U256::ONE, U256::MAX),
+        (U256::MAX, U256::MAX, U256::from(2)),
+    ] {
+        let model = symbolic_model(
+            &mut cx,
+            [("x".to_string(), x), ("y".to_string(), y), ("z".to_string(), z)],
+        );
+        assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
+    }
+}
+
+#[test]
+fn solver_polynomial_normalization_stops_at_factor_limit() {
+    let mut cx = SymCx::new();
+    let mut expression = SymExpr::one(&mut cx);
+    for index in 0..9 {
+        let factor = SymExpr::var(&mut cx, &format!("x_{index}"));
+        expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
+    }
+
+    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_skips_single_product() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, x, y);
+
+    assert_eq!(normalize_expr_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
 fn solver_normalizes_guarded_self_division_add_overflow_guard() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
