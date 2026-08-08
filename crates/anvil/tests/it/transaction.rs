@@ -963,6 +963,26 @@ async fn can_get_raw_receipts() {
     assert!(second_decoded.status());
     assert_eq!(first_decoded.cumulative_gas_used(), 21_000);
     assert_eq!(second_decoded.cumulative_gas_used(), 42_000);
+
+    // Loaded state can contain transaction metadata that is inconsistent with the block body.
+    // Receipt lookup must continue to use transaction hashes in block-body order.
+    let mut state = api.serialized_state(false).await.unwrap();
+    state.transactions.reverse();
+    for transaction in &mut state.transactions {
+        transaction.info.transaction_index = 99;
+        transaction.block_hash = B256::repeat_byte(0xff);
+        transaction.block_number = 999;
+    }
+    let (loaded_api, _loaded_handle) =
+        spawn(NodeConfig::test().with_init_state(Some(state.clone()))).await;
+    let loaded_raw = loaded_api.raw_receipts(BlockId::number(1)).await.unwrap();
+    assert_eq!(loaded_raw, raw_by_number);
+
+    // A block with any missing stored transaction must not return a partial receipt list.
+    state.transactions.pop();
+    let (incomplete_api, _incomplete_handle) =
+        spawn(NodeConfig::test().with_init_state(Some(state))).await;
+    assert!(incomplete_api.raw_receipts(BlockId::number(1)).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
