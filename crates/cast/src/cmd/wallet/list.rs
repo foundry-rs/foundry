@@ -144,6 +144,8 @@ impl ListArgs {
             if path.is_file()
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
+                // Skip recognized Touch ID sidecars while retaining ambiguous files.
+                && !matches!(super::is_touch_id_sidecar(&path), Ok(true))
             {
                 let account = local_account_name(name);
                 if format_json {
