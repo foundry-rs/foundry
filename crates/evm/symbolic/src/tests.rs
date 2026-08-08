@@ -3060,6 +3060,55 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
 }
 
 #[test]
+fn solver_normalizes_bounded_mul_div_identity() {
+    let mut cx = SymCx::new();
+    let limb_word = SymExpr::var(&mut cx, "limb");
+    let uint248_max = SymExpr::constant(&mut cx, (U256::ONE << 248) - U256::ONE);
+    let limb = SymExpr::binop(&mut cx, SymBinOp::And, limb_word, uint248_max);
+    let radix = SymExpr::constant(&mut cx, U256::from(58));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, limb.clone(), radix.clone());
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, radix);
+    let identity = SymBoolExpr::eq(&mut cx, quotient, limb);
+
+    assert!(normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)).is_empty());
+    let failure = identity.not(&mut cx);
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &[failure]),
+        vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
+fn solver_does_not_normalize_wrapping_mul_div_identity() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let factor = SymExpr::constant(&mut cx, U256::from(58));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), factor.clone());
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, factor);
+    let identity = SymBoolExpr::eq(&mut cx, quotient, value);
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)),
+        vec![identity]
+    );
+}
+
+#[test]
+fn solver_does_not_normalize_zero_divisor_mul_div_identity() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let zero = SymExpr::zero(&mut cx);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), zero.clone());
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, zero);
+    let identity = SymBoolExpr::eq(&mut cx, quotient, value);
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)),
+        vec![identity]
+    );
+}
+
+#[test]
 fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
@@ -3141,6 +3190,150 @@ fn solver_does_not_invert_guarded_zero_self_division() {
         let model = symbolic_model(&mut cx, [("a".to_string(), value)]);
         assert_eq!(mirrored.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
     }
+}
+
+#[test]
+fn solver_normalizes_wrapping_polynomial_distributivity() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let x_plus_y = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
+    let factored = SymExpr::binop(&mut cx, SymBinOp::Mul, x_plus_y, z.clone());
+    let xz = SymExpr::binop(&mut cx, SymBinOp::Mul, x, z.clone());
+    let yz = SymExpr::binop(&mut cx, SymBinOp::Mul, y, z);
+    let expanded = SymExpr::binop(&mut cx, SymBinOp::Add, xz, yz);
+    let equality = SymBoolExpr::eq(&mut cx, factored, expanded);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, equality), SymBoolExpr::constant(&mut cx, true));
+}
+
+#[test]
+fn solver_normalizes_wrapping_polynomial_cancellation() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let negated_x = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), max);
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Add, x, negated_x);
+    let zero = SymExpr::zero(&mut cx);
+    let equality = SymBoolExpr::eq(&mut cx, expression, zero);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, equality), SymBoolExpr::constant(&mut cx, true));
+}
+
+#[test]
+fn solver_polynomial_normalization_preserves_wrapping_models() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let x_plus_y = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
+    let original = SymExpr::binop(&mut cx, SymBinOp::Mul, x_plus_y, z);
+    let normalized = normalize_polynomial_for_solver(&mut cx, original.clone());
+
+    let edge_values = [
+        U256::ZERO,
+        U256::ONE,
+        U256::from(2),
+        U256::from(u128::MAX),
+        U256::MAX - U256::ONE,
+        U256::MAX,
+    ];
+    for &x in &edge_values {
+        for &y in &edge_values {
+            for &z in &edge_values {
+                let model = symbolic_model(
+                    &mut cx,
+                    [("x".to_string(), x), ("y".to_string(), y), ("z".to_string(), z)],
+                );
+                assert_eq!(
+                    original.eval_model(&model).unwrap(),
+                    normalized.eval_model(&model).unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn solver_polynomial_normalization_stops_at_factor_limit() {
+    let mut cx = SymCx::new();
+    let mut expression = SymExpr::one(&mut cx);
+    for index in 0..9 {
+        let factor = SymExpr::var(&mut cx, &format!("x_{index}"));
+        expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
+    }
+
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_stops_at_term_limit() {
+    let mut cx = SymCx::new();
+    let mut expression = SymExpr::zero(&mut cx);
+    for index in 0..33 {
+        let term = SymExpr::var(&mut cx, &format!("x_{index}"));
+        expression = SymExpr::binop(&mut cx, SymBinOp::Add, expression, term);
+    }
+    let factor = SymExpr::var(&mut cx, "factor");
+    expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
+
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_stops_at_product_limit() {
+    let mut cx = SymCx::new();
+    let mut left = SymExpr::zero(&mut cx);
+    for index in 0..17 {
+        let term = SymExpr::var(&mut cx, &format!("left_{index}"));
+        left = SymExpr::binop(&mut cx, SymBinOp::Add, left, term);
+    }
+    let mut right = SymExpr::zero(&mut cx);
+    for index in 0..16 {
+        let term = SymExpr::var(&mut cx, &format!("right_{index}"));
+        right = SymExpr::binop(&mut cx, SymBinOp::Add, right, term);
+    }
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, left, right);
+
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_skips_single_product() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, x, y);
+
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_skips_unsupported_arithmetic_atoms() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let denominator = SymExpr::var(&mut cx, "denominator");
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), denominator);
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, quotient, y);
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, sum, x);
+
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
+fn solver_polynomial_normalization_keeps_non_identity_equality_shape() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let expected = SymExpr::var(&mut cx, "expected");
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, sum, z);
+    let equality = SymBoolExpr::eq(&mut cx, product, expected);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, equality.clone()), equality);
 }
 
 #[test]
@@ -3248,6 +3441,44 @@ fn solver_normalizes_unsigned_interval_product_contradiction() {
     assert_eq!(
         normalize_constraints_for_solver(&mut cx, &constraints),
         vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
+fn solver_proves_bounded_product_after_logical_shift() {
+    let mut cx = SymCx::default();
+    let limb = SymExpr::var(&mut cx, "limb");
+    let carry = SymExpr::var(&mut cx, "carry");
+    let limb_mask = SymExpr::constant(&mut cx, (U256::from(1) << 248) - U256::from(1));
+    let carry_mask = SymExpr::constant(&mut cx, U256::from(u8::MAX));
+    let limb = SymExpr::binop(&mut cx, SymBinOp::And, limb, limb_mask);
+    let carry = SymExpr::binop(&mut cx, SymBinOp::And, carry, carry_mask);
+    let radix = SymExpr::constant(&mut cx, U256::from(58));
+    let carry_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, carry.clone(), radix.clone());
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, limb, radix.clone());
+    let accumulator = SymExpr::binop(&mut cx, SymBinOp::Add, product, carry);
+    let shift = SymExpr::constant(&mut cx, U256::from(248));
+    let high = SymExpr::binop(&mut cx, SymBinOp::Shr, accumulator, shift);
+    let high_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, high, radix).not(&mut cx);
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &[carry_bounded, high_bounded]);
+    assert_eq!(normalized.len(), 1);
+    assert_eq!(normalized[0].as_const(), Some(false));
+}
+
+#[test]
+fn solver_does_not_prove_shifted_product_when_multiplication_can_wrap() {
+    let mut cx = SymCx::default();
+    let value = SymExpr::var(&mut cx, "value");
+    let factor = SymExpr::constant(&mut cx, U256::from(58));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value, factor.clone());
+    let shift = SymExpr::constant(&mut cx, U256::from(248));
+    let high = SymExpr::binop(&mut cx, SymBinOp::Shr, product, shift);
+    let failure = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, high, factor).not(&mut cx);
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&failure)),
+        vec![failure]
     );
 }
 
