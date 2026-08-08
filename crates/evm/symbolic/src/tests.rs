@@ -3070,7 +3070,7 @@ fn solver_normalizes_bounded_mul_div_identity() {
     let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, radix);
     let identity = SymBoolExpr::eq(&mut cx, quotient, limb);
 
-    assert!(normalize_constraints_for_solver(&mut cx, &[identity.clone()]).is_empty());
+    assert!(normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)).is_empty());
     let failure = identity.not(&mut cx);
     assert_eq!(
         normalize_constraints_for_solver(&mut cx, &[failure]),
@@ -3087,7 +3087,10 @@ fn solver_does_not_normalize_wrapping_mul_div_identity() {
     let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, factor);
     let identity = SymBoolExpr::eq(&mut cx, quotient, value);
 
-    assert_eq!(normalize_constraints_for_solver(&mut cx, &[identity.clone()]), vec![identity]);
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)),
+        vec![identity]
+    );
 }
 
 #[test]
@@ -3099,7 +3102,10 @@ fn solver_does_not_normalize_zero_divisor_mul_div_identity() {
     let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, zero);
     let identity = SymBoolExpr::eq(&mut cx, quotient, value);
 
-    assert_eq!(normalize_constraints_for_solver(&mut cx, &[identity.clone()]), vec![identity]);
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)),
+        vec![identity]
+    );
 }
 
 #[test]
@@ -3470,7 +3476,10 @@ fn solver_does_not_prove_shifted_product_when_multiplication_can_wrap() {
     let high = SymExpr::binop(&mut cx, SymBinOp::Shr, product, shift);
     let failure = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, high, factor).not(&mut cx);
 
-    assert_eq!(normalize_constraints_for_solver(&mut cx, &[failure.clone()]), vec![failure]);
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&failure)),
+        vec![failure]
+    );
 }
 
 #[test]
