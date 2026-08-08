@@ -372,7 +372,7 @@ impl RunArgs {
         }
         apply_chain_specific_tx_replay_env_changes(&mut evm_env);
 
-        let trace_requirements = TraceRequirements::none()
+        let target_trace_requirements = TraceRequirements::none()
             .with_calls(true)
             .with_debug(self.debug)
             .with_decode_internal(if tracing.decode_internal {
@@ -385,7 +385,7 @@ impl RunArgs {
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
-            trace_requirements,
+            TraceRequirements::none(),
             networks,
             create2_deployer,
             None,
@@ -503,6 +503,7 @@ impl RunArgs {
 
         // Execute our transaction
         let result = {
+            executor.set_trace_requirements(target_trace_requirements);
             executor.set_trace_printer(self.trace_printer);
 
             let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
