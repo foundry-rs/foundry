@@ -372,20 +372,11 @@ impl RunArgs {
         }
         apply_chain_specific_tx_replay_env_changes(&mut evm_env);
 
-        let trace_requirements = TraceRequirements::none()
-            .with_calls(true)
-            .with_debug(self.debug)
-            .with_decode_internal(if tracing.decode_internal {
-                InternalTraceMode::Full
-            } else {
-                InternalTraceMode::None
-            })
-            .with_state_changes(verbosity > 4);
         let mut executor = TracingExecutor::<FEN>::new(
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
-            trace_requirements,
+            TraceRequirements::none(),
             networks,
             create2_deployer,
             None,
@@ -503,6 +494,18 @@ impl RunArgs {
 
         // Execute our transaction
         let result = {
+            // Enable tracing only for the target transaction; the prefix replay above ran with
+            // tracing disabled.
+            let target_trace_requirements = TraceRequirements::none()
+                .with_calls(true)
+                .with_debug(self.debug)
+                .with_decode_internal(if tracing.decode_internal {
+                    InternalTraceMode::Full
+                } else {
+                    InternalTraceMode::None
+                })
+                .with_state_changes(verbosity > 4);
+            executor.set_trace_requirements(target_trace_requirements);
             executor.set_trace_printer(self.trace_printer);
 
             let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
