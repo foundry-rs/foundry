@@ -748,6 +748,9 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a ^ a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `a ^ ((a ^ b) * bool_word(c)) => ite(c, b, a)`.
+                _ if let Some(value) = Self::xor_with_bool_select(cx, &left, &right) => value,
+                _ if let Some(value) = Self::xor_with_bool_select(cx, &right, &left) => value,
                 _ => Self::commutative_binop(cx, binop, left, right),
             },
             SymBinOp::Shl => match (left.kind(), right.kind()) {
@@ -906,6 +909,24 @@ impl SymExpr {
             return Some(Self::ite(cx, condition.clone(), then_expr.clone(), other));
         }
         None
+    }
+
+    fn xor_with_bool_select(cx: &mut SymCx, base: &Self, selector: &Self) -> Option<Self> {
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = selector.kind() else { return None };
+        let (delta, condition) = if let Some(condition) = left.bool_word_condition() {
+            (right, condition)
+        } else {
+            (left, right.bool_word_condition()?)
+        };
+        let SymExprKind::BinOp(SymBinOp::Xor, left, right) = delta.kind() else { return None };
+        let selected = if left == base {
+            right.clone()
+        } else if right == base {
+            left.clone()
+        } else {
+            return None;
+        };
+        Some(Self::ite(cx, condition, selected, base.clone()))
     }
 
     fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
