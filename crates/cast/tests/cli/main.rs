@@ -730,8 +730,21 @@ casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
     assert!(!keystore_file.exists());
 });
 
+fn valid_touch_id_sidecar_fixture(version: u32, policy: &str) -> String {
+    let sealed_password = format!("04{}", "00".repeat(92));
+
+    serde_json::json!({
+        "version": version,
+        "policy": policy,
+        "se_key": "aa",
+        "sealed_password": sealed_password,
+    })
+    .to_string()
+}
+
 casttest!(wallet_remove_touch_id_sidecar, |prj, cmd| {
     let keystore_dir = prj.root().join("keystore");
+
     let account_name = "testAccount";
     let keystore_file = keystore_dir.join(account_name);
 
@@ -749,11 +762,7 @@ casttest!(wallet_remove_touch_id_sidecar, |prj, cmd| {
     .assert_success();
 
     let sidecar = keystore_dir.join(format!("{account_name}.touchid"));
-    fs::write(
-        &sidecar,
-        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
-    )
-    .unwrap();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "user-presence")).unwrap();
 
     cmd.cast_fuse()
         .args([
@@ -793,6 +802,56 @@ Error: Invalid password - wallet removal cancelled
 "#]]);
     assert!(!keystore_file.exists());
     assert!(!sidecar.exists());
+});
+
+casttest!(wallet_remove_preserves_invalid_touch_id_payload, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_path = keystore_dir.join("testAccount");
+    let sidecar_path = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+
+    let invalid_sidecar_content = serde_json::json!({
+        "version": 1,
+        "policy": "user-presence",
+        "se_key": "aa",
+        "sealed_password": format!("04{}", "00".repeat(90)),
+    })
+    .to_string();
+
+    fs::write(&sidecar_path, &invalid_sidecar_content).unwrap();
+
+    let original_keystore_bytes = fs::read(&keystore_path).unwrap();
+    let original_sidecar_bytes = fs::read(&sidecar_path).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            "testAccount",
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure();
+
+    assert!(keystore_path.exists());
+    assert!(sidecar_path.exists());
+    assert_eq!(fs::read(&keystore_path).unwrap(), original_keystore_bytes);
+    assert_eq!(fs::read(&sidecar_path).unwrap(), original_sidecar_bytes);
 });
 
 casttest!(wallet_remove_preserves_touch_id_named_keystore, |prj, cmd| {
@@ -1282,7 +1341,7 @@ Created new encrypted keystore file: [..]
 
     fs::write(
         keystore_path.join("ignored.touchid"),
-        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
+        valid_touch_id_sidecar_fixture(1, "user-presence"),
     )
     .unwrap();
 
@@ -1323,18 +1382,19 @@ casttest!(wallet_list_retains_unknown_touch_id_sidecars_and_hides_recognized, |p
 
     fs::write(
         keystore_path.join("recognized.touchid"),
-        r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+        valid_touch_id_sidecar_fixture(1, "user-presence"),
     )
     .unwrap();
 
     fs::write(
         keystore_path.join("future.touchid"),
-        r#"{
-            "version": 2,
-            "policy": "user-presence",
-            "se_key": "aa",
-            "sealed_password": "bb"
-        }"#,
+        valid_touch_id_sidecar_fixture(2, "user-presence"),
+    )
+    .unwrap();
+
+    fs::write(
+        keystore_path.join("invalid_payload.touchid"),
+        r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
     )
     .unwrap();
 
@@ -1342,6 +1402,7 @@ casttest!(wallet_list_retains_unknown_touch_id_sidecars_and_hides_recognized, |p
 
     cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
         [r#"future.touchid (Local)
+invalid_payload.touchid (Local)
 
 "#]
     ]);
@@ -1356,7 +1417,7 @@ casttest!(wallet_list_local_accounts_json, |prj, cmd| {
     cmd.args(["wallet", "new", "keystore", "--unsafe-password", "test"]).assert_success();
     fs::write(
         keystore_path.join("ignored.touchid"),
-        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
+        valid_touch_id_sidecar_fixture(1, "user-presence"),
     )
     .unwrap();
 
@@ -2006,8 +2067,7 @@ casttest!(
     |prj, cmd| {
         let keystore_dir = prj.root().join("keystore");
         let sidecar = keystore_dir.join("testAccount.touchid");
-        let sidecar_content =
-            r#"{"version":2,"policy":"user-presence","se_key":"","sealed_password":""}"#;
+        let sidecar_content = valid_touch_id_sidecar_fixture(2, "user-presence");
 
         cmd.args([
             "wallet",
@@ -2021,7 +2081,7 @@ casttest!(
             "old_password",
         ])
         .assert_success();
-        fs::write(&sidecar, sidecar_content).unwrap();
+        fs::write(&sidecar, &sidecar_content).unwrap();
 
         cmd.cast_fuse()
             .args([
@@ -2153,11 +2213,7 @@ casttest!(wallet_change_password_removes_touch_id_sidecar, |prj, cmd| {
         "old_password",
     ])
     .assert_success();
-    fs::write(
-        &sidecar,
-        r#"{"version":1,"policy":"user-presence","se_key":"","sealed_password":""}"#,
-    )
-    .unwrap();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "user-presence")).unwrap();
 
     cmd.cast_fuse()
         .args([
