@@ -5,7 +5,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, map::HashMap as AlloyHashMap};
 use foundry_compilers::{
     Artifact, ArtifactId,
     artifacts::{CompactBytecode, CompactContractBytecodeCow, Libraries},
@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::OnceLock,
 };
 
 /// Errors that can occur during linking.
@@ -35,11 +36,19 @@ pub enum LinkerError {
     LinkingFailed { artifact: String },
 }
 
+type Index = AlloyHashMap<PathBuf, AlloyHashMap<String, Vec<ArtifactId>>>;
+
 pub struct Linker<'a> {
     /// Root of the project, used to determine whether artifact/library path can be stripped.
     pub root: PathBuf,
     /// Compilation artifacts.
     pub contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
+}
+
+/// Reuses artifact lookups across multiple linker operations.
+pub struct Resolver<'a, 'b> {
+    linker: &'b Linker<'a>,
+    index: OnceLock<Index>,
 }
 
 /// Output of the `link_with_nonce_or_address`
@@ -121,6 +130,18 @@ impl<'a> Linker<'a> {
         path.to_path_buf()
     }
 
+    fn index<'b>(&self, index: &'b OnceLock<Index>) -> &'b Index {
+        index.get_or_init(|| {
+            let mut artifacts = AlloyHashMap::<_, AlloyHashMap<_, Vec<_>>>::default();
+            for id in self.contracts.keys() {
+                let path = self.project_relative_path(&id.source);
+                let name = id.name.split('.').next().unwrap().to_owned();
+                artifacts.entry(path).or_default().entry(name).or_default().push(id.clone());
+            }
+            artifacts
+        })
+    }
+
     /// Resolves `path` against the project root and canonicalizes it for comparison only.
     fn canonical_path(&self, path: &Path) -> Option<PathBuf> {
         let path = if path.is_relative() { self.root.join(path) } else { path.to_path_buf() };
@@ -177,7 +198,9 @@ impl<'a> Linker<'a> {
             if !self.path_matches(Path::new(reference), &file_relative, canonical_file.as_deref()) {
                 continue;
             }
-            if let Some(id) = self.find_artifact_id_by_library_path(reference, name, target)? {
+            if let Some(id) =
+                self.find_artifact_id_by_library_path(None, reference, name, target)?
+            {
                 let (artifact_file, artifact_name) = self.convert_artifact_id_to_lib_path(id);
                 if artifact_file == file_relative && artifact_name == name {
                     references.push(reference.clone());
@@ -198,25 +221,36 @@ impl<'a> Linker<'a> {
     /// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
     /// library path in the form of "./path/to/Lib.sol:Lib"
     ///
-    /// Optionally accepts solc version, and if present, only compares artifacts with given version.
-    fn find_artifact_id_by_library_path(
-        &'a self,
+    /// Dependency lookups can use the index. Canonical paths retain the fallback scan required
+    /// for symlinked library aliases.
+    fn find_artifact_id_by_library_path<'b>(
+        &'b self,
+        index: Option<&'b OnceLock<Index>>,
         file: &str,
         name: &str,
         target: &ArtifactId,
-    ) -> Result<Option<&'a ArtifactId>, LinkerError> {
+    ) -> Result<Option<&'b ArtifactId>, LinkerError> {
         let library_path = self.project_relative_path(Path::new(file));
-        let candidates = self
-            .contracts
-            .keys()
-            .filter(|id| {
-                if id.version != target.version {
-                    return false;
-                }
-                let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
-                artifact_name == *name && artifact_path == library_path
-            })
-            .collect::<Vec<_>>();
+        let candidates = if let Some(index) = index {
+            self.index(index)
+                .get(&library_path)
+                .and_then(|artifacts| artifacts.get(name))
+                .into_iter()
+                .flatten()
+                .filter(|id| id.version == target.version)
+                .collect::<Vec<_>>()
+        } else {
+            self.contracts
+                .keys()
+                .filter(|id| {
+                    if id.version != target.version {
+                        return false;
+                    }
+                    let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
+                    artifact_name == *name && artifact_path == library_path
+                })
+                .collect()
+        };
         let candidates = if candidates.is_empty() {
             let canonical_library_path = self.canonical_path(&library_path);
             self.contracts
@@ -254,11 +288,12 @@ impl<'a> Linker<'a> {
         Ok(candidates.into_iter().next())
     }
 
-    fn direct_dependencies(
-        &'a self,
-        target: &'a ArtifactId,
-        references: &mut BTreeMap<&'a ArtifactId, BTreeSet<PathBuf>>,
-    ) -> Result<BTreeSet<&'a ArtifactId>, LinkerError> {
+    fn direct_dependencies<'b>(
+        &'b self,
+        index: &'b OnceLock<Index>,
+        target: &ArtifactId,
+        references: &mut BTreeMap<&'b ArtifactId, BTreeSet<PathBuf>>,
+    ) -> Result<BTreeSet<&'b ArtifactId>, LinkerError> {
         let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
         let mut link_references: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -279,9 +314,12 @@ impl<'a> Linker<'a> {
         let mut dependencies = BTreeSet::new();
         for (file, libs) in link_references {
             for name in libs {
-                let id = self.find_artifact_id_by_library_path(&file, &name, target)?.ok_or_else(
-                    || LinkerError::MissingLibraryArtifact { file: file.clone(), name },
-                )?;
+                let id = self
+                    .find_artifact_id_by_library_path(Some(index), &file, &name, target)?
+                    .ok_or_else(|| LinkerError::MissingLibraryArtifact {
+                        file: file.clone(),
+                        name,
+                    })?;
                 references.entry(id).or_default().insert(file.clone().into());
                 dependencies.insert(id);
             }
@@ -291,15 +329,16 @@ impl<'a> Linker<'a> {
     }
 
     /// Performs DFS on the graph of link references, and populates `deps` with all found libraries.
-    fn collect_dependencies(
-        &'a self,
-        target: &'a ArtifactId,
-        deps: &mut BTreeSet<&'a ArtifactId>,
-        references: &mut BTreeMap<&'a ArtifactId, BTreeSet<PathBuf>>,
+    fn collect_dependencies<'b>(
+        &'b self,
+        index: &'b OnceLock<Index>,
+        target: &ArtifactId,
+        deps: &mut BTreeSet<&'b ArtifactId>,
+        references: &mut BTreeMap<&'b ArtifactId, BTreeSet<PathBuf>>,
     ) -> Result<(), LinkerError> {
-        for id in self.direct_dependencies(target, references)? {
+        for id in self.direct_dependencies(index, target, references)? {
             if deps.insert(id) {
-                self.collect_dependencies(id, deps, references)?;
+                self.collect_dependencies(index, id, deps, references)?;
             }
         }
 
@@ -387,15 +426,16 @@ impl<'a> Linker<'a> {
             .transpose()
     }
 
-    fn libraries_for_artifact(
-        &'a self,
-        target: &'a ArtifactId,
+    fn libraries_for_artifact<'b>(
+        &'b self,
+        index: &'b OnceLock<Index>,
+        target: &ArtifactId,
         configured: &Libraries,
-        addresses: &BTreeMap<&'a ArtifactId, Address>,
+        addresses: &BTreeMap<&'b ArtifactId, Address>,
     ) -> Result<Libraries, LinkerError> {
         let mut libraries = configured.clone();
         let mut dependencies = BTreeSet::new();
-        self.collect_dependencies(target, &mut dependencies, &mut BTreeMap::new())?;
+        self.collect_dependencies(index, target, &mut dependencies, &mut BTreeMap::new())?;
         for id in dependencies {
             let Some(&address) = addresses.get(id) else { continue };
             let (file, name) = self.convert_artifact_id_to_lib_path(id);
@@ -413,15 +453,18 @@ impl<'a> Linker<'a> {
         Ok(libraries)
     }
 
-    fn artifact_libraries(
-        &'a self,
-        artifacts: impl IntoIterator<Item = &'a ArtifactId>,
+    fn artifact_libraries<'b>(
+        &'b self,
+        index: &'b OnceLock<Index>,
+        artifacts: impl IntoIterator<Item = &'b ArtifactId>,
         configured: &Libraries,
-        addresses: &BTreeMap<&'a ArtifactId, Address>,
+        addresses: &BTreeMap<&'b ArtifactId, Address>,
     ) -> Result<BTreeMap<ArtifactId, Libraries>, LinkerError> {
         artifacts
             .into_iter()
-            .map(|id| Ok((id.clone(), self.libraries_for_artifact(id, configured, addresses)?)))
+            .map(|id| {
+                Ok((id.clone(), self.libraries_for_artifact(index, id, configured, addresses)?))
+            })
             .collect()
     }
 
@@ -529,9 +572,18 @@ impl<'a> Linker<'a> {
         target: &'a ArtifactId,
         libraries: &Libraries,
     ) -> Result<BTreeSet<Address>, LinkerError> {
+        Resolver::new(self).linked_library_addresses(target, libraries)
+    }
+
+    fn linked_library_addresses_inner<'b>(
+        &'b self,
+        index: &'b OnceLock<Index>,
+        target: &ArtifactId,
+        libraries: &Libraries,
+    ) -> Result<BTreeSet<Address>, LinkerError> {
         let mut dependencies = BTreeSet::new();
         let mut references = BTreeMap::new();
-        self.collect_dependencies(target, &mut dependencies, &mut references)?;
+        self.collect_dependencies(index, target, &mut dependencies, &mut references)?;
         let mut libraries = libraries.clone();
         self.apply_configured_references(&references, &mut libraries)?;
 
@@ -555,8 +607,17 @@ impl<'a> Linker<'a> {
         &'a self,
         target: &'a ArtifactId,
     ) -> Result<BTreeSet<ArtifactId>, LinkerError> {
+        let index = OnceLock::new();
+        self.dependencies_inner(&index, target)
+    }
+
+    fn dependencies_inner<'b>(
+        &'b self,
+        index: &'b OnceLock<Index>,
+        target: &ArtifactId,
+    ) -> Result<BTreeSet<ArtifactId>, LinkerError> {
         let mut dependencies = BTreeSet::new();
-        self.collect_dependencies(target, &mut dependencies, &mut BTreeMap::new())?;
+        self.collect_dependencies(index, target, &mut dependencies, &mut BTreeMap::new())?;
         Ok(dependencies.into_iter().cloned().collect())
     }
 
@@ -601,6 +662,7 @@ impl<'a> Linker<'a> {
         mut nonce: u64,
         targets: impl IntoIterator<Item = &'a ArtifactId>,
     ) -> Result<DetailedLinkOutput, LinkerError> {
+        let index = OnceLock::new();
         // Library paths in `link_references` keys are always stripped, so we have to strip
         // user-provided paths to be able to match them correctly.
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
@@ -609,7 +671,7 @@ impl<'a> Linker<'a> {
         let mut needed_libraries = BTreeSet::new();
         let mut references = BTreeMap::new();
         for &target in &targets {
-            self.collect_dependencies(target, &mut needed_libraries, &mut references)?;
+            self.collect_dependencies(&index, target, &mut needed_libraries, &mut references)?;
         }
         self.apply_configured_references(&references, &mut libraries)?;
 
@@ -628,6 +690,7 @@ impl<'a> Linker<'a> {
         }
 
         let artifact_libraries = self.artifact_libraries(
+            &index,
             targets.iter().copied().chain(needed_libraries.iter().copied()),
             &libraries,
             &addresses,
@@ -676,6 +739,7 @@ impl<'a> Linker<'a> {
         salt: B256,
         targets: impl IntoIterator<Item = &'a ArtifactId>,
     ) -> Result<DetailedLinkOutput, LinkerError> {
+        let index = OnceLock::new();
         // Library paths in `link_references` keys are always stripped, so we have to strip
         // user-provided paths to be able to match them correctly.
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
@@ -684,7 +748,7 @@ impl<'a> Linker<'a> {
         let mut needed_libraries = BTreeSet::new();
         let mut references = BTreeMap::new();
         for &target in &targets {
-            self.collect_dependencies(target, &mut needed_libraries, &mut references)?;
+            self.collect_dependencies(&index, target, &mut needed_libraries, &mut references)?;
         }
         self.apply_configured_references(&references, &mut libraries)?;
 
@@ -703,20 +767,21 @@ impl<'a> Linker<'a> {
         // left.
         while !pending.is_empty() {
             let mut deployable = None;
-            for (index, &id) in pending.iter().enumerate() {
-                let artifact_libraries = self.libraries_for_artifact(id, &libraries, &addresses)?;
+            for (position, &id) in pending.iter().enumerate() {
+                let artifact_libraries =
+                    self.libraries_for_artifact(&index, id, &libraries, &addresses)?;
                 let bytecode = self.link(id, &artifact_libraries)?.bytecode.ok_or_else(|| {
                     LinkerError::LinkingFailed { artifact: id.source.to_string_lossy().into() }
                 })?;
                 if !bytecode.object.is_unlinked() {
-                    deployable = Some((index, id, bytecode));
+                    deployable = Some((position, id, bytecode));
                     break;
                 }
             }
-            let Some((index, id, bytecode)) = deployable else {
+            let Some((position, id, bytecode)) = deployable else {
                 return Err(LinkerError::CyclicDependency);
             };
-            pending.swap_remove(index);
+            pending.swap_remove(position);
             let code = bytecode.bytes().ok_or_else(|| LinkerError::LinkingFailed {
                 artifact: id.source.to_string_lossy().into(),
             })?;
@@ -732,6 +797,7 @@ impl<'a> Linker<'a> {
         }
 
         let artifact_libraries = self.artifact_libraries(
+            &index,
             targets.iter().copied().chain(needed_libraries.iter().copied()),
             &libraries,
             &addresses,
@@ -758,15 +824,16 @@ impl<'a> Linker<'a> {
         required: &BTreeSet<ArtifactId>,
         target: &'a ArtifactId,
     ) -> Result<(DetailedLinkOutput, Vec<LinkedLibrary>), LinkerError> {
+        let index = OnceLock::new();
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
         let mut needed = BTreeSet::new();
         let mut references = BTreeMap::new();
-        self.collect_dependencies(target, &mut needed, &mut references)?;
+        self.collect_dependencies(&index, target, &mut needed, &mut references)?;
         self.apply_configured_references(&references, &mut libraries)?;
         let library_keys = self.collect_library_keys(&needed, &libraries)?;
         let mut required_with_dependencies = required.clone();
         for id in required {
-            required_with_dependencies.extend(self.dependencies(id)?);
+            required_with_dependencies.extend(self.dependencies_inner(&index, id)?);
         }
         let mut local_nonce = 0;
         let mut assigned = Vec::new();
@@ -827,15 +894,16 @@ impl<'a> Linker<'a> {
         required: &BTreeSet<ArtifactId>,
         target: &'a ArtifactId,
     ) -> Result<(DetailedLinkOutput, Vec<LinkedLibrary>), LinkerError> {
+        let index = OnceLock::new();
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
         let mut needed = BTreeSet::new();
         let mut references = BTreeMap::new();
-        self.collect_dependencies(target, &mut needed, &mut references)?;
+        self.collect_dependencies(&index, target, &mut needed, &mut references)?;
         self.apply_configured_references(&references, &mut libraries)?;
         let library_keys = self.collect_library_keys(&needed, &libraries)?;
         let mut required_with_dependencies = required.clone();
         for id in required {
-            required_with_dependencies.extend(self.dependencies(id)?);
+            required_with_dependencies.extend(self.dependencies_inner(&index, id)?);
         }
         let mut local_ids = Vec::new();
         let mut required_ids = Vec::new();
@@ -865,11 +933,11 @@ impl<'a> Linker<'a> {
             .collect::<Result<Vec<_>, LinkerError>>()?;
         let mut onchain = Vec::new();
         while !pending.is_empty() {
-            let Some(index) = pending.iter().position(|(_, code)| !code.object.is_unlinked())
+            let Some(position) = pending.iter().position(|(_, code)| !code.object.is_unlinked())
             else {
                 return Err(LinkerError::CyclicDependency);
             };
-            let (id, code) = pending.swap_remove(index);
+            let (id, code) = pending.swap_remove(position);
             let bytecode = code.bytes().cloned().ok_or_else(|| LinkerError::LinkingFailed {
                 artifact: id.source.to_string_lossy().into_owned(),
             })?;
@@ -1007,6 +1075,22 @@ impl<'a> Linker<'a> {
     }
 }
 
+impl<'a, 'b> Resolver<'a, 'b> {
+    /// Creates a resolver that reuses artifact lookups across calls.
+    pub const fn new(linker: &'b Linker<'a>) -> Self {
+        Self { linker, index: OnceLock::new() }
+    }
+
+    /// Returns the resolved addresses of all libraries required by `target`.
+    pub fn linked_library_addresses(
+        &self,
+        target: &ArtifactId,
+        libraries: &Libraries,
+    ) -> Result<BTreeSet<Address>, LinkerError> {
+        self.linker.linked_library_addresses_inner(&self.index, target, libraries)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1018,7 +1102,6 @@ mod tests {
         solc::{Solc, SolcCompiler},
     };
     use semver::Version;
-    use std::sync::OnceLock;
 
     fn testdata() -> &'static Path {
         static CACHE: OnceLock<PathBuf> = OnceLock::new();
@@ -1516,18 +1599,19 @@ mod tests {
         let test = LinkerTest::new(&testdata().join("default/linking/nested"), true);
         let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
         let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
+        let resolver = Resolver::new(&linker);
 
         let create2 = linker
             .link_with_create2_detailed(Libraries::default(), Address::ZERO, B256::ZERO, [consumer])
             .unwrap();
         let libraries = create2.artifact_libraries.get(consumer).unwrap();
-        assert_eq!(linker.linked_library_addresses(consumer, libraries).unwrap().len(), 2);
+        assert_eq!(resolver.linked_library_addresses(consumer, libraries).unwrap().len(), 2);
 
         let nonce = linker
             .link_with_nonce_or_address_detailed(Libraries::default(), Address::ZERO, 0, [consumer])
             .unwrap();
         let libraries = nonce.artifact_libraries.get(consumer).unwrap();
-        assert_eq!(linker.linked_library_addresses(consumer, libraries).unwrap().len(), 2);
+        assert_eq!(resolver.linked_library_addresses(consumer, libraries).unwrap().len(), 2);
     }
 
     #[test]

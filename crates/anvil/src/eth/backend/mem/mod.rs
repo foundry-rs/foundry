@@ -5689,12 +5689,45 @@ where
 
     /// Returns all transaction receipts of the block
     pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
-        let mut receipts = Vec::new();
-        let block = self.get_block(id)?;
+        let storage = self.blockchain.storage.read();
+        let hash = match id.into() {
+            BlockId::Hash(hash) => hash.block_hash,
+            BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch)?,
+        };
+        let block = storage.blocks.get(&hash)?.clone();
 
-        for transaction in block.body.transactions {
-            let receipt = self.mined_transaction_receipt(transaction.hash())?;
+        if block.body.transactions.iter().enumerate().any(|(index, transaction)| {
+            storage.transactions.get(&transaction.hash()).is_none_or(|transaction| {
+                transaction.block_hash != hash
+                    || transaction.info.transaction_index as usize != index
+            })
+        }) {
+            drop(storage);
+            return block
+                .body
+                .transactions
+                .into_iter()
+                .map(|transaction| {
+                    self.mined_transaction_receipt(transaction.hash()).map(|receipt| receipt.inner)
+                })
+                .collect();
+        }
+
+        let mut receipts = Vec::with_capacity(block.body.transactions.len());
+        let mut next_log_index = 0;
+
+        for block_transaction in &block.body.transactions {
+            let transaction = storage.transactions.get(&block_transaction.hash())?;
+            let log_count = transaction.receipt.logs().len();
+            let receipt = self.build_mined_transaction_receipt(
+                &transaction.info,
+                transaction.receipt.clone(),
+                transaction.block_hash,
+                &block,
+                next_log_index,
+            );
             receipts.push(receipt.inner);
+            next_log_index += log_count;
         }
 
         Some(receipts)
@@ -5705,12 +5738,32 @@ where
         &self,
         hash: B256,
     ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
-        let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
-            self.blockchain.get_transaction_by_hash(&hash)?;
+        let transaction = self.blockchain.get_transaction_by_hash(&hash)?;
 
-        let index = info.transaction_index as usize;
-        let block = self.blockchain.get_block_by_hash(&block_hash)?;
-        let transaction = block.body.transactions[index].clone();
+        let index = transaction.info.transaction_index as usize;
+        let block = self.blockchain.get_block_by_hash(&transaction.block_hash)?;
+        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
+        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
+
+        let MinedTransaction { info, receipt, block_hash, .. } = transaction;
+        Some(self.build_mined_transaction_receipt(
+            &info,
+            receipt,
+            block_hash,
+            &block,
+            next_log_index,
+        ))
+    }
+
+    fn build_mined_transaction_receipt(
+        &self,
+        info: &TransactionInfo,
+        tx_receipt: FoundryReceiptEnvelope,
+        block_hash: B256,
+        block: &Block,
+        next_log_index: usize,
+    ) -> MinedTransactionReceipt<FoundryNetwork> {
+        let transaction = block.body.transactions[info.transaction_index as usize].clone();
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas();
@@ -5719,9 +5772,6 @@ where
         let blob_gas_used = transaction.blob_gas_used();
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
-
-        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
-        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
         let tx_receipt = tx_receipt.convert_logs_rpc(
             BlockNumHash::new(block.header.number(), block_hash),
@@ -5775,7 +5825,7 @@ where
                 inner = inner.with_fee_token(fee_token);
             }
         }
-        Some(MinedTransactionReceipt { inner, out: info.out })
+        MinedTransactionReceipt { inner, out: info.out.clone() }
     }
 
     /// Returns the blocks receipts for the given number
@@ -5845,21 +5895,21 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
         let mut selected_head = None;
         let mut selected_header = None;
         let mut checkpoint = None;
+        let fork_head = self.get_fork().map(|f| (f.block_number(), f.block_hash(), f.timestamp()));
         if let Some(block) = &mut block_env {
             if self.is_tempo() && self.is_fork() && block.beneficiary.is_zero() {
                 block.beneficiary = TIP_FEE_MANAGER_ADDRESS;
             }
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
-            let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
-
             let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
-            let (selected_best_number, selected_best_hash) = if let Some((number, hash)) =
-                fork_num_and_hash
+            let (selected_best_number, selected_best_hash) = if let Some((number, hash, _)) =
+                fork_head
             {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
@@ -5941,7 +5991,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
         // Apply the prepared chain data atomically so concurrent readers never observe blocks
         // without their transactions or a partially updated head.
-        {
+        let canonical_timestamp = {
             let mut storage = self.blockchain.storage.write();
             storage.load_blocks(std::mem::take(&mut state.blocks));
             storage.load_transactions(std::mem::take(&mut state.transactions));
@@ -5953,6 +6003,22 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 storage.best_number = number;
                 storage.best_hash = hash;
             }
+
+            // Re-anchor block time to the canonical head selected above so the next blocks
+            // continue its timeline: the saved one when the loaded head stays canonical, the
+            // fork's when the state file is at or below the fork block. Resolving the head by
+            // identity also keeps the timeline of stale blocks a state file can carry above
+            // its own best block out of the anchor. A head rolled back to the fork block has
+            // no header in local storage, so take the fork timestamp, as `reset_fork` does.
+            match fork_head {
+                Some((_, fork_hash, fork_timestamp)) if storage.best_hash == fork_hash => {
+                    Some(fork_timestamp)
+                }
+                _ => storage.blocks.get(&storage.best_hash).map(|b| b.header.timestamp),
+            }
+        };
+        if let Some(timestamp) = canonical_timestamp {
+            self.time.reset(timestamp);
         }
 
         if let Some(mut block) = block_env {
