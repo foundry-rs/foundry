@@ -335,7 +335,9 @@ static REWARD_PERCENTILES: LazyLock<Vec<f64>> = LazyLock::new(|| {
 });
 
 /// Calculates percentile rewards from transactions sorted by effective reward.
-fn reward_percentiles(transactions: &[(u64, u128)], gas_used: f64) -> Vec<u128> {
+///
+/// [`REWARD_PERCENTILES`] must remain ascending because the transaction cursor never rewinds.
+fn reward_percentiles(transactions: &[(u64, u128)], block_gas_used: f64) -> Vec<u128> {
     let mut rewards = Vec::with_capacity(REWARD_PERCENTILES.len());
     let mut transactions = transactions.iter().copied();
     let Some((mut cumulative_gas, mut current_reward)) = transactions.next() else {
@@ -343,10 +345,10 @@ fn reward_percentiles(transactions: &[(u64, u128)], gas_used: f64) -> Vec<u128> 
     };
 
     for &percentile in REWARD_PERCENTILES.iter() {
-        let target_gas = (percentile * gas_used / 100f64) as u64;
+        let target_gas = (percentile * block_gas_used / 100f64) as u64;
         while target_gas > cumulative_gas {
-            let Some((gas_used, effective_reward)) = transactions.next() else { return rewards };
-            cumulative_gas += gas_used;
+            let Some((tx_gas_used, effective_reward)) = transactions.next() else { return rewards };
+            cumulative_gas += tx_gas_used;
             current_reward = effective_reward;
         }
         rewards.push(current_reward);
@@ -558,14 +560,17 @@ impl fmt::Debug for FeeDetails {
 mod tests {
     use super::*;
 
-    fn reward_percentiles_reference(transactions: &[(u64, u128)], gas_used: f64) -> Vec<u128> {
+    fn reward_percentiles_reference(
+        transactions: &[(u64, u128)],
+        block_gas_used: f64,
+    ) -> Vec<u128> {
         REWARD_PERCENTILES
             .iter()
             .filter_map(|&percentile| {
-                let target_gas = (percentile * gas_used / 100f64) as u64;
+                let target_gas = (percentile * block_gas_used / 100f64) as u64;
                 let mut cumulative_gas = 0;
-                for (gas_used, effective_reward) in transactions.iter().copied() {
-                    cumulative_gas += gas_used;
+                for (tx_gas_used, effective_reward) in transactions.iter().copied() {
+                    cumulative_gas += tx_gas_used;
                     if target_gas <= cumulative_gas {
                         return Some(effective_reward);
                     }
