@@ -120,11 +120,14 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn push_lines(&mut self) {
         self.all_lines.sort_unstable();
         self.all_lines.dedup();
-        let mut lines = Vec::new();
+        let mut lines = Vec::with_capacity(self.all_lines.len());
+        // Items are already ordered by line, so advance through them only once.
+        let mut items = self.items.iter().peekable();
         for &line in &self.all_lines {
-            if let Some(reference_item) =
-                self.items.iter().find(|item| item.loc.lines.start == line)
-            {
+            while items.peek().is_some_and(|item| item.loc.lines.start < line) {
+                items.next();
+            }
+            if let Some(reference_item) = items.peek().filter(|item| item.loc.lines.start == line) {
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
                     loc: reference_item.loc.clone(),

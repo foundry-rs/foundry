@@ -18,7 +18,7 @@ use solar::{
     ast::{BinOpKind, UnOpKind},
     interface::{Session, source_map::FileName},
     sema::{
-        Compiler, Gcx,
+        Compiler, CompilerRef, Gcx,
         hir::{self, ElementaryType, ExprKind, Visit},
         ty::TyKind,
     },
@@ -26,8 +26,15 @@ use solar::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ReplacementOperator {
+    Assignment(AssignmentReplacement),
     Binary(BinOpKind),
     Unary(UnOpKind),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AssignmentReplacement {
+    Zero,
+    Negate,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -38,6 +45,14 @@ pub struct MutationExclusion {
 }
 
 impl MutationExclusion {
+    pub fn assignment(span: solar::ast::Span, replacement: AssignmentReplacement) -> Self {
+        Self {
+            lo: span.lo().0,
+            hi: span.hi().0,
+            new_op: ReplacementOperator::Assignment(replacement),
+        }
+    }
+
     pub fn binary(span: solar::ast::Span, new_op: BinOpKind) -> Self {
         Self { lo: span.lo().0, hi: span.hi().0, new_op: ReplacementOperator::Binary(new_op) }
     }
@@ -63,9 +78,18 @@ pub fn collect_mutation_exclusions(
         let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
             return Ok(MutationExclusionsByPath::new());
         };
-        let _ = compiler.analysis();
-        Ok(collect_from_gcx(compiler.gcx()))
+        Ok(analyze_and_collect(compiler))
     })
+}
+
+fn analyze_and_collect(compiler: &CompilerRef<'_>) -> MutationExclusionsByPath {
+    let Ok(ControlFlow::Continue(())) = compiler.analysis() else {
+        return MutationExclusionsByPath::new();
+    };
+    if compiler.dcx().has_errors().is_err() {
+        return MutationExclusionsByPath::new();
+    }
+    collect_from_gcx(compiler.gcx())
 }
 
 fn collect_from_gcx<'gcx>(gcx: Gcx<'gcx>) -> MutationExclusionsByPath {
@@ -106,6 +130,11 @@ impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let ExprKind::Assign(destination, None, value) = &expr.kind
+            && let Some(ty) = self.gcx.type_of_expr(destination.id)
+        {
+            self.collect_assignment(value, ty);
+        }
         if let ExprKind::Binary(left, op, right) = &expr.kind
             && (op.kind.is_cmp() || matches!(op.kind, BinOpKind::And | BinOpKind::Or))
         {
@@ -117,11 +146,39 @@ impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
         {
             self.mutations.insert(MutationExclusion::unary(span, UnOpKind::Neg));
         }
+        if let ExprKind::Unary(_, operand) = &expr.kind
+            && is_non_storage_push_call(self.gcx, operand)
+            && let Some(span) = self.local_span(expr.span)
+        {
+            for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+                self.mutations.insert(MutationExclusion::unary(span, op));
+            }
+        }
         self.walk_expr(expr)
+    }
+
+    fn visit_var(&mut self, var: &'hir hir::Variable<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let Some(value) = var.initializer {
+            self.collect_assignment(value, self.gcx.type_of_hir_ty(&var.ty));
+        }
+        self.walk_var(var)
     }
 }
 
 impl MutationExclusionCollector<'_> {
+    fn collect_assignment(&mut self, value: &hir::Expr<'_>, destination: solar::sema::ty::Ty<'_>) {
+        let Some(span) = self.local_span(value.span) else { return };
+        let Some(kind) = assignment_destination_kind(destination) else { return };
+
+        if !kind.accepts_zero() {
+            self.mutations.insert(MutationExclusion::assignment(span, AssignmentReplacement::Zero));
+        }
+        if !kind.accepts_negation() {
+            self.mutations
+                .insert(MutationExclusion::assignment(span, AssignmentReplacement::Negate));
+        }
+    }
+
     fn collect_comparison(
         &mut self,
         expr: &hir::Expr<'_>,
@@ -153,6 +210,40 @@ impl MutationExclusionCollector<'_> {
         let lo = span.lo().0.checked_sub(self.source_start)?;
         let hi = span.hi().0.checked_sub(self.source_start)?;
         Some(solar::ast::Span::new(solar::interface::BytePos(lo), solar::interface::BytePos(hi)))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AssignmentDestinationKind {
+    SignedNumber,
+    UnsignedNumber,
+    FixedBytes,
+    Other,
+}
+
+impl AssignmentDestinationKind {
+    const fn accepts_zero(self) -> bool {
+        !matches!(self, Self::Other)
+    }
+
+    const fn accepts_negation(self) -> bool {
+        matches!(self, Self::SignedNumber)
+    }
+}
+
+fn assignment_destination_kind(ty: solar::sema::ty::Ty<'_>) -> Option<AssignmentDestinationKind> {
+    match ty.peel_refs().kind {
+        TyKind::Elementary(ElementaryType::Int(_) | ElementaryType::Fixed(..)) => {
+            Some(AssignmentDestinationKind::SignedNumber)
+        }
+        TyKind::Elementary(ElementaryType::UInt(_) | ElementaryType::UFixed(..)) => {
+            Some(AssignmentDestinationKind::UnsignedNumber)
+        }
+        TyKind::Elementary(ElementaryType::FixedBytes(_)) => {
+            Some(AssignmentDestinationKind::FixedBytes)
+        }
+        TyKind::Udvt(..) | TyKind::Err(_) => None,
+        _ => Some(AssignmentDestinationKind::Other),
     }
 }
 
@@ -209,6 +300,26 @@ fn is_unsigned(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
     })
 }
 
+fn is_non_storage_push_call(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
+    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
+    if member.as_str() != "push" || !args.is_empty() {
+        return false;
+    }
+
+    !gcx.type_of_expr(receiver.id).is_some_and(|ty| {
+        matches!(
+            ty.kind,
+            TyKind::Ref(inner, location)
+                if location.is_storage()
+                    && matches!(
+                        inner.kind,
+                        TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes)
+                    )
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,8 +335,7 @@ mod tests {
             pcx.add_file(file);
             pcx.parse();
             assert!(matches!(compiler.lower_asts(), Ok(ControlFlow::Continue(()))));
-            let _ = compiler.analysis();
-            collect_from_gcx(compiler.gcx()).remove(&path).unwrap_or_default()
+            analyze_and_collect(compiler).remove(&path).unwrap_or_default()
         })
     }
 
@@ -243,6 +353,143 @@ mod tests {
             solar::ast::Span::new(BytePos(lo), BytePos(lo + expression.len() as u32)),
             new_op,
         )
+    }
+
+    fn assignment_mutation(
+        source: &str,
+        value: &str,
+        replacement: AssignmentReplacement,
+    ) -> MutationExclusion {
+        let lo = source.rfind(value).expect("value") as u32;
+        MutationExclusion::assignment(
+            solar::ast::Span::new(BytePos(lo), BytePos(lo + value.len() as u32)),
+            replacement,
+        )
+    }
+
+    #[test]
+    fn excludes_assignments_invalid_for_destination_type() {
+        let source = r#"
+enum Choice { A, B }
+
+contract Test {
+    function check(address account, bool flag, uint256 unsigned, Choice choice) external pure {
+        address accountCopy = account;
+        bool flagCopy = flag;
+        uint256 unsignedCopy = unsigned;
+        Choice choiceCopy = choice;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for value in ["account", "flag", "choice"] {
+            assert!(mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Zero,
+            )));
+            assert!(mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Negate,
+            )));
+        }
+        assert!(!mutations.contains(&assignment_mutation(
+            source,
+            "unsigned",
+            AssignmentReplacement::Zero,
+        )));
+        assert!(mutations.contains(&assignment_mutation(
+            source,
+            "unsigned",
+            AssignmentReplacement::Negate,
+        )));
+    }
+
+    #[test]
+    fn uses_lhs_type_for_assignments() {
+        let source = r#"
+contract Test {
+    function check(address account, bool flag) external pure {
+        account = account;
+        flag = flag;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for value in ["account", "flag"] {
+            assert!(mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Zero,
+            )));
+            assert!(mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Negate,
+            )));
+        }
+    }
+
+    #[test]
+    fn preserves_valid_signed_and_fixed_bytes_assignments() {
+        let source = r#"
+contract Test {
+    function check(int256 signed, bytes32 word) external pure {
+        int256 signedCopy = signed;
+        bytes32 wordCopy = word;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for replacement in [AssignmentReplacement::Zero, AssignmentReplacement::Negate] {
+            assert!(!mutations.contains(&assignment_mutation(source, "signed", replacement)));
+        }
+        assert!(!mutations.contains(&assignment_mutation(
+            source,
+            "word",
+            AssignmentReplacement::Zero,
+        )));
+        assert!(mutations.contains(&assignment_mutation(
+            source,
+            "word",
+            AssignmentReplacement::Negate,
+        )));
+    }
+
+    #[test]
+    fn preserves_udvt_assignments() {
+        let source = r#"
+type Amount is uint256;
+
+contract Test {
+    function check(Amount amount) external pure {
+        Amount copy = amount;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for replacement in [AssignmentReplacement::Zero, AssignmentReplacement::Negate] {
+            assert!(!mutations.contains(&assignment_mutation(source, "amount", replacement)));
+        }
+    }
+
+    #[test]
+    fn preserves_all_mutations_when_analysis_has_errors() {
+        let source = r#"
+contract Test {
+    function check(address account) external pure {
+        address copy = account;
+        unresolved = unresolved;
+    }
+}
+"#;
+
+        assert!(collect(source).is_empty());
     }
 
     #[test]
@@ -276,6 +523,44 @@ contract Test {
         assert!(mutations.contains(&unary_mutation(source, "unsigned++", UnOpKind::Neg)));
         assert!(mutations.contains(&unary_mutation(source, "++unsigned", UnOpKind::Neg)));
         assert!(!mutations.contains(&unary_mutation(source, "signed++", UnOpKind::Neg)));
+    }
+
+    #[test]
+    fn excludes_lvalue_mutations_for_user_defined_push() {
+        let source = r#"
+contract Test {
+    function push() external pure returns (int256) {
+        return 1;
+    }
+
+    function check() external view returns (int256) {
+        return -this.push();
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+            assert!(mutations.contains(&unary_mutation(source, "-this.push()", op)));
+        }
+    }
+
+    #[test]
+    fn preserves_lvalue_mutations_for_storage_push() {
+        let source = r#"
+contract Test {
+    int256[] values;
+
+    function check() external returns (int256) {
+        return -values.push();
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+            assert!(!mutations.contains(&unary_mutation(source, "-values.push()", op)));
+        }
     }
 
     #[test]
