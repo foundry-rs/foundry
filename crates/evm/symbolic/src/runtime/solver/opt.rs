@@ -995,34 +995,35 @@ pub(crate) fn normalize_polynomial_for_solver(cx: &mut SymCx, expr: SymExpr) -> 
 }
 
 fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
-    fn ring_shape(expr: &SymExpr) -> (usize, usize) {
+    fn ring_shape(expr: &SymExpr) -> Option<(usize, usize)> {
         match expr.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) => Some((0, 0)),
             SymExprKind::BinOp(
                 op @ (SymBinOp::Add | SymBinOp::Sub | SymBinOp::Mul),
                 left,
                 right,
             ) => {
-                let left = ring_shape(left);
-                let right = ring_shape(right);
+                let left = ring_shape(left)?;
+                let right = ring_shape(right)?;
                 let operations = left.0.saturating_add(right.0).saturating_add(1);
                 let multiplications = left
                     .1
                     .saturating_add(right.1)
                     .saturating_add(usize::from(*op == SymBinOp::Mul));
-                (operations, multiplications)
+                Some((operations, multiplications))
             }
             SymExprKind::BinOp(SymBinOp::Shl, value, shift)
                 if shift.as_const().is_some_and(|shift| shift < U256::from(256)) =>
             {
-                let shape = ring_shape(value);
-                (shape.0.saturating_add(1), shape.1.saturating_add(1))
+                let shape = ring_shape(value)?;
+                Some((shape.0.saturating_add(1), shape.1.saturating_add(1)))
             }
-            _ => (0, 0),
+            _ => None,
         }
     }
 
-    let (operations, multiplications) = ring_shape(expr);
-    operations > 1 && multiplications > 0
+    ring_shape(expr)
+        .is_some_and(|(operations, multiplications)| operations > 1 && multiplications > 0)
 }
 
 // Keep distributive expansion predictably bounded. The motivating accounting identity needs two

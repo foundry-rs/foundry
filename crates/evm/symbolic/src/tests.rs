@@ -3262,6 +3262,19 @@ fn solver_polynomial_normalization_skips_single_product() {
 }
 
 #[test]
+fn solver_polynomial_normalization_skips_unsupported_arithmetic_atoms() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let denominator = SymExpr::var(&mut cx, "denominator");
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), denominator);
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, quotient, y);
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, sum, x);
+
+    assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
+}
+
+#[test]
 fn solver_polynomial_normalization_keeps_non_identity_equality_shape() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
