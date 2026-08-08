@@ -1941,6 +1941,12 @@ import "./IUnsafe.sol";
 contract Safe is IUnsafe {
     /// @inheritdoc IUnsafe
     function transfer(uint256 amount) external returns (uint256) {}
+
+    /// @return First local result
+    /// @return Second local result
+    function localResults() external pure returns (uint256, address) {
+        return (1, address(0));
+    }
 }
 "#,
     );
@@ -1969,7 +1975,14 @@ function transfer(uint256 amount) external returns (uint256);
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| &lt;none&gt; | `uint256` | new balance |
+| &lt;none&gt; | `uint256` | The new balance |
+...
+### localResults
+...
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `uint256` | First local result |
+| &lt;none&gt; | `address` | Second local result |
 ...
 "#]],
     );
