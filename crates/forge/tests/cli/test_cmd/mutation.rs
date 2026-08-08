@@ -171,6 +171,70 @@ exclude_operators = [
 "#]]);
 });
 
+forgetest_init!(mutation_testing_retains_storage_push_lvalue_mutants, |prj, cmd| {
+    prj.add_source(
+        "StoragePush.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract StoragePush {
+    int256[] private values;
+
+    function mutate() public returns (int256) {
+        return -values.push();
+    }
+
+    function value() public view returns (int256) {
+        return values[0];
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "StoragePush.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/StoragePush.sol";
+
+contract StoragePushTest {
+    function testMutate() public {
+        StoragePush target = new StoragePush();
+        assert(target.mutate() == 0);
+        assert(target.value() == 0);
+    }
+}
+"#,
+    );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[mutation]
+exclude_operators = [
+    "assembly",
+    "assignment",
+    "binary-op",
+    "delete-expression",
+    "elim-delegate",
+    "require",
+]
+"#,
+    )
+    .unwrap();
+
+    let output = cmd
+        .args(["test", "--mutate", "src/StoragePush.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success();
+    let summary = mutation_summary(&output.get_output().stdout_lossy());
+
+    assert_eq!(summary["total"], 5);
+    assert_eq!(summary["killed"], 5);
+    assert_eq!(summary["invalid"], 0);
+    assert_eq!(summary["skipped"], 0);
+});
+
 forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
     prj.add_source(
         "Comparisons.sol",

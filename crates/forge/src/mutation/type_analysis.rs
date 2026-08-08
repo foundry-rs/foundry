@@ -146,6 +146,14 @@ impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
         {
             self.mutations.insert(MutationExclusion::unary(span, UnOpKind::Neg));
         }
+        if let ExprKind::Unary(_, operand) = &expr.kind
+            && is_non_storage_push_call(self.gcx, operand)
+            && let Some(span) = self.local_span(expr.span)
+        {
+            for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+                self.mutations.insert(MutationExclusion::unary(span, op));
+            }
+        }
         self.walk_expr(expr)
     }
 
@@ -289,6 +297,26 @@ fn comparison_operand_kind(
 fn is_unsigned(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
     gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
         matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::UInt(_)))
+    })
+}
+
+fn is_non_storage_push_call(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
+    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
+    if member.as_str() != "push" || !args.is_empty() {
+        return false;
+    }
+
+    !gcx.type_of_expr(receiver.id).is_some_and(|ty| {
+        matches!(
+            ty.kind,
+            TyKind::Ref(inner, location)
+                if location.is_storage()
+                    && matches!(
+                        inner.kind,
+                        TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes)
+                    )
+        )
     })
 }
 
@@ -495,6 +523,44 @@ contract Test {
         assert!(mutations.contains(&unary_mutation(source, "unsigned++", UnOpKind::Neg)));
         assert!(mutations.contains(&unary_mutation(source, "++unsigned", UnOpKind::Neg)));
         assert!(!mutations.contains(&unary_mutation(source, "signed++", UnOpKind::Neg)));
+    }
+
+    #[test]
+    fn excludes_lvalue_mutations_for_user_defined_push() {
+        let source = r#"
+contract Test {
+    function push() external pure returns (int256) {
+        return 1;
+    }
+
+    function check() external view returns (int256) {
+        return -this.push();
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+            assert!(mutations.contains(&unary_mutation(source, "-this.push()", op)));
+        }
+    }
+
+    #[test]
+    fn preserves_lvalue_mutations_for_storage_push() {
+        let source = r#"
+contract Test {
+    int256[] values;
+
+    function check() external returns (int256) {
+        return -values.push();
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+            assert!(!mutations.contains(&unary_mutation(source, "-values.push()", op)));
+        }
     }
 
     #[test]

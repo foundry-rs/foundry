@@ -73,7 +73,13 @@ pub enum ForgeSubcommand {
     /// - forge build --sizes (print a contract size report)
     /// - forge build --watch (rebuild on file changes)
     #[command(verbatim_doc_comment, visible_aliases = ["b", "compile"])]
-    Build(BuildArgs),
+    Build {
+        /// Require foundry.lock to match direct Git dependency submodules.
+        #[arg(long)]
+        locked: bool,
+        #[command(flatten)]
+        args: BuildArgs,
+    },
 
     /// Clone a contract from Etherscan
     ///
