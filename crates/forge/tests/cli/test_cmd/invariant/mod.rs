@@ -2,6 +2,11 @@ use alloy_primitives::U256;
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
+use std::{
+    process::Stdio,
+    thread,
+    time::{Duration, Instant},
+};
 
 mod common;
 mod handler;
@@ -1347,10 +1352,12 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
     );
 });
 
-forgetest_init!(contract_level_invariant_corpus_dir, |prj, cmd| {
+forgetest_init!(parallel_invariant_corpus_uses_worker_dirs, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
         config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
     });
     prj.add_test(
@@ -1387,6 +1394,122 @@ Ran 1 test for test/ContractCorpusTest.t.sol:ContractCorpusTest
     assert!(contract_dir.exists());
     assert!(!contract_dir.join("invariant_a").exists());
     assert!(!contract_dir.join("invariant_b").exists());
+    for worker in ["worker0", "worker1"] {
+        let worker_corpus = contract_dir.join(worker).join("corpus");
+        assert!(
+            std::fs::read_dir(&worker_corpus).is_ok_and(|mut entries| entries.next().is_some()),
+            "expected {worker} to persist corpus entries during the campaign"
+        );
+    }
+});
+
+forgetest_init!(parallel_invariant_corpus_survives_external_termination, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.depth = 64;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "InterruptedCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InterruptedCorpusHandler {
+    uint256 public value;
+
+    function set(uint256 next) external {
+        value = next;
+    }
+}
+
+contract InterruptedCorpusTest is Test {
+    InterruptedCorpusHandler handler;
+
+    function setUp() public {
+        handler = new InterruptedCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    // Finish compilation before starting the process that will be terminated.
+    cmd.args(["build", "-q"]).assert_success();
+    cmd.forge_fuse().args([
+        "test",
+        "--mc",
+        "InterruptedCorpusTest",
+        "--mt",
+        "invariant_ok",
+        "--fuzz-seed",
+        "0x574",
+        "-q",
+    ]);
+    cmd.cmd().stdout(Stdio::null()).stderr(Stdio::null());
+    let mut child = cmd.cmd().spawn().unwrap();
+
+    let contract_dir = prj.root().join("invariant_corpus").join("InterruptedCorpusTest");
+    let worker_dirs =
+        [contract_dir.join("worker0").join("corpus"), contract_dir.join("worker1").join("corpus")];
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut persisted = false;
+    while Instant::now() < deadline {
+        persisted = worker_dirs.iter().any(|dir| {
+            std::fs::read_dir(dir).is_ok_and(|mut entries| {
+                entries.any(|entry| {
+                    entry.is_ok_and(|entry| {
+                        entry.path().extension().is_some_and(|ext| ext == "json")
+                    })
+                })
+            })
+        });
+        if persisted {
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(persisted, "parallel invariant campaign did not persist corpus before termination");
+
+    let entries = worker_dirs
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<_>>();
+    assert!(!entries.is_empty());
+    for entry in entries {
+        let contents = std::fs::read_to_string(&entry).unwrap();
+        serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap();
+    }
+
+    // Exercise normal startup discovery and EVM replay against the corpus retained by the killed
+    // campaign, rather than only checking that the files contain valid JSON.
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "InterruptedCorpusTest",
+            "--mt",
+            "invariant_ok",
+            "--fuzz-seed",
+            "0x574",
+        ])
+        .assert_success();
+    let stdout = replay.get_output().stdout_lossy();
+    assert!(!stdout.contains("failed corpus replays"), "{stdout}");
 });
 
 forgetest_init!(optimization_invariants_use_function_level_corpus_dir, |prj, cmd| {
