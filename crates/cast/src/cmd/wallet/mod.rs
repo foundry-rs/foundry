@@ -1315,12 +1315,22 @@ enum TouchIdSidecarState {
     /// The file is an Ethereum keystore.
     Keystore,
     /// Anything else: malformed JSON, empty object, array, unrelated object,
-    /// unsupported sidecar version, unknown policy, or future sidecar format.
+    /// unsupported sidecar version, unknown policy, invalid hex, empty payload,
+    /// truncated sealed payload, invalid X9.63 prefix, or future sidecar format.
     Unknown,
 }
 
 /// The only sidecar version this Cast release understands.
 const TOUCH_ID_SIDECAR_VERSION: u32 = 1;
+
+/// Minimum encoded ciphertext payload:
+/// 65-byte P-256 X9.63 public key + 12-byte ChaChaPoly nonce + 16-byte tag.
+///
+/// The encrypted password itself may be empty, so 93 bytes is the true minimum.
+const TOUCH_ID_SEALED_PASSWORD_MIN_LEN: usize = 65 + 12 + 16;
+
+/// X9.63 prefix for an uncompressed P-256 public key.
+const TOUCH_ID_X963_UNCOMPRESSED_PREFIX: u8 = 0x04;
 
 /// Strict deserialization-only representation of the persisted sidecar format.
 ///
@@ -1344,12 +1354,32 @@ enum TouchIdPolicyWire {
     CurrentBiometry,
 }
 
+/// Validates that `wire` contains plausible payload bytes:
+/// - `se_key` is valid hex and non-empty.
+/// - `sealed_password` is valid hex, at least 93 decoded bytes, and starts with 0x04.
+fn has_valid_touch_id_payload(wire: &TouchIdSidecarWire) -> bool {
+    let Ok(se_key) = hex::decode(&wire.se_key) else {
+        return false;
+    };
+
+    if se_key.is_empty() {
+        return false;
+    }
+
+    let Ok(sealed_password) = hex::decode(&wire.sealed_password) else {
+        return false;
+    };
+
+    sealed_password.len() >= TOUCH_ID_SEALED_PASSWORD_MIN_LEN
+        && sealed_password.first().copied() == Some(TOUCH_ID_X963_UNCOMPRESSED_PREFIX)
+}
+
 /// Returns the state of the file at `path` with respect to the Touch ID sidecar schema.
 ///
 /// Classification order:
 /// 1. Not found → `Missing`
 /// 2. Has both `version` and `crypto`/`Crypto` fields → `Keystore`
-/// 3. Parses strictly as a v1 Touch ID sidecar → `Recognized`
+/// 3. Parses strictly as a v1 Touch ID sidecar + plausible payload → `Recognized`
 /// 4. Everything else → `Unknown`
 fn touch_id_sidecar_state(path: &Path) -> Result<TouchIdSidecarState> {
     let value = match fs::read_json_file::<serde_json::Value>(path) {
@@ -1366,10 +1396,14 @@ fn touch_id_sidecar_state(path: &Path) -> Result<TouchIdSidecarState> {
         return Ok(TouchIdSidecarState::Keystore);
     }
 
-    // Attempt strict sidecar parse.  Any missing/extra field or unsupported
-    // version/policy maps to `Unknown` rather than `Recognized`.
+    // Attempt strict sidecar parse. Any missing/extra field, unsupported
+    // version/policy, or invalid payload maps to `Unknown` rather than `Recognized`.
     match serde_json::from_value::<TouchIdSidecarWire>(value) {
-        Ok(wire) if wire.version == TOUCH_ID_SIDECAR_VERSION => Ok(TouchIdSidecarState::Recognized),
+        Ok(wire)
+            if wire.version == TOUCH_ID_SIDECAR_VERSION && has_valid_touch_id_payload(&wire) =>
+        {
+            Ok(TouchIdSidecarState::Recognized)
+        }
         _ => Ok(TouchIdSidecarState::Unknown),
     }
 }
@@ -1474,6 +1508,30 @@ mod tests {
 
     // ── Touch ID sidecar classification ────────────────────────────────────────
 
+    fn valid_sealed_password_hex() -> String {
+        format!("04{}", "00".repeat(TOUCH_ID_SEALED_PASSWORD_MIN_LEN - 1))
+    }
+
+    fn touch_id_sidecar_json(
+        version: u32,
+        policy: &str,
+        se_key: &str,
+        sealed_password: &str,
+    ) -> String {
+        serde_json::json!({
+            "version": version,
+            "policy": policy,
+            "se_key": se_key,
+            "sealed_password": sealed_password,
+        })
+        .to_string()
+    }
+
+    fn valid_touch_id_sidecar_json(policy: &str) -> String {
+        let sealed_password = valid_sealed_password_hex();
+        touch_id_sidecar_json(TOUCH_ID_SIDECAR_VERSION, policy, "aa", &sealed_password)
+    }
+
     /// Returns a temp dir and the path `<dir>/account.touchid`.
     fn setup_sidecar_path() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -1492,7 +1550,7 @@ mod tests {
     #[test]
     fn recognized_sidecar_user_presence() {
         let (_dir, p) = setup_sidecar_path();
-        write(&p, r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#);
+        write(&p, &valid_touch_id_sidecar_json("user-presence"));
         assert!(is_touch_id_sidecar(&p).unwrap());
         assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Recognized);
     }
@@ -1500,10 +1558,7 @@ mod tests {
     #[test]
     fn recognized_sidecar_current_biometry() {
         let (_dir, p) = setup_sidecar_path();
-        write(
-            &p,
-            r#"{"version":1,"policy":"current-biometry","se_key":"aa","sealed_password":"bb"}"#,
-        );
+        write(&p, &valid_touch_id_sidecar_json("current-biometry"));
         assert!(is_touch_id_sidecar(&p).unwrap());
         assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Recognized);
     }
@@ -1535,7 +1590,8 @@ mod tests {
     #[test]
     fn unknown_version_is_unknown() {
         let (_dir, p) = setup_sidecar_path();
-        write(&p, r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#);
+        let content = touch_id_sidecar_json(2, "user-presence", "aa", &valid_sealed_password_hex());
+        write(&p, &content);
         assert!(!is_touch_id_sidecar(&p).unwrap());
         assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
     }
@@ -1543,10 +1599,15 @@ mod tests {
     #[test]
     fn unknown_field_is_unknown_due_to_deny_unknown_fields() {
         let (_dir, p) = setup_sidecar_path();
-        write(
-            &p,
-            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb","future_field":true}"#,
-        );
+        let json = serde_json::json!({
+            "version": 1,
+            "policy": "user-presence",
+            "se_key": "aa",
+            "sealed_password": valid_sealed_password_hex(),
+            "future_field": true
+        })
+        .to_string();
+        write(&p, &json);
         assert!(!is_touch_id_sidecar(&p).unwrap());
         assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
     }
@@ -1554,9 +1615,114 @@ mod tests {
     #[test]
     fn unknown_policy_is_unknown() {
         let (_dir, p) = setup_sidecar_path();
-        write(&p, r#"{"version":1,"policy":"future-policy","se_key":"aa","sealed_password":"bb"}"#);
+        let content = touch_id_sidecar_json(1, "future-policy", "aa", &valid_sealed_password_hex());
+        write(&p, &content);
         assert!(!is_touch_id_sidecar(&p).unwrap());
         assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn empty_se_key_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        let content = touch_id_sidecar_json(1, "user-presence", "", &valid_sealed_password_hex());
+        write(&p, &content);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn non_hex_se_key_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        let content = touch_id_sidecar_json(1, "user-presence", "zz", &valid_sealed_password_hex());
+        write(&p, &content);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn empty_sealed_password_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        let content = touch_id_sidecar_json(1, "user-presence", "aa", "");
+        write(&p, &content);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn non_hex_sealed_password_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        let content = touch_id_sidecar_json(1, "user-presence", "aa", "zz");
+        write(&p, &content);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn truncated_sealed_password_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        let truncated_sealed = format!("04{}", "00".repeat(TOUCH_ID_SEALED_PASSWORD_MIN_LEN - 2));
+        let content = touch_id_sidecar_json(1, "user-presence", "aa", &truncated_sealed);
+        write(&p, &content);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn sealed_password_without_uncompressed_point_prefix_is_unknown() {
+        let (_dir, p) = setup_sidecar_path();
+        let invalid_prefix_sealed =
+            format!("03{}", "00".repeat(TOUCH_ID_SEALED_PASSWORD_MIN_LEN - 1));
+        let content = touch_id_sidecar_json(1, "user-presence", "aa", &invalid_prefix_sealed);
+        write(&p, &content);
+        assert!(!is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Unknown);
+    }
+
+    #[test]
+    fn minimum_valid_sealed_password_is_recognized() {
+        let (_dir, p) = setup_sidecar_path();
+        let exact_min_sealed = format!("04{}", "00".repeat(TOUCH_ID_SEALED_PASSWORD_MIN_LEN - 1));
+        let content = touch_id_sidecar_json(1, "user-presence", "aa", &exact_min_sealed);
+        write(&p, &content);
+        assert!(is_touch_id_sidecar(&p).unwrap());
+        assert_eq!(touch_id_sidecar_state(&p).unwrap(), TouchIdSidecarState::Recognized);
+    }
+
+    #[test]
+    fn invalid_payload_sidecars_are_preserved() {
+        let valid_sealed = valid_sealed_password_hex();
+        let truncated_sealed = format!("04{}", "00".repeat(TOUCH_ID_SEALED_PASSWORD_MIN_LEN - 2));
+        let bad_prefix_sealed = format!("03{}", "00".repeat(TOUCH_ID_SEALED_PASSWORD_MIN_LEN - 1));
+
+        let invalid_fixtures = [
+            touch_id_sidecar_json(1, "user-presence", "", &valid_sealed),
+            touch_id_sidecar_json(1, "user-presence", "zz", &valid_sealed),
+            touch_id_sidecar_json(1, "user-presence", "aa", ""),
+            touch_id_sidecar_json(1, "user-presence", "aa", "zz"),
+            touch_id_sidecar_json(1, "user-presence", "aa", &truncated_sealed),
+            touch_id_sidecar_json(1, "user-presence", "aa", &bad_prefix_sealed),
+        ];
+
+        for fixture in invalid_fixtures {
+            let dir = tempfile::tempdir().unwrap();
+            let sidecar = dir.path().join("account.touchid");
+            write(&sidecar, &fixture);
+            let k_path = keystore_path(dir.path());
+
+            let err = ensure_touch_id_sidecar_available(&k_path).unwrap_err();
+            assert!(
+                err.to_string().contains("is not a recognized Touch ID sidecar"),
+                "unexpected error: {err}"
+            );
+            assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), fixture);
+
+            let err = remove_touch_id_sidecar(&k_path).unwrap_err();
+            assert!(
+                err.to_string().contains("is not a recognized Touch ID sidecar"),
+                "unexpected error: {err}"
+            );
+            assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), fixture);
+        }
     }
 
     #[test]
@@ -1611,10 +1777,7 @@ mod tests {
     fn enrollment_allows_replacing_recognized_sidecar() {
         let dir = tempfile::tempdir().unwrap();
         let sidecar = dir.path().join("account.touchid");
-        write(
-            &sidecar,
-            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
-        );
+        write(&sidecar, &valid_touch_id_sidecar_json("user-presence"));
         // Existing recognized sidecar — re-enrollment must succeed.
         ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap();
     }
@@ -1674,9 +1837,8 @@ mod tests {
     fn enrollment_refuses_unknown_version() {
         let dir = tempfile::tempdir().unwrap();
         let sidecar = dir.path().join("account.touchid");
-        let content =
-            r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#;
-        write(&sidecar, content);
+        let content = touch_id_sidecar_json(2, "user-presence", "aa", &valid_sealed_password_hex());
+        write(&sidecar, &content);
         let err = ensure_touch_id_sidecar_available(&keystore_path(dir.path())).unwrap_err();
         assert!(
             err.to_string().contains("is not a recognized Touch ID sidecar"),
@@ -1699,10 +1861,7 @@ mod tests {
     fn removal_deletes_recognized_sidecar() {
         let dir = tempfile::tempdir().unwrap();
         let sidecar = dir.path().join("account.touchid");
-        write(
-            &sidecar,
-            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
-        );
+        write(&sidecar, &valid_touch_id_sidecar_json("user-presence"));
         let removed = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap();
         assert!(removed);
         assert!(!sidecar.exists());
@@ -1766,9 +1925,8 @@ mod tests {
     fn removal_refuses_unknown_version() {
         let dir = tempfile::tempdir().unwrap();
         let sidecar = dir.path().join("account.touchid");
-        let content =
-            r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#;
-        write(&sidecar, content);
+        let content = touch_id_sidecar_json(2, "user-presence", "aa", &valid_sealed_password_hex());
+        write(&sidecar, &content);
         let err = remove_touch_id_sidecar(&keystore_path(dir.path())).unwrap_err();
         assert!(
             err.to_string().contains("is not a recognized Touch ID sidecar"),
@@ -1784,16 +1942,14 @@ mod tests {
     /// - recognized v1 sidecars are hidden
     /// - unknown-content `.touchid` files are retained
     /// - unknown-version `.touchid` files are retained
+    /// - invalid-payload `.touchid` files are retained
     #[test]
     fn listing_hides_only_recognized_sidecars() {
         // is_touch_id_sidecar returns Ok(true) only for Recognized.
         let dir = tempfile::tempdir().unwrap();
 
         let recognized = dir.path().join("recognized.touchid");
-        write(
-            &recognized,
-            r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
-        );
+        write(&recognized, &valid_touch_id_sidecar_json("user-presence"));
 
         let unknown_content = dir.path().join("unknown_content.touchid");
         write(&unknown_content, r#"{"application":"unrelated"}"#);
@@ -1801,8 +1957,11 @@ mod tests {
         let unknown_version = dir.path().join("unknown_version.touchid");
         write(
             &unknown_version,
-            r#"{"version":2,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+            &touch_id_sidecar_json(2, "user-presence", "aa", &valid_sealed_password_hex()),
         );
+
+        let invalid_payload = dir.path().join("invalid_payload.touchid");
+        write(&invalid_payload, &touch_id_sidecar_json(1, "user-presence", "aa", "bb"));
 
         // Recognized sidecar → is_touch_id_sidecar returns Ok(true) → hidden.
         assert!(matches!(is_touch_id_sidecar(&recognized), Ok(true)));
@@ -1810,6 +1969,8 @@ mod tests {
         assert!(matches!(is_touch_id_sidecar(&unknown_content), Ok(false)));
         // Unknown version → Ok(false) → retained by listing.
         assert!(matches!(is_touch_id_sidecar(&unknown_version), Ok(false)));
+        // Invalid payload → Ok(false) → retained by listing.
+        assert!(matches!(is_touch_id_sidecar(&invalid_payload), Ok(false)));
     }
 
     // ── preflights_every_named_touch_id_sidecar (preserved from before) ────────
