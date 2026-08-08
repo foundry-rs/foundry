@@ -1247,7 +1247,7 @@ fn return_description<'a>(
 
     match return_name {
         Some(return_name) => desc.strip_prefix(return_name).and_then(strip_one_ws).unwrap_or(desc),
-        None => split_first_word(desc).map(|(_, desc)| desc).unwrap_or(desc),
+        None => desc,
     }
 }
 
@@ -1255,13 +1255,6 @@ fn strip_one_ws(s: &str) -> Option<&str> {
     let mut chars = s.char_indices();
     let (_, first) = chars.next()?;
     first.is_whitespace().then(|| chars.next().map(|(idx, _)| &s[idx..]).unwrap_or(""))
-}
-
-fn split_first_word(s: &str) -> Option<(&str, &str)> {
-    let trimmed = s.trim_start();
-    let split = trimmed.find(char::is_whitespace)?;
-    let (first, rest) = trimmed.split_at(split);
-    Some((first, rest.trim_start()))
 }
 
 fn write_struct_properties_table(
