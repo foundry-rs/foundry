@@ -691,6 +691,7 @@ impl ConstraintContext {
             SymBoolExprKind::Not(value) if self.unsigned_bool_always_true(value) => {
                 SymBoolExpr::constant(cx, false)
             }
+            _ if self.unsigned_bool_always_true(&expr) => SymBoolExpr::constant(cx, true),
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if self.masked_word_eq_self(left, right) =>
             {
@@ -904,6 +905,11 @@ impl ConstraintContext {
     }
 
     fn unsigned_cmp_always_true(&self, op: SymCmpOp, left: &SymExpr, right: &SymExpr) -> bool {
+        if op == SymCmpOp::Eq
+            && (self.mul_div_identity(left, right) || self.mul_div_identity(right, left))
+        {
+            return true;
+        }
         let Some(left) = self.interval(left) else { return false };
         let Some(right) = self.interval(right) else { return false };
         match op {
@@ -913,6 +919,24 @@ impl ConstraintContext {
             SymCmpOp::Uge => left.min >= right.max,
             SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => false,
         }
+    }
+
+    fn mul_div_identity(&self, quotient: &SymExpr, expected: &SymExpr) -> bool {
+        let Some((numerator, denominator)) = quotient.udiv_operands() else { return false };
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
+            return false;
+        };
+        let other = if left == denominator {
+            right
+        } else if right == denominator {
+            left
+        } else {
+            return false;
+        };
+
+        other == expected
+            && self.interval(denominator).is_some_and(|interval| !interval.min.is_zero())
+            && self.mul_cannot_overflow_256(denominator, other)
     }
 
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
@@ -960,6 +984,15 @@ impl ConstraintContext {
                     min: left.min.checked_mul(right.min)?,
                     max: left.max.checked_mul(right.max)?,
                 })
+            }
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
+                let shift = shift.as_const()?;
+                if shift >= U256::from(256) {
+                    return Some(WordInterval::exact(U256::ZERO));
+                }
+                let value = self.interval(value)?;
+                let shift = shift.to::<usize>();
+                Some(WordInterval { min: value.min >> shift, max: value.max >> shift })
             }
             SymExprKind::Ite(_, left, right) => {
                 let left = self.interval(left)?;
