@@ -8,6 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
 
 /// Network-agnostic signing: messages, typed data, and hashes.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait MessageSigner: Send + Sync {
     /// returns the available accounts for this signer
