@@ -600,6 +600,25 @@ impl SymExpr {
                     let max = Self::constant(cx, U256::MAX);
                     Self::ite(cx, condition, zero, max)
                 }
+                // `one_bit_word(c) + k => ite(c, k + 1, k)`.
+                (SymExprKind::Const(value), _)
+                    if right.bool_word_condition().is_none()
+                        && let Some(condition) = right.bitwise_bool_word_condition(cx) =>
+                {
+                    let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, incremented, value)
+                }
+                (_, SymExprKind::Const(value))
+                    if left.bool_word_condition().is_none()
+                        && let Some(condition) = left.bitwise_bool_word_condition(cx) =>
+                {
+                    let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, incremented, value)
+                }
+                _ if let Some(value) = Self::add_with_const_ite(cx, &left, &right) => value,
+                _ if let Some(value) = Self::add_with_const_ite(cx, &right, &left) => value,
                 _ => Self::commutative_binop(cx, binop, left, right),
             },
             SymBinOp::Sub => match (left.kind(), right.kind()) {
@@ -620,6 +639,14 @@ impl SymExpr {
                     let max = Self::constant(cx, U256::MAX);
                     Self::ite(cx, condition, zero, max)
                 }
+                // `k - bool_word(c) => ite(c, k - 1, k)`.
+                (SymExprKind::Const(value), _)
+                    if let Some(condition) = right.bitwise_bool_word_condition(cx) =>
+                {
+                    let decremented = Self::constant(cx, value.wrapping_sub(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, decremented, value)
+                }
                 _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
             SymBinOp::Mul => match (left.kind(), right.kind()) {
@@ -637,6 +664,16 @@ impl SymExpr {
                 (SymExprKind::Const(value), _) if *value == U256::ONE => right,
                 // `a * 1 => a`.
                 (_, SymExprKind::Const(value)) if *value == U256::ONE => left,
+                // `bool_word(c) * a => ite(c, a, 0)`.
+                _ if let Some(condition) = left.bool_word_condition() => {
+                    let zero = Self::zero(cx);
+                    Self::ite(cx, condition, right, zero)
+                }
+                // `a * bool_word(c) => ite(c, a, 0)`.
+                _ if let Some(condition) = right.bool_word_condition() => {
+                    let zero = Self::zero(cx);
+                    Self::ite(cx, condition, left, zero)
+                }
                 // `2**n * a => a << n`.
                 (SymExprKind::Const(value), _) if let Some(shift) = power_of_two_shift(*value) => {
                     let shift = Self::constant(cx, U256::from(shift));
@@ -748,9 +785,15 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a ^ a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `a ^ (a ^ b) => b`.
+                _ if let Some(value) = Self::xor_with_shared_operand(&left, &right) => value,
+                _ if let Some(value) = Self::xor_with_shared_operand(&right, &left) => value,
                 // `a ^ ((a ^ b) * bool_word(c)) => ite(c, b, a)`.
                 _ if let Some(value) = Self::xor_with_bool_select(cx, &left, &right) => value,
                 _ if let Some(value) = Self::xor_with_bool_select(cx, &right, &left) => value,
+                // `a ^ ite(c, b, 0) => ite(c, a ^ b, a)`.
+                _ if let Some(value) = Self::xor_with_zero_ite(cx, &left, &right) => value,
+                _ if let Some(value) = Self::xor_with_zero_ite(cx, &right, &left) => value,
                 _ => Self::commutative_binop(cx, binop, left, right),
             },
             SymBinOp::Shl => match (left.kind(), right.kind()) {
@@ -911,6 +954,21 @@ impl SymExpr {
         None
     }
 
+    fn add_with_const_ite(cx: &mut SymCx, other: &Self, conditional: &Self) -> Option<Self> {
+        if other.as_const().is_some() {
+            return None;
+        }
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_none() || else_expr.as_const().is_none() {
+            return None;
+        }
+        let then_expr = Self::binop(cx, SymBinOp::Add, other.clone(), then_expr.clone());
+        let else_expr = Self::binop(cx, SymBinOp::Add, other.clone(), else_expr.clone());
+        Some(Self::ite(cx, condition.clone(), then_expr, else_expr))
+    }
+
     fn xor_with_bool_select(cx: &mut SymCx, base: &Self, selector: &Self) -> Option<Self> {
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = selector.kind() else { return None };
         let (delta, condition) = if let Some(condition) = left.bitwise_bool_word_condition(cx) {
@@ -927,6 +985,32 @@ impl SymExpr {
             return None;
         };
         Some(Self::ite(cx, condition, selected, base.clone()))
+    }
+
+    fn xor_with_shared_operand(base: &Self, nested: &Self) -> Option<Self> {
+        let SymExprKind::BinOp(SymBinOp::Xor, left, right) = nested.kind() else { return None };
+        if left == base {
+            Some(right.clone())
+        } else if right == base {
+            Some(left.clone())
+        } else {
+            None
+        }
+    }
+
+    fn xor_with_zero_ite(cx: &mut SymCx, base: &Self, conditional: &Self) -> Option<Self> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_some_and(|value| value.is_zero()) {
+            let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), else_expr.clone());
+            return Some(Self::ite(cx, condition.clone(), base.clone(), selected));
+        }
+        if else_expr.as_const().is_some_and(|value| value.is_zero()) {
+            let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), then_expr.clone());
+            return Some(Self::ite(cx, condition.clone(), selected, base.clone()));
+        }
+        None
     }
 
     fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
@@ -1338,10 +1422,16 @@ impl SymExpr {
         if let Some(condition) = self.bool_word_condition() {
             return Some(condition);
         }
-        let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() else { return None };
-        let left = left.bitwise_bool_word_condition(cx)?;
-        let right = right.bitwise_bool_word_condition(cx)?;
-        Some(SymBoolExpr::or(cx, vec![left, right]))
+        if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
+            let left = left.bitwise_bool_word_condition(cx)?;
+            let right = right.bitwise_bool_word_condition(cx)?;
+            return Some(SymBoolExpr::or(cx, vec![left, right]));
+        }
+        if self.unsigned_bits() != 1 {
+            return None;
+        }
+        let zero = Self::zero(cx);
+        Some(SymBoolExpr::eq(cx, self.clone(), zero).not(cx))
     }
 
     fn bool_word_condition_from_parts(
