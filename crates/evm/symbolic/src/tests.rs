@@ -2672,6 +2672,23 @@ fn expression_simplifies_saturating_select_idiom() {
 }
 
 #[test]
+fn expression_simplifies_xor_bool_select_idiom() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, selected.clone(), base.clone());
+    let condition_word = SymExpr::bool_word(&mut cx, condition.clone());
+    let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+    let expected = SymExpr::ite(&mut cx, condition, selected, base);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn ite_equality_with_selected_arm_exposes_branch_condition() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
