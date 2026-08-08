@@ -3853,6 +3853,190 @@ casttest!(send_eip7702, async |_prj, cmd| {
 "#]]);
 });
 
+casttest!(call_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_requires_signer, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let delegate_code = "0x602a5f5260205ff3".parse().unwrap();
+    api.anvil_set_code(address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"), delegate_code)
+        .await
+        .unwrap();
+    api.anvil_set_code(
+        address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        "0x602a5f5260205ff3".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let args = [
+        "call",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    cmd.args(args)
+        .arg("--json")
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![""]);
+
+    let signer: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+    let auth = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        nonce: 0,
+    };
+    let signature = signer.sign_hash(&auth.signature_hash()).await.unwrap();
+    let encoded_auth = hex::encode_prefixed(alloy_rlp::encode(auth.into_signed(signature)));
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            &signer.address().to_string(),
+            "--auth",
+            &encoded_auth,
+            "--from",
+            &signer.address().to_string(),
+            "--rpc-url",
+            &endpoint,
+        ])
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse().args(args).arg("--trace").assert_success().stderr_eq(str![""]);
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--trace", "--access-list", "[]"])
+        .assert_success()
+        .stderr_eq(str![""]);
+});
+
+casttest!(call_eip7702_auth_disclosure_routing, |_prj, cmd| {
+    let base_args = [
+        "call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ];
+
+    cmd.args(base_args)
+        .arg("--debug-trace-call")
+        .stdin("n\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(base_args)
+        .args(["--trace", "--access-list"])
+        .stdin("n\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(base_args)
+        .arg("--quiet")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: EIP-7702 authorization disclosure requires confirmation; pass `--force` to continue with `--quiet`
+
+"#]]);
+
+    cmd.cast_fuse().args(base_args).arg("--curl").assert_success().stderr_eq(str![""]);
+});
+
 casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;

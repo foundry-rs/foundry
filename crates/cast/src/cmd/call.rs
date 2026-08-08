@@ -140,6 +140,10 @@ pub struct CallArgs {
     #[command(flatten)]
     tx: TransactionOpts,
 
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    force: bool,
+
     #[command(flatten)]
     rpc: RpcOpts,
 
@@ -189,6 +193,32 @@ pub enum CallSubcommands {
         #[arg(long, value_parser = parse_ether_value)]
         value: Option<U256>,
     },
+}
+
+/// Confirms that the user intends to disclose an EIP-7702 authorization to an RPC endpoint.
+///
+/// Returns `false` when the user declines and the command should exit without sending the
+/// authorization.
+fn confirm_auth_rpc_disclosure(force: bool) -> Result<bool> {
+    if force {
+        return Ok(true);
+    }
+    if shell::is_quiet() {
+        eyre::bail!(
+            "EIP-7702 authorization disclosure requires confirmation; pass `--force` to continue with `--quiet`"
+        );
+    }
+
+    sh_warn!(
+        "This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid."
+    )?;
+    let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
+    if !matches!(response.trim(), "y" | "Y") {
+        sh_status!("Aborted.")?;
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 impl CallArgs {
@@ -281,6 +311,7 @@ impl CallArgs {
             with_local_artifacts,
             wallet,
             browser,
+            force,
             ..
         } = self;
 
@@ -313,15 +344,22 @@ impl CallArgs {
             None
         };
 
-        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
+        let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
-            .raw()
-            .build(sender)
-            .await?;
+            .raw();
+        let will_disclose =
+            (!trace && builder.has_auth()) || builder.will_disclose_auth_during_build();
+        if will_disclose {
+            builder.validate_auth(&sender)?;
+            if !confirm_auth_rpc_disclosure(force)? {
+                return Ok(());
+            }
+        }
+        let (tx, func) = builder.build(sender).await?;
 
         if self.debug_trace_call {
             let block = self.block.unwrap_or(BlockId::latest());
