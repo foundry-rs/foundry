@@ -67,6 +67,8 @@ use std::{
 mod builder;
 pub use builder::ExecutorBuilder;
 
+mod campaign;
+
 pub mod fuzz;
 pub use fuzz::FuzzedExecutor;
 
