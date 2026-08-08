@@ -35,19 +35,6 @@ mod process_tree;
 pub mod session;
 use session::SessionArgs;
 
-fn derive_wallets(phrase: &str, count: u8) -> Result<Vec<PrivateKeySigner>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    Ok(MnemonicBuilder::<English>::default()
-        .phrase(phrase)
-        .build_parent_key()?
-        .children()
-        .take(count as usize)
-        .collect::<Result<Vec<_>, _>>()?)
-}
-
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
@@ -536,7 +523,13 @@ impl WalletSubcommands {
                     sh_println!("{}", "Generating mnemonic from provided entropy...".yellow())?;
                 }
 
-                let wallets = derive_wallets(&phrase, accounts)?;
+                let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
+                let derivation_path = "m/44'/60'/0'/0/";
+                let wallets = (0..accounts)
+                    .map(|i| builder.clone().derivation_path(format!("{derivation_path}{i}")))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let wallets =
+                    wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
 
                 if !format_json {
                     sh_println!("{}", "Successfully generated a new mnemonic.".green())?;
@@ -600,35 +593,45 @@ impl WalletSubcommands {
             Self::Derive { mnemonic, accounts, insecure } => {
                 let format_json = shell::is_json();
                 let mut accounts_json = json!([]);
-                let mnemonic = if Path::new(&mnemonic).is_file() {
-                    fs::read_to_string(mnemonic)?
-                } else {
-                    mnemonic
-                };
-                let mnemonic = mnemonic.split_whitespace().collect::<Vec<_>>().join(" ");
-                let accounts = accounts.unwrap_or(1);
-                let wallets = derive_wallets(&mnemonic, accounts)?;
-                for (i, wallet) in wallets.iter().enumerate() {
-                    let address = wallet.address().to_checksum(None);
-                    let private_key = hex::encode(wallet.credential().to_bytes());
-                    if format_json {
-                        if insecure {
-                            accounts_json.as_array_mut().unwrap().push(json!({
-                                "address": address.clone(),
-                                "private_key": format!("0x{}", private_key),
-                            }));
-                        } else {
-                            accounts_json.as_array_mut().unwrap().push(json!({
-                                "address": address.clone()
-                            }));
+                for i in 0..accounts.unwrap_or(1) {
+                    let wallet = WalletOpts {
+                        raw: RawWalletOpts {
+                            mnemonic: Some(mnemonic.clone()),
+                            mnemonic_index: i as u32,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                    .signer()
+                    .await?;
+
+                    match wallet {
+                        WalletSigner::Local(local_wallet) => {
+                            let address = local_wallet.address().to_checksum(None);
+                            let private_key = hex::encode(local_wallet.credential().to_bytes());
+                            if format_json {
+                                if insecure {
+                                    accounts_json.as_array_mut().unwrap().push(json!({
+                                        "address": address.clone(),
+                                        "private_key": format!("0x{}", private_key),
+                                    }));
+                                } else {
+                                    accounts_json.as_array_mut().unwrap().push(json!({
+                                        "address": address.clone()
+                                    }));
+                                }
+                            } else {
+                                sh_println!("- Account {i}:")?;
+                                if insecure {
+                                    sh_println!("Address:     {}", address)?;
+                                    sh_println!("Private key: 0x{}\n", private_key)?;
+                                } else {
+                                    sh_println!("Address:     {}\n", address)?;
+                                }
+                            }
                         }
-                    } else {
-                        sh_println!("- Account {i}:")?;
-                        if insecure {
-                            sh_println!("Address:     {}", address)?;
-                            sh_println!("Private key: 0x{}\n", private_key)?;
-                        } else {
-                            sh_println!("Address:     {}\n", address)?;
+                        _ => {
+                            eyre::bail!("Only local wallets are supported by this command");
                         }
                     }
                 }
