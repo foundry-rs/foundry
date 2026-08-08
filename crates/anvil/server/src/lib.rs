@@ -80,7 +80,6 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
 }
 
 /// Helper trait that is used to execute ethereum rpc calls
-#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// The request type to expect

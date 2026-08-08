@@ -119,6 +119,7 @@ significant_drop_tightening = "allow"
 too_long_first_doc_paragraph = "allow"
 
 # Specific allows.
+double_must_use = "allow"
 result_large_err = "allow"
 
 [workspace.lints.rust]

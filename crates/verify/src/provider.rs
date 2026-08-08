@@ -102,7 +102,6 @@ impl VerificationContext {
 }
 
 /// An abstraction for various verification providers such as etherscan, sourcify, blockscout
-#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait VerificationProvider {
     /// Returns the provider type, used to assert the selected provider in tests.

@@ -18,7 +18,6 @@ use std::{
 };
 
 /// The general purpose trait for handling RPC requests and subscriptions
-#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
     /// The request type to expect

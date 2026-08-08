@@ -6,7 +6,6 @@ use anvil_core::eth::transaction::PendingTransaction;
 use revm::state::AccountInfo;
 
 /// A trait for validating transactions
-#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait TransactionValidator<T> {
     /// Validates the transaction's validity when it comes to nonce, payment
