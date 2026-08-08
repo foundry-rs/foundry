@@ -110,7 +110,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     )));
                 }
 
-                if let Some(contract_status) = job_response.contract.match_status {
+                if let Some(contract_status) =
+                    job_response.contract.and_then(|contract| contract.match_status)
+                {
                     let _ = sh_status!(
                         "Contract successfully verified:\nStatus: `{}`",
                         sanitize_remote_message(&contract_status),
@@ -417,7 +419,7 @@ pub struct SourcifyVerificationResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SourcifyJobResponse {
     is_job_completed: bool,
-    contract: SourcifyContractResponse,
+    contract: Option<SourcifyContractResponse>,
     error: Option<SourcifyErrorResponse>,
 }
 
@@ -482,6 +484,57 @@ mod tests {
         assert!(ui.ends_with(&format!("verify-ui/jobs/{encoded}")), "{ui}");
         assert_eq!(encode_path_segment("."), "%2E");
         assert_eq!(encode_path_segment(".."), "%2E%2E");
+    }
+
+    #[tokio::test]
+    async fn check_reports_error_with_null_contract() {
+        let body = json!({
+            "isJobCompleted": true,
+            "contract": null,
+            "error": {
+                "customCode": "internal_error",
+                "message": "too many connections from this IP"
+            }
+        })
+        .to_string();
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_url = format!("http://{}/", server.local_addr().unwrap());
+        let server_thread = thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0; 4096];
+            let bytes_read = socket.read(&mut request).unwrap();
+            assert!(
+                std::str::from_utf8(&request[..bytes_read])
+                    .unwrap()
+                    .starts_with("GET /v2/verify/job-id ")
+            );
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+        });
+
+        let args = VerifyCheckArgs::parse_from([
+            "foundry-cli",
+            "job-id",
+            "--verifier-url",
+            &server_url,
+            "--retries",
+            "1",
+            "--delay",
+            "0",
+        ]);
+        let error = SourcifyVerificationProvider::default().check(args).await.unwrap_err();
+        server_thread.join().unwrap();
+
+        let error = format!("{error:?}");
+        assert!(error.contains("Error Code: `internal_error`"), "{error}");
+        assert!(error.contains("Message: `too many connections from this IP`"), "{error}");
     }
 
     #[tokio::test]
