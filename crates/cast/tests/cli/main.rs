@@ -965,6 +965,91 @@ casttest!(wallet_sign_auth, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(wallet_sign_auth_zero_chain_requires_confirmation, |_prj, cmd| {
+    use alloy_rlp::Decodable;
+
+    let delegate = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
+    let private_key = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+    cmd.args(["wallet", "sign-auth", "--nonce", "100", "--chain", "0", delegate])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let confirmed = cmd
+        .cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--nonce",
+            "100",
+            "--chain",
+            "0",
+            delegate,
+        ])
+        .stdin("y\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] "#]])
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    let bytes = hex::decode(confirmed.strip_prefix("0x").unwrap()).unwrap();
+    let auth = alloy_eips::eip7702::SignedAuthorization::decode(&mut bytes.as_slice()).unwrap();
+    assert_eq!(*auth.chain_id(), U256::ZERO);
+    assert_eq!(auth.nonce(), 100);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--nonce",
+            "100",
+            "--chain",
+            "0",
+            "--force",
+            delegate,
+        ])
+        .assert_success()
+        .stdout_eq(format!("{confirmed}\n"))
+        .stderr_eq(str![""]);
+});
+
+casttest!(wallet_sign_auth_rpc_zero_chain_requires_confirmation, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(0u64))).await;
+
+    cmd.args([
+        "wallet",
+        "sign-auth",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
 // tests that `cast wallet sign-auth --self-broadcast` uses nonce + 1
 casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
     use alloy_rlp::Decodable;
