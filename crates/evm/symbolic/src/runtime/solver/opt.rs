@@ -691,7 +691,11 @@ impl ConstraintContext {
             SymBoolExprKind::Not(value) if self.unsigned_bool_always_true(value) => {
                 SymBoolExpr::constant(cx, false)
             }
-            _ if self.unsigned_bool_always_true(&expr) => SymBoolExpr::constant(cx, true),
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                if self.mul_div_identity(left, right) || self.mul_div_identity(right, left) =>
+            {
+                SymBoolExpr::constant(cx, true)
+            }
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if self.masked_word_eq_self(left, right) =>
             {
