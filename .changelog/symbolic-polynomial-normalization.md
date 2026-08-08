@@ -2,4 +2,4 @@
 forge: minor
 ---
 
-Prove bounded nonlinear EVM word-ring identities by canonicalizing small polynomial expressions before SMT solving.
+Prove more bounded nonlinear EVM word identities, including small polynomial equalities and non-wrapping multiplication, division, and shift bounds, before SMT solving.
