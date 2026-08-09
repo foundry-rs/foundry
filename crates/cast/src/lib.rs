@@ -2069,6 +2069,46 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(calldata))
     }
 
+    /// ABI-encodes the function signature and arguments into calldata, then lays it out as a
+    /// `bytes` value in memory.
+    ///
+    /// The layout mirrors how Solidity stores `bytes memory`: a 32-byte big-endian length
+    /// prefix, followed by the calldata right-padded with zero bytes to the next 32-byte word
+    /// boundary.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// // `f(uint256)` calldata is 36 bytes: a 4-byte selector + one 32-byte word.
+    /// let out = Cast::memory_encode("f(uint256 a)", &["1"]).unwrap();
+    /// // A 32-byte length prefix (0x24 = 36) followed by the data padded to two words.
+    /// assert!(out.starts_with(
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000024"
+    /// ));
+    /// assert_eq!(out.len(), 2 + 192);
+    /// ```
+    pub fn memory_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
+        let func = get_func(sig.as_ref())?;
+        let calldata = encode_function_args(&func, args)?;
+        Ok(hex::encode_prefixed(Self::bytes_memory_layout(&calldata)))
+    }
+
+    /// Lays out arbitrary bytes as a Solidity `bytes memory` value: a 32-byte big-endian length
+    /// prefix followed by the data right-padded with zeros to a whole number of 32-byte words.
+    fn bytes_memory_layout(data: &[u8]) -> Vec<u8> {
+        const WORD: usize = 32;
+        let padded_len = data.len().div_ceil(WORD) * WORD;
+        let mut out = Vec::with_capacity(WORD + padded_len);
+        // 32-byte big-endian length prefix.
+        out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<32>());
+        // The data, right-padded with zeros to a word boundary.
+        out.extend_from_slice(data);
+        out.resize(WORD + padded_len, 0);
+        out
+    }
+
     /// Returns the slot number for a given mapping key and slot.
     ///
     /// Given `mapping(k => v) m`, for a key `k` the slot number of its associated `v` is
@@ -2678,6 +2718,28 @@ mod logs_bisecting {
 mod tests {
     use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
     use alloy_primitives::hex;
+
+    #[test]
+    fn memory_encode_lays_out_bytes() {
+        // `f(uint256)` calldata is 36 bytes: a 4-byte selector + one 32-byte word.
+        let out = Cast::memory_encode("f(uint256 a)", &["1"]).unwrap();
+        // 32-byte big-endian length prefix (0x24 = 36) followed by the data padded to two words.
+        assert!(out.starts_with(
+            "0x0000000000000000000000000000000000000000000000000000000000000024"
+        ));
+        assert_eq!(out.len(), 2 + 192);
+    }
+
+    #[test]
+    fn memory_encode_pads_to_word_boundary() {
+        // `f()` calldata is the 4-byte selector only.
+        let out = Cast::memory_encode("f()", &[] as &[&str]).unwrap();
+        // Length prefix 0x04 followed by one padded data word = 64 bytes total.
+        assert!(out.starts_with(
+            "0x0000000000000000000000000000000000000000000000000000000000000004"
+        ));
+        assert_eq!(out.len(), 2 + 128);
+    }
 
     /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]
     /// implementation, which `sol!`-generated events use to compute indexed topics.

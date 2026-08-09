@@ -469,6 +469,29 @@ pub enum CastSubcommand {
         file: Option<PathBuf>,
     },
 
+    /// ABI-encode a function with arguments and lay the calldata out in `bytes` memory.
+    ///
+    /// Produces the full in-memory representation of the calldata as a `bytes` value: a
+    /// 32-byte big-endian length prefix, followed by the encoded calldata right-padded with
+    /// zeros to a whole number of 32-byte words.
+    ///
+    /// Examples:
+    /// - cast memory "transfer(address,uint256)" 0x... 200
+    /// - cast mem "f(uint256 a)" 1
+    #[command(verbatim_doc_comment, name = "memory", visible_alias = "mem")]
+    Memory {
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`
+        sig: String,
+
+        /// The arguments to encode.
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
+
+        // Path to file containing arguments to encode.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
+
     /// Get the symbolic name of the current chain.
     Chain {
         #[command(flatten)]

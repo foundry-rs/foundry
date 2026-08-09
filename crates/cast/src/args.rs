@@ -286,6 +286,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = SimpleCast::calldata_encode(sig, &final_args)?;
             print_scalar(out)?;
         }
+        CastSubcommand::Memory { sig, args, file } => {
+            let final_args = if let Some(file_path) = file {
+                let contents = fs::read_to_string(file_path)?;
+                contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(String::from)
+                    .collect()
+            } else {
+                args
+            };
+            let out = SimpleCast::memory_encode(sig, &final_args)?;
+            print_scalar(out)?;
+        }
         CastSubcommand::DecodeString { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
             print_tokens(&tokens)?;
