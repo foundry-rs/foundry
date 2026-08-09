@@ -15,6 +15,7 @@ use alloy_primitives::{
 use analysis::SourceAnalysis;
 use eyre::Result;
 use foundry_compilers::artifacts::sourcemap::SourceMap;
+use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt,
@@ -37,11 +38,11 @@ pub use inspector::LineCoverageCollector;
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
     /// A map of compiler build IDs and source IDs to source paths.
-    pub source_paths: HashMap<Arc<str>, HashMap<usize, PathBuf>>,
+    pub source_paths: HashMap<String, HashMap<usize, PathBuf>>,
     /// A map of compiler build IDs and source paths to source IDs.
-    pub source_paths_to_ids: HashMap<Arc<str>, HashMap<PathBuf, usize>>,
+    pub source_paths_to_ids: HashMap<String, HashMap<PathBuf, usize>>,
     /// All coverage items for the codebase, keyed by the compiler build ID.
-    pub analyses: HashMap<Arc<str>, SourceAnalysis>,
+    pub analyses: HashMap<String, SourceAnalysis>,
     /// All item anchors for the codebase, keyed by their contract ID.
     ///
     /// `(id, (creation, runtime))`
@@ -54,24 +55,14 @@ pub struct CoverageReport {
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, build_id: &str, source_id: usize, path: PathBuf) -> SourceId {
-        let build_id = self
-            .source_paths_to_ids
-            .get_key_value(build_id)
-            .map(|(build_id, _)| build_id.clone())
-            .unwrap_or_else(|| Arc::from(build_id));
-
+    pub fn add_source(&mut self, build_id: String, source_id: usize, path: PathBuf) {
         self.source_paths.entry(build_id.clone()).or_default().insert(source_id, path.clone());
-        self.source_paths_to_ids.entry(build_id.clone()).or_default().insert(path, source_id);
-
-        SourceId { build_id, source_id }
+        self.source_paths_to_ids.entry(build_id).or_default().insert(path, source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, build_id: &str, path: &Path) -> Option<SourceId> {
-        let (build_id, paths) = self.source_paths_to_ids.get_key_value(build_id)?;
-        let source_id = *paths.get(path)?;
-        Some(SourceId { build_id: build_id.clone(), source_id })
+    pub fn get_source_id(&self, build_id: &str, path: &Path) -> Option<usize> {
+        self.source_paths_to_ids.get(build_id)?.get(path).copied()
     }
 
     /// Get the source path for a source ID in a compiler build.
@@ -88,7 +79,7 @@ impl CoverageReport {
     }
 
     /// Add a [`SourceAnalysis`] to this report.
-    pub fn add_analysis(&mut self, build_id: Arc<str>, analysis: SourceAnalysis) {
+    pub fn add_analysis(&mut self, build_id: String, analysis: SourceAnalysis) {
         self.analyses.insert(build_id, analysis);
     }
 
@@ -152,7 +143,7 @@ impl CoverageReport {
             for anchor in anchors {
                 if let Some(hits) = hit_map.get(anchor.instruction) {
                     self.analyses
-                        .get_mut(contract_id.source_id.build_id.as_ref())
+                        .get_mut(&contract_id.build_id)
                         .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
                         .expect("Anchor refers to non-existent coverage item")
                         .hits += hits.get();
@@ -180,7 +171,7 @@ impl CoverageReport {
             }
         }
 
-        let Some(items) = self.analyses.get(contract_id.source_id.build_id.as_ref()) else {
+        let Some(items) = self.analyses.get(&contract_id.build_id) else {
             return Vec::new();
         };
         hits_by_item
@@ -205,9 +196,7 @@ impl CoverageReport {
         let source_paths = &self.source_paths;
         self.source_paths_to_ids.retain(|build_id, paths| {
             paths.retain(|_, source_id| {
-                source_paths
-                    .get(build_id.as_ref())
-                    .is_some_and(|paths| paths.contains_key(source_id))
+                source_paths.get(build_id).is_some_and(|paths| paths.contains_key(source_id))
             });
             !paths.is_empty()
         });
@@ -330,19 +319,12 @@ impl HitMap {
     }
 }
 
-/// A unique identifier for a source across compiler builds.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SourceId {
-    /// The compiler build this source belongs to.
-    pub build_id: Arc<str>,
-    /// The source ID within the compiler build.
-    pub source_id: usize,
-}
-
 /// A unique identifier for a contract.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
-    pub source_id: SourceId,
+    pub version: Version,
+    pub build_id: String,
+    pub source_id: usize,
     pub contract_name: Arc<str>,
 }
 
@@ -350,8 +332,8 @@ impl fmt::Display for ContractId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Contract \"{}\" (build {}, source ID {})",
-            self.contract_name, self.source_id.build_id, self.source_id.source_id
+            "Contract \"{}\" (solc {}, source ID {})",
+            self.contract_name, self.version, self.source_id
         )
     }
 }

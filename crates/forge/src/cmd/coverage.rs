@@ -6,7 +6,7 @@ use super::{
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
     CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
-    ResolvedHitMaps, SourceId,
+    ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
 };
@@ -300,7 +300,7 @@ impl CoverageArgs {
         let output = &*output;
 
         // Collect source files.
-        let mut sources_by_build = HashMap::<Arc<str>, SourceFiles>::default();
+        let mut sources_by_build = HashMap::<String, SourceFiles>::default();
         for (path, sources) in &output.output().sources.0 {
             // Filter out vyper sources.
             if path
@@ -313,8 +313,7 @@ impl CoverageArgs {
 
             for source in sources {
                 let source_file = &source.source_file;
-                let source_id =
-                    report.add_source(&source.build_id, source_file.id as usize, path.clone());
+                report.add_source(source.build_id.clone(), source_file.id as usize, path.clone());
 
                 // Filter out libs dependencies and tests.
                 if (!self.include_libs && project_paths.has_library_ancestor(path))
@@ -324,7 +323,7 @@ impl CoverageArgs {
                 }
 
                 sources_by_build
-                    .entry(source_id.build_id)
+                    .entry(source.build_id.clone())
                     .or_default()
                     .sources
                     .insert(source_file.id, project_paths.root.join(path));
@@ -346,7 +345,7 @@ impl CoverageArgs {
             let source_analysis = SourceAnalysis::new(sources, output)?;
             let anchors = artifacts
                 .par_iter()
-                .filter(|artifact| artifact.contract_id.source_id.build_id == *build_id)
+                .filter(|artifact| artifact.contract_id.build_id == *build_id)
                 .map(|artifact| {
                     let creation_code_anchors = artifact.creation.find_anchors(&source_analysis);
                     let deployed_code_anchors = artifact.deployed.find_anchors(&source_analysis);
@@ -425,8 +424,12 @@ impl CoverageArgs {
                     else {
                         continue;
                     };
-                    let contract_id =
-                        ContractId { source_id, contract_name: artifact_id.name.as_str().into() };
+                    let contract_id = ContractId {
+                        version: artifact_id.version.clone(),
+                        build_id: artifact_id.build_id.clone(),
+                        source_id,
+                        contract_name: artifact_id.name.as_str().into(),
+                    };
 
                     report.add_hit_map(&contract_id, map, is_deployed_code)?;
 
@@ -526,9 +529,14 @@ pub struct ArtifactData {
 }
 
 impl ArtifactData {
-    pub fn new(id: &ArtifactId, source_id: SourceId, artifact: &impl Artifact) -> Option<Self> {
+    pub fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
         Some(Self {
-            contract_id: ContractId { source_id, contract_name: id.name.as_str().into() },
+            contract_id: ContractId {
+                version: id.version.clone(),
+                build_id: id.build_id.clone(),
+                source_id,
+                contract_name: id.name.as_str().into(),
+            },
             creation: BytecodeData::new(
                 artifact.get_source_map()?.ok()?,
                 artifact
