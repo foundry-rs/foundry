@@ -202,6 +202,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = SimpleCast::to_bytes32(&value)?;
             print_scalar(out)?;
         }
+        CastSubcommand::ToBytesMemory { data } => {
+            let value = stdin::unwrap_line(data)?;
+            let out = SimpleCast::to_bytes_memory(&value)?;
+            print_scalar(out)?;
+        }
         CastSubcommand::Pad { data, right, left: _, len } => {
             let value = stdin::unwrap_line(data)?;
             let out = SimpleCast::pad(&value, right, len)?;
