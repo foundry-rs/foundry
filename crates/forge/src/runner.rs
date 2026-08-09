@@ -3761,22 +3761,33 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // predicate as the replay anchor because merged invariant suites persist failures per
         // predicate, while campaign runs use a stable suite anchor.
         let mut replayed_persisted_invariant = false;
-        let replay_candidates: Vec<(&Function, bool)> =
-            if self.cr.mcr.tcfg.fuzz_failure_replay && !is_optimization {
-                replay_invariant_fns
-                    .iter()
-                    .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor())
-                    .chain(
-                        replay_invariant_fns.iter().filter(|(invariant_fn, _)| {
-                            *invariant_fn == invariant_contract.anchor()
-                        }),
-                    )
-                    .copied()
-                    .collect()
-            } else {
-                vec![(invariant_contract.anchor(), false)]
-            };
-        for (replay_invariant, _) in replay_candidates {
+        let mut replayed_secondary_failures = Vec::new();
+        let replay_candidates: Vec<(&Function, bool)> = if is_optimization {
+            vec![(invariant_contract.anchor(), false)]
+        } else if self.cr.mcr.tcfg.fuzz_failure_replay {
+            replay_invariant_fns
+                .iter()
+                .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor())
+                .chain(
+                    replay_invariant_fns
+                        .iter()
+                        .filter(|(invariant_fn, _)| *invariant_fn == invariant_contract.anchor()),
+                )
+                .copied()
+                .collect()
+        } else {
+            replay_invariant_fns
+                .iter()
+                .filter(|(invariant_fn, _)| *invariant_fn == invariant_contract.anchor())
+                .chain(
+                    replay_invariant_fns
+                        .iter()
+                        .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor()),
+                )
+                .copied()
+                .collect()
+        };
+        for (replay_invariant, fail_on_revert) in replay_candidates {
             let replay_failure_file = invariant_failure_file(&failure_dir, replay_invariant);
             let Some(InvariantPersistedFailure {
                 mut call_sequence,
@@ -3828,6 +3839,38 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     continue;
                 };
                 if failure_site.is_some_and(|expected| expected != confirmed_failure_site) {
+                    continue;
+                }
+                if replay_invariant != invariant_contract.anchor()
+                    && !self.cr.mcr.tcfg.fuzz_failure_replay
+                {
+                    let is_revert = match confirmed_failure_site {
+                        SymbolicInvariantFailureSite::Invariant { target, selector, .. }
+                            if target == replay_contract.address
+                                && selector == replay_invariant.selector() =>
+                        {
+                            false
+                        }
+                        SymbolicInvariantFailureSite::SequenceCall { .. }
+                            if fail_on_revert && !replay.sequence_assertion_failure =>
+                        {
+                            true
+                        }
+                        _ => continue,
+                    };
+                    replayed_secondary_failures.push((
+                        replay_invariant.name.clone(),
+                        InvariantFuzzError::from_replayed_invariant(
+                            replay_contract.address,
+                            replay_invariant,
+                            txes,
+                            replay.reason,
+                            invariant_config,
+                            fail_on_revert,
+                            assertion_failure,
+                            is_revert,
+                        ),
+                    ));
                     continue;
                 }
                 let mut replayed_entirely = replay.replayed_entirely;
@@ -4343,7 +4386,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
-        let invariant_result = match evm.invariant_fuzz(
+        let mut invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true, None),
@@ -4357,6 +4400,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
+        for (name, failure) in replayed_secondary_failures {
+            invariant_result.errors.entry(name).or_insert(failure);
+        }
         // Merge coverage collected during invariant run with test setup coverage.
         self.result.merge_coverages(invariant_result.line_coverage);
 

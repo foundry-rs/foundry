@@ -2525,6 +2525,72 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     assert_eq!(persisted_json["call_sequence"].as_array().unwrap().len(), 3);
 });
 
+// Verifies that a compatible persisted secondary failure is replayed even when the fresh
+// campaign has no budget to rediscover it.
+forgetest_init!(secondary_persisted_replays_without_fresh_runs, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    let test = r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ReplayCounter {
+    uint256 public value;
+
+    function inc() public {
+        value++;
+    }
+}
+
+contract PersistedSecondaryReplayTest is Test {
+    ReplayCounter public counter;
+
+    function setUp() public {
+        counter = new ReplayCounter();
+        targetContract(address(counter));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_secondary() public view {
+        require(counter.value() < 2, "secondary still broken");
+    }
+}
+   "#;
+    prj.add_test("PersistedSecondaryReplayTest.t.sol", test);
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: secondary still broken] invariant_secondary
+...
+PersistedSecondaryReplayTest invariants: 1/2 invariants broken
+...
+ PersistedSecondaryReplayTest invariants (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+
+    // The same sequence now asserts in the handler while the predicate passes. It is stale as a
+    // predicate failure and must not be attributed to `invariant_secondary`.
+    prj.add_test(
+        "PersistedSecondaryReplayTest.t.sol",
+        &test.replace("value++;", "assert(false);").replace(
+            "require(counter.value() < 2, \"secondary still broken\");",
+            "require(true, \"secondary still broken\");",
+        ),
+    );
+    let output = cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(!stdout.contains("[FAIL: secondary still broken] invariant_secondary"), "{stdout}");
+});
+
 // Verifies that a compatible persisted secondary remains in the report while the campaign
 // continues to discover another predicate failure.
 forgetest_init!(secondary_persisted_continues_campaign, |prj, cmd| {
