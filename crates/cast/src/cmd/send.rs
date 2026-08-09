@@ -25,7 +25,7 @@ use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 use crate::{
-    cmd::tip20::iso4217_warning_message,
+    cmd::{auth::confirm_auth_rpc_disclosure_during_build, tip20::iso4217_warning_message},
     tempo,
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
 };
@@ -241,6 +241,9 @@ impl SendTxArgs {
         if print_sponsor_hash {
             let chain = builder.chain();
             let (mut tx, from) = if let Some(ref ak) = access_key {
+                if !confirm_auth_rpc_disclosure_during_build(&builder, ak.account(), force)? {
+                    return Ok(());
+                }
                 let (tx, _, prepared) = builder.build_with_tempo_wallet(ak).await?;
                 (tx, prepared.account())
             } else {
@@ -250,6 +253,9 @@ impl SendTxArgs {
                     eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
                 })?;
                 let from = signer.address();
+                if !confirm_auth_rpc_disclosure_during_build(&builder, signer, force)? {
+                    return Ok(());
+                }
                 let (tx, _) = builder.build(from).await?;
                 (tx, from)
             };
@@ -315,6 +321,9 @@ impl SendTxArgs {
             }
 
             let chain = builder.chain();
+            if !confirm_auth_rpc_disclosure_during_build(&builder, config.sender, force)? {
+                return Ok(());
+            }
             let (mut tx_request, _) = builder.build(config.sender).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -347,6 +356,9 @@ impl SendTxArgs {
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
             let chain = builder.chain();
+            if !confirm_auth_rpc_disclosure_during_build(&builder, browser.address(), force)? {
+                return Ok(());
+            }
             let (mut tx_request, _) =
                 builder.with_browser_wallet().build(browser.address()).await?;
             maybe_print_resolved_lane(
@@ -388,6 +400,9 @@ impl SendTxArgs {
         // Case 3: Tempo access-key wallet.
         } else if let Some(ak) = access_key {
             let chain = builder.chain();
+            if !confirm_auth_rpc_disclosure_during_build(&builder, ak.account(), force)? {
+                return Ok(());
+            }
             let (mut tx_request, _, prepared) = builder.build_with_tempo_wallet(&ak).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -442,6 +457,9 @@ impl SendTxArgs {
 
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
+            if !confirm_auth_rpc_disclosure_during_build(&builder, &signer, force)? {
+                return Ok(());
+            }
             let (mut tx_request, _) = builder.build(&signer).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -483,6 +501,9 @@ impl SendTxArgs {
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
             let chain = builder.chain();
+            if !confirm_auth_rpc_disclosure_during_build(&builder, &signer, force)? {
+                return Ok(());
+            }
             let (mut tx_request, _) = builder.build(&signer).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),

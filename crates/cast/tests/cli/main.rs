@@ -4095,10 +4095,13 @@ casttest!(send_eip7702, async |_prj, cmd| {
         "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-limit",
+        "100000",
         "--rpc-url",
         &endpoint,
     ])
-    .assert_success();
+    .assert_success()
+    .stderr_eq(str![""]);
 
     cmd.cast_fuse()
         .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
@@ -4107,6 +4110,54 @@ casttest!(send_eip7702, async |_prj, cmd| {
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
 "#]]);
+});
+
+casttest!(send_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(send_eip7702_auth_disclosure_forced, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--async",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
 });
 
 casttest!(call_eip7702_auth_disclosure_declined, |_prj, cmd| {
