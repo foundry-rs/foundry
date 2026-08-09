@@ -4160,6 +4160,84 @@ casttest!(send_eip7702_auth_disclosure_forced, async |_prj, cmd| {
     .stderr_eq(str![""]);
 });
 
+casttest!(batch_mktx_eip7702_auth_disclosure, async |_prj, cmd| {
+    let args = [
+        "batch-mktx",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+
+    cmd.args(args)
+        .args(["--chain", "31337", "--rpc-url", "http://127.0.0.1:1"])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--force", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+
+"#]]);
+});
+
+casttest!(batch_send_eip7702_auth_disclosure, async |_prj, cmd| {
+    let args = [
+        "batch-send",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+
+    cmd.args(args)
+        .args(["--chain", "31337", "--rpc-url", "http://127.0.0.1:1"])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--force", "--async", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+
+"#]]);
+});
+
 casttest!(call_eip7702_auth_disclosure_declined, |_prj, cmd| {
     cmd.args([
         "call",

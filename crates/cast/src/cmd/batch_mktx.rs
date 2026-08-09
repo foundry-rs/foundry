@@ -5,6 +5,7 @@
 
 use crate::{
     call_spec::CallSpec,
+    cmd::auth::confirm_auth_rpc_disclosure_during_build,
     tempo,
     tx::{self, CastTxBuilder},
 };
@@ -45,6 +46,10 @@ pub struct BatchMakeTxArgs {
     #[command(flatten)]
     pub tx: TransactionOpts,
 
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    pub force: bool,
+
     #[command(flatten)]
     pub eth: EthereumOpts,
 
@@ -59,7 +64,7 @@ pub struct BatchMakeTxArgs {
 
 impl BatchMakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { calls, mut tx, eth, raw_unsigned, ethsign } = self;
+        let Self { calls, mut tx, force, eth, raw_unsigned, ethsign } = self;
         let has_nonce = tx.nonce.is_some();
         let has_session = tx.tempo.session_id()?.is_some();
         let expires_at = tx.tempo.resolve_expires();
@@ -135,6 +140,9 @@ impl BatchMakeTxArgs {
             }
 
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, from, force)? {
+                return Ok(());
+            }
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let fee_token = resolve_and_set_fee_token(
@@ -152,6 +160,9 @@ impl BatchMakeTxArgs {
         }
 
         if ethsign {
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, config.sender, force)? {
+                return Ok(());
+            }
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let fee_token = resolve_and_set_fee_token(
@@ -168,6 +179,10 @@ impl BatchMakeTxArgs {
         }
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, access_key.account(), force)?
+            {
+                return Ok(());
+            }
             let (mut tx, _, prepared) = tx_builder.build_with_tempo_wallet(access_key).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let fee_token = resolve_and_set_fee_token(
@@ -186,6 +201,9 @@ impl BatchMakeTxArgs {
                 None => eth.wallet.signer().await?,
             };
             tx::validate_from_address(eth.wallet.from, Signer::address(&signer))?;
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, &signer, force)? {
+                return Ok(());
+            }
             let (mut tx, _) = tx_builder.build(&signer).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let fee_token = resolve_and_set_fee_token(
