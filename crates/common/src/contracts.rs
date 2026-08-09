@@ -86,7 +86,7 @@ impl From<CompactDeployedBytecode> for BytecodeData {
 }
 
 /// Container for commonly used contract data.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ContractData {
     /// Contract name.
     pub name: String,
@@ -200,8 +200,10 @@ impl UnlinkedBytecodeMatch {
         // Decode valid byte pairs once while retaining invalid placeholder positions.
         let (pairs, trailing) = raw.as_chunks::<2>();
         for &[high, low] in pairs {
-            if let (Some(high), Some(low)) = (hex_nibble(high), hex_nibble(low)) {
-                bytes.push(high << 4 | low);
+            if let (Some(high), Some(low)) =
+                ((high as char).to_digit(16), (low as char).to_digit(16))
+            {
+                bytes.push((high << 4 | low) as u8);
                 valid.push(true);
             } else {
                 bytes.push(0);
@@ -222,46 +224,6 @@ impl UnlinkedBytecodeMatch {
 enum MatchBytecode {
     Bytecode(Bytes),
     Unlinked(UnlinkedBytecodeMatch),
-}
-
-enum DeployedCodeMatchKind {
-    NoMatch,
-    Partial,
-    Exact,
-}
-
-#[inline]
-fn match_simple_deployed_code(
-    contract: &ContractData,
-    code: &[u8],
-    metadata_start: Option<usize>,
-) -> Option<DeployedCodeMatchKind> {
-    let data = contract.deployed_bytecode.as_ref()?;
-    if !data.immutable_references.is_empty() || !data.link_references.is_empty() {
-        return None;
-    }
-    let BytecodeObject::Bytecode(bytecode) = data.object.as_ref()? else { return None };
-    if bytecode.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX) {
-        return None;
-    }
-    if bytecode.len() != code.len() {
-        return Some(DeployedCodeMatchKind::NoMatch);
-    }
-
-    let Some(metadata) = metadata_start else {
-        return Some(if bytecode.as_ref() == code {
-            DeployedCodeMatchKind::Exact
-        } else {
-            DeployedCodeMatchKind::NoMatch
-        });
-    };
-    if bytecode[..metadata] != code[..metadata] {
-        Some(DeployedCodeMatchKind::NoMatch)
-    } else if bytecode[metadata..] == code[metadata..] {
-        Some(DeployedCodeMatchKind::Exact)
-    } else {
-        Some(DeployedCodeMatchKind::Partial)
-    }
 }
 
 impl MatchBytecode {
@@ -300,19 +262,8 @@ impl MatchBytecode {
     }
 }
 
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
 struct DeployedCodeMatch {
     id: ArtifactId,
-    // Retain the selected data here to avoid a second artifact tree lookup after matching.
-    contract: ContractData,
     bytecode: MatchBytecode,
     ignored: Vec<Offsets>,
 }
@@ -332,7 +283,7 @@ impl DeployedCodeMatch {
             ignored.push(Offsets { start: 1, length: 20 });
         }
         ignored.sort_by_key(|offset| offset.start);
-        Some(Self { id: id.clone(), contract: contract.clone(), bytecode, ignored })
+        Some(Self { id: id.clone(), bytecode, ignored })
     }
 
     fn matches(&self, code: &[u8], metadata_start: Option<usize>) -> bool {
@@ -385,14 +336,10 @@ struct ContractsByArtifactInner {
 }
 
 impl ContractsByArtifactInner {
-    const fn first_deployed_code(&self) -> Option<&DeployedCodeMatch> {
-        self.first_deployed_code.as_ref()
-    }
-
     fn deployed_code_index(&self) -> &DeployedCodeIndex {
         self.deployed_code_index.get_or_init(|| {
             let mut index = DeployedCodeIndex::new();
-            let first = self.first_deployed_code().map(|candidate| &candidate.id);
+            let first = self.first_deployed_code.as_ref().map(|candidate| &candidate.id);
             // Inserting from the artifact tree retains its selection order within each bucket.
             for (id, contract) in &self.contracts {
                 if first == Some(id) {
@@ -509,48 +456,39 @@ impl ContractsByArtifact {
         }
 
         let metadata_start = find_metadata_start(code);
-        let mut partial_match = None;
-        let first = self.0.contracts.iter().next();
-        let mut checked_first = false;
-        // Preserve the original constant-time path for a common first, fully linked artifact.
-        if let Some(contract) = first
-            && let Some(matched) = match_simple_deployed_code(contract.1, code, metadata_start)
-        {
-            checked_first = true;
-            match matched {
-                DeployedCodeMatchKind::Exact => return Some(contract),
-                DeployedCodeMatchKind::Partial => partial_match = Some(contract),
-                DeployedCodeMatchKind::NoMatch => {}
-            }
-        }
-        if !checked_first
-            && let Some(candidate) = self.0.first_deployed_code()
+        // Check the eagerly prepared first candidate before touching the index so a common first,
+        // fully linked artifact keeps a constant-time path.
+        let mut partial_match = if let Some(candidate) = &self.0.first_deployed_code
             && candidate.bytecode.len() == code.len()
             && candidate.matches(code, metadata_start)
         {
-            let contract = first.unwrap();
             if metadata_start.is_none_or(|metadata| candidate.matches_metadata(code, metadata)) {
-                return Some(contract);
+                // The first candidate is always built from the first entry.
+                return self.0.contracts.first_key_value();
             }
-            partial_match = Some(contract);
-        }
-
-        let Some(candidates) = self.0.deployed_code_index().get(&code.len()) else {
-            return partial_match;
+            Some(candidate)
+        } else {
+            None
         };
-        for candidate in candidates {
-            if !candidate.matches(code, metadata_start) {
-                continue;
-            }
 
-            let contract = (&candidate.id, &candidate.contract);
-            let Some(metadata) = metadata_start else { return Some(contract) };
-            if candidate.matches_metadata(code, metadata) {
-                return Some(contract);
+        if let Some(candidates) = self.0.deployed_code_index().get(&code.len()) {
+            for candidate in candidates {
+                if !candidate.matches(code, metadata_start) {
+                    continue;
+                }
+                if metadata_start.is_none_or(|metadata| candidate.matches_metadata(code, metadata))
+                {
+                    return self.entry(&candidate.id);
+                }
+                partial_match = Some(candidate);
             }
-            partial_match = Some(contract);
         }
-        partial_match
+        partial_match.and_then(|candidate| self.entry(&candidate.id))
+    }
+
+    /// Resolves a matched candidate id back to the stored artifact entry.
+    fn entry(&self, id: &ArtifactId) -> Option<ArtifactWithContractRef<'_>> {
+        self.0.contracts.get_key_value(id)
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is

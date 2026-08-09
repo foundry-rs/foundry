@@ -93,7 +93,7 @@ vergen = { workspace = true, features = ["build", "emit_and_set"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
-criterion = "0.7"
+criterion.workspace = true
 foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
 proptest.workspace = true
