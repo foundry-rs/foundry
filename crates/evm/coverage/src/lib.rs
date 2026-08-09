@@ -15,7 +15,6 @@ use alloy_primitives::{
 use analysis::SourceAnalysis;
 use eyre::Result;
 use foundry_compilers::artifacts::sourcemap::SourceMap;
-use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt,
@@ -37,12 +36,12 @@ pub use inspector::LineCoverageCollector;
 /// "anchors"). A single coverage item may be referred to by multiple anchors.
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
-    /// A map of source IDs to the source path.
-    pub source_paths: HashMap<(Version, usize), PathBuf>,
-    /// A map of source paths to source IDs.
-    pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
-    /// All coverage items for the codebase, keyed by the compiler version.
-    pub analyses: HashMap<Version, SourceAnalysis>,
+    /// A map of build and source IDs to the source path.
+    pub source_paths: HashMap<(String, usize), PathBuf>,
+    /// A map of build IDs and source paths to source IDs.
+    pub source_paths_to_ids: HashMap<(String, PathBuf), usize>,
+    /// All coverage items for the codebase, keyed by the compiler build ID.
+    pub analyses: HashMap<String, SourceAnalysis>,
     /// All item anchors for the codebase, keyed by their contract ID.
     ///
     /// `(id, (creation, runtime))`
@@ -55,14 +54,14 @@ pub struct CoverageReport {
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, version: Version, source_id: usize, path: PathBuf) {
-        self.source_paths.insert((version.clone(), source_id), path.clone());
-        self.source_paths_to_ids.insert((version, path), source_id);
+    pub fn add_source(&mut self, build_id: String, source_id: usize, path: PathBuf) {
+        self.source_paths.insert((build_id.clone(), source_id), path.clone());
+        self.source_paths_to_ids.insert((build_id, path), source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<usize> {
-        self.source_paths_to_ids.get(&(version, path)).copied()
+    pub fn get_source_id(&self, build_id: String, path: PathBuf) -> Option<usize> {
+        self.source_paths_to_ids.get(&(build_id, path)).copied()
     }
 
     /// Add the source maps.
@@ -74,8 +73,8 @@ impl CoverageReport {
     }
 
     /// Add a [`SourceAnalysis`] to this report.
-    pub fn add_analysis(&mut self, version: Version, analysis: SourceAnalysis) {
-        self.analyses.insert(version, analysis);
+    pub fn add_analysis(&mut self, build_id: String, analysis: SourceAnalysis) {
+        self.analyses.insert(build_id, analysis);
     }
 
     /// Add anchors to this report.
@@ -90,7 +89,10 @@ impl CoverageReport {
 
     /// Returns an iterator over coverage summaries by source file path.
     pub fn summary_by_file(&self) -> impl Iterator<Item = (&Path, CoverageSummary)> {
-        self.by_file(|summary: &mut CoverageSummary, item| summary.add_item(item))
+        self.coalesced_items_by_file().map(|(path, items)| {
+            let summary = CoverageSummary::from_items(items.iter());
+            (path, summary)
+        })
     }
 
     /// Returns an iterator over coverage items by source file path.
@@ -98,14 +100,36 @@ impl CoverageReport {
         self.by_file(|list: &mut Vec<_>, item| list.push(item))
     }
 
+    /// Returns coverage items coalesced by their logical source location.
+    ///
+    /// The same physical source can participate in multiple compiler builds. Its coverage items
+    /// are identical across those builds, so reporters should count each item once and combine
+    /// its hits.
+    pub fn coalesced_items_by_file(&self) -> impl Iterator<Item = (&Path, Vec<CoverageItem>)> {
+        let mut by_file = BTreeMap::<&Path, BTreeMap<CoverageItemKey<'_>, CoverageItem>>::new();
+        for (build_id, items) in &self.analyses {
+            for item in items.all_items() {
+                let key = (build_id.clone(), item.loc.source_id);
+                let Some(path) = self.source_paths.get(&key) else { continue };
+                by_file
+                    .entry(path)
+                    .or_default()
+                    .entry(item.report_key())
+                    .and_modify(|existing| existing.hits = existing.hits.saturating_add(item.hits))
+                    .or_insert_with(|| item.clone());
+            }
+        }
+        by_file.into_iter().map(|(path, items)| (path, items.into_values().collect()))
+    }
+
     fn by_file<'a, T: Default>(
         &'a self,
         mut f: impl FnMut(&mut T, &'a CoverageItem),
     ) -> impl Iterator<Item = (&'a Path, T)> {
         let mut by_file: BTreeMap<&Path, T> = BTreeMap::new();
-        for (version, items) in &self.analyses {
+        for (build_id, items) in &self.analyses {
             for item in items.all_items() {
-                let key = (version.clone(), item.loc.source_id);
+                let key = (build_id.clone(), item.loc.source_id);
                 let Some(path) = self.source_paths.get(&key) else { continue };
                 f(by_file.entry(path).or_default(), item);
             }
@@ -136,7 +160,7 @@ impl CoverageReport {
             for anchor in anchors {
                 if let Some(hits) = hit_map.get(anchor.instruction) {
                     self.analyses
-                        .get_mut(&contract_id.version)
+                        .get_mut(&contract_id.build_id)
                         .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
                         .expect("Anchor refers to non-existent coverage item")
                         .hits += hits.get();
@@ -164,7 +188,7 @@ impl CoverageReport {
             }
         }
 
-        let Some(items) = self.analyses.get(&contract_id.version) else { return Vec::new() };
+        let Some(items) = self.analyses.get(&contract_id.build_id) else { return Vec::new() };
         hits_by_item
             .into_iter()
             .filter_map(|(item_id, hits)| {
@@ -180,8 +204,8 @@ impl CoverageReport {
     /// will be missing the ones that are dependent on them.
     pub fn retain_sources(&mut self, mut predicate: impl FnMut(&Path) -> bool) {
         self.source_paths.retain(|_, path| predicate(path));
-        self.source_paths_to_ids.retain(|(version, _), source_id| {
-            self.source_paths.contains_key(&(version.clone(), *source_id))
+        self.source_paths_to_ids.retain(|(build_id, _), source_id| {
+            self.source_paths.contains_key(&(build_id.clone(), *source_id))
         });
     }
 }
@@ -305,7 +329,7 @@ impl HitMap {
 /// A unique identifier for a contract
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
-    pub version: Version,
+    pub build_id: String,
     pub source_id: usize,
     pub contract_name: Arc<str>,
 }
@@ -314,8 +338,8 @@ impl fmt::Display for ContractId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Contract \"{}\" (solc {}, source ID {})",
-            self.contract_name, self.version, self.source_id
+            "Contract \"{}\" (build {}, source ID {})",
+            self.contract_name, self.build_id, self.source_id
         )
     }
 }
@@ -432,6 +456,31 @@ impl fmt::Display for CoverageItem {
 }
 
 impl CoverageItem {
+    fn report_key(&self) -> CoverageItemKey<'_> {
+        let (kind, detail) = match &self.kind {
+            CoverageItemKind::Line => (0, CoverageItemKindDetail::None),
+            CoverageItemKind::Statement => (1, CoverageItemKindDetail::None),
+            CoverageItemKind::Branch { branch_id, path_id, is_first_opcode } => (
+                2,
+                CoverageItemKindDetail::Branch {
+                    branch_id: *branch_id,
+                    path_id: *path_id,
+                    is_first_opcode: *is_first_opcode,
+                },
+            ),
+            CoverageItemKind::Function { name } => (3, CoverageItemKindDetail::Function { name }),
+        };
+        (
+            self.loc.lines.start,
+            self.loc.lines.end,
+            kind,
+            self.loc.bytes.start,
+            self.loc.bytes.end,
+            self.loc.contract_name.as_ref(),
+            detail,
+        )
+    }
+
     fn ord_key(&self) -> impl Ord + use<> {
         (
             self.loc.source_id,
@@ -481,6 +530,15 @@ impl CoverageItem {
             Ok(())
         })
     }
+}
+
+type CoverageItemKey<'a> = (u32, u32, u8, u32, u32, &'a str, CoverageItemKindDetail<'a>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum CoverageItemKindDetail<'a> {
+    None,
+    Branch { branch_id: u32, path_id: u32, is_first_opcode: bool },
+    Function { name: &'a str },
 }
 
 /// A source location.

@@ -2975,6 +2975,172 @@ contract ReportScript {
     );
 });
 
+forgetest!(coverage_separates_same_version_compiler_jobs, |prj, cmd| {
+    fs::write(
+        prj.config(),
+        r#"
+[profile.default]
+optimizer = false
+via_ir = false
+
+[[profile.default.additional_compiler_profiles]]
+name = "via-ir"
+via_ir = true
+
+[[profile.default.compilation_restrictions]]
+paths = "src/A.sol"
+via_ir = true
+"#,
+    )
+    .unwrap();
+
+    prj.add_raw_source(
+        "A.sol",
+        "pragma solidity >=0.8.0;\ncontract A { function value() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_raw_source(
+        "B.sol",
+        "pragma solidity >=0.8.0;\ncontract B { function value() external pure returns (uint256) { return 2; } }",
+    );
+    prj.add_raw_test(
+        "ATest.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+import {A} from "../src/A.sol";
+contract ATest { function testA() public { require(new A().value() == 1); } }
+"#,
+    );
+    prj.add_raw_test(
+        "BTest.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+import {B} from "../src/B.sol";
+contract BTest { function testB() public { require(new B().value() == 2); } }
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/A.sol
+DA:2,1
+FN:2,A.value
+FNDA:1,A.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/B.sol
+DA:2,1
+FN:2,B.value
+FNDA:1,B.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
+
+forgetest!(coverage_coalesces_shared_sources_across_compiler_jobs, |prj, cmd| {
+    fs::write(
+        prj.config(),
+        r#"
+[profile.default]
+optimizer = false
+via_ir = false
+
+[[profile.default.additional_compiler_profiles]]
+name = "via-ir"
+via_ir = true
+
+[[profile.default.compilation_restrictions]]
+paths = "src/A.sol"
+via_ir = true
+"#,
+    )
+    .unwrap();
+
+    prj.add_raw_source(
+        "Common.sol",
+        "pragma solidity >=0.8.0;\nlibrary Common { function value(uint256 n) internal pure returns (uint256) { return n; } }",
+    );
+    prj.add_raw_source(
+        "A.sol",
+        "pragma solidity >=0.8.0;\nimport {Common} from \"./Common.sol\";\ncontract A { function value() external pure returns (uint256) { return Common.value(1); } }",
+    );
+    prj.add_raw_source(
+        "B.sol",
+        "pragma solidity >=0.8.0;\nimport {Common} from \"./Common.sol\";\ncontract B { function value() external pure returns (uint256) { return Common.value(2); } }",
+    );
+    prj.add_raw_test(
+        "Coverage.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+import {A} from "../src/A.sol";
+import {B} from "../src/B.sol";
+contract CoverageTest {
+    function testBothBuilds() public {
+        require(new A().value() == 1);
+        require(new B().value() == 2);
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/A.sol
+DA:3,1
+FN:3,A.value
+FNDA:1,A.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/B.sol
+DA:3,1
+FN:3,B.value
+FNDA:1,B.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/Common.sol
+DA:2,2
+FN:2,Common.value
+FNDA:2,Common.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
+
 #[test]
 fn coverage_help_renders_notes() {
     let help = CoverageArgs::command().render_long_help().to_string();

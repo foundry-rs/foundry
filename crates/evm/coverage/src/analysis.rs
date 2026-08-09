@@ -474,9 +474,8 @@ impl SourceAnalysis {
     /// source ID the item is in, the source code range of the item, and the contract name the item
     /// is in.
     ///
-    /// Note: Source IDs are only unique per compilation job; that is, a code base compiled with
-    /// two different solc versions will produce overlapping source IDs if the compiler version is
-    /// not taken into account.
+    /// Note: Source IDs are only unique per compilation job. A code base compiled in multiple
+    /// jobs can produce overlapping source IDs even when those jobs use the same compiler version.
     #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
