@@ -354,6 +354,84 @@ contract Effective is IMid {
     );
 });
 
+forgetest_init!(inheritdoc_documents_unnamed_parameters, |prj, cmd| {
+    prj.add_source(
+        "Unnamed.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IProcessor {
+    /// @param amount The amount to process
+    function single(uint256 amount) external;
+
+    /// @param first The first value
+    /// @param third The third value
+    function sparse(uint256 first, address second, bytes32 third) external;
+
+    /// @param first The named underscore
+    /// @param second The unnamed value
+    function underscoreCollision(uint256 first, uint256 second) external;
+
+    /// @param first The named display value
+    /// @param second The custom-named value
+    function customNameCollision(uint256 first, uint256 second) external;
+}
+
+contract Processor is IProcessor {
+    /// @inheritdoc IProcessor
+    function single(uint256) external override {}
+
+    /// @inheritdoc IProcessor
+    function sparse(uint256, address, bytes32) external override {}
+
+    /// @inheritdoc IProcessor
+    function underscoreCollision(uint256 _, uint256) external override {}
+
+    /// @inheritdoc IProcessor
+    /// @custom:name display
+    function customNameCollision(uint256 display, uint256) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Processor.mdx"), None),
+        str![[r#"
+...
+### single
+...
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| _ | `uint256` | The amount to process |
+...
+### sparse
+...
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| _ | `uint256` | The first value |
+| _ | `address` |  |
+| _ | `bytes32` | The third value |
+...
+### underscoreCollision
+...
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| _ | `uint256` | The named underscore |
+| _ | `uint256` | The unnamed value |
+...
+### customNameCollision
+...
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| display | `uint256` | The named display value |
+| display | `uint256` | The custom-named value |
+...
+"#]],
+    );
+});
+
 forgetest_init!(inheritdoc_mapping_getter_uses_generated_signature, |prj, cmd| {
     prj.add_source(
         "ExplicitGetter.sol",
@@ -1941,6 +2019,12 @@ import "./IUnsafe.sol";
 contract Safe is IUnsafe {
     /// @inheritdoc IUnsafe
     function transfer(uint256 amount) external returns (uint256) {}
+
+    /// @return First local result
+    /// @return Second local result
+    function localResults() external pure returns (uint256, address) {
+        return (1, address(0));
+    }
 }
 "#,
     );
@@ -1969,7 +2053,14 @@ function transfer(uint256 amount) external returns (uint256);
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| &lt;none&gt; | `uint256` | new balance |
+| &lt;none&gt; | `uint256` | The new balance |
+...
+### localResults
+...
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `uint256` | First local result |
+| &lt;none&gt; | `address` | Second local result |
 ...
 "#]],
     );

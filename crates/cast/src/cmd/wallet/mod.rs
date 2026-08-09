@@ -198,6 +198,10 @@ pub enum WalletSubcommands {
         #[arg(long)]
         chain: Option<Chain>,
 
+        /// Skip the confirmation prompt for wildcard chain authorizations.
+        #[arg(long)]
+        force: bool,
+
         /// If set, indicates the authorization will be broadcast by the signing account itself.
         /// This means the nonce used will be the current nonce + 1 (to account for the
         /// transaction that will include this authorization).
@@ -790,9 +794,25 @@ impl WalletSubcommands {
                     print_scalar(format!("0x{}", hex::encode(sig.as_bytes())))?;
                 }
             }
-            Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast } => {
-                let wallet = wallet.signer().await?;
+            Self::SignAuth { rpc, nonce, chain, force, wallet, address, self_broadcast } => {
                 let provider = utils::get_provider(&rpc.load_config()?)?;
+                let chain_id = if let Some(chain) = chain {
+                    chain.id()
+                } else {
+                    provider.get_chain_id().await?
+                };
+                if chain_id == 0 && !force {
+                    sh_warn!(
+                        "Chain ID 0 creates an EIP-7702 authorization that is valid on every chain."
+                    )?;
+                    let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
+                    if !matches!(response.trim(), "y" | "Y") {
+                        sh_status!("Aborted.")?;
+                        return Ok(());
+                    }
+                }
+
+                let wallet = wallet.signer().await?;
                 let nonce = if let Some(nonce) = nonce {
                     nonce
                 } else {
@@ -804,11 +824,6 @@ impl WalletSubcommands {
                     } else {
                         current_nonce
                     }
-                };
-                let chain_id = if let Some(chain) = chain {
-                    chain.id()
-                } else {
-                    provider.get_chain_id().await?
                 };
                 let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;

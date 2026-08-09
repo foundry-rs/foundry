@@ -1438,6 +1438,91 @@ casttest!(wallet_sign_auth, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(wallet_sign_auth_zero_chain_requires_confirmation, |_prj, cmd| {
+    use alloy_rlp::Decodable;
+
+    let delegate = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
+    let private_key = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+    cmd.args(["wallet", "sign-auth", "--nonce", "100", "--chain", "0", delegate])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let confirmed = cmd
+        .cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--nonce",
+            "100",
+            "--chain",
+            "0",
+            delegate,
+        ])
+        .stdin("y\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] "#]])
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    let bytes = hex::decode(confirmed.strip_prefix("0x").unwrap()).unwrap();
+    let auth = alloy_eips::eip7702::SignedAuthorization::decode(&mut bytes.as_slice()).unwrap();
+    assert_eq!(*auth.chain_id(), U256::ZERO);
+    assert_eq!(auth.nonce(), 100);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--nonce",
+            "100",
+            "--chain",
+            "0",
+            "--force",
+            delegate,
+        ])
+        .assert_success()
+        .stdout_eq(format!("{confirmed}\n"))
+        .stderr_eq(str![""]);
+});
+
+casttest!(wallet_sign_auth_rpc_zero_chain_requires_confirmation, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(0u64))).await;
+
+    cmd.args([
+        "wallet",
+        "sign-auth",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
 // tests that `cast wallet sign-auth --self-broadcast` uses nonce + 1
 casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
     use alloy_rlp::Decodable;
@@ -4998,6 +5083,146 @@ async fn deploy_counter_and_set_number(
         .unwrap()
         .tx_hash()
 }
+
+// `cast run` must replay a transaction's block prefix without changing the trace requested for the
+// selected transaction. A single block covers a deployment in the first position, a revert in the
+// middle, and an internally traced state change in the last position.
+forgetest_async!(cast_run_fork_traces_only_target_transaction, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ReplayTarget",
+        r#"
+contract ReplayTarget {
+    uint256 public number;
+
+    constructor() {
+        number = 1;
+    }
+
+    function revertingIncrement() external {
+        number++;
+        revert("expected revert");
+    }
+
+    function increment() external {
+        _increment();
+    }
+
+    function _increment() internal {
+        number++;
+    }
+}
+"#,
+    );
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "ReplayTarget", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let bytecode = Bytes::from_str(bytecode.trim()).unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    let target = sender.create(nonce);
+    let deployment = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .with_deploy_code(bytecode)
+                .nonce(nonce)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let revert = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(target)
+                .with_input(Bytes::copy_from_slice(&keccak256(b"revertingIncrement()")[..4]))
+                .nonce(nonce + 1)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let increment = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(target)
+                .with_input(Bytes::copy_from_slice(&keccak256(b"increment()")[..4]))
+                .nonce(nonce + 2)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let tx_hashes = [*deployment.tx_hash(), *revert.tx_hash(), *increment.tx_hash()];
+    api.mine_one().await.unwrap();
+
+    for (index, tx_hash) in tx_hashes.iter().enumerate() {
+        let block_tx = api
+            .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(index))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(block_tx.tx_hash(), *tx_hash);
+    }
+    assert!(!api.transaction_receipt(tx_hashes[1]).await.unwrap().unwrap().status());
+
+    cmd.set_current_dir(prj.root());
+    let deployment_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[0].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(deployment_output.contains("new ReplayTarget"));
+    assert!(deployment_output.contains("Transaction successfully executed."));
+
+    let revert_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[1].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(revert_output.contains("ReplayTarget::revertingIncrement()"));
+    assert!(revert_output.contains("expected revert"));
+
+    let increment_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[2].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(increment_output.contains("ReplayTarget::increment()"));
+    assert!(increment_output.contains("Transaction successfully executed."));
+
+    let decoded_output = cmd
+        .cast_fuse()
+        .args([
+            "run",
+            &tx_hashes[2].to_string(),
+            "--rpc-url",
+            &endpoint,
+            "--with-local-artifacts",
+            "--decode-internal",
+            "-vvvvv",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(decoded_output.contains("ReplayTarget::_increment()"));
+    assert!(decoded_output.contains("@ 0: 1 → 2"));
+});
 
 // `cast run --prestate-tracer` uses the prestate tracer when the node exposes the debug API
 // (Anvil does), skipping the block replay while still producing correct traces. The block replay

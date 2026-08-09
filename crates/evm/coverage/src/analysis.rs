@@ -474,9 +474,8 @@ impl SourceAnalysis {
     /// source ID the item is in, the source code range of the item, and the contract name the item
     /// is in.
     ///
-    /// Note: Source IDs are only unique per compilation job; that is, a code base compiled with
-    /// two different solc versions will produce overlapping source IDs if the compiler version is
-    /// not taken into account.
+    /// Note: Source IDs are only unique per compilation job, so report-level source identity must
+    /// also include the compiler build ID.
     #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
@@ -575,9 +574,9 @@ impl SourceAnalysis {
     }
 }
 
-/// A list of versioned sources and their ASTs.
+/// A list of sources from one compiler build.
 #[derive(Default)]
 pub struct SourceFiles {
-    /// The versioned sources.
+    /// The sources keyed by their IDs within the compiler build.
     pub sources: HashMap<u32, PathBuf>,
 }
