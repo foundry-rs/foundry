@@ -2975,6 +2975,40 @@ contract ReportScript {
     );
 });
 
+// A file of only file-level (free) functions must still appear in the coverage report.
+// Regression for https://github.com/foundry-rs/foundry/issues/16085
+forgetest!(coverage_reports_free_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Free.sol",
+        r#"
+function double(uint256 x) pure returns (uint256) {
+    return x * 2;
+}
+"#,
+    );
+    prj.add_source(
+        "FreeTest.sol",
+        r#"
+import "./test.sol";
+import {double} from "./Free.sol";
+
+contract FreeTest is DSTest {
+    function testDouble() public {
+        require(double(3) == 6);
+    }
+}
+"#,
+    );
+
+    let output = cmd.arg("coverage").assert_success().get_output().stdout_lossy();
+    // Before the fix, a file of only free functions produced no coverage record at all.
+    assert!(
+        output.contains("src/Free.sol"),
+        "free-function-only file must appear in coverage:\n{output}"
+    );
+});
+
 #[test]
 fn coverage_help_renders_notes() {
     let help = CoverageArgs::command().render_long_help().to_string();

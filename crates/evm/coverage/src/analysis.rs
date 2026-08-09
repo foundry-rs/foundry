@@ -464,11 +464,12 @@ pub struct SourceAnalysis {
 }
 
 impl SourceAnalysis {
-    /// Analyzes contracts in the sources held by the source analyzer.
+    /// Analyzes the sources held by the source analyzer.
     ///
     /// Coverage items are found by:
     /// - Walking the AST of each contract (except interfaces)
-    /// - Recording the items of each contract
+    /// - Walking file-level (free) functions
+    /// - Recording the items found
     ///
     /// Each coverage item contains relevant information to find opcodes corresponding to them: the
     /// source ID the item is in, the source code range of the item, and the contract name the item
@@ -491,18 +492,27 @@ impl SourceAnalysis {
 
                     let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
                     for item in ast.items.iter() {
-                        // Visit only top-level contracts.
-                        let ItemKind::Contract(contract) = &item.kind else { continue };
+                        match &item.kind {
+                            // Contracts: walk their functions, dropping test contracts.
+                            ItemKind::Contract(contract) => {
+                                // Skip interfaces which have no function implementations.
+                                if contract.kind.is_interface() {
+                                    continue;
+                                }
 
-                        // Skip interfaces which have no function implementations.
-                        if contract.kind.is_interface() {
-                            continue;
-                        }
-
-                        let checkpoint = visitor.checkpoint();
-                        visitor.visit_contract(contract);
-                        if visitor.has_tests(&checkpoint) {
-                            visitor.restore_checkpoint(checkpoint);
+                                let checkpoint = visitor.checkpoint();
+                                visitor.visit_contract(contract);
+                                if visitor.has_tests(&checkpoint) {
+                                    visitor.restore_checkpoint(checkpoint);
+                                }
+                            }
+                            // File-level (free) functions are covered too, not only functions
+                            // defined inside a contract. Without this, a file of only free
+                            // functions gets no coverage record at all.
+                            ItemKind::Function(_) => {
+                                let _ = ast::Visit::visit_item(&mut visitor, item);
+                            }
+                            _ => {}
                         }
                     }
 
