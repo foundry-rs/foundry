@@ -423,7 +423,7 @@ fn render_contract<'ast, 'gcx>(
             let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
-            write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+            write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
         }
     }
 
@@ -436,7 +436,7 @@ fn render_contract<'ast, 'gcx>(
             let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
-            write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+            write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
         }
     }
 
@@ -616,7 +616,7 @@ fn render_error<'ast>(
     write_git_source(&mut out, git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
-    write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+    write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
     out
 }
 
@@ -638,7 +638,7 @@ fn render_event<'ast>(
     write_git_source(&mut out, git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
-    write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+    write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
     out
 }
 
@@ -663,6 +663,7 @@ fn render_function_section(
     writeln!(out, "### {heading}").unwrap();
     writeln!(out).unwrap();
     let mut c = collect_comments(docs, name_to_page, page_path, local);
+    let mut inherited_params = None;
     // Merge inherited natspec for missing tags.
     if let Some(inherited) = inherited {
         let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
@@ -687,11 +688,13 @@ fn render_function_section(
             );
         }
         if c.params.is_empty() {
-            for (index, desc) in inherited.params.iter().enumerate() {
+            let params = inherited.params.iter().map(|desc| sanitize(desc)).collect::<Vec<_>>();
+            for (index, desc) in params.iter().enumerate() {
                 if let Some(name) = f.header.parameters.get(index).and_then(|param| param.name) {
-                    c.params.push((name.as_str().to_string(), sanitize(desc)));
+                    c.params.push((name.as_str().to_string(), desc.clone()));
                 }
             }
+            inherited_params = Some(params);
         }
         if c.returns.is_empty() {
             for (index, desc) in inherited.returns.iter().enumerate() {
@@ -711,9 +714,16 @@ fn render_function_section(
     let hspan = if f.header.span.lo() == f.header.span.hi() { span } else { f.header.span };
     let snippet = ctx.dedented_snippet(hspan);
     write_code_block(out, &format!("{snippet};"));
-    write_param_table(out, "Parameters", &f.header.parameters, &c, ctx);
+    write_param_table(
+        out,
+        "Parameters",
+        &f.header.parameters,
+        &c,
+        inherited_params.as_deref(),
+        ctx,
+    );
     if let Some(returns) = &f.header.returns {
-        write_param_table(out, "Returns", returns, &c, ctx);
+        write_param_table(out, "Returns", returns, &c, None, ctx);
     }
 }
 
@@ -1194,6 +1204,7 @@ fn write_param_table(
     heading: &str,
     params: &ParameterList<'_>,
     comments: &CommentData,
+    inherited_params: Option<&[String]>,
     ctx: &Ctx<'_>,
 ) {
     if params.is_empty() {
@@ -1217,7 +1228,16 @@ fn write_param_table(
         let desc = if is_return {
             return_description(comments, index, var.name.map(|_| name.as_str()))
         } else {
-            comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
+            let named = comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str());
+            if var.name.is_none() {
+                inherited_params
+                    .and_then(|params| params.get(index))
+                    .map(String::as_str)
+                    .or(named)
+                    .unwrap_or("")
+            } else {
+                named.unwrap_or("")
+            }
         };
         let name = escape_table_cell(&name);
         let desc = escape_table_cell(desc);
@@ -1247,7 +1267,7 @@ fn return_description<'a>(
 
     match return_name {
         Some(return_name) => desc.strip_prefix(return_name).and_then(strip_one_ws).unwrap_or(desc),
-        None => split_first_word(desc).map(|(_, desc)| desc).unwrap_or(desc),
+        None => desc,
     }
 }
 
@@ -1255,13 +1275,6 @@ fn strip_one_ws(s: &str) -> Option<&str> {
     let mut chars = s.char_indices();
     let (_, first) = chars.next()?;
     first.is_whitespace().then(|| chars.next().map(|(idx, _)| &s[idx..]).unwrap_or(""))
-}
-
-fn split_first_word(s: &str) -> Option<(&str, &str)> {
-    let trimmed = s.trim_start();
-    let split = trimmed.find(char::is_whitespace)?;
-    let (first, rest) = trimmed.split_at(split);
-    Some((first, rest.trim_start()))
 }
 
 fn write_struct_properties_table(

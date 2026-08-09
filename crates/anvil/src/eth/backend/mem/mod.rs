@@ -3759,14 +3759,16 @@ where
 
     /// Returns all receipts of the block
     pub fn mined_receipts(&self, hash: B256) -> Option<Vec<N::ReceiptEnvelope>> {
-        let block = self.mined_block_by_hash(hash)?;
-        let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions.hashes() {
-            let receipt = storage.transactions.get(&tx)?.receipt.clone();
-            receipts.push(receipt);
-        }
-        Some(receipts)
+        let block = storage.blocks.get(&hash)?;
+        block
+            .body
+            .transactions
+            .iter()
+            .map(|transaction| {
+                storage.transactions.get(&transaction.hash()).map(|tx| tx.receipt.clone())
+            })
+            .collect()
     }
 }
 

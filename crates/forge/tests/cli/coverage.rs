@@ -1,6 +1,7 @@
 use clap::CommandFactory;
 use forge::cmd::coverage::CoverageArgs;
 use foundry_common::fs::{self, files_with_ext};
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
 use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData},
@@ -2972,6 +2973,85 @@ contract ReportScript {
     assert!(
         !output.contains("test/Unselected.t.sol"),
         "unselected tests should be omitted from coverage reports:\n{output}"
+    );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16084>
+forgetest!(coverage_separates_compiler_builds, |prj, cmd| {
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "via-ir".to_owned(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/A.sol".parse().unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+
+    prj.add_source(
+        "A.sol",
+        "contract A { function value() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "B.sol",
+        "contract B { function value() external pure returns (uint256) { return 2; } }",
+    );
+    prj.add_test(
+        "Coverage.t.sol",
+        r#"
+import {A} from "../src/A.sol";
+import {B} from "../src/B.sol";
+contract CoverageTest {
+    function testCoverage() public {
+        require(new A().value() == 1);
+        require(new B().value() == 2);
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/A.sol
+DA:3,1
+FN:3,A.value
+FNDA:1,A.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/B.sol
+DA:3,1
+FN:3,B.value
+FNDA:1,B.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
     );
 });
 
