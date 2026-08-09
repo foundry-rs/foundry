@@ -633,6 +633,16 @@ casttest!(wallet_import_help_describes_touch_id_fallback, |_prj, cmd| {
     assert!(output.contains("Touch ID-assisted authentication"));
     assert!(output.contains("explicit keystore passwords remain available"));
 });
+
+casttest!(wallet_touch_id_help_lists_lifecycle_commands, |_prj, cmd| {
+    let assert = cmd.args(["wallet", "touch-id", "--help"]).assert_success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+
+    assert!(output.contains("enroll"));
+    assert!(output.contains("status"));
+    assert!(output.contains("remove"));
+});
+
 casttest!(new_wallet_multiple_keys, |_prj, cmd| {
     cmd.args(["wallet", "new", "-n", "2"])
         .assert_success()
@@ -741,6 +751,227 @@ fn valid_touch_id_sidecar_fixture(version: u32, policy: &str) -> String {
     })
     .to_string()
 }
+
+casttest!(wallet_touch_id_status_missing_and_json, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID is not enrolled for keystore `testAccount`.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":{"account":"testAccount","status":"not-enrolled"},"errors":[],"warnings":[]}
+
+"#]]);
+});
+
+casttest!(wallet_touch_id_status_recognized_is_non_mutating, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "current-biometry")).unwrap();
+    let original_sidecar = fs::read(&sidecar).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID is enrolled for keystore `testAccount` with `current-biometry` policy.
+
+"#]]);
+
+    assert_eq!(fs::read(sidecar).unwrap(), original_sidecar);
+});
+
+casttest!(wallet_touch_id_remove_is_idempotent, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore = keystore_dir.join("testAccount");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "user-presence")).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID enrollment removed for keystore `testAccount`.
+
+"#]]);
+    assert!(keystore.exists());
+    assert!(!sidecar.exists());
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID is not enrolled for keystore `testAccount`.
+
+"#]]);
+});
+
+casttest!(wallet_touch_id_remove_refuses_unknown_sidecar, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(2, "user-presence")).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID status for keystore `testAccount` is unknown: [..]/testAccount.touchid is not a recognized Touch ID sidecar.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: refusing to remove [..]/testAccount.touchid because it is not a recognized Touch ID sidecar
+
+"#]]);
+    assert!(sidecar.exists());
+});
+
+casttest!(wallet_touch_id_remove_refuses_keystore_collision, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore = keystore_dir.join("testAccount");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::copy(&keystore, &sidecar).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: refusing to remove existing keystore at [..]/testAccount.touchid
+
+"#]]);
+    assert!(keystore.exists());
+    assert!(sidecar.exists());
+});
 
 casttest!(wallet_remove_touch_id_sidecar, |prj, cmd| {
     let keystore_dir = prj.root().join("keystore");
@@ -1914,6 +2145,42 @@ Error: `--touch-id` requires macOS and a cast build with the `touch-id` feature
     assert!(!keystore_path.exists());
     assert!(!keystore_path.join("testAccount").exists());
     assert!(!keystore_path.join("testAccount.touchid").exists());
+});
+
+#[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+casttest!(wallet_touch_id_enroll_unsupported, |prj, cmd| {
+    let keystore_dir = prj.root().join("touch-id-keystore");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "enroll",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: `--touch-id` requires macOS and a cast build with the `touch-id` feature
+
+"#]]);
+    assert!(!keystore_dir.join("testAccount.touchid").exists());
 });
 
 // tests that `cast wallet import` creates a keystore for a private key and that `cast wallet

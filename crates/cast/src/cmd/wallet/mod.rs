@@ -39,6 +39,9 @@ mod process_tree;
 pub mod session;
 use session::SessionArgs;
 
+mod touch_id;
+use touch_id::TouchIdArgs;
+
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
@@ -281,6 +284,9 @@ pub enum WalletSubcommands {
 
     /// Manage temporary Tempo wallet sessions.
     Session(SessionArgs),
+
+    /// Manage Touch ID enrollment for encrypted keystores.
+    TouchId(TouchIdArgs),
 
     /// Remove a wallet from the keystore.
     ///
@@ -970,6 +976,9 @@ flag to set your key via:
             Self::Session(args) => {
                 args.run().await?;
             }
+            Self::TouchId(args) => {
+                args.run()?;
+            }
             Self::Remove { name, dir, unsafe_password } => {
                 let dir = if let Some(path) = dir {
                     Path::new(&path).to_path_buf()
@@ -1347,11 +1356,20 @@ struct TouchIdSidecarWire {
 }
 
 /// The policy values currently recognised by this Cast release.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum TouchIdPolicyWire {
     UserPresence,
     CurrentBiometry,
+}
+
+impl TouchIdPolicyWire {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::UserPresence => "user-presence",
+            Self::CurrentBiometry => "current-biometry",
+        }
+    }
 }
 
 /// Validates that `wire` contains plausible payload bytes:
@@ -1406,6 +1424,16 @@ fn touch_id_sidecar_state(path: &Path) -> Result<TouchIdSidecarState> {
         }
         _ => Ok(TouchIdSidecarState::Unknown),
     }
+}
+
+fn touch_id_sidecar_policy(path: &Path) -> Result<TouchIdPolicyWire> {
+    let value = fs::read_json_file::<serde_json::Value>(path)?;
+    let wire = serde_json::from_value::<TouchIdSidecarWire>(value)
+        .wrap_err_with(|| format!("failed to parse Touch ID sidecar at {}", path.display()))?;
+    if wire.version != TOUCH_ID_SIDECAR_VERSION || !has_valid_touch_id_payload(&wire) {
+        eyre::bail!("{} is not a recognized Touch ID sidecar", path.display());
+    }
+    Ok(wire.policy)
 }
 
 fn is_touch_id_sidecar(path: &Path) -> Result<bool> {
