@@ -1,3 +1,4 @@
+use super::auth::confirm_auth_rpc_disclosure;
 use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
@@ -54,6 +55,10 @@ pub struct EstimateArgs {
     #[command(flatten)]
     tx: TransactionOpts,
 
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    force: bool,
+
     #[command(flatten)]
     rpc: RpcOpts,
 }
@@ -96,8 +101,19 @@ impl EstimateArgs {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, mut sig, mut args, mut tx, block, cost, wallet, browser, rpc, command } =
-            self;
+        let Self {
+            to,
+            mut sig,
+            mut args,
+            mut tx,
+            block,
+            cost,
+            wallet,
+            browser,
+            force,
+            rpc,
+            command,
+        } = self;
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
@@ -125,15 +141,20 @@ impl EstimateArgs {
             None
         };
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+        let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
-            .raw()
-            .build(sender)
-            .await?;
+            .raw();
+        if builder.has_auth() {
+            builder.validate_auth(&sender)?;
+            if !confirm_auth_rpc_disclosure(force)? {
+                return Ok(());
+            }
+        }
+        let (tx, _) = builder.build(sender).await?;
 
         let tx = if browser.is_some() { tx.browser_wallet_gas_estimation_request() } else { tx };
         let gas = provider.estimate_gas(tx).block(block.unwrap_or_default()).await?;

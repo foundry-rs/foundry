@@ -1869,6 +1869,99 @@ casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     assert!(output > 0);
 });
 
+casttest!(estimate_eip7702_auth_disclosure_declined, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "estimate",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(estimate_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "estimate",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(estimate_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    api.anvil_set_code(
+        address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+        "0x602a5f5260205ff3".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let args = [
+        "estimate",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    let output = cmd
+        .args(args)
+        .arg("--json")
+        .stdin("y\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]])
+        .get_output()
+        .stdout_lossy();
+    let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert!(output["data"].as_u64().unwrap() > 21_000);
+
+    let output = cmd
+        .cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stderr_eq(str![""])
+        .get_output()
+        .stdout_lossy();
+    assert!(output.trim().parse::<u64>().unwrap() > 21_000);
+});
+
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
 casttest!(rlp, |_prj, cmd| {
     cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]).assert_success().stdout_eq(str![[
