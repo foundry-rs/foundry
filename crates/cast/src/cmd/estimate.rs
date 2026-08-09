@@ -148,11 +148,8 @@ impl EstimateArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .raw();
-        if builder.has_auth() {
-            builder.validate_auth(&sender)?;
-            if !confirm_auth_rpc_disclosure(force)? {
-                return Ok(());
-            }
+        if builder.has_auth() && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+            return Ok(());
         }
         let (tx, _) = builder.build(sender).await?;
 

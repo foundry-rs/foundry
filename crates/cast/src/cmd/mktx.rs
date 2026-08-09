@@ -1,3 +1,4 @@
+use super::auth::confirm_auth_rpc_disclosure_during_build;
 use crate::{
     tempo,
     tx::{self, CastTxBuilder},
@@ -48,6 +49,10 @@ pub struct MakeTxArgs {
 
     #[command(flatten)]
     tx: TransactionOpts,
+
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    force: bool,
 
     /// The path of blob data to be sent.
     #[arg(
@@ -137,6 +142,7 @@ impl MakeTxArgs {
             mut args,
             command,
             mut tx,
+            force,
             path,
             eth,
             raw_unsigned,
@@ -195,6 +201,13 @@ impl MakeTxArgs {
             // transactions must also be prepared before hashing so a pending authorization is
             // included in the digest.
             let (mut tx, from) = if let Some(access_key) = access_key {
+                if !confirm_auth_rpc_disclosure_during_build(
+                    &tx_builder,
+                    access_key.account(),
+                    force,
+                )? {
+                    return Ok(());
+                }
                 let (tx, _, prepared) = tx_builder.build_with_tempo_wallet(&access_key).await?;
                 (tx, prepared.account())
             } else {
@@ -203,6 +216,9 @@ impl MakeTxArgs {
                     None => eth.wallet.signer().await?,
                 };
                 let from = signer.address();
+                if !confirm_auth_rpc_disclosure_during_build(&tx_builder, &signer, force)? {
+                    return Ok(());
+                }
                 let (tx, _) = tx_builder.build(from).await?;
                 (tx, from)
             };
@@ -244,6 +260,9 @@ impl MakeTxArgs {
             // Use zero address as placeholder for unsigned transactions
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
 
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, from, force)? {
+                return Ok(());
+            }
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
@@ -275,6 +294,9 @@ impl MakeTxArgs {
         if let Some(signature) = signature {
             let signature = signature.normalized_s();
             let from = eth.wallet.from.expect("required by clap");
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, from, force)? {
+                return Ok(());
+            }
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
@@ -314,6 +336,9 @@ impl MakeTxArgs {
         if ethsign {
             // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
             // unlocked accounts.
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, config.sender, force)? {
+                return Ok(());
+            }
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
@@ -344,6 +369,10 @@ impl MakeTxArgs {
 
         // Default to using the local signer.
         let signed_tx = if let Some(access_key) = access_key {
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, access_key.account(), force)?
+            {
+                return Ok(());
+            }
             let (mut tx, _, prepared) = tx_builder.build_with_tempo_wallet(&access_key).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
@@ -377,6 +406,9 @@ impl MakeTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
+            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, &signer, force)? {
+                return Ok(());
+            }
             let (mut tx, _) = tx_builder.build(&signer).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {

@@ -328,11 +328,8 @@ impl CallArgs {
             .raw();
         let will_disclose =
             (!trace && builder.has_auth()) || builder.will_disclose_auth_during_build();
-        if will_disclose {
-            builder.validate_auth(&sender)?;
-            if !confirm_auth_rpc_disclosure(force)? {
-                return Ok(());
-            }
+        if will_disclose && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+            return Ok(());
         }
         let (tx, func) = builder.build(sender).await?;
 
