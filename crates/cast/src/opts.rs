@@ -1390,10 +1390,6 @@ pub enum CastSubcommand {
     /// Tempo keychain (access key) management.
     #[command(visible_alias = "kc")]
     Keychain {
-        /// Skip the EIP-7702 authorization disclosure confirmation.
-        #[arg(long, global = true)]
-        force: bool,
-
         #[command(subcommand)]
         command: KeychainSubcommand,
     },

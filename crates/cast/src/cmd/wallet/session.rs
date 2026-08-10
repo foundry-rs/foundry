@@ -65,7 +65,7 @@ pub struct SessionArgs {
     pub command: Option<SessionSubcommands>,
 
     /// Skip the EIP-7702 authorization disclosure confirmation.
-    #[arg(long, global = true)]
+    #[arg(long)]
     pub force: bool,
 
     /// Root account that will authorize the temporary session.
@@ -120,7 +120,7 @@ impl SessionArgs {
         } = self;
 
         if let Some(command) = command {
-            return command.run(force).await;
+            return command.run().await;
         }
 
         let root_account =
@@ -192,6 +192,10 @@ pub enum SessionSubcommands {
         #[arg(long)]
         local: bool,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: Box<TransactionOpts>,
 
@@ -201,12 +205,12 @@ pub enum SessionSubcommands {
 }
 
 impl SessionSubcommands {
-    pub async fn run(self, force: bool) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         match self {
             Self::Create { root_account, chain_id, expires, scope, spend_limits, wallet } => {
                 run_create(root_account, chain_id, expires, scope, spend_limits, *wallet).await
             }
-            Self::Revoke { session_id, local, tx, send_tx } => {
+            Self::Revoke { session_id, local, force, tx, send_tx } => {
                 run_revoke(session_id, local, *tx, *send_tx, force).await
             }
         }

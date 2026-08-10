@@ -978,7 +978,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::ReceivePolicy { command } => command.run().await?,
         CastSubcommand::Tip403 { command } => command.run().await?,
         CastSubcommand::StorageCredits { command } => command.run().await?,
-        CastSubcommand::Keychain { force, command } => command.run(force).await?,
+        CastSubcommand::Keychain { command } => command.run().await?,
         CastSubcommand::KeyAuthorization { command } => command.run().await?,
         CastSubcommand::Tempo { command } => command.run().await?,
         CastSubcommand::VirtualAddress { command } => command.run().await?,

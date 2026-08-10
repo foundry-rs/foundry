@@ -195,6 +195,10 @@ pub enum KeychainSubcommand {
         #[arg(long)]
         admin: bool,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -208,6 +212,10 @@ pub enum KeychainSubcommand {
         /// The key address to revoke.
         key_address: Address,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -220,6 +228,10 @@ pub enum KeychainSubcommand {
     BurnWitness {
         /// Witness to burn. `bytes32(0)` is valid.
         witness: B256,
+
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
 
         #[command(flatten)]
         tx: TransactionOpts,
@@ -321,6 +333,10 @@ pub enum KeychainSubcommand {
         /// The new spending limit.
         new_limit: U256,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -338,6 +354,10 @@ pub enum KeychainSubcommand {
         #[arg(long = "scope", required = true, value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -354,6 +374,10 @@ pub enum KeychainSubcommand {
         /// The target address to remove scope for.
         target: Address,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -363,6 +387,10 @@ pub enum KeychainSubcommand {
 
     /// Read or edit TIP-1011 access-key permissions.
     Policy {
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long, global = true)]
+        force: bool,
+
         #[command(subcommand)]
         command: KeychainPolicySubcommand,
     },
@@ -725,7 +753,7 @@ fn parse_auth_scopes_json_wrapped(s: &str) -> Result<AuthScopesJson, String> {
 
 impl KeychainSubcommand {
     #[allow(clippy::large_stack_frames)]
-    pub async fn run(self, force: bool) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         match self {
             Self::List => run_list(),
             Self::Show { wallet_address } => run_show(wallet_address),
@@ -767,6 +795,7 @@ impl KeychainSubcommand {
                 scopes_json,
                 witness,
                 admin,
+                force,
                 tx,
                 send_tx,
             } => {
@@ -792,10 +821,10 @@ impl KeychainSubcommand {
                 )
                 .await
             }
-            Self::Revoke { key_address, tx, send_tx } => {
+            Self::Revoke { key_address, force, tx, send_tx } => {
                 run_revoke(key_address, tx, send_tx, force).await
             }
-            Self::BurnWitness { witness, tx, send_tx } => {
+            Self::BurnWitness { witness, force, tx, send_tx } => {
                 run_burn_witness(witness, tx, send_tx, force).await
             }
             Self::IsWitnessBurned { account, witness, rpc } => {
@@ -813,16 +842,16 @@ impl KeychainSubcommand {
             Self::RemainingLimit { wallet_address, key_address, token, rpc } => {
                 run_remaining_limit(wallet_address, key_address, token, rpc).await
             }
-            Self::UpdateLimit { key_address, token, new_limit, tx, send_tx } => {
+            Self::UpdateLimit { key_address, token, new_limit, force, tx, send_tx } => {
                 run_update_limit(key_address, token, new_limit, tx, send_tx, force).await
             }
-            Self::SetScope { key_address, scope, tx, send_tx } => {
+            Self::SetScope { key_address, scope, force, tx, send_tx } => {
                 run_set_scope(key_address, scope, tx, send_tx, force).await
             }
-            Self::RemoveScope { key_address, target, tx, send_tx } => {
+            Self::RemoveScope { key_address, target, force, tx, send_tx } => {
                 run_remove_scope(key_address, target, tx, send_tx, force).await
             }
-            Self::Policy { command } => command.run(force).await,
+            Self::Policy { force, command } => command.run(force).await,
         }
     }
 }
@@ -4382,6 +4411,7 @@ mod tests {
             KeychainSubcommand::Policy {
                 command:
                     KeychainPolicySubcommand::SetLimit { key_address, token, amount, period, .. },
+                ..
             } => {
                 assert_eq!(key_address, Address::from_str(key).unwrap());
                 assert_eq!(token, PATH_USD_ADDRESS);
