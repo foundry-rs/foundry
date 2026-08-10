@@ -114,6 +114,10 @@ Display options:
           and
             backtraces with line numbers.
 
+Compiler options:
+      --allow-local-compiler
+          Allow use of local compiler executables without prompting
+
 Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
