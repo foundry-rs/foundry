@@ -21,6 +21,12 @@ const BASE_URL: &str = "https://api.4byte.sourcify.dev";
 const SELECTOR_LOOKUP_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
 const SELECTOR_IMPORT_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/import";
 
+/// The selector registry uses Express's default 100 KiB JSON body limit.
+const SELECTOR_IMPORT_BODY_LIMIT: usize = 100 * 1024;
+
+/// The selector registry accepts at most this many signatures of each kind per database insert.
+const SELECTOR_IMPORT_SIGNATURE_LIMIT: usize = 1000;
+
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -317,7 +323,20 @@ impl OpenChainClient {
             }
         };
 
-        Ok(self.post_json(SELECTOR_IMPORT_URL, &request).await?)
+        let mut response: Option<SelectorImportResponse> = None;
+        for request in request.into_chunks()? {
+            let chunk: SelectorImportResponse =
+                self.post_json(SELECTOR_IMPORT_URL, &request).await?;
+            if let Some(response) = &mut response {
+                response.result.function.imported.extend(chunk.result.function.imported);
+                response.result.function.duplicated.extend(chunk.result.function.duplicated);
+                response.result.event.imported.extend(chunk.result.event.imported);
+                response.result.event.duplicated.extend(chunk.result.event.duplicated);
+            } else {
+                response = Some(chunk);
+            }
+        }
+        Ok(response.expect("selector import always contains at least one request"))
     }
 }
 
@@ -463,6 +482,49 @@ pub enum SelectorImportData {
 struct SelectorImportRequest {
     function: OpenChainSignatures,
     event: OpenChainSignatures,
+}
+
+impl SelectorImportRequest {
+    fn into_chunks(self) -> eyre::Result<Vec<Self>> {
+        let empty_request_len = serde_json::to_vec(&Self::default()).unwrap().len();
+        let mut chunks = Vec::new();
+        let mut chunk = Self::default();
+        let mut chunk_len = empty_request_len;
+
+        for (is_event, signature) in self
+            .function
+            .into_iter()
+            .map(|signature| (false, signature))
+            .chain(self.event.into_iter().map(|signature| (true, signature)))
+        {
+            let signature_len = serde_json::to_vec(&signature).unwrap().len();
+            if empty_request_len + signature_len > SELECTOR_IMPORT_BODY_LIMIT {
+                eyre::bail!("selector signature exceeds the registry request body limit");
+            }
+            let needs_comma =
+                if is_event { !chunk.event.is_empty() } else { !chunk.function.is_empty() };
+            let signatures_full = if is_event {
+                chunk.event.len() == SELECTOR_IMPORT_SIGNATURE_LIMIT
+            } else {
+                chunk.function.len() == SELECTOR_IMPORT_SIGNATURE_LIMIT
+            };
+            if (signatures_full
+                || chunk_len + signature_len + usize::from(needs_comma)
+                    > SELECTOR_IMPORT_BODY_LIMIT)
+                && chunk_len > empty_request_len
+            {
+                chunks.push(chunk);
+                chunk = Self::default();
+                chunk_len = empty_request_len;
+            }
+
+            let signatures = if is_event { &mut chunk.event } else { &mut chunk.function };
+            chunk_len += signature_len + usize::from(!signatures.is_empty());
+            signatures.push(signature);
+        }
+        chunks.push(chunk);
+        Ok(chunks)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -644,6 +706,24 @@ mod tests {
         assert_eq!(
             result,
             ParsedSignatures { signatures: Default::default(), ..Default::default() }
+        );
+    }
+
+    #[test]
+    fn selector_import_requests_stay_within_registry_limits() {
+        let suffix = "x".repeat(100);
+        let function = (0..3_000)
+            .map(|i| format!("functionName{i:04}{suffix}(address,uint256)"))
+            .collect::<Vec<_>>();
+        let expected = function.clone();
+        let chunks = SelectorImportRequest { function, event: Vec::new() }.into_chunks().unwrap();
+
+        assert!(chunks.len() > 3);
+        assert!(chunks.iter().all(|chunk| chunk.function.len() <= SELECTOR_IMPORT_SIGNATURE_LIMIT
+            && serde_json::to_vec(chunk).unwrap().len() <= SELECTOR_IMPORT_BODY_LIMIT));
+        assert_eq!(
+            chunks.into_iter().flat_map(|chunk| chunk.function).collect::<Vec<_>>(),
+            expected
         );
     }
 
