@@ -26,6 +26,19 @@ impl<T> HashConsed<T> {
         self.inner.hash.cmp(&other.inner.hash)
     }
 
+    /// Orders nodes within one hash-consing context without inspecting or rendering their value.
+    ///
+    /// The cached structural hash handles the common case. Pointer identity is only a tie-breaker
+    /// for distinct nodes with the same hash; structurally equal values share one node.
+    #[inline]
+    pub(in crate::runtime::expr) fn identity_cmp(&self, other: &Self) -> Ordering {
+        self.inner.hash.cmp(&other.inner.hash).then_with(|| {
+            let left = Arc::as_ptr(&self.inner);
+            let right = Arc::as_ptr(&other.inner);
+            left.cmp(&right)
+        })
+    }
+
     #[inline]
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
