@@ -680,6 +680,11 @@ struct WordInterval {
     max: U256,
 }
 
+// These analyses are solver optimizations, so exceeding their local work budget must only make
+// them decline a rewrite. Keeping the bound shared and private prevents deeply nested bytecode
+// expressions from turning a proof shortcut into unbounded Rust recursion.
+const MAX_LOCAL_ANALYSIS_NODES: usize = 256;
+
 impl WordInterval {
     fn new(min: U256, max: U256) -> Option<Self> {
         (min <= max).then_some(Self { min, max })
@@ -942,7 +947,13 @@ impl ConstraintContext {
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => const_side_bound(left, right),
             SymBoolExprKind::Not(value) => match value.kind() {
                 SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
-                    nonzero_bound(left, right).or_else(|| nonzero_bound(right, left))
+                    if right.as_const().is_some_and(|value| value.is_zero()) {
+                        Some((left, U256::from(1)))
+                    } else if left.as_const().is_some_and(|value| value.is_zero()) {
+                        Some((right, U256::from(1)))
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             },
@@ -996,13 +1007,15 @@ impl ConstraintContext {
 
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
         let mut intervals = HashMap::default();
-        self.interval_cached(expr, &mut intervals)
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        self.interval_cached(expr, &mut intervals, &mut remaining)
     }
 
     fn interval_cached(
         &self,
         expr: &SymExpr,
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
     ) -> Option<WordInterval> {
         if let Some(interval) = intervals.get(expr) {
             return *interval;
@@ -1010,12 +1023,21 @@ impl ConstraintContext {
 
         let lower = self.lower_bound(expr);
         let upper = self.upper_bound(expr);
-        let interval = self.structural_interval(expr, intervals).or_else(|| {
-            (lower.is_some() || upper.is_some()).then(|| WordInterval {
-                min: lower.unwrap_or(U256::ZERO),
-                max: upper.unwrap_or(U256::MAX),
-            })
-        });
+        let explicit_bounds = || {
+            if lower.is_none() && upper.is_none() {
+                return None;
+            }
+            WordInterval::new(lower.unwrap_or(U256::ZERO), upper.unwrap_or(U256::MAX))
+        };
+        if *remaining == 0 {
+            let interval = explicit_bounds();
+            intervals.insert(expr.clone(), interval);
+            return interval;
+        }
+        *remaining -= 1;
+
+        let interval =
+            self.structural_interval(expr, intervals, remaining).or_else(explicit_bounds);
         let interval = interval.and_then(|interval| interval.with_bounds(lower, upper));
         intervals.insert(expr.clone(), interval);
         interval
@@ -1025,6 +1047,7 @@ impl ConstraintContext {
         &self,
         expr: &SymExpr,
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
     ) -> Option<WordInterval> {
         match expr.kind() {
             SymExprKind::Const(value) => Some(WordInterval::exact(*value)),
@@ -1033,16 +1056,16 @@ impl ConstraintContext {
                 Some(WordInterval { min: U256::ZERO, max: mask })
             }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                let left = self.interval_cached(left, intervals)?;
-                let right = self.interval_cached(right, intervals)?;
+                let left = self.interval_cached(left, intervals, remaining)?;
+                let right = self.interval_cached(right, intervals, remaining)?;
                 Some(WordInterval {
                     min: left.min.checked_add(right.min)?,
                     max: left.max.checked_add(right.max)?,
                 })
             }
             SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
-                let left = self.interval_cached(left, intervals)?;
-                let right = self.interval_cached(right, intervals)?;
+                let left = self.interval_cached(left, intervals, remaining)?;
+                let right = self.interval_cached(right, intervals, remaining)?;
                 if left.min < right.max {
                     return None;
                 }
@@ -1052,8 +1075,8 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                let left = self.interval_cached(left, intervals)?;
-                let right = self.interval_cached(right, intervals)?;
+                let left = self.interval_cached(left, intervals, remaining)?;
+                let right = self.interval_cached(right, intervals, remaining)?;
                 Some(WordInterval {
                     min: left.min.checked_mul(right.min)?,
                     max: left.max.checked_mul(right.max)?,
@@ -1064,13 +1087,13 @@ impl ConstraintContext {
                 if shift >= U256::from(256) {
                     return Some(WordInterval::exact(U256::ZERO));
                 }
-                let value = self.interval_cached(value, intervals)?;
+                let value = self.interval_cached(value, intervals, remaining)?;
                 let shift = shift.to::<usize>();
                 Some(WordInterval { min: value.min >> shift, max: value.max >> shift })
             }
             SymExprKind::Ite(_, left, right) => {
-                let left = self.interval_cached(left, intervals)?;
-                let right = self.interval_cached(right, intervals)?;
+                let left = self.interval_cached(left, intervals, remaining)?;
+                let right = self.interval_cached(right, intervals, remaining)?;
                 Some(WordInterval { min: left.min.min(right.min), max: left.max.max(right.max) })
             }
             _ => None,
@@ -1083,10 +1106,6 @@ fn const_side_bound<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<(&'a Sy
         .as_const()
         .map(|value| (left, value))
         .or_else(|| left.as_const().map(|value| (right, value)))
-}
-
-fn nonzero_bound<'a>(expr: &'a SymExpr, value: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
-    value.as_const().is_some_and(|value| value.is_zero()).then(|| (expr, U256::from(1)))
 }
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
@@ -1105,23 +1124,24 @@ fn polynomial_identity(left: &SymExpr, right: &SymExpr) -> bool {
 }
 
 fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
-    fn is_sum(expr: &SymExpr) -> bool {
-        matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Sub, ..))
-    }
-
-    fn is_product(expr: &SymExpr) -> bool {
-        matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Mul, ..))
-            || matches!(
-                expr.kind(),
-                SymExprKind::BinOp(SymBinOp::Shl, _, shift)
-                    if shift.as_const().is_some_and(|shift| shift < U256::from(256))
-            )
-    }
-
     let crosses_sum_product_boundary = match expr.kind() {
-        SymExprKind::BinOp(SymBinOp::Mul, left, right) => is_sum(left) || is_sum(right),
+        SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+            matches!(left.kind(), SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Sub, ..))
+                || matches!(right.kind(), SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Sub, ..))
+        }
         SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Sub, left, right) => {
-            is_product(left) || is_product(right)
+            matches!(left.kind(), SymExprKind::BinOp(SymBinOp::Mul, ..))
+                || matches!(right.kind(), SymExprKind::BinOp(SymBinOp::Mul, ..))
+                || matches!(
+                    left.kind(),
+                    SymExprKind::BinOp(SymBinOp::Shl, _, shift)
+                        if shift.as_const().is_some_and(|shift| shift < U256::from(256))
+                )
+                || matches!(
+                    right.kind(),
+                    SymExprKind::BinOp(SymBinOp::Shl, _, shift)
+                        if shift.as_const().is_some_and(|shift| shift < U256::from(256))
+                )
         }
         _ => false,
     };
@@ -1132,10 +1152,15 @@ fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
     fn ring_shape(
         expr: &SymExpr,
         shapes: &mut HashMap<SymExpr, Option<(usize, usize)>>,
+        remaining: &mut usize,
     ) -> Option<(usize, usize)> {
         if let Some(shape) = shapes.get(expr) {
             return *shape;
         }
+        if *remaining == 0 {
+            return None;
+        }
+        *remaining -= 1;
         let shape = (|| match expr.kind() {
             SymExprKind::Const(_) | SymExprKind::Var(_) => Some((0, 0)),
             SymExprKind::BinOp(
@@ -1143,8 +1168,8 @@ fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
                 left,
                 right,
             ) => {
-                let left = ring_shape(left, shapes)?;
-                let right = ring_shape(right, shapes)?;
+                let left = ring_shape(left, shapes, remaining)?;
+                let right = ring_shape(right, shapes, remaining)?;
                 let operations = left.0.saturating_add(right.0).saturating_add(1);
                 let multiplications = left
                     .1
@@ -1155,7 +1180,7 @@ fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
             SymExprKind::BinOp(SymBinOp::Shl, value, shift)
                 if shift.as_const().is_some_and(|shift| shift < U256::from(256)) =>
             {
-                let shape = ring_shape(value, shapes)?;
+                let shape = ring_shape(value, shapes, remaining)?;
                 Some((shape.0.saturating_add(1), shape.1.saturating_add(1)))
             }
             _ => None,
@@ -1165,7 +1190,8 @@ fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
     }
 
     let mut shapes = HashMap::default();
-    ring_shape(expr, &mut shapes)
+    let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+    ring_shape(expr, &mut shapes, &mut remaining)
         .is_some_and(|(operations, multiplications)| operations > 1 && multiplications > 0)
 }
 
@@ -1190,39 +1216,48 @@ struct Polynomial {
 
 impl Polynomial {
     fn from_expr(expr: &SymExpr) -> Option<Self> {
-        Self::from_expr_cached(expr, &mut HashMap::default())
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        Self::from_expr_cached(expr, &mut HashMap::default(), &mut remaining)
     }
 
     fn from_expr_cached(
         expr: &SymExpr,
         polynomials: &mut HashMap<SymExpr, Option<Self>>,
+        remaining: &mut usize,
     ) -> Option<Self> {
         if let Some(polynomial) = polynomials.get(expr) {
             return polynomial.clone();
         }
-        let polynomial = (|| match expr.kind() {
-            SymExprKind::Const(value) => Some(Self::constant(*value)),
-            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                Self::from_expr_cached(left, polynomials)?
-                    .add(Self::from_expr_cached(right, polynomials)?)
-            }
-            SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
-                Self::from_expr_cached(left, polynomials)?
-                    .sub(Self::from_expr_cached(right, polynomials)?)
-            }
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                Self::from_expr_cached(left, polynomials)?
-                    .mul(Self::from_expr_cached(right, polynomials)?)
-            }
-            SymExprKind::BinOp(SymBinOp::Shl, value, shift)
-                if let Some(shift) = shift.as_const()
-                    && shift < U256::from(256) =>
-            {
-                let coefficient = U256::ONE << usize::try_from(shift).ok()?;
-                Self::from_expr_cached(value, polynomials)?.mul(Self::constant(coefficient))
-            }
-            _ => Some(Self::atom(expr.clone())),
-        })();
+        if *remaining == 0 {
+            polynomials.insert(expr.clone(), None);
+            return None;
+        }
+        *remaining -= 1;
+        let polynomial =
+            (|| match expr.kind() {
+                SymExprKind::Const(value) => Some(Self::constant(*value)),
+                SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                    Self::from_expr_cached(left, polynomials, remaining)?
+                        .add(Self::from_expr_cached(right, polynomials, remaining)?)
+                }
+                SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+                    Self::from_expr_cached(left, polynomials, remaining)?
+                        .sub(Self::from_expr_cached(right, polynomials, remaining)?)
+                }
+                SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                    Self::from_expr_cached(left, polynomials, remaining)?
+                        .mul(Self::from_expr_cached(right, polynomials, remaining)?)
+                }
+                SymExprKind::BinOp(SymBinOp::Shl, value, shift)
+                    if let Some(shift) = shift.as_const()
+                        && shift < U256::from(256) =>
+                {
+                    let coefficient = U256::ONE << usize::try_from(shift).ok()?;
+                    Self::from_expr_cached(value, polynomials, remaining)?
+                        .mul(Self::constant(coefficient))
+                }
+                _ => Some(Self::atom(expr.clone())),
+            })();
         polynomials.insert(expr.clone(), polynomial.clone());
         polynomial
     }
@@ -1672,33 +1707,41 @@ impl ConstraintContext {
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
         let mut intervals = HashMap::default();
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
         if self
-            .interval_cached(left, &mut intervals)
-            .zip(self.interval_cached(right, &mut intervals))
+            .interval_cached(left, &mut intervals, &mut remaining)
+            .zip(self.interval_cached(right, &mut intervals, &mut remaining))
             .is_some_and(|(left, right)| left.max.checked_mul(right.max).is_some())
         {
             return true;
         }
 
         let mut bit_widths = HashMap::default();
-        self.unsigned_bits_cached(left, &mut bit_widths)
-            .saturating_add(self.unsigned_bits_cached(right, &mut bit_widths))
-            <= 256
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        self.unsigned_bits_cached(left, &mut bit_widths, &mut remaining)
+            .zip(self.unsigned_bits_cached(right, &mut bit_widths, &mut remaining))
+            .is_some_and(|(left, right)| left.saturating_add(right) <= 256)
     }
 
     pub(super) fn unsigned_bits(&self, expr: &SymExpr) -> usize {
         let mut bit_widths = HashMap::default();
-        self.unsigned_bits_cached(expr, &mut bit_widths)
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        self.unsigned_bits_cached(expr, &mut bit_widths, &mut remaining).unwrap_or(256)
     }
 
     fn unsigned_bits_cached(
         &self,
         expr: &SymExpr,
         bit_widths: &mut HashMap<SymExpr, usize>,
-    ) -> usize {
+        remaining: &mut usize,
+    ) -> Option<usize> {
         if let Some(bits) = bit_widths.get(expr) {
-            return *bits;
+            return Some(*bits);
         }
+        if *remaining == 0 {
+            return None;
+        }
+        *remaining -= 1;
 
         let bits = match expr.kind() {
             SymExprKind::Const(value) => value.bit_len().max(1),
@@ -1709,33 +1752,33 @@ impl ConstraintContext {
             | SymExprKind::Not(_) => 256,
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
-                    self.unsigned_bits_cached(left, bit_widths).min(mask.bit_len())
+                    self.unsigned_bits_cached(left, bit_widths, remaining)?.min(mask.bit_len())
                 } else {
                     256
                 }
             }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => self
-                .unsigned_bits_cached(left, bit_widths)
-                .max(self.unsigned_bits_cached(right, bit_widths))
+                .unsigned_bits_cached(left, bit_widths, remaining)?
+                .max(self.unsigned_bits_cached(right, bit_widths, remaining)?)
                 .saturating_add(1)
                 .min(256),
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => self
-                .unsigned_bits_cached(left, bit_widths)
-                .saturating_add(self.unsigned_bits_cached(right, bit_widths))
+                .unsigned_bits_cached(left, bit_widths, remaining)?
+                .saturating_add(self.unsigned_bits_cached(right, bit_widths, remaining)?)
                 .min(256),
             SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
-                self.unsigned_bits_cached(left, bit_widths)
+                self.unsigned_bits_cached(left, bit_widths, remaining)?
             }
             SymExprKind::Ite(_, left, right) => self
-                .unsigned_bits_cached(left, bit_widths)
-                .max(self.unsigned_bits_cached(right, bit_widths)),
+                .unsigned_bits_cached(left, bit_widths, remaining)?
+                .max(self.unsigned_bits_cached(right, bit_widths, remaining)?),
             _ => 256,
         };
 
         let bits =
             self.upper_bound(expr).map(|bound| bits.min(bound.bit_len().max(1))).unwrap_or(bits);
         bit_widths.insert(expr.clone(), bits);
-        bits
+        Some(bits)
     }
 }
 
@@ -1839,6 +1882,27 @@ mod tests {
     }
 
     #[test]
+    fn polynomial_analysis_stops_at_input_node_limit() {
+        let mut cx = SymCx::new();
+        let one = SymExpr::one(&mut cx);
+        let mut expression = SymExpr::var(&mut cx, "source");
+        for _ in 0..MAX_LOCAL_ANALYSIS_NODES {
+            expression = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Add, expression, one.clone()),
+            );
+        }
+        let factor = SymExpr::var(&mut cx, "factor");
+        let product = SymExpr::from_kind(
+            &mut cx,
+            SymExprKind::BinOp(SymBinOp::Mul, expression.clone(), factor),
+        );
+
+        assert!(!polynomial_normalization_can_help(&product));
+        assert!(Polynomial::from_expr(&expression).is_none());
+    }
+
+    #[test]
     fn shared_arithmetic_dag_interval_analysis_is_memoized() {
         let mut cx = SymCx::new();
         let source = SymExpr::var(&mut cx, "source");
@@ -1849,5 +1913,29 @@ mod tests {
         }
 
         assert!(ConstraintContext::default().mul_cannot_overflow_256(&shared, &shared));
+    }
+
+    #[test]
+    fn unique_arithmetic_chains_stop_at_analysis_budget() {
+        let mut cx = SymCx::new();
+        let zero = SymExpr::zero(&mut cx);
+        let one = SymExpr::one(&mut cx);
+        let mut shifted = one.clone();
+        let mut divided = one.clone();
+        for _ in 0..MAX_LOCAL_ANALYSIS_NODES {
+            shifted = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Shr, shifted, zero.clone()),
+            );
+            divided = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::UDiv, divided, one.clone()),
+            );
+        }
+
+        let context = ConstraintContext::default();
+        assert!(context.interval(&shifted).is_none());
+        assert_eq!(context.unsigned_bits(&divided), 256);
+        assert!(!context.mul_cannot_overflow_256(&divided, &divided));
     }
 }
