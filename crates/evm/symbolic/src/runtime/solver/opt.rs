@@ -593,12 +593,8 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
         SymBoolExprKind::Cmp(op, left, right) => {
             let left = normalize_expr_for_solver(cx, left.clone());
             let right = normalize_expr_for_solver(cx, right.clone());
-            if *op == SymCmpOp::Eq {
-                let polynomial_left = normalize_polynomial_for_solver(cx, left.clone());
-                let polynomial_right = normalize_polynomial_for_solver(cx, right.clone());
-                if polynomial_left == polynomial_right {
-                    return normalize_cmp_for_solver(cx, *op, polynomial_left, polynomial_right);
-                }
+            if *op == SymCmpOp::Eq && polynomial_identity(&left, &right) {
+                return SymBoolExpr::constant(cx, true);
             }
             let normalized = normalize_cmp_for_solver(cx, *op, left, right);
             normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
@@ -1068,11 +1064,14 @@ pub(crate) fn normalize_expr_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExp
     if expr.contains_ite() { expr.fold(cx, &mut normalize_expr_node_for_solver) } else { expr }
 }
 
-pub(crate) fn normalize_polynomial_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-    if !polynomial_normalization_can_help(&expr) {
-        return expr;
+fn polynomial_identity(left: &SymExpr, right: &SymExpr) -> bool {
+    if !polynomial_normalization_can_help(left) && !polynomial_normalization_can_help(right) {
+        return false;
     }
-    Polynomial::from_expr(&expr).map_or(expr, |polynomial| polynomial.into_expr(cx))
+    matches!(
+        (Polynomial::from_expr(left), Polynomial::from_expr(right)),
+        (Some(left), Some(right)) if left == right
+    )
 }
 
 fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
@@ -1154,7 +1153,7 @@ type Monomial = Vec<SymExpr>;
 /// Addition, subtraction, and multiplication of EVM words obey the ring laws even when they
 /// wrap. Canonicalizing small expressions here lets the solver recognize nonlinear algebraic
 /// identities without replacing bit-vector semantics with unbounded integer arithmetic.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Polynomial {
     terms: HashMap<Monomial, U256>,
 }
@@ -1268,45 +1267,12 @@ impl Polynomial {
             self.terms.insert(monomial, coefficient);
         }
     }
-
-    fn into_expr(self, cx: &mut SymCx) -> SymExpr {
-        let mut terms = self.terms.into_iter().collect::<Vec<_>>();
-        terms.sort_by_cached_key(|(monomial, _)| monomial_structural_key(monomial));
-        let mut expression = None;
-        for (monomial, coefficient) in terms {
-            let term = monomial_into_expr(cx, monomial, coefficient);
-            expression = Some(match expression {
-                Some(left) => SymExpr::binop(cx, SymBinOp::Add, left, term),
-                None => term,
-            });
-        }
-        expression.unwrap_or_else(|| SymExpr::zero(cx))
-    }
 }
 
 fn expr_structural_key(expr: &SymExpr) -> String {
     let mut key = String::new();
     write_expr_structural_key(&mut key, expr);
     key
-}
-
-fn monomial_structural_key(monomial: &[SymExpr]) -> String {
-    let mut key = String::new();
-    write_exprs_structural_key(&mut key, monomial);
-    key
-}
-
-fn monomial_into_expr(cx: &mut SymCx, monomial: Monomial, coefficient: U256) -> SymExpr {
-    let factors =
-        monomial.into_iter().reduce(|left, right| SymExpr::binop(cx, SymBinOp::Mul, left, right));
-    match factors {
-        Some(factors) if coefficient == U256::ONE => factors,
-        Some(factors) => {
-            let coefficient = SymExpr::constant(cx, coefficient);
-            SymExpr::binop(cx, SymBinOp::Mul, factors, coefficient)
-        }
-        None => SymExpr::constant(cx, coefficient),
-    }
 }
 
 fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
@@ -1752,6 +1718,86 @@ impl ConstraintContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polynomial_identity_handles_shared_dag() {
+        let mut cx = SymCx::new();
+        let shared_atom = SymExpr::var(&mut cx, "shared");
+        let mut shared = shared_atom.clone();
+        for _ in 0..64 {
+            shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
+        }
+        let factor = SymExpr::var(&mut cx, "factor");
+        let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, shared, factor.clone());
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, shared_atom, factor);
+        let shift = SymExpr::constant(&mut cx, U256::from(64));
+        let expected = SymExpr::binop(&mut cx, SymBinOp::Shl, product, shift);
+
+        assert!(polynomial_identity(&expression, &expected));
+    }
+
+    #[test]
+    fn polynomial_identity_stops_at_factor_limit() {
+        let mut cx = SymCx::new();
+        let mut product_at_limit = SymExpr::one(&mut cx);
+        for index in 0..8 {
+            let factor = SymExpr::var(&mut cx, &format!("x_{index}"));
+            product_at_limit = SymExpr::binop(&mut cx, SymBinOp::Mul, product_at_limit, factor);
+        }
+        let left = SymExpr::var(&mut cx, "left");
+        let right = SymExpr::var(&mut cx, "right");
+        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, left, right);
+        let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, product_at_limit, sum);
+
+        assert!(!polynomial_identity(&expression, &expression));
+    }
+
+    #[test]
+    fn polynomial_identity_stops_at_term_limit() {
+        let mut cx = SymCx::new();
+        let mut expression = SymExpr::zero(&mut cx);
+        for index in 0..33 {
+            let term = SymExpr::var(&mut cx, &format!("x_{index}"));
+            expression = SymExpr::binop(&mut cx, SymBinOp::Add, expression, term);
+        }
+        let factor = SymExpr::var(&mut cx, "factor");
+        expression = SymExpr::binop(&mut cx, SymBinOp::Mul, expression, factor);
+
+        assert!(!polynomial_identity(&expression, &expression));
+    }
+
+    #[test]
+    fn polynomial_identity_stops_at_product_limit() {
+        let mut cx = SymCx::new();
+        let mut left = SymExpr::zero(&mut cx);
+        for index in 0..17 {
+            let term = SymExpr::var(&mut cx, &format!("left_{index}"));
+            left = SymExpr::binop(&mut cx, SymBinOp::Add, left, term);
+        }
+        let mut right = SymExpr::zero(&mut cx);
+        for index in 0..16 {
+            let term = SymExpr::var(&mut cx, &format!("right_{index}"));
+            right = SymExpr::binop(&mut cx, SymBinOp::Add, right, term);
+        }
+        let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, left, right);
+
+        assert!(!polynomial_identity(&expression, &expression));
+    }
+
+    #[test]
+    fn polynomial_identity_skips_irrelevant_and_unsupported_shapes() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let single_product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
+        assert!(!polynomial_identity(&single_product, &single_product));
+
+        let denominator = SymExpr::var(&mut cx, "denominator");
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), denominator);
+        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, quotient, y);
+        let unsupported = SymExpr::binop(&mut cx, SymBinOp::Mul, sum, x);
+        assert!(!polynomial_identity(&unsupported, &unsupported));
+    }
 
     #[test]
     fn shared_arithmetic_dag_interval_analysis_is_memoized() {
