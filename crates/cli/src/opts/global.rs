@@ -20,7 +20,7 @@ fn ensure_local_compiler_approved(path: &Path) -> CompilerResult<()> {
         return if *approved { Ok(()) } else { Err(local_compiler_not_approved(path)) };
     }
 
-    if !io::stdin().is_terminal() {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
         return Err(local_compiler_not_approved(path));
     }
 
