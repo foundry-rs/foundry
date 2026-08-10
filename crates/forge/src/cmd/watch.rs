@@ -12,7 +12,7 @@ use std::{
     io::IsTerminal,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, OnceLock, Weak,
         atomic::{AtomicU8, Ordering},
     },
     time::Duration,
@@ -33,6 +33,7 @@ use watchexec_signals::Signal;
 use yansi::{Color, Paint};
 
 type SpawnHook = Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>;
+type KeyboardConfig = Arc<OnceLock<Weak<watchexec::Config>>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum KeyboardAction {
@@ -56,6 +57,12 @@ fn keyboard_action(events: &[Event]) -> Option<KeyboardAction> {
     }
 
     rerun.then_some(KeyboardAction::Rerun)
+}
+
+fn set_keyboard_events(config: &Option<KeyboardConfig>, enable: bool) {
+    if let Some(config) = config.as_ref().and_then(|config| config.get()).and_then(Weak::upgrade) {
+        config.keyboard_events(enable);
+    }
 }
 
 #[derive(Clone, Debug, Default, Parser)]
@@ -110,25 +117,34 @@ impl WatchArgs {
         &self,
         default_paths: impl FnOnce() -> Result<PS>,
     ) -> Result<watchexec::Config> {
-        self.watchexec_config_generic(default_paths, None)
+        self.watchexec_config_generic(default_paths, None, None)
     }
 
-    /// Creates a new [`watchexec::Config`] with a custom command spawn hook.
+    /// Creates a new [`watchexec::Config`] with a custom command spawn hook and optional keyboard
+    /// events while the command is idle.
     ///
     /// If paths were provided as arguments the these will be used as the watcher's pathset,
     /// otherwise the path the closure returns will be used.
-    pub fn watchexec_config_with_override<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
+    fn watchexec_config_with_override<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
         default_paths: impl FnOnce() -> Result<PS>,
+        watch_keyboard: bool,
         spawn_hook: impl Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static,
-    ) -> Result<watchexec::Config> {
-        self.watchexec_config_generic(default_paths, Some(Arc::new(spawn_hook)))
+    ) -> Result<(watchexec::Config, Option<KeyboardConfig>)> {
+        let keyboard_config = watch_keyboard.then(|| Arc::new(OnceLock::new()));
+        let config = self.watchexec_config_generic(
+            default_paths,
+            Some(Arc::new(spawn_hook)),
+            keyboard_config.clone(),
+        )?;
+        Ok((config, keyboard_config))
     }
 
     fn watchexec_config_generic<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
         default_paths: impl FnOnce() -> Result<PS>,
         spawn_hook: Option<SpawnHook>,
+        keyboard_config: Option<KeyboardConfig>,
     ) -> Result<watchexec::Config> {
         let mut paths = self.watch.as_deref().unwrap_or_default();
         let storage: Vec<_>;
@@ -136,13 +152,14 @@ impl WatchArgs {
             storage = default_paths()?.into_iter().map(Into::into).filter(|p| p.exists()).collect();
             paths = &storage;
         }
-        self.watchexec_config_inner(paths, spawn_hook)
+        self.watchexec_config_inner(paths, spawn_hook, keyboard_config)
     }
 
     fn watchexec_config_inner(
         &self,
         paths: &[PathBuf],
         spawn_hook: Option<SpawnHook>,
+        keyboard_config: Option<KeyboardConfig>,
     ) -> Result<watchexec::Config> {
         let config = watchexec::Config::default();
 
@@ -248,8 +265,13 @@ impl WatchArgs {
                 }
             }
 
+            // Let the child own stdin while it runs. This keeps prompts and the debugger from
+            // racing Watchexec's keyboard event source for terminal input.
+            set_keyboard_events(&keyboard_config, false);
+
             job.run({
                 let job = job.clone();
+                let keyboard_config = keyboard_config.clone();
                 move |context| {
                     if context.current.is_running() && no_restart {
                         return;
@@ -259,7 +281,7 @@ impl WatchArgs {
                         let job = job.clone();
                         move |context| {
                             clear_screen();
-                            setup_process(job, &context.command)
+                            setup_process(job, &context.command, keyboard_config)
                         }
                     });
                 }
@@ -272,14 +294,14 @@ impl WatchArgs {
     }
 }
 
-fn setup_process(job: Job, _command: &Command) {
+fn setup_process(job: Job, _command: &Command, keyboard_config: Option<KeyboardConfig>) {
     tokio::spawn(async move {
         job.to_wait().await;
-        job.run(move |context| end_of_process(context.current));
+        job.run(move |context| end_of_process(context.current, keyboard_config));
     });
 }
 
-fn end_of_process(state: &CommandState) {
+fn end_of_process(state: &CommandState, keyboard_config: Option<KeyboardConfig>) {
     let CommandState::Finished { status, started, finished } = state else {
         return;
     };
@@ -301,6 +323,7 @@ fn end_of_process(state: &CommandState) {
     };
 
     let quiet = false;
+    set_keyboard_events(&keyboard_config, true);
     if !quiet {
         let _ = sh_eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
     }
@@ -308,7 +331,17 @@ fn end_of_process(state: &CommandState) {
 
 /// Runs the given [`watchexec::Config`].
 pub async fn run(config: watchexec::Config) -> Result<()> {
+    run_inner(config, None).await
+}
+
+async fn run_inner(
+    config: watchexec::Config,
+    keyboard_config: Option<KeyboardConfig>,
+) -> Result<()> {
     let wx = Watchexec::with_config(config)?;
+    if let Some(config) = keyboard_config {
+        debug_assert!(config.set(Arc::downgrade(&wx.config)).is_ok());
+    }
     wx.send_event(Event::default(), Priority::Urgent).await?;
     wx.main().await??;
     Ok(())
@@ -343,9 +376,11 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let project_root = config.root.to_string_lossy().into_owned();
     let test_failures_file = config.test_failures_file.clone();
     let rerun_failed = args.watch.rerun_failed;
+    let watch_keyboard = std::io::stdin().is_terminal();
 
-    let config = args.watch.watchexec_config_with_override(
+    let (config, keyboard_config) = args.watch.watchexec_config_with_override(
         || Ok([&config.test, &config.src]),
+        watch_keyboard,
         move |events, command| {
             if keyboard_action(events) == Some(KeyboardAction::Rerun) {
                 return;
@@ -402,12 +437,11 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
         },
     )?;
 
-    if std::io::stdin().is_terminal() {
-        config.keyboard_events(true);
+    if watch_keyboard {
         let _ = sh_eprintln!("[Press 'a' to rerun all tests]");
     }
 
-    run(config).await
+    run_inner(config, keyboard_config).await
 }
 
 pub async fn watch_coverage(args: CoverageArgs) -> Result<()> {
