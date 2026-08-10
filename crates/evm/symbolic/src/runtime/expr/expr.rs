@@ -913,10 +913,10 @@ impl SymExpr {
 
     fn xor_with_bool_select(cx: &mut SymCx, base: &Self, selector: &Self) -> Option<Self> {
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = selector.kind() else { return None };
-        let (delta, condition) = if let Some(condition) = left.bool_word_condition() {
+        let (delta, condition) = if let Some(condition) = left.bitwise_bool_word_condition(cx) {
             (right, condition)
         } else {
-            (left, right.bool_word_condition()?)
+            (left, right.bitwise_bool_word_condition(cx)?)
         };
         let SymExprKind::BinOp(SymBinOp::Xor, left, right) = delta.kind() else { return None };
         let selected = if left == base {
