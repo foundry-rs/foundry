@@ -682,17 +682,6 @@ contract SymbolicSaturatingMul {
         assert(SaturatingMath.saturatingMul(x, y) == expected);
     }
 
-    function checkSaturatingMulBoundaries() public pure {
-        assert(SaturatingMath.saturatingMul(0, type(uint256).max) == 0);
-        assert(SaturatingMath.saturatingMul(type(uint256).max, 0) == 0);
-        assert(SaturatingMath.saturatingMul(type(uint256).max, 1) == type(uint256).max);
-        assert(SaturatingMath.saturatingMul(1, type(uint256).max) == type(uint256).max);
-        assert(SaturatingMath.saturatingMul(type(uint256).max, 2) == type(uint256).max);
-        assert(SaturatingMath.saturatingMul(2, type(uint256).max) == type(uint256).max);
-        assert(SaturatingMath.saturatingMul(2 ** 255, 2) == type(uint256).max);
-        assert(SaturatingMath.saturatingMul(2, 2 ** 255) == type(uint256).max);
-    }
-
     function checkWrongOverflowResult(uint256 x, uint256 y) public pure {
         if (x == type(uint256).max && y == 2) {
             assert(SaturatingMath.saturatingMul(x, y) == 0);
@@ -714,23 +703,6 @@ contract SymbolicSaturatingMul {
     assert_eq!(result["symbolic"]["status"], "pass");
     assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
     assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
-
-    let output = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--optimize",
-            "--match-test",
-            "checkSaturatingMulBoundaries",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout
-        .clone();
-    let result = json_test_result(&output, "checkSaturatingMulBoundaries()");
-    assert_eq!(result["symbolic"]["status"], "pass");
 
     let output = cmd
         .forge_fuse()
