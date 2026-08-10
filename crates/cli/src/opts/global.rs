@@ -3,8 +3,55 @@ use foundry_common::{
     shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity},
     version::{IS_NIGHTLY_VERSION, NIGHTLY_VERSION_WARNING_MESSAGE},
 };
+use foundry_compilers::error::{Result as CompilerResult, SolcError};
 use foundry_config::{Config, figment::Profile};
 use serde::{Deserialize, Serialize};
+use std::{
+    io::{self, IsTerminal, Write},
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+static LOCAL_COMPILER_APPROVALS: Mutex<Vec<(PathBuf, bool)>> = Mutex::new(Vec::new());
+
+fn ensure_local_compiler_approved(path: &Path) -> CompilerResult<()> {
+    let mut approvals = LOCAL_COMPILER_APPROVALS.lock().unwrap_or_else(|err| err.into_inner());
+    if let Some((_, approved)) = approvals.iter().find(|(approved_path, _)| approved_path == path) {
+        return if *approved { Ok(()) } else { Err(local_compiler_not_approved(path)) };
+    }
+
+    if !io::stdin().is_terminal() {
+        return Err(local_compiler_not_approved(path));
+    }
+
+    let mut stderr = io::stderr().lock();
+    writeln!(
+        stderr,
+        "Warning: this project is configured to use a local compiler executable:\n  {path:?}\n\
+         Running this executable may execute arbitrary code.",
+    )
+    .map_err(|err| SolcError::msg(format!("failed to write compiler approval prompt: {err}")))?;
+    write!(stderr, "Do you trust this compiler and want to continue? [y/N] ")
+        .and_then(|_| stderr.flush())
+        .map_err(|err| {
+            SolcError::msg(format!("failed to write compiler approval prompt: {err}"))
+        })?;
+
+    let mut response = String::new();
+    io::stdin()
+        .read_line(&mut response)
+        .map_err(|err| SolcError::msg(format!("failed to read compiler approval: {err}")))?;
+    let approved = matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+    approvals.push((path.to_path_buf(), approved));
+
+    if approved { Ok(()) } else { Err(local_compiler_not_approved(path)) }
+}
+
+fn local_compiler_not_approved(path: &Path) -> SolcError {
+    SolcError::msg(format!(
+        "refusing to run unapproved local compiler {path:?}; pass `--allow-local-compiler` if you trust this executable"
+    ))
+}
 
 /// Global arguments for the CLI.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Parser)]
@@ -84,9 +131,10 @@ impl GlobalArgs {
         }
         let _ = Config::selected_profile();
 
-        if self.allow_local_compiler {
-            foundry_config::allow_local_compilers();
-        }
+        let allow_local_compiler = self.allow_local_compiler;
+        foundry_compilers::set_compiler_approval_handler(move |path| {
+            if allow_local_compiler { Ok(()) } else { ensure_local_compiler_approved(path) }
+        });
 
         // Set the global shell.
         let shell = self.shell();

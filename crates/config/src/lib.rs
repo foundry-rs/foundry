@@ -45,14 +45,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fs,
-    io::{self, IsTerminal},
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
 };
 
 mod macros;
@@ -156,64 +151,6 @@ pub use semver;
 
 #[cfg(not(test))]
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
-
-static ALLOW_LOCAL_COMPILERS: AtomicBool = AtomicBool::new(false);
-static LOCAL_COMPILER_APPROVALS: Mutex<Vec<(PathBuf, bool)>> = Mutex::new(Vec::new());
-
-/// Allows local compiler executables without interactive approval for the current process.
-#[doc(hidden)]
-pub fn allow_local_compilers() {
-    ALLOW_LOCAL_COMPILERS.store(true, Ordering::Relaxed);
-}
-
-fn ensure_local_compiler_approved(path: &Path) -> Result<(), SolcError> {
-    use std::io::Write;
-
-    if ALLOW_LOCAL_COMPILERS.load(Ordering::Relaxed) {
-        return Ok(());
-    }
-
-    let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let mut approvals = LOCAL_COMPILER_APPROVALS.lock().unwrap_or_else(|err| err.into_inner());
-    if let Some((_, approved)) = approvals.iter().find(|(approved_path, _)| approved_path == &path)
-    {
-        return if *approved { Ok(()) } else { Err(local_compiler_not_approved(&path)) };
-    }
-
-    if !io::stdin().is_terminal() {
-        return Err(local_compiler_not_approved(&path));
-    }
-
-    let mut stderr = io::stderr().lock();
-    writeln!(
-        stderr,
-        "Warning: this project is configured to use a local compiler executable:\n  {}\n\
-         Running this executable may execute arbitrary code.",
-        path.display()
-    )
-    .map_err(|err| SolcError::msg(format!("failed to write compiler approval prompt: {err}")))?;
-    write!(stderr, "Do you trust this compiler and want to continue? [y/N] ")
-        .and_then(|_| stderr.flush())
-        .map_err(|err| {
-            SolcError::msg(format!("failed to write compiler approval prompt: {err}"))
-        })?;
-
-    let mut response = String::new();
-    io::stdin()
-        .read_line(&mut response)
-        .map_err(|err| SolcError::msg(format!("failed to read compiler approval: {err}")))?;
-    let approved = matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes");
-    approvals.push((path.clone(), approved));
-
-    if approved { Ok(()) } else { Err(local_compiler_not_approved(&path)) }
-}
-
-fn local_compiler_not_approved(path: &Path) -> SolcError {
-    SolcError::msg(format!(
-        "refusing to run unapproved local compiler `{}`; pass `--allow-local-compiler` if you trust this executable",
-        path.display()
-    ))
-}
 
 /// Foundry configuration
 ///
@@ -1554,13 +1491,9 @@ impl Config {
                 }
                 SolcReq::Local(solc) => {
                     if !solc.is_file() {
-                        return Err(SolcError::msg(format!(
-                            "`solc` {} does not exist",
-                            solc.display()
-                        )));
+                        return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
                     }
-                    ensure_local_compiler_approved(solc)?;
-                    Solc::new(solc)?
+                    Solc::new_with_approval(solc)?
                 }
             };
             return Ok(Some(solc));
@@ -1648,8 +1581,7 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            ensure_local_compiler_approved(path)?;
-            Some(Vyper::new(path)?)
+            Some(Vyper::new_with_approval(path)?)
         } else {
             Vyper::new("vyper").ok()
         };
@@ -3120,13 +3052,10 @@ impl SolcReq {
     ///
     /// If the `SolcReq` is a `Version` it will return the version, if it's a path to a binary it
     /// will try to get the version from the binary.
-    fn try_version(&self) -> Result<Version, SolcError> {
+    pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => {
-                ensure_local_compiler_approved(path)?;
-                Solc::new(path).map(|solc| solc.version)
-            }
+            Self::Local(path) => Solc::new_with_approval(path).map(|solc| solc.version),
         }
     }
 }

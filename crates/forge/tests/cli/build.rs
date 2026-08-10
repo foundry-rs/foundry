@@ -66,6 +66,24 @@ exit 1
     assert!(invoked.exists(), "approved local compiler did not run");
 });
 
+#[cfg(unix)]
+forgetest!(local_compiler_path_escapes_control_characters, |prj, cmd| {
+    let solc = prj.root().join("payload\n\u{1b}[2Jspoofed");
+    fs::write(&solc, "#!/bin/sh\nexit 1\n").unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+    prj.add_source("Contract", "contract Contract {}");
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+    });
+
+    let output = cmd.arg("build").assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+    assert!(stderr.contains(r"payload\n\u{1b}[2Jspoofed"), "{stderr:?}");
+    assert!(!stderr.contains("payload\n\u{1b}[2Jspoofed"), "{stderr:?}");
+});
+
 forgetest!(
     #[cfg(unix)]
     can_build_physical_and_symlinked_dependency_configs,

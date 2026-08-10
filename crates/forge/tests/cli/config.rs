@@ -799,7 +799,7 @@ Compiler run successful!
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: `solc` this/solc/does/not/exist does not exist
+Error: `solc` "this/solc/does/not/exist" does not exist
 
 "#]]);
 
