@@ -1335,13 +1335,36 @@ impl SymExpr {
         &self,
         cx: &mut SymCx,
     ) -> Option<SymBoolExpr> {
-        if let Some(condition) = self.bool_word_condition() {
-            return Some(condition);
+        let mut conditions = HashMap::default();
+        let mut remaining = MAX_BITWISE_BOOL_WORD_NODES;
+        self.bitwise_bool_word_condition_cached(cx, &mut conditions, &mut remaining)
+    }
+
+    fn bitwise_bool_word_condition_cached(
+        &self,
+        cx: &mut SymCx,
+        conditions: &mut HashMap<SymExpr, Option<SymBoolExpr>>,
+        remaining: &mut usize,
+    ) -> Option<SymBoolExpr> {
+        if let Some(condition) = conditions.get(self) {
+            return condition.clone();
         }
-        let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() else { return None };
-        let left = left.bitwise_bool_word_condition(cx)?;
-        let right = right.bitwise_bool_word_condition(cx)?;
-        Some(SymBoolExpr::or(cx, vec![left, right]))
+        if *remaining == 0 {
+            return None;
+        }
+        *remaining -= 1;
+
+        let condition = if let Some(condition) = self.bool_word_condition() {
+            Some(condition)
+        } else if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
+            let left = left.bitwise_bool_word_condition_cached(cx, conditions, remaining)?;
+            let right = right.bitwise_bool_word_condition_cached(cx, conditions, remaining)?;
+            Some(if left == right { left } else { SymBoolExpr::or(cx, vec![left, right]) })
+        } else {
+            None
+        };
+        conditions.insert(self.clone(), condition.clone());
+        condition
     }
 
     fn bool_word_condition_from_parts(
@@ -1917,6 +1940,10 @@ impl SymExpr {
     }
 }
 
+// Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
+// unique nodes so adversarial expression trees cannot turn construction into unbounded recursion.
+const MAX_BITWISE_BOOL_WORD_NODES: usize = 256;
+
 fn write_smt_wide_modular_arithmetic(
     cx: &SymCx,
     out: &mut String,
@@ -2055,6 +2082,50 @@ impl SymBinOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bitwise_bool_word_condition_memoizes_shared_or_dag() {
+        let mut cx = SymCx::new();
+        let base = SymExpr::var(&mut cx, "base");
+        let selected = SymExpr::var(&mut cx, "selected");
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+        let mut condition_word = SymExpr::bool_word(&mut cx, condition);
+        for _ in 0..64 {
+            condition_word = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Or, condition_word.clone(), condition_word.clone()),
+            );
+        }
+        let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+        let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+        let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+
+        let SymExprKind::Ite(_, then_expr, else_expr) = actual.kind() else {
+            panic!("shared boolean selector was not recovered");
+        };
+        assert_eq!(then_expr, &selected);
+        assert_eq!(else_expr, &base);
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_stops_at_node_budget() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+        let bool_word = SymExpr::bool_word(&mut cx, condition);
+        let mut condition_word = bool_word.clone();
+        for _ in 0..MAX_BITWISE_BOOL_WORD_NODES {
+            condition_word = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Or, condition_word, bool_word.clone()),
+            );
+        }
+
+        assert!(condition_word.bitwise_bool_word_condition(&mut cx).is_none());
+    }
 
     #[test]
     fn saturating_mul_rewrite_preserves_boundary_values() {
