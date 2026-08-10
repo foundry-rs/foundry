@@ -28,7 +28,7 @@ use revm::{
     context_interface::{Cfg, ContextSetters, transaction::AuthorizationTr},
     handler::{EthFrame, EvmTr, FrameResult, Handler},
     inspector::{InspectSystemCallEvm, Inspector, InspectorHandler},
-    interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
+    interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
     primitives::{Address, HashSet},
     state::EvmState,
 };
@@ -372,7 +372,6 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = MonadEvmHandler::<I>::new();
-        let reservoir = frame.reservoir();
 
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
@@ -380,7 +379,12 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 
         let mut frame_result = handler.inspect_run_exec_loop(self, first_frame_input)?;
 
-        handler.last_frame_result(self, reservoir, &mut frame_result)?;
+        let mut parent_gas = GasTracker::new(
+            frame_result.gas().limit(),
+            frame_result.gas().remaining(),
+            frame_result.gas().reservoir(),
+        );
+        handler.last_frame_result(self, &mut frame_result, &mut parent_gas)?;
 
         Ok(frame_result)
     }

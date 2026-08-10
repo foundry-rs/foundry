@@ -1440,7 +1440,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: true,
                         precompile_call_logs: vec![],
-                        charged_new_account_state_gas: false,
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
                     })
                 }
                 Err(err) => {
@@ -1454,7 +1454,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
-                        charged_new_account_state_gas: false,
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
                     })
                 }
             };
