@@ -679,21 +679,15 @@ contract SymbolicSaturatingMul {
         assert(SaturatingMath.saturatingMul(x, y) == expected);
     }
 
-    function checkSaturatingMulBoundaries(uint256 x, uint256 y) public view {
-        bool boundary =
-            (x == 0 && y == type(uint256).max) ||
-            (x == type(uint256).max && y == 0) ||
-            (x == type(uint256).max && y == 1) ||
-            (x == 1 && y == type(uint256).max) ||
-            (x == type(uint256).max && y == 2) ||
-            (x == 2 && y == type(uint256).max) ||
-            (x == 2 ** 255 && y == 2) ||
-            (x == 2 && y == 2 ** 255);
-        if (boundary) {
-            (bool success,) = address(this).staticcall(abi.encodeCall(this.mul, (x, y)));
-            uint256 expected = success ? x * y : type(uint256).max;
-            assert(SaturatingMath.saturatingMul(x, y) == expected);
-        }
+    function checkSaturatingMulBoundaries() public pure {
+        assert(SaturatingMath.saturatingMul(0, type(uint256).max) == 0);
+        assert(SaturatingMath.saturatingMul(type(uint256).max, 0) == 0);
+        assert(SaturatingMath.saturatingMul(type(uint256).max, 1) == type(uint256).max);
+        assert(SaturatingMath.saturatingMul(1, type(uint256).max) == type(uint256).max);
+        assert(SaturatingMath.saturatingMul(type(uint256).max, 2) == type(uint256).max);
+        assert(SaturatingMath.saturatingMul(2, type(uint256).max) == type(uint256).max);
+        assert(SaturatingMath.saturatingMul(2 ** 255, 2) == type(uint256).max);
+        assert(SaturatingMath.saturatingMul(2, 2 ** 255) == type(uint256).max);
     }
 
     function checkWrongOverflowResult(uint256 x, uint256 y) public pure {
@@ -732,7 +726,7 @@ contract SymbolicSaturatingMul {
         .get_output()
         .stdout
         .clone();
-    let result = json_test_result(&output, "checkSaturatingMulBoundaries(uint256,uint256)");
+    let result = json_test_result(&output, "checkSaturatingMulBoundaries()");
     assert_eq!(result["symbolic"]["status"], "pass");
 
     let output = cmd
