@@ -298,13 +298,14 @@ impl OpenChainClient {
                         abi.functions()
                             .map(|func| func.signature())
                             .chain(abi.errors().map(|error| error.signature()))
-                            .collect::<Vec<_>>()
                     })
+                    .unique()
                     .collect();
 
                 let events = abis
                     .iter()
                     .flat_map(|abi| abi.events().map(|event| event.signature()))
+                    .unique()
                     .collect::<Vec<_>>();
 
                 SelectorImportRequest { function: functions_and_errors, event: events }
