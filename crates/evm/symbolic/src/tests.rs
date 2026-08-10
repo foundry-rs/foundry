@@ -2982,28 +2982,6 @@ fn ite_equality_with_constant_expands_selected_branch() {
 }
 
 #[test]
-fn ite_equality_with_constant_memoizes_shared_dag() {
-    let mut cx = SymCx::new();
-    let x = SymExpr::var(&mut cx, "x");
-    let y = SymExpr::var(&mut cx, "y");
-    let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
-    let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), y.clone());
-    let third = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
-    let zero = SymExpr::zero(&mut cx);
-    let one = SymExpr::one(&mut cx);
-    let mut shared = SymExpr::ite(&mut cx, first.clone(), zero.clone(), one.clone());
-
-    for _ in 0..32 {
-        let left = SymExpr::ite(&mut cx, first.clone(), shared.clone(), zero.clone());
-        let right = SymExpr::ite(&mut cx, second.clone(), shared.clone(), one.clone());
-        shared = SymExpr::ite(&mut cx, third.clone(), left, right);
-    }
-
-    let matches = SymBoolExpr::eq(&mut cx, shared, one);
-    assert!(matches.as_const().is_none());
-}
-
-#[test]
 fn ite_equality_with_constant_keeps_nonconstant_leaf() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");

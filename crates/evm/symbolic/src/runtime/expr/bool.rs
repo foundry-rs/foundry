@@ -713,6 +713,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn constant_ite_equality_memoizes_shared_dag() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), y.clone());
+        let third = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+        let zero = SymExpr::zero(&mut cx);
+        let one = SymExpr::one(&mut cx);
+        let mut shared = SymExpr::ite(&mut cx, first.clone(), zero.clone(), one.clone());
+
+        for _ in 0..32 {
+            let left = SymExpr::ite(&mut cx, first.clone(), shared.clone(), zero.clone());
+            let right = SymExpr::ite(&mut cx, second.clone(), shared.clone(), one.clone());
+            shared = SymExpr::ite(&mut cx, third.clone(), left, right);
+        }
+
+        let raw = SymBoolExpr::from_kind(
+            &mut cx,
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, shared.clone(), one.clone()),
+        );
+        let expanded = SymBoolExpr::eq(&mut cx, shared, one);
+        assert_ne!(expanded, raw);
+    }
+
+    #[test]
     fn constant_ite_equality_stops_at_expansion_budget() {
         let mut cx = SymCx::new();
         let zero = SymExpr::zero(&mut cx);

@@ -2311,6 +2311,36 @@ mod tests {
     }
 
     #[test]
+    fn bitwise_bool_word_condition_bounds_bit_width_analysis() {
+        let mut cx = SymCx::new();
+        let one = SymExpr::one(&mut cx);
+        let mut expression = one.clone();
+        for _ in 0..MAX_BITWISE_BOOL_WORD_NODES {
+            expression = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::UDiv, expression, one.clone()),
+            );
+        }
+
+        assert!(expression.bitwise_bool_word_condition(&mut cx).is_none());
+    }
+
+    #[test]
+    fn unsigned_bit_width_handles_deep_expression_iteratively() {
+        let mut cx = SymCx::new();
+        let one = SymExpr::one(&mut cx);
+        let mut expression = one.clone();
+        for _ in 0..2048 {
+            expression = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::UDiv, expression, one.clone()),
+            );
+        }
+
+        assert_eq!(expression.unsigned_bits(), 1);
+    }
+
+    #[test]
     fn saturating_mul_rewrite_preserves_boundary_values() {
         let mut cx = SymCx::new();
         let x = SymExpr::var(&mut cx, "x");
