@@ -2030,3 +2030,67 @@ impl SymBinOp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saturating_mul_rewrite_preserves_boundary_values() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let x_symbol = match x.kind() {
+            SymExprKind::Var(symbol) => *symbol,
+            _ => unreachable!("constructed symbolic variable"),
+        };
+        let y_symbol = match y.kind() {
+            SymExprKind::Var(symbol) => *symbol,
+            _ => unreachable!("constructed symbolic variable"),
+        };
+
+        let zero = SymExpr::zero(&mut cx);
+        let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), x);
+        let product_is_exact = SymBoolExpr::eq(&mut cx, quotient, y);
+        let safe = SymBoolExpr::or(&mut cx, vec![product_is_exact.clone(), x_is_zero.clone()]);
+        let x_is_zero_word = SymExpr::bool_word(&mut cx, x_is_zero);
+        let product_is_exact_word = SymExpr::bool_word(&mut cx, product_is_exact);
+        let guard = SymExpr::binop(&mut cx, SymBinOp::Or, x_is_zero_word, product_is_exact_word);
+        let one = SymExpr::one(&mut cx);
+        let raw_mask =
+            SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Sub, guard.clone(), one));
+        let original = SymExpr::from_kind(
+            &mut cx,
+            SymExprKind::BinOp(SymBinOp::Or, raw_mask, product.clone()),
+        );
+
+        let one = SymExpr::one(&mut cx);
+        let simplified_mask = SymExpr::binop(&mut cx, SymBinOp::Sub, guard, one);
+        let simplified = SymExpr::binop(&mut cx, SymBinOp::Or, simplified_mask, product.clone());
+        let max = SymExpr::constant(&mut cx, U256::MAX);
+        let expected = SymExpr::ite(&mut cx, safe, product, max);
+        assert_eq!(simplified, expected);
+
+        let half_range = U256::ONE << 255;
+        let boundaries = [
+            (U256::ZERO, U256::MAX),
+            (U256::MAX, U256::ZERO),
+            (U256::MAX, U256::ONE),
+            (U256::ONE, U256::MAX),
+            (U256::MAX, U256::from(2)),
+            (U256::from(2), U256::MAX),
+            (half_range, U256::from(2)),
+            (U256::from(2), half_range),
+        ];
+        for (x_value, y_value) in boundaries {
+            let mut model = SymbolicModel::default();
+            model.insert(x_symbol, x_value);
+            model.insert(y_symbol, y_value);
+            let expected_value = x_value.checked_mul(y_value).unwrap_or(U256::MAX);
+            assert_eq!(original.eval_model(&model).unwrap(), expected_value);
+            assert_eq!(simplified.eval_model(&model).unwrap(), expected_value);
+        }
+    }
+}
