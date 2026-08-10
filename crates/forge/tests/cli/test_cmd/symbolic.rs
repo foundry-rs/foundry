@@ -566,20 +566,23 @@ contract SymbolicBoundedCarry {
         }
     }
 
-    function checkMulDivBoundary() public pure {
+    function checkMulDivBoundary(uint256 value) public pure {
         uint256 factor = 58;
         uint256 boundary = type(uint256).max / factor;
-        unchecked {
-            assert(boundary * factor / factor == boundary);
+        if (value == boundary) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
         }
     }
 
-    function checkMulDivPastBoundary() public pure {
+    function checkMulDivPastBoundary(uint256 value) public pure {
         uint256 factor = 58;
         uint256 boundary = type(uint256).max / factor;
-        uint256 value = boundary + 1;
-        unchecked {
-            assert(value * factor / factor == value);
+        if (value == boundary + 1) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
         }
     }
 }
@@ -627,7 +630,7 @@ contract SymbolicBoundedCarry {
         .get_output()
         .stdout
         .clone();
-    let result = json_test_result(&output, "checkMulDivBoundary()");
+    let result = json_test_result(&output, "checkMulDivBoundary(uint256)");
     assert_eq!(result["symbolic"]["status"], "pass");
 
     let output = cmd
@@ -644,7 +647,7 @@ contract SymbolicBoundedCarry {
         .get_output()
         .stdout
         .clone();
-    let result = json_test_result(&output, "checkMulDivPastBoundary()");
+    let result = json_test_result(&output, "checkMulDivPastBoundary(uint256)");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });

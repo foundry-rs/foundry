@@ -613,6 +613,21 @@ fn normalize_cmp_for_solver(
     left: SymExpr,
     right: SymExpr,
 ) -> SymBoolExpr {
+    if op == SymCmpOp::Eq {
+        if right.as_const().is_some_and(|value| value.is_zero())
+            && let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = left.kind()
+        {
+            // Word subtraction is zero exactly when both operands are equal, including at the
+            // modular boundary. Solc commonly lowers optimized equality checks to this shape.
+            return SymBoolExpr::eq(cx, minuend.clone(), subtrahend.clone());
+        }
+        if left.as_const().is_some_and(|value| value.is_zero())
+            && let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = right.kind()
+        {
+            return SymBoolExpr::eq(cx, minuend.clone(), subtrahend.clone());
+        }
+    }
+
     match op {
         // `a > b => b < a`.
         SymCmpOp::Ugt => SymBoolExpr::cmp(cx, SymCmpOp::Ult, right, left),
@@ -695,6 +710,16 @@ impl ConstraintContext {
                 if self.mul_div_identity(left, right) || self.mul_div_identity(right, left) =>
             {
                 SymBoolExpr::constant(cx, true)
+            }
+            SymBoolExprKind::Not(value)
+                if matches!(
+                    value.kind(),
+                    SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                        if self.mul_div_identity(left, right)
+                            || self.mul_div_identity(right, left)
+                ) =>
+            {
+                SymBoolExpr::constant(cx, false)
             }
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if self.masked_word_eq_self(left, right) =>
@@ -944,18 +969,37 @@ impl ConstraintContext {
     }
 
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
+        let mut intervals = HashMap::default();
+        self.interval_cached(expr, &mut intervals)
+    }
+
+    fn interval_cached(
+        &self,
+        expr: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+    ) -> Option<WordInterval> {
+        if let Some(interval) = intervals.get(expr) {
+            return *interval;
+        }
+
         let lower = self.lower_bound(expr);
         let upper = self.upper_bound(expr);
-        let interval = self.structural_interval(expr).or_else(|| {
+        let interval = self.structural_interval(expr, intervals).or_else(|| {
             (lower.is_some() || upper.is_some()).then(|| WordInterval {
                 min: lower.unwrap_or(U256::ZERO),
                 max: upper.unwrap_or(U256::MAX),
             })
-        })?;
-        interval.with_bounds(lower, upper)
+        });
+        let interval = interval.and_then(|interval| interval.with_bounds(lower, upper));
+        intervals.insert(expr.clone(), interval);
+        interval
     }
 
-    fn structural_interval(&self, expr: &SymExpr) -> Option<WordInterval> {
+    fn structural_interval(
+        &self,
+        expr: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+    ) -> Option<WordInterval> {
         match expr.kind() {
             SymExprKind::Const(value) => Some(WordInterval::exact(*value)),
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
@@ -963,16 +1007,16 @@ impl ConstraintContext {
                 Some(WordInterval { min: U256::ZERO, max: mask })
             }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                let left = self.interval(left)?;
-                let right = self.interval(right)?;
+                let left = self.interval_cached(left, intervals)?;
+                let right = self.interval_cached(right, intervals)?;
                 Some(WordInterval {
                     min: left.min.checked_add(right.min)?,
                     max: left.max.checked_add(right.max)?,
                 })
             }
             SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
-                let left = self.interval(left)?;
-                let right = self.interval(right)?;
+                let left = self.interval_cached(left, intervals)?;
+                let right = self.interval_cached(right, intervals)?;
                 if left.min < right.max {
                     return None;
                 }
@@ -982,8 +1026,8 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                let left = self.interval(left)?;
-                let right = self.interval(right)?;
+                let left = self.interval_cached(left, intervals)?;
+                let right = self.interval_cached(right, intervals)?;
                 Some(WordInterval {
                     min: left.min.checked_mul(right.min)?,
                     max: left.max.checked_mul(right.max)?,
@@ -994,13 +1038,13 @@ impl ConstraintContext {
                 if shift >= U256::from(256) {
                     return Some(WordInterval::exact(U256::ZERO));
                 }
-                let value = self.interval(value)?;
+                let value = self.interval_cached(value, intervals)?;
                 let shift = shift.to::<usize>();
                 Some(WordInterval { min: value.min >> shift, max: value.max >> shift })
             }
             SymExprKind::Ite(_, left, right) => {
-                let left = self.interval(left)?;
-                let right = self.interval(right)?;
+                let left = self.interval_cached(left, intervals)?;
+                let right = self.interval_cached(right, intervals)?;
                 Some(WordInterval { min: left.min.min(right.min), max: left.max.max(right.max) })
             }
             _ => None,
@@ -1637,40 +1681,88 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
-        self.interval(left)
-            .zip(self.interval(right))
+        let mut intervals = HashMap::default();
+        if self
+            .interval_cached(left, &mut intervals)
+            .zip(self.interval_cached(right, &mut intervals))
             .is_some_and(|(left, right)| left.max.checked_mul(right.max).is_some())
-            || self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)) <= 256
+        {
+            return true;
+        }
+
+        let mut bit_widths = HashMap::default();
+        self.unsigned_bits_cached(left, &mut bit_widths)
+            .saturating_add(self.unsigned_bits_cached(right, &mut bit_widths))
+            <= 256
     }
 
     pub(super) fn unsigned_bits(&self, expr: &SymExpr) -> usize {
+        let mut bit_widths = HashMap::default();
+        self.unsigned_bits_cached(expr, &mut bit_widths)
+    }
+
+    fn unsigned_bits_cached(
+        &self,
+        expr: &SymExpr,
+        bit_widths: &mut HashMap<SymExpr, usize>,
+    ) -> usize {
+        if let Some(bits) = bit_widths.get(expr) {
+            return *bits;
+        }
+
         let bits = match expr.kind() {
-            SymExprKind::Const(_)
-            | SymExprKind::Var(_)
+            SymExprKind::Const(value) => value.bit_len().max(1),
+            SymExprKind::Var(_)
             | SymExprKind::GasLeft(_)
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. }
-            | SymExprKind::Not(_) => expr.unsigned_bits(),
+            | SymExprKind::Not(_) => 256,
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
-                    self.unsigned_bits(left).min(mask.bit_len())
+                    self.unsigned_bits_cached(left, bit_widths).min(mask.bit_len())
                 } else {
                     256
                 }
             }
-            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                self.unsigned_bits(left).max(self.unsigned_bits(right)).saturating_add(1).min(256)
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => self
+                .unsigned_bits_cached(left, bit_widths)
+                .max(self.unsigned_bits_cached(right, bit_widths))
+                .saturating_add(1)
+                .min(256),
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => self
+                .unsigned_bits_cached(left, bit_widths)
+                .saturating_add(self.unsigned_bits_cached(right, bit_widths))
+                .min(256),
+            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
+                self.unsigned_bits_cached(left, bit_widths)
             }
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)).min(256)
-            }
-            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => self.unsigned_bits(left),
-            SymExprKind::Ite(_, left, right) => {
-                self.unsigned_bits(left).max(self.unsigned_bits(right))
-            }
+            SymExprKind::Ite(_, left, right) => self
+                .unsigned_bits_cached(left, bit_widths)
+                .max(self.unsigned_bits_cached(right, bit_widths)),
             _ => 256,
         };
 
-        self.upper_bound(expr).map(|bound| bits.min(bound.bit_len().max(1))).unwrap_or(bits)
+        let bits =
+            self.upper_bound(expr).map(|bound| bits.min(bound.bit_len().max(1))).unwrap_or(bits);
+        bit_widths.insert(expr.clone(), bits);
+        bits
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_arithmetic_dag_interval_analysis_is_memoized() {
+        let mut cx = SymCx::new();
+        let source = SymExpr::var(&mut cx, "source");
+        let one = SymExpr::one(&mut cx);
+        let mut shared = SymExpr::binop(&mut cx, SymBinOp::And, source, one);
+        for _ in 0..64 {
+            shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
+        }
+
+        assert!(ConstraintContext::default().mul_cannot_overflow_256(&shared, &shared));
     }
 }

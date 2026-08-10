@@ -3089,11 +3089,13 @@ fn solver_normalizes_mul_div_at_exact_no_wrap_boundary() {
     let identity = SymBoolExpr::eq(&mut cx, quotient, value.clone());
     let boundary_value = U256::MAX / factor_value;
     let boundary = SymExpr::constant(&mut cx, boundary_value);
-    let in_range = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), boundary);
+    let difference = SymExpr::binop(&mut cx, SymBinOp::Sub, value.clone(), boundary);
+    let zero = SymExpr::zero(&mut cx);
+    let at_boundary = SymBoolExpr::eq(&mut cx, difference, zero);
     let failure = identity.clone().not(&mut cx);
 
     assert_eq!(
-        normalize_constraints_for_solver(&mut cx, &[in_range, failure]),
+        normalize_constraints_for_solver(&mut cx, &[at_boundary, failure]),
         vec![SymBoolExpr::constant(&mut cx, false)]
     );
     let boundary_model = symbolic_model(&mut cx, [("value".to_string(), boundary_value)]);
@@ -3296,15 +3298,15 @@ fn solver_polynomial_normalization_preserves_wrapping_models() {
 #[test]
 fn solver_polynomial_normalization_stops_at_factor_limit() {
     let mut cx = SymCx::new();
-    let mut oversized_product = SymExpr::one(&mut cx);
-    for index in 0..9 {
+    let mut product_at_limit = SymExpr::one(&mut cx);
+    for index in 0..8 {
         let factor = SymExpr::var(&mut cx, &format!("x_{index}"));
-        oversized_product = SymExpr::binop(&mut cx, SymBinOp::Mul, oversized_product, factor);
+        product_at_limit = SymExpr::binop(&mut cx, SymBinOp::Mul, product_at_limit, factor);
     }
     let left = SymExpr::var(&mut cx, "left");
     let right = SymExpr::var(&mut cx, "right");
-    let second_product = SymExpr::binop(&mut cx, SymBinOp::Mul, left, right);
-    let expression = SymExpr::binop(&mut cx, SymBinOp::Add, oversized_product, second_product);
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, left, right);
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, product_at_limit, sum);
 
     assert_eq!(normalize_polynomial_for_solver(&mut cx, expression.clone()), expression);
 }
