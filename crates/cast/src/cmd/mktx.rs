@@ -1,4 +1,4 @@
-use super::auth::confirm_auth_rpc_disclosure_during_build;
+use super::auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_during_build};
 use crate::{
     tempo,
     tx::{self, CastTxBuilder},
@@ -336,7 +336,8 @@ impl MakeTxArgs {
         if ethsign {
             // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
             // unlocked accounts.
-            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, config.sender, force)? {
+            let sender = config.sender.into();
+            if tx_builder.has_auth() && !confirm_auth_rpc_disclosure(&tx_builder, &sender, force)? {
                 return Ok(());
             }
             let (mut tx, _) = tx_builder.build(config.sender).await?;

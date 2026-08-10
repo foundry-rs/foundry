@@ -5,7 +5,7 @@
 
 use crate::{
     call_spec::CallSpec,
-    cmd::auth::confirm_auth_rpc_disclosure_during_build,
+    cmd::auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_during_build},
     tempo,
     tx::{self, CastTxBuilder},
 };
@@ -160,7 +160,8 @@ impl BatchMakeTxArgs {
         }
 
         if ethsign {
-            if !confirm_auth_rpc_disclosure_during_build(&tx_builder, config.sender, force)? {
+            let sender = config.sender.into();
+            if tx_builder.has_auth() && !confirm_auth_rpc_disclosure(&tx_builder, &sender, force)? {
                 return Ok(());
             }
             let (mut tx, _) = tx_builder.build(config.sender).await?;
