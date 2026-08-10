@@ -1351,7 +1351,7 @@ impl SymExpr {
     fn bitwise_bool_word_condition_cached(
         &self,
         cx: &mut SymCx,
-        conditions: &mut HashMap<SymExpr, Option<SymBoolExpr>>,
+        conditions: &mut HashMap<Self, Option<SymBoolExpr>>,
         remaining: &mut usize,
     ) -> Option<SymBoolExpr> {
         if let Some(condition) = conditions.get(self) {
