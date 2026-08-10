@@ -561,7 +561,11 @@ impl CallArgs {
             }
         }
 
-        sh_println!("{}", response)?;
+        // Bypass the shell verbosity layer so `--quiet` does not suppress the primary result.
+        let mut shell = shell::Shell::get();
+        let out = shell.out();
+        writeln!(out, "{response}")?;
+        out.flush()?;
 
         Ok(())
     }

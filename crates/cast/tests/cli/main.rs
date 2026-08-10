@@ -4333,6 +4333,16 @@ Continue anyway? [y/N] "#]]);
 "#]])
         .stderr_eq(str![""]);
 
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--quiet", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![""]);
+
     let signer: PrivateKeySigner =
         "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
     let auth = Authorization {
