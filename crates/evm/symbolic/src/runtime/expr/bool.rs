@@ -372,9 +372,10 @@ impl SymBoolExpr {
                 let else_matches = Self::constant_ite_eq(cx, else_expr, expected, cache, remaining);
                 match (then_matches, else_matches) {
                     (Some(then_matches), Some(else_matches)) => {
-                        let then_selected = Self::and(cx, vec![condition.clone(), then_matches]);
+                        let then_selected =
+                            Self::and_ite_branch(cx, condition.clone(), then_matches);
                         let condition = Self::not_bool(cx, condition);
-                        let else_selected = Self::and(cx, vec![condition, else_matches]);
+                        let else_selected = Self::and_ite_branch(cx, condition, else_matches);
                         Some(Self::or(cx, vec![then_selected, else_selected]))
                     }
                     _ => None,
@@ -384,6 +385,21 @@ impl SymBoolExpr {
         };
         cache.insert(expr.clone(), result.clone());
         result
+    }
+
+    /// Builds one selected ITE branch without flattening a cached child conjunction.
+    ///
+    /// Flattening here makes a linear ITE chain retain conjunctions of lengths `1..n` in the
+    /// per-call cache. Keeping this pair binary preserves the shared DAG and leaves flattening to
+    /// solver constraint normalization, where only the final expression is expanded.
+    fn and_ite_branch(cx: &mut SymCx, condition: Self, branch: Self) -> Self {
+        match (condition.as_const(), branch.as_const()) {
+            (Some(false), _) | (_, Some(false)) => Self::constant(cx, false),
+            (Some(true), _) => branch,
+            (_, Some(true)) => condition,
+            _ if condition == branch => condition,
+            _ => Self::from_kind(cx, SymBoolExprKind::And(vec![condition, branch].into())),
+        }
     }
 
     pub(crate) fn as_const(&self) -> Option<bool> {
@@ -736,6 +752,37 @@ mod tests {
         );
         let expanded = SymBoolExpr::eq(&mut cx, shared, one);
         assert_ne!(expanded, raw);
+    }
+
+    #[test]
+    fn constant_ite_equality_keeps_linear_chain_linear() {
+        let mut cx = SymCx::new();
+        let zero = SymExpr::zero(&mut cx);
+        let one = SymExpr::one(&mut cx);
+        let mut value = zero.clone();
+        for index in 0..64 {
+            let selector = SymExpr::var(&mut cx, &format!("selector_{index}"));
+            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+            value = SymExpr::ite(&mut cx, condition, value, one.clone());
+        }
+
+        let expanded = SymBoolExpr::eq(&mut cx, value, zero);
+        let mut pending = vec![expanded];
+        let mut visited = HashSet::<SymBoolExpr>::default();
+        while let Some(expr) = pending.pop() {
+            if !visited.insert(expr.clone()) {
+                continue;
+            }
+            match expr.kind() {
+                SymBoolExprKind::Not(value) => pending.push(value.clone()),
+                SymBoolExprKind::And(values) => {
+                    assert!(values.len() <= 2);
+                    pending.extend(values.iter().cloned());
+                }
+                SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) => {}
+            }
+        }
+        assert!(visited.len() < 2 * 64);
     }
 
     #[test]
