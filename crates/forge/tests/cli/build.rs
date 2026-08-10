@@ -10,7 +10,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 
 fn git(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git").current_dir(root).args(args).output().unwrap();
@@ -30,6 +30,41 @@ fn add_local_submodule(root: &Path, path: &str) -> String {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     git(&root.join(path), &["rev-parse", "HEAD"])
 }
+
+#[cfg(unix)]
+forgetest!(local_compiler_requires_approval, |prj, cmd| {
+    let solc = prj.root().join("payload");
+    let invoked = prj.root().join("payload.invoked");
+    fs::write(
+        &solc,
+        r#"#!/bin/sh
+touch "$0.invoked"
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.35+commit.69074fbd"
+    exit 0
+fi
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+    prj.add_source("Contract", "contract Contract {}");
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+    });
+
+    let output = cmd.arg("build").assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+    assert!(stderr.contains("refusing to run unapproved local compiler"), "{stderr}");
+    assert!(stderr.contains("--allow-local-compiler"), "{stderr}");
+    assert!(!invoked.exists(), "local compiler ran without approval");
+
+    cmd.forge_fuse().args(["build", "--allow-local-compiler"]).assert_failure();
+    assert!(invoked.exists(), "approved local compiler did not run");
+});
 
 forgetest!(
     #[cfg(unix)]

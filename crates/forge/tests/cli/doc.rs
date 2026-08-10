@@ -144,7 +144,7 @@ exit 1
         config.skip = vec!["*Skipped*".parse().unwrap()];
     });
 
-    cmd.arg("doc").assert_success();
+    cmd.args(["doc", "--allow-local-compiler"]).assert_success();
     assert!(!invoked.exists(), "forge doc invoked the configured solc binary");
     assert!(!prj.root().join("docs/src/pages/src/contract.Skipped.mdx").exists());
 });

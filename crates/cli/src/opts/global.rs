@@ -53,6 +53,10 @@ pub struct GlobalArgs {
     /// The configuration profile to use.
     #[arg(global = true, long, value_name = "PROFILE")]
     profile: Option<Profile>,
+
+    /// Allow use of local compiler executables without prompting.
+    #[arg(global = true, long, help_heading = "Compiler options")]
+    allow_local_compiler: bool,
 }
 
 impl GlobalArgs {
@@ -79,6 +83,10 @@ impl GlobalArgs {
             );
         }
         let _ = Config::selected_profile();
+
+        if self.allow_local_compiler {
+            foundry_config::allow_local_compilers();
+        }
 
         // Set the global shell.
         let shell = self.shell();

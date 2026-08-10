@@ -107,7 +107,7 @@ forgetest!(can_print_resolved_vyper_path, |prj, cmd| {
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT);
     prj.update_config(|config| config.vyper.path = Some(vyper.path.clone()));
 
-    cmd.args(["compiler", "resolve", "--path"])
+    cmd.args(["compiler", "resolve", "--path", "--allow-local-compiler"])
         .assert_success()
         .stdout_eq(format!("{}\n", vyper.path.display()));
 });
