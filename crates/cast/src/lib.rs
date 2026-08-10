@@ -1753,6 +1753,34 @@ impl SimpleCast {
         Ok(padded.parse::<B256>()?.to_string())
     }
 
+    /// Converts hex data to the word-aligned layout of a Solidity `bytes memory` value.
+    ///
+    /// The output contains a 32-byte big-endian length prefix followed by the data, right-padded
+    /// with zeros to a whole number of 32-byte words.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(
+    ///     Cast::to_bytes_memory("0x1234")?,
+    ///     "0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000"
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn to_bytes_memory(data: &str) -> Result<String> {
+        const WORD: usize = 32;
+
+        let data = hex::decode(data).wrap_err("Could not decode hex")?;
+        let padded_len = data.len().next_multiple_of(WORD);
+        let mut out = Vec::with_capacity(WORD + padded_len);
+        out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<WORD>());
+        out.extend_from_slice(&data);
+        out.resize(WORD + padded_len, 0);
+        Ok(hex::encode_prefixed(out))
+    }
+
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
         let str_bytes: &[u8] = s.as_bytes();
@@ -2677,7 +2705,7 @@ mod logs_bisecting {
 #[cfg(test)]
 mod tests {
     use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
-    use alloy_primitives::hex;
+    use alloy_primitives::{U256, hex};
 
     /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]
     /// implementation, which `sol!`-generated events use to compute indexed topics.
@@ -2919,6 +2947,22 @@ mod tests {
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
         assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
+    }
+
+    #[test]
+    fn to_bytes_memory() {
+        for len in [0, 31, 32, 33] {
+            let data = vec![0xab; len];
+            let out = Cast::to_bytes_memory(&hex::encode_prefixed(&data)).unwrap();
+            let out = hex::decode(out).unwrap();
+
+            assert_eq!(out.len(), 32 + len.next_multiple_of(32));
+            assert_eq!(U256::from_be_slice(&out[..32]), U256::from(len));
+            assert_eq!(&out[32..32 + len], data);
+            assert!(out[32 + len..].iter().all(|byte| *byte == 0));
+        }
+
+        assert!(Cast::to_bytes_memory("0x1").is_err());
     }
 
     #[test]
