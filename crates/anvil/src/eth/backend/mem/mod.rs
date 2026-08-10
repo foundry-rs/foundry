@@ -3613,17 +3613,13 @@ where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     /// Returns all `Log`s mined by the node that were emitted in the `block` and match the `Filter`
-    fn mined_logs_for_block(
-        &self,
-        filter: &Filter,
-        block: &Block,
-        block_hash: B256,
-        storage: &BlockchainStorage<N>,
-    ) -> Vec<Log> {
+    fn mined_logs_for_block(&self, filter: Filter, block: Block, block_hash: B256) -> Vec<Log> {
         let mut all_logs = Vec::new();
         let mut block_log_index = 0u32;
 
-        for tx in &block.body.transactions {
+        let storage = self.blockchain.storage.read();
+
+        for tx in block.body.transactions {
             let Some(tx) = storage.transactions.get(&tx.hash()) else {
                 continue;
             };
@@ -3694,11 +3690,8 @@ where
         filter: Filter,
         hash: B256,
     ) -> Result<Vec<Log>, BlockchainError> {
-        {
-            let storage = self.blockchain.storage.read();
-            if let Some(block) = storage.blocks.get(&hash) {
-                return Ok(self.mined_logs_for_block(&filter, block, hash, &storage));
-            }
+        if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
+            return Ok(self.mined_logs_for_block(filter, block, hash));
         }
 
         if let Some(fork) = self.get_fork() {
@@ -3736,12 +3729,9 @@ where
             }
         }
 
-        let storage = self.blockchain.storage.read();
         for number in from..=to {
-            if let Some(hash) = storage.hashes.get(&number)
-                && let Some(block) = storage.blocks.get(hash)
-            {
-                all_logs.extend(self.mined_logs_for_block(filter, block, *hash, &storage));
+            if let Some((block, hash)) = self.get_block_with_hash(number) {
+                all_logs.extend(self.mined_logs_for_block(filter.clone(), block, hash));
             }
         }
 
