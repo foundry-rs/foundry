@@ -2881,6 +2881,62 @@ fn expression_simplifies_xor_over_conditional_zero() {
 }
 
 #[test]
+fn expression_normalizes_direct_and_inverted_bool_word_arithmetic() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let inverted_condition = condition.clone().not(&mut cx);
+    let direct = SymExpr::bool_word(&mut cx, condition.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let inverted = SymExpr::ite(&mut cx, condition.clone(), zero.clone(), one.clone());
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+
+    let direct_sum = SymExpr::ite(&mut cx, condition.clone(), three.clone(), two.clone());
+    let inverted_sum = SymExpr::ite(&mut cx, inverted_condition.clone(), three, two.clone());
+    for (left, right) in [(direct.clone(), two.clone()), (two.clone(), direct.clone())] {
+        assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, left, right), direct_sum);
+    }
+    for (left, right) in [(inverted.clone(), two.clone()), (two.clone(), inverted.clone())] {
+        assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, left, right), inverted_sum);
+    }
+
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let direct_minus_one = SymExpr::ite(&mut cx, condition.clone(), zero.clone(), max.clone());
+    let inverted_minus_one = SymExpr::ite(&mut cx, inverted_condition.clone(), zero, max);
+    assert_eq!(
+        SymExpr::binop(&mut cx, SymBinOp::Sub, direct.clone(), one.clone()),
+        direct_minus_one
+    );
+    assert_eq!(
+        SymExpr::binop(&mut cx, SymBinOp::Sub, inverted.clone(), one.clone()),
+        inverted_minus_one
+    );
+
+    let direct_subtrahend = SymExpr::ite(&mut cx, condition, one.clone(), two.clone());
+    let inverted_subtrahend = SymExpr::ite(&mut cx, inverted_condition, one, two.clone());
+    assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, two.clone(), direct), direct_subtrahend);
+    assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, two, inverted), inverted_subtrahend);
+}
+
+#[test]
+fn expression_construction_sizes_shared_arithmetic_dag_once() {
+    let mut cx = SymCx::new();
+    let source = SymExpr::var(&mut cx, "source");
+    let one = SymExpr::one(&mut cx);
+    let mut shared = SymExpr::binop(&mut cx, SymBinOp::And, source, one);
+    for _ in 0..64 {
+        shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
+    }
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Add, shared, two);
+
+    assert_eq!(expression.unsigned_bits(), 66);
+}
+
+#[test]
 fn ite_equality_with_selected_arm_exposes_branch_condition() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");

@@ -602,16 +602,14 @@ impl SymExpr {
                 }
                 // `one_bit_word(c) + k => ite(c, k + 1, k)`.
                 (SymExprKind::Const(value), _)
-                    if right.bool_word_condition().is_none()
-                        && let Some(condition) = right.bitwise_bool_word_condition(cx) =>
+                    if let Some(condition) = right.bitwise_bool_word_condition(cx) =>
                 {
                     let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
                     let value = Self::constant(cx, *value);
                     Self::ite(cx, condition, incremented, value)
                 }
                 (_, SymExprKind::Const(value))
-                    if left.bool_word_condition().is_none()
-                        && let Some(condition) = left.bitwise_bool_word_condition(cx) =>
+                    if let Some(condition) = left.bitwise_bool_word_condition(cx) =>
                 {
                     let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
                     let value = Self::constant(cx, *value);
@@ -1434,19 +1432,35 @@ impl SymExpr {
         &self,
         cx: &mut SymCx,
     ) -> Option<SymBoolExpr> {
-        if let Some(condition) = self.direct_bool_word_condition(cx) {
-            return Some(condition);
+        let mut conditions = HashMap::default();
+        let mut bit_widths = HashMap::default();
+        self.bitwise_bool_word_condition_cached(cx, &mut conditions, &mut bit_widths)
+    }
+
+    fn bitwise_bool_word_condition_cached(
+        &self,
+        cx: &mut SymCx,
+        conditions: &mut HashMap<Self, Option<SymBoolExpr>>,
+        bit_widths: &mut HashMap<Self, usize>,
+    ) -> Option<SymBoolExpr> {
+        if let Some(condition) = conditions.get(self) {
+            return condition.clone();
         }
-        if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
-            let left = left.bitwise_bool_word_condition(cx)?;
-            let right = right.bitwise_bool_word_condition(cx)?;
-            return Some(SymBoolExpr::or(cx, vec![left, right]));
-        }
-        if self.unsigned_bits() != 1 {
-            return None;
-        }
-        let zero = Self::zero(cx);
-        Some(SymBoolExpr::eq(cx, self.clone(), zero).not(cx))
+
+        let condition = if let Some(condition) = self.direct_bool_word_condition(cx) {
+            Some(condition)
+        } else if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
+            let left = left.bitwise_bool_word_condition_cached(cx, conditions, bit_widths);
+            let right = right.bitwise_bool_word_condition_cached(cx, conditions, bit_widths);
+            left.zip(right).map(|(left, right)| SymBoolExpr::or(cx, vec![left, right]))
+        } else if self.unsigned_bits_cached(bit_widths) == 1 {
+            let zero = Self::zero(cx);
+            Some(SymBoolExpr::eq(cx, self.clone(), zero).not(cx))
+        } else {
+            None
+        };
+        conditions.insert(self.clone(), condition.clone());
+        condition
     }
 
     /// Returns the condition represented by a direct `0`/`1` ITE, preserving its polarity.
@@ -1632,25 +1646,37 @@ impl SymExpr {
     }
 
     pub(crate) fn unsigned_bits(&self) -> usize {
-        match self.kind() {
+        let mut bit_widths = HashMap::default();
+        self.unsigned_bits_cached(&mut bit_widths)
+    }
+
+    fn unsigned_bits_cached(&self, bit_widths: &mut HashMap<Self, usize>) -> usize {
+        if let Some(bits) = bit_widths.get(self) {
+            return *bits;
+        }
+
+        let bits = match self.kind() {
             SymExprKind::Const(value) => value.bit_len().max(1),
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
-                    left.unsigned_bits().min(mask.bit_len())
+                    left.unsigned_bits_cached(bit_widths).min(mask.bit_len())
                 } else {
                     256
                 }
             }
-            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                left.unsigned_bits().max(right.unsigned_bits()).saturating_add(1).min(256)
-            }
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                left.unsigned_bits().saturating_add(right.unsigned_bits()).min(256)
-            }
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => left
+                .unsigned_bits_cached(bit_widths)
+                .max(right.unsigned_bits_cached(bit_widths))
+                .saturating_add(1)
+                .min(256),
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => left
+                .unsigned_bits_cached(bit_widths)
+                .saturating_add(right.unsigned_bits_cached(bit_widths))
+                .min(256),
             SymExprKind::BinOp(SymBinOp::Shl, left, right) => {
                 if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
                 {
-                    left.unsigned_bits().saturating_add(shift).min(256)
+                    left.unsigned_bits_cached(bit_widths).saturating_add(shift).min(256)
                 } else {
                     256
                 }
@@ -1658,16 +1684,20 @@ impl SymExpr {
             SymExprKind::BinOp(SymBinOp::Shr, left, right) => {
                 if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
                 {
-                    left.unsigned_bits().saturating_sub(shift).max(1)
+                    left.unsigned_bits_cached(bit_widths).saturating_sub(shift).max(1)
                 } else {
                     256
                 }
             }
-            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => left.unsigned_bits(),
-            SymExprKind::TernOp(_, _, _, modulus) => modulus.unsigned_bits(),
-            SymExprKind::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
+            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => left.unsigned_bits_cached(bit_widths),
+            SymExprKind::TernOp(_, _, _, modulus) => modulus.unsigned_bits_cached(bit_widths),
+            SymExprKind::Ite(_, left, right) => {
+                left.unsigned_bits_cached(bit_widths).max(right.unsigned_bits_cached(bit_widths))
+            }
             _ => 256,
-        }
+        };
+        bit_widths.insert(self.clone(), bits);
+        bits
     }
 
     pub(crate) fn extracted_byte(&self, cx: &mut SymCx, index: usize) -> Self {

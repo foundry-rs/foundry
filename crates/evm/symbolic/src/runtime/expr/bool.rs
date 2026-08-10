@@ -1,5 +1,9 @@
 use super::{hashcons::HashConsed, *};
 
+/// Bounds constant-ITE equality expansion to roughly 8k flattened condition handles in the
+/// linear worst case, while remaining above the compiler-generated selector trees seen in tests.
+const MAX_CONSTANT_ITE_EQ_NODES: usize = 128;
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymBoolExpr {
     pub(in crate::runtime::expr) kind: HashConsed<SymBoolExprKind>,
@@ -64,6 +68,27 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn cmp(cx: &mut SymCx, op: SymCmpOp, left: SymExpr, right: SymExpr) -> Self {
+        if let (
+            SymExprKind::Ite(left_condition, left_then, left_else),
+            SymExprKind::Ite(right_condition, right_then, right_else),
+        ) = (left.kind(), right.kind())
+            && left_condition == right_condition
+            && let (Some(left_then), Some(left_else), Some(right_then), Some(right_else)) = (
+                left_then.as_const(),
+                left_else.as_const(),
+                right_then.as_const(),
+                right_else.as_const(),
+            )
+        {
+            // Compare aligned constant-arm ITEs pointwise without expanding either expression.
+            return match (op.eval(left_then, right_then), op.eval(left_else, right_else)) {
+                (true, true) => Self::constant(cx, true),
+                (false, false) => Self::constant(cx, false),
+                (true, false) => left_condition.clone(),
+                (false, true) => Self::not_bool(cx, left_condition.clone()),
+            };
+        }
+
         match op {
             SymCmpOp::Eq => {
                 if let Some(condition) = Self::ite_eq_arm(cx, &left, &right)
@@ -317,7 +342,8 @@ impl SymBoolExpr {
         }
         if let Some(expected) = expected.as_const() {
             let mut cache = HashMap::default();
-            return Self::constant_ite_eq(cx, conditional, expected, &mut cache);
+            let mut remaining = MAX_CONSTANT_ITE_EQ_NODES;
+            return Self::constant_ite_eq(cx, conditional, expected, &mut cache, &mut remaining);
         }
         None
     }
@@ -327,16 +353,23 @@ impl SymBoolExpr {
         expr: &SymExpr,
         expected: U256,
         cache: &mut HashMap<SymExpr, Option<Self>>,
+        remaining: &mut usize,
     ) -> Option<Self> {
         if let Some(cached) = cache.get(expr) {
             return cached.clone();
         }
+        if *remaining == 0 {
+            cache.insert(expr.clone(), None);
+            return None;
+        }
+        *remaining -= 1;
+
         let result = match expr.kind() {
             SymExprKind::Const(value) => Some(Self::constant(cx, *value == expected)),
             SymExprKind::Ite(condition, then_expr, else_expr) => {
                 let condition = condition.clone();
-                let then_matches = Self::constant_ite_eq(cx, then_expr, expected, cache);
-                let else_matches = Self::constant_ite_eq(cx, else_expr, expected, cache);
+                let then_matches = Self::constant_ite_eq(cx, then_expr, expected, cache, remaining);
+                let else_matches = Self::constant_ite_eq(cx, else_expr, expected, cache, remaining);
                 match (then_matches, else_matches) {
                     (Some(then_matches), Some(else_matches)) => {
                         let then_selected = Self::and(cx, vec![condition.clone(), then_matches]);
@@ -672,5 +705,27 @@ impl SymCmpOp {
             Self::Slt => slt(left, right),
             Self::Sgt => slt(right, left),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constant_ite_equality_stops_at_expansion_budget() {
+        let mut cx = SymCx::new();
+        let zero = SymExpr::zero(&mut cx);
+        let one = SymExpr::one(&mut cx);
+        let mut value = zero;
+        for index in 0..MAX_CONSTANT_ITE_EQ_NODES {
+            let selector = SymExpr::var(&mut cx, &format!("selector_{index}"));
+            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+            value = SymExpr::ite(&mut cx, condition, value, one.clone());
+        }
+        let two = SymExpr::constant(&mut cx, U256::from(2));
+        let comparison = SymBoolExpr::eq(&mut cx, value, two);
+
+        assert!(matches!(comparison.kind(), SymBoolExprKind::Cmp(SymCmpOp::Eq, _, _)));
     }
 }
