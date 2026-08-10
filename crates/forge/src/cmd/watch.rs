@@ -9,6 +9,7 @@ use foundry_cli::utils::{self, FoundryPathExt, LoadConfig};
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
+    io::IsTerminal,
     path::PathBuf,
     sync::{
         Arc,
@@ -25,13 +26,37 @@ use watchexec::{
     paths::summarise_events_to_env,
 };
 use watchexec_events::{
-    Event, Priority, ProcessEnd, Tag,
+    Event, KeyCode, Keyboard, Priority, ProcessEnd, Tag,
     filekind::{AccessKind, FileEventKind},
 };
 use watchexec_signals::Signal;
 use yansi::{Color, Paint};
 
 type SpawnHook = Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyboardAction {
+    Rerun,
+    Quit,
+}
+
+fn keyboard_action(events: &[Event]) -> Option<KeyboardAction> {
+    let mut rerun = false;
+
+    for tag in events.iter().flat_map(|event| &event.tags) {
+        match tag {
+            Tag::Keyboard(Keyboard::Eof) => return Some(KeyboardAction::Quit),
+            Tag::Keyboard(Keyboard::Key { key: KeyCode::Char('a'), modifiers })
+                if modifiers.is_empty() =>
+            {
+                rerun = true;
+            }
+            _ => {}
+        }
+    }
+
+    rerun.then_some(KeyboardAction::Rerun)
+}
 
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Watch options")]
@@ -178,18 +203,25 @@ impl WatchArgs {
             };
 
             let signals = action.signals().collect::<Vec<_>>();
+            let keyboard_action = keyboard_action(&action.events);
 
-            if signals.contains(&Signal::Terminate) || signals.contains(&Signal::Interrupt) {
+            if signals.contains(&Signal::Terminate)
+                || signals.contains(&Signal::Interrupt)
+                || keyboard_action == Some(KeyboardAction::Quit)
+            {
                 return quit(action);
             }
 
-            // Only filesystem events below here (or empty synthetic events).
-            if action.paths().next().is_none() && !action.events.iter().any(|e| e.is_empty()) {
-                debug!("no filesystem or synthetic events, skip without doing more");
+            // Only filesystem, keyboard rerun, or empty synthetic events below here.
+            if action.paths().next().is_none()
+                && keyboard_action != Some(KeyboardAction::Rerun)
+                && !action.events.iter().any(|e| e.is_empty())
+            {
+                debug!("no filesystem, rerun, or synthetic events, skip without doing more");
                 return action;
             }
 
-            if cfg!(target_os = "linux") {
+            if cfg!(target_os = "linux") && keyboard_action != Some(KeyboardAction::Rerun) {
                 // Reading a file now triggers `Access(Open)` events on Linux due to:
                 // https://github.com/notify-rs/notify/pull/612
                 // This causes an infinite rebuild loop: the build reads a file,
@@ -315,6 +347,10 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config = args.watch.watchexec_config_with_override(
         || Ok([&config.test, &config.src]),
         move |events, command| {
+            if keyboard_action(events) == Some(KeyboardAction::Rerun) {
+                return;
+            }
+
             // Check if we should prioritize rerunning failed tests
             let has_failures = rerun_failed && test_failures_file.exists();
 
@@ -365,6 +401,12 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
             }
         },
     )?;
+
+    if std::io::stdin().is_terminal() {
+        config.keyboard_events(true);
+        let _ = sh_eprintln!("[Press 'a' to rerun all tests]");
+    }
+
     run(config).await
 }
 
@@ -505,6 +547,33 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use watchexec_events::Modifiers;
+
+    fn key_event(key: char, modifiers: Modifiers) -> Event {
+        Event {
+            tags: vec![Tag::Keyboard(Keyboard::Key { key: KeyCode::Char(key), modifiers })],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn classifies_keyboard_actions() {
+        assert_eq!(
+            keyboard_action(&[key_event('a', Modifiers::default())]),
+            Some(KeyboardAction::Rerun)
+        );
+        assert_eq!(keyboard_action(&[key_event('x', Modifiers::default())]), None);
+        assert_eq!(
+            keyboard_action(&[key_event('a', Modifiers { ctrl: true, ..Default::default() })]),
+            None
+        );
+
+        let eof = Event { tags: vec![Tag::Keyboard(Keyboard::Eof)], ..Default::default() };
+        assert_eq!(
+            keyboard_action(&[key_event('a', Modifiers::default()), eof]),
+            Some(KeyboardAction::Quit)
+        );
+    }
 
     #[test]
     fn parse_cmd_args() {
