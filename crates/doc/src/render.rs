@@ -772,7 +772,7 @@ struct Description {
 struct CommentData {
     titles: Vec<String>,
     authors: Vec<String>,
-    /// Real `@notice` items (used for inheritdoc merging and frontmatter description).
+    /// Real `@notice` items used for inheritdoc merging.
     notices: Vec<String>,
     /// Real `@dev` items (used for inheritdoc merging).
     devs: Vec<String>,
@@ -980,7 +980,10 @@ fn inheritdoc_base(docs: &DocComments<'_>) -> Option<String> {
 }
 
 fn first_notice(data: &CommentData) -> Option<String> {
-    data.notices.first().cloned()
+    data.descriptions
+        .iter()
+        .find(|description| description.kind == DescKind::Notice)
+        .map(|description| description.content.clone())
 }
 
 // ── markdown output helpers ───────────────────────────────────────────────────
