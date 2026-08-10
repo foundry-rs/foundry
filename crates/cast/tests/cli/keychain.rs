@@ -1229,6 +1229,36 @@ Continue anyway? [y/N] Aborted.
     assert!(stderr.contains("error sending request"), "unexpected stderr:\n{stderr}");
 });
 
+casttest!(keychain_eip7702_address_auth_uses_wallet_signer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--auth",
+            accounts::ADDR3,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+            "--force",
+        ])
+        .assert_success();
+
+    let output = cmd
+        .cast_fuse()
+        .args(["keychain", "check", accounts::ADDR1, accounts::ADDR2, "--rpc-url", &rpc, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let checked: serde_json::Value =
+        serde_json::from_str(output.trim()).expect("keychain check emits JSON");
+    assert_eq!(checked["data"]["provisioned"], true);
+});
+
 casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();

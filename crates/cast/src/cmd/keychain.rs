@@ -57,7 +57,7 @@ use crate::cmd::tempo_policy_args::{
 
 use crate::{
     cmd::{auth::confirm_auth_rpc_disclosure_during_build, send::cast_send},
-    tx::{CastTxBuilder, CastTxSender, SendTxOpts},
+    tx::{CastTxBuilder, CastTxSender, SendTxOpts, SenderKind},
 };
 
 /// Tempo keychain management commands.
@@ -3506,6 +3506,13 @@ impl KeychainRootSigner {
             Self::Wallet(signer) => signer.address(),
         }
     }
+
+    fn sender(&self) -> SenderKind<'_> {
+        match self {
+            Self::Browser(browser) => browser.address().into(),
+            Self::Wallet(signer) => signer.as_ref().into(),
+        }
+    }
 }
 
 /// Resolve the root-authorized signer used for AccountKeychain policy changes.
@@ -3605,14 +3612,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
 
-    if !confirm_auth_rpc_disclosure_during_build(&builder, root_signer.address(), force)? {
+    if !confirm_auth_rpc_disclosure_during_build(&builder, root_signer.sender(), force)? {
         return Ok(KeychainTxOutcome::Aborted);
     }
 
     if print_sponsor_hash {
         let from = root_signer.address();
         let chain = builder.chain();
-        let (mut tx, _) = builder.build(from).await?;
+        let (mut tx, _) = builder.build(root_signer.sender()).await?;
         if let Some(fee_payer) = sponsor_fee_payer {
             resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
@@ -3669,7 +3676,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         KeychainRootSigner::Wallet(signer) => {
             let from = signer.address();
             let chain = builder.chain();
-            let (mut tx, _) = builder.build(from).await?;
+            let (mut tx, _) = builder.build(signer.as_ref()).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor
