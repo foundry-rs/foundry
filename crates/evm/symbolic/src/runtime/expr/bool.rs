@@ -315,29 +315,42 @@ impl SymBoolExpr {
             let condition = Self::not_bool(cx, condition.clone());
             return Some(Self::or(cx, vec![condition, then_matches]));
         }
-        if expected.as_const().is_some()
-            && Self::ite_has_only_constant_leaves(then_expr)
-            && Self::ite_has_only_constant_leaves(else_expr)
-        {
-            let then_matches = Self::eq(cx, then_expr.clone(), expected.clone());
-            let else_matches = Self::eq(cx, else_expr.clone(), expected.clone());
-            let then_selected = Self::and(cx, vec![condition.clone(), then_matches]);
-            let condition = Self::not_bool(cx, condition.clone());
-            let else_selected = Self::and(cx, vec![condition, else_matches]);
-            return Some(Self::or(cx, vec![then_selected, else_selected]));
+        if let Some(expected) = expected.as_const() {
+            let mut cache = HashMap::default();
+            return Self::constant_ite_eq(cx, conditional, expected, &mut cache);
         }
         None
     }
 
-    fn ite_has_only_constant_leaves(expr: &SymExpr) -> bool {
-        match expr.kind() {
-            SymExprKind::Const(_) => true,
-            SymExprKind::Ite(_, then_expr, else_expr) => {
-                Self::ite_has_only_constant_leaves(then_expr)
-                    && Self::ite_has_only_constant_leaves(else_expr)
-            }
-            _ => false,
+    fn constant_ite_eq(
+        cx: &mut SymCx,
+        expr: &SymExpr,
+        expected: U256,
+        cache: &mut HashMap<SymExpr, Option<Self>>,
+    ) -> Option<Self> {
+        if let Some(cached) = cache.get(expr) {
+            return cached.clone();
         }
+        let result = match expr.kind() {
+            SymExprKind::Const(value) => Some(Self::constant(cx, *value == expected)),
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                let condition = condition.clone();
+                let then_matches = Self::constant_ite_eq(cx, then_expr, expected, cache);
+                let else_matches = Self::constant_ite_eq(cx, else_expr, expected, cache);
+                match (then_matches, else_matches) {
+                    (Some(then_matches), Some(else_matches)) => {
+                        let then_selected = Self::and(cx, vec![condition.clone(), then_matches]);
+                        let condition = Self::not_bool(cx, condition);
+                        let else_selected = Self::and(cx, vec![condition, else_matches]);
+                        Some(Self::or(cx, vec![then_selected, else_selected]))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        cache.insert(expr.clone(), result.clone());
+        result
     }
 
     pub(crate) fn as_const(&self) -> Option<bool> {
