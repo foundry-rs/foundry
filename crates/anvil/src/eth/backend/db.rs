@@ -1,4 +1,4 @@
-//! Helper types for working with [revm](foundry_evm::revm)
+//! Helper types for working with [revm]
 
 use std::{
     collections::BTreeMap,
