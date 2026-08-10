@@ -1226,7 +1226,10 @@ impl Polynomial {
                     Self::from_expr_cached(value, polynomials, remaining)?
                         .mul(Self::constant(coefficient))
                 }
-                _ => Some(Self::atom(expr.clone())),
+                _ => {
+                    let terms = HashMap::from_iter([(vec![expr.clone()], U256::ONE)]);
+                    Some(Self { terms })
+                }
             })();
         polynomials.insert(expr.clone(), polynomial.clone());
         polynomial
@@ -1238,10 +1241,6 @@ impl Polynomial {
             terms.insert(Vec::new(), value);
         }
         Self { terms }
-    }
-
-    fn atom(expr: SymExpr) -> Self {
-        Self { terms: HashMap::from_iter([(vec![expr], U256::ONE)]) }
     }
 
     fn add(mut self, right: Self) -> Option<Self> {
