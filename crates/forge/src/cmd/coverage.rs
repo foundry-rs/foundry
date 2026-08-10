@@ -300,8 +300,8 @@ impl CoverageArgs {
         let output = &*output;
 
         // Collect source files.
-        let mut versioned_sources = HashMap::<Version, SourceFiles>::default();
-        for (path, source_file, version) in output.output().sources.sources_with_version() {
+        let mut sources_by_build = HashMap::<String, SourceFiles>::default();
+        for (path, sources) in &output.output().sources.0 {
             // Filter out vyper sources.
             if path
                 .extension()
@@ -311,21 +311,23 @@ impl CoverageArgs {
                 continue;
             }
 
-            report.add_source(version.clone(), source_file.id as usize, path.clone());
+            for source in sources {
+                let source_file = &source.source_file;
+                report.add_source(source.build_id.clone(), source_file.id as usize, path.clone());
 
-            // Filter out libs dependencies and tests.
-            if (!self.include_libs && project_paths.has_library_ancestor(path))
-                || (self.exclude_tests && project_paths.is_test(path))
-            {
-                continue;
+                // Filter out libs dependencies and tests.
+                if (!self.include_libs && project_paths.has_library_ancestor(path))
+                    || (self.exclude_tests && project_paths.is_test(path))
+                {
+                    continue;
+                }
+
+                sources_by_build
+                    .entry(source.build_id.clone())
+                    .or_default()
+                    .sources
+                    .insert(source_file.id, project_paths.root.join(path));
             }
-
-            let path = project_paths.root.join(path);
-            versioned_sources
-                .entry(version.clone())
-                .or_default()
-                .sources
-                .insert(source_file.id, path);
         }
 
         // Get source maps and bytecodes.
@@ -333,17 +335,17 @@ impl CoverageArgs {
             .artifact_ids()
             .par_bridge() // This parses source maps, so we want to run it in parallel.
             .filter_map(|(id, artifact)| {
-                let source_id = report.get_source_id(id.version.clone(), id.source.clone())?;
+                let source_id = report.get_source_id(&id.build_id, &id.source)?;
                 ArtifactData::new(&id, source_id, artifact)
             })
             .collect();
 
         // Add coverage items.
-        for (version, sources) in &versioned_sources {
+        for (build_id, sources) in &sources_by_build {
             let source_analysis = SourceAnalysis::new(sources, output)?;
             let anchors = artifacts
                 .par_iter()
-                .filter(|artifact| artifact.contract_id.version == *version)
+                .filter(|artifact| artifact.contract_id.build_id == *build_id)
                 .map(|artifact| {
                     let creation_code_anchors = artifact.creation.find_anchors(&source_analysis);
                     let deployed_code_anchors = artifact.deployed.find_anchors(&source_analysis);
@@ -351,7 +353,7 @@ impl CoverageArgs {
                 })
                 .collect_vec_list();
             report.add_anchors(anchors.into_iter().flatten());
-            report.add_analysis(version.clone(), source_analysis);
+            report.add_analysis(build_id.clone(), source_analysis);
         }
 
         if self.reporters.iter().any(|reporter| reporter.needs_source_maps()) {
@@ -417,13 +419,14 @@ impl CoverageArgs {
                         continue;
                     };
 
-                    let Some(source_id) = report
-                        .get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
+                    let Some(source_id) =
+                        report.get_source_id(&artifact_id.build_id, &artifact_id.source)
                     else {
                         continue;
                     };
                     let contract_id = ContractId {
                         version: artifact_id.version.clone(),
+                        build_id: artifact_id.build_id.clone(),
                         source_id,
                         contract_name: artifact_id.name.as_str().into(),
                     };
@@ -530,6 +533,7 @@ impl ArtifactData {
         Some(Self {
             contract_id: ContractId {
                 version: id.version.clone(),
+                build_id: id.build_id.clone(),
                 source_id,
                 contract_name: id.name.as_str().into(),
             },
