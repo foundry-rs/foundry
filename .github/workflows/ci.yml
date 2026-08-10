@@ -74,7 +74,7 @@ jobs:
   touch-id-link:
     name: touch-id link (${{ matrix.target }})
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
