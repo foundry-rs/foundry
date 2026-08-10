@@ -558,11 +558,36 @@ contract SymbolicBoundedCarry {
             assert((accumulator >> 248) < 58);
         }
     }
+
+    function checkCarryBoundary(uint248 limb, uint8 carry) public pure {
+        if (limb == type(uint248).max && carry == 58) {
+            uint256 accumulator = uint256(limb) * 58 + uint256(carry);
+            assert((accumulator >> 248) < 58);
+        }
+    }
+
+    function checkMulDivBoundary() public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        unchecked {
+            assert(boundary * factor / factor == boundary);
+        }
+    }
+
+    function checkMulDivPastBoundary() public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        uint256 value = boundary + 1;
+        unchecked {
+            assert(value * factor / factor == value);
+        }
+    }
 }
 "#,
     );
 
     let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--symbolic",
@@ -583,6 +608,45 @@ contract SymbolicBoundedCarry {
     let result = json_test_result(&output, "checkCarryBounds(uint248,uint8)");
     assert_eq!(result["symbolic"]["status"], "pass");
     assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkCarryBoundary"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkCarryBoundary(uint248,uint8)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkMulDivBoundary"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivBoundary()");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkMulDivPastBoundary",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivPastBoundary()");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
 forgetest_init!(symbolic_json_schema_reports_pass, |prj, cmd| {

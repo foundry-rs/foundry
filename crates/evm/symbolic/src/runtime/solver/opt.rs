@@ -1056,16 +1056,22 @@ fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
         return false;
     }
 
-    fn ring_shape(expr: &SymExpr) -> Option<(usize, usize)> {
-        match expr.kind() {
+    fn ring_shape(
+        expr: &SymExpr,
+        shapes: &mut HashMap<SymExpr, Option<(usize, usize)>>,
+    ) -> Option<(usize, usize)> {
+        if let Some(shape) = shapes.get(expr) {
+            return *shape;
+        }
+        let shape = (|| match expr.kind() {
             SymExprKind::Const(_) | SymExprKind::Var(_) => Some((0, 0)),
             SymExprKind::BinOp(
                 op @ (SymBinOp::Add | SymBinOp::Sub | SymBinOp::Mul),
                 left,
                 right,
             ) => {
-                let left = ring_shape(left)?;
-                let right = ring_shape(right)?;
+                let left = ring_shape(left, shapes)?;
+                let right = ring_shape(right, shapes)?;
                 let operations = left.0.saturating_add(right.0).saturating_add(1);
                 let multiplications = left
                     .1
@@ -1076,14 +1082,17 @@ fn polynomial_normalization_can_help(expr: &SymExpr) -> bool {
             SymExprKind::BinOp(SymBinOp::Shl, value, shift)
                 if shift.as_const().is_some_and(|shift| shift < U256::from(256)) =>
             {
-                let shape = ring_shape(value)?;
+                let shape = ring_shape(value, shapes)?;
                 Some((shape.0.saturating_add(1), shape.1.saturating_add(1)))
             }
             _ => None,
-        }
+        })();
+        shapes.insert(expr.clone(), shape);
+        shape
     }
 
-    ring_shape(expr)
+    let mut shapes = HashMap::default();
+    ring_shape(expr, &mut shapes)
         .is_some_and(|(operations, multiplications)| operations > 1 && multiplications > 0)
 }
 
@@ -1101,32 +1110,48 @@ type Monomial = Vec<SymExpr>;
 /// Addition, subtraction, and multiplication of EVM words obey the ring laws even when they
 /// wrap. Canonicalizing small expressions here lets the solver recognize nonlinear algebraic
 /// identities without replacing bit-vector semantics with unbounded integer arithmetic.
+#[derive(Clone)]
 struct Polynomial {
     terms: HashMap<Monomial, U256>,
 }
 
 impl Polynomial {
     fn from_expr(expr: &SymExpr) -> Option<Self> {
-        match expr.kind() {
+        Self::from_expr_cached(expr, &mut HashMap::default())
+    }
+
+    fn from_expr_cached(
+        expr: &SymExpr,
+        polynomials: &mut HashMap<SymExpr, Option<Self>>,
+    ) -> Option<Self> {
+        if let Some(polynomial) = polynomials.get(expr) {
+            return polynomial.clone();
+        }
+        let polynomial = (|| match expr.kind() {
             SymExprKind::Const(value) => Some(Self::constant(*value)),
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                Self::from_expr(left)?.add(Self::from_expr(right)?)
+                Self::from_expr_cached(left, polynomials)?
+                    .add(Self::from_expr_cached(right, polynomials)?)
             }
             SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
-                Self::from_expr(left)?.sub(Self::from_expr(right)?)
+                Self::from_expr_cached(left, polynomials)?
+                    .sub(Self::from_expr_cached(right, polynomials)?)
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                Self::from_expr(left)?.mul(Self::from_expr(right)?)
+                Self::from_expr_cached(left, polynomials)?
+                    .mul(Self::from_expr_cached(right, polynomials)?)
             }
             SymExprKind::BinOp(SymBinOp::Shl, value, shift)
                 if let Some(shift) = shift.as_const()
                     && shift < U256::from(256) =>
             {
                 let coefficient = U256::ONE << usize::try_from(shift).ok()?;
-                Self::from_expr(value)?.mul(Self::constant(coefficient))
+                Self::from_expr_cached(value, polynomials)?.mul(Self::constant(coefficient))
             }
             _ => Some(Self::atom(expr.clone())),
-        }
+        })();
+        polynomials.insert(expr.clone(), polynomial.clone());
+        polynomial
     }
 
     fn constant(value: U256) -> Self {
@@ -1612,7 +1637,10 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
-        self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)) <= 256
+        self.interval(left)
+            .zip(self.interval(right))
+            .is_some_and(|(left, right)| left.max.checked_mul(right.max).is_some())
+            || self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)) <= 256
     }
 
     pub(super) fn unsigned_bits(&self, expr: &SymExpr) -> usize {
