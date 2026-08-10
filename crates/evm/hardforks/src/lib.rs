@@ -251,7 +251,7 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
         OpHardfork::Isthmus => OpSpecId::ISTHMUS,
         OpHardfork::Jovian => OpSpecId::JOVIAN,
         OpHardfork::Karst => OpSpecId::KARST,
-        OpHardfork::Interop => OpSpecId::INTEROP,
+        OpHardfork::Lagoon => OpSpecId::LAGOON,
         f => unreachable!("unimplemented {}", f),
     }
 }
@@ -265,8 +265,8 @@ pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
         OpHardfork::Ecotone | OpHardfork::Fjord | OpHardfork::Granite | OpHardfork::Holocene => {
             SpecId::CANCUN
         }
-        OpHardfork::Isthmus | OpHardfork::Jovian | OpHardfork::Interop => SpecId::PRAGUE,
-        OpHardfork::Karst => SpecId::OSAKA,
+        OpHardfork::Isthmus | OpHardfork::Jovian => SpecId::PRAGUE,
+        OpHardfork::Karst | OpHardfork::Lagoon => SpecId::OSAKA,
         f => unreachable!("unimplemented {}", f),
     }
 }
@@ -614,7 +614,10 @@ mod tests {
             // Test latest hardforks
             assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Holocene), OpSpecId::HOLOCENE);
             assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Karst), OpSpecId::KARST);
-            assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Interop), OpSpecId::INTEROP);
+            assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Lagoon), OpSpecId::LAGOON);
+            assert_eq!(eth_spec_id_from_optimism_hardfork(OpHardfork::Jovian), SpecId::PRAGUE);
+            assert_eq!(eth_spec_id_from_optimism_hardfork(OpHardfork::Karst), SpecId::OSAKA);
+            assert_eq!(eth_spec_id_from_optimism_hardfork(OpHardfork::Lagoon), SpecId::OSAKA);
             assert_eq!(evm_spec_id::<OpSpecId>(EvmVersion::Osaka), OpSpecId::KARST);
         }
 
