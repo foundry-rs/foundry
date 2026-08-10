@@ -118,7 +118,7 @@ pub(crate) fn hard_arith_fallback_model(
 /// from the path is preserved instead of being overwritten by the semantic default. This does not
 /// perform the generic bounded candidate search, and a model is returned only when it satisfies
 /// every original constraint.
-pub(crate) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+pub(super) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
     for constraint in constraints {
         let Some((zero_operand, expected, guard_is_true)) = checked_mul_guard_branch(constraint)
         else {
@@ -130,25 +130,31 @@ pub(crate) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Opt
             [(U256::MAX, U256::from(2)), (U256::from(2), U256::MAX)]
         };
         for (zero_default, expected_default) in assignments {
-            let mut model = SymbolicModel::default();
-            for support in constraints {
-                complete_support_constraint(support, &mut model);
-            }
-            let zero_assigned = match zero_operand.eval_model_if_complete(&model) {
-                Ok(Some(_)) => true,
-                Ok(None) => zero_operand.assign_model_value(&mut model, zero_default),
-                Err(_) => false,
-            };
-            let expected_assigned = match expected.eval_model_if_complete(&model) {
-                Ok(Some(_)) => true,
-                Ok(None) => expected.assign_model_value(&mut model, expected_default),
-                Err(_) => false,
-            };
-            if zero_assigned
-                && expected_assigned
-                && complete_fallback_support_model(constraints, &mut model)
-            {
-                return Some(model);
+            let seed_orders = [
+                [(&zero_operand, zero_default), (&expected, expected_default)],
+                [(&expected, expected_default), (&zero_operand, zero_default)],
+            ];
+            for seeds in seed_orders {
+                let mut model = SymbolicModel::default();
+                if !propagate_fallback_support_constraints(constraints, &mut model) {
+                    continue;
+                }
+                let mut valid = true;
+                for (operand, default) in seeds {
+                    let assigned = match operand.eval_model_if_complete(&model) {
+                        Ok(Some(_)) => true,
+                        Ok(None) => operand.assign_model_value(&mut model, default),
+                        Err(_) => false,
+                    };
+                    if !assigned || !propagate_fallback_support_constraints(constraints, &mut model)
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+                if valid && complete_fallback_support_model(constraints, &mut model) {
+                    return Some(model);
+                }
             }
         }
     }
@@ -384,16 +390,9 @@ fn fallback_model_satisfies_all_constraints(
 
 fn complete_fallback_support_model(constraints: &[SymBoolExpr], model: &mut SymbolicModel) -> bool {
     for _ in 0..constraints.len() {
-        let mut changed = false;
-        for constraint in constraints {
-            match constraint.eval_model_if_complete(model) {
-                Ok(Some(true)) => {}
-                Ok(Some(false)) | Err(_) => return false,
-                Ok(None) => {
-                    changed |= complete_support_constraint(constraint, model);
-                }
-            }
-        }
+        let Some(mut changed) = complete_support_constraints_once(constraints, model) else {
+            return false;
+        };
         if changed {
             continue;
         }
@@ -413,6 +412,35 @@ fn complete_fallback_support_model(constraints: &[SymBoolExpr], model: &mut Symb
         }
     }
     fallback_model_satisfies_all_constraints(constraints, model)
+}
+
+fn propagate_fallback_support_constraints(
+    constraints: &[SymBoolExpr],
+    model: &mut SymbolicModel,
+) -> bool {
+    for _ in 0..constraints.len() {
+        match complete_support_constraints_once(constraints, model) {
+            Some(true) => {}
+            Some(false) => return true,
+            None => return false,
+        }
+    }
+    true
+}
+
+fn complete_support_constraints_once(
+    constraints: &[SymBoolExpr],
+    model: &mut SymbolicModel,
+) -> Option<bool> {
+    let mut changed = false;
+    for constraint in constraints {
+        match constraint.eval_model_if_complete(model) {
+            Ok(Some(true)) => {}
+            Ok(Some(false)) | Err(_) => return None,
+            Ok(None) => changed |= complete_support_constraint(constraint, model),
+        }
+    }
+    Some(changed)
 }
 
 fn complete_support_constraint(constraint: &SymBoolExpr, model: &mut SymbolicModel) -> bool {
@@ -918,6 +946,35 @@ mod tests {
             checked_mul_guard_branch_model(&false_constraints).expect("false guard branch model");
         assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
         assert_eq!(y.eval_model(&false_model).unwrap(), U256::from(3));
+        assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
+    }
+
+    #[test]
+    fn checked_mul_guard_branch_model_propagates_relational_operand_constraints() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let guard = checked_mul_guard_word(&mut cx, &x, &y);
+        let zero = SymExpr::zero(&mut cx);
+        let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
+        let guard_is_true = guard_is_false.clone().not(&mut cx);
+
+        let seven = SymExpr::constant(&mut cx, U256::from(7));
+        let x_plus_seven = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), seven);
+        let y_is_x_plus_seven = SymBoolExpr::eq(&mut cx, y.clone(), x_plus_seven);
+        let true_constraints = [guard_is_true, y_is_x_plus_seven];
+        let true_model =
+            checked_mul_guard_branch_model(&true_constraints).expect("true relational model");
+        assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
+        assert_eq!(y.eval_model(&true_model).unwrap(), U256::from(7));
+        assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
+
+        let operands_are_equal = SymBoolExpr::eq(&mut cx, x.clone(), y.clone());
+        let false_constraints = [guard_is_false, operands_are_equal];
+        let false_model =
+            checked_mul_guard_branch_model(&false_constraints).expect("false relational model");
+        assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
+        assert_eq!(y.eval_model(&false_model).unwrap(), U256::MAX);
         assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
     }
 
