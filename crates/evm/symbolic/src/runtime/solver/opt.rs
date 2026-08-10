@@ -1275,7 +1275,7 @@ impl Polynomial {
                 let mut monomial = Vec::with_capacity(factor_count);
                 monomial.extend(left_monomial.iter().cloned());
                 monomial.extend(right_monomial.iter().cloned());
-                monomial.sort_by_cached_key(expr_structural_key);
+                SymExpr::sort_interned_factors(&mut monomial);
                 out.add_term(monomial, left_coefficient.wrapping_mul(*right_coefficient));
                 if out.terms.len() > MAX_POLYNOMIAL_TERMS {
                     return None;
@@ -1297,12 +1297,6 @@ impl Polynomial {
             self.terms.insert(monomial, coefficient);
         }
     }
-}
-
-fn expr_structural_key(expr: &SymExpr) -> String {
-    let mut key = String::new();
-    write_expr_structural_key(&mut key, expr);
-    key
 }
 
 fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
@@ -1764,6 +1758,21 @@ mod tests {
         let expected = SymExpr::binop(&mut cx, SymBinOp::Shl, product, shift);
 
         assert!(polynomial_identity(&expression, &expected));
+    }
+
+    #[test]
+    fn polynomial_factors_use_interned_identity_order() {
+        let mut cx = SymCx::new();
+        let left = SymExpr::var(&mut cx, "left");
+        let right = SymExpr::var(&mut cx, "right");
+        let left_right = SymExpr::from_kind(
+            &mut cx,
+            SymExprKind::BinOp(SymBinOp::Mul, left.clone(), right.clone()),
+        );
+        let right_left =
+            SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Mul, right, left));
+
+        assert!(Polynomial::from_expr(&left_right) == Polynomial::from_expr(&right_left));
     }
 
     #[test]

@@ -1047,6 +1047,14 @@ impl SymExpr {
         }
     }
 
+    /// Canonically orders factors that belong to the same symbolic context.
+    ///
+    /// Polynomial normalization only needs a stable order within one context, where hash-consed
+    /// identity is both total and substantially cheaper than rendering structural string keys.
+    pub(in crate::runtime) fn sort_interned_factors(factors: &mut [Self]) {
+        factors.sort_unstable_by(|left, right| left.kind.identity_cmp(&right.kind));
+    }
+
     fn complexity(&self) -> usize {
         match self.kind() {
             SymExprKind::Const(_) => 0,
