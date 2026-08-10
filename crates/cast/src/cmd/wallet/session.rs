@@ -64,6 +64,10 @@ pub struct SessionArgs {
     #[command(subcommand)]
     pub command: Option<SessionSubcommands>,
 
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long, global = true)]
+    pub force: bool,
+
     /// Root account that will authorize the temporary session.
     #[arg(long = "root", value_name = "ADDRESS")]
     pub root_account: Option<Address>,
@@ -103,6 +107,7 @@ impl SessionArgs {
     pub async fn run(self) -> Result<()> {
         let Self {
             command,
+            force,
             root_account,
             expires,
             scope,
@@ -115,7 +120,7 @@ impl SessionArgs {
         } = self;
 
         if let Some(command) = command {
-            return command.run().await;
+            return command.run(force).await;
         }
 
         let root_account =
@@ -144,7 +149,7 @@ impl SessionArgs {
         )
         .await?;
 
-        run_for_command(entry, command, tx, send_tx).await
+        run_for_command(entry, command, tx, send_tx, force).await
     }
 }
 
@@ -196,13 +201,13 @@ pub enum SessionSubcommands {
 }
 
 impl SessionSubcommands {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, force: bool) -> Result<()> {
         match self {
             Self::Create { root_account, chain_id, expires, scope, spend_limits, wallet } => {
                 run_create(root_account, chain_id, expires, scope, spend_limits, *wallet).await
             }
             Self::Revoke { session_id, local, tx, send_tx } => {
-                run_revoke(session_id, local, *tx, *send_tx).await
+                run_revoke(session_id, local, *tx, *send_tx, force).await
             }
         }
     }
@@ -213,12 +218,13 @@ async fn run_for_command(
     command: InnerCommand,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let session_id = entry.session_id;
     upsert_session_entry(entry)?;
 
     let child_result = command.run(session_id).await;
-    let cleanup_result = cleanup_session_run(session_id, tx, send_tx).await;
+    let cleanup_result = cleanup_session_run(session_id, tx, send_tx, force).await;
 
     finish_session_run(session_id, child_result, cleanup_result)
 }
@@ -227,10 +233,12 @@ async fn cleanup_session_run(
     session_id: B256,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let retire_result = retire_session_run_locally(session_id);
     let revoke_result =
-        run_revoke_with_policy(session_id, false, tx, send_tx, UnprovisionedKeyPolicy::Fail).await;
+        run_revoke_with_policy(session_id, false, tx, send_tx, UnprovisionedKeyPolicy::Fail, force)
+            .await;
 
     match (retire_result, revoke_result) {
         (Ok(()), Ok(())) => Ok(()),
@@ -536,9 +544,17 @@ async fn run_revoke(
     local: bool,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
-    run_revoke_with_policy(session_id, local, tx, send_tx, UnprovisionedKeyPolicy::RevokeLocally)
-        .await
+    run_revoke_with_policy(
+        session_id,
+        local,
+        tx,
+        send_tx,
+        UnprovisionedKeyPolicy::RevokeLocally,
+        force,
+    )
+    .await
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -553,6 +569,7 @@ async fn run_revoke_with_policy(
     tx: TransactionOpts,
     send_tx: SendTxOpts,
     unprovisioned_policy: UnprovisionedKeyPolicy,
+    force: bool,
 ) -> Result<()> {
     let Some(entry) = read_session_entry(session_id)? else {
         print_revoke_status(session_id, None, SessionRevokeStatus::NotFound)?;
@@ -599,20 +616,35 @@ async fn run_revoke_with_policy(
             retire_session_entry(session_id)?;
             Ok(())
         };
-        match send_keychain_tx_with_root_signer(calldata, tx, &send_tx, root_signer, before_submit)
-            .await?
-        {
-            KeychainTxOutcome::Submitted => {}
-            KeychainTxOutcome::PrintedSponsorHash => {
-                eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
-            }
+        let outcome = send_keychain_tx_with_root_signer(
+            calldata,
+            tx,
+            &send_tx,
+            root_signer,
+            force,
+            before_submit,
+        )
+        .await?;
+        if outcome == KeychainTxOutcome::PrintedSponsorHash {
+            eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
         }
-        Ok(())
+        Ok(outcome)
     }
     .await;
-    if let Err(err) = revoke_result {
-        handle_revoke_error(&provider, session_id, &entry).await;
-        return Err(err.wrap_err("failed to revoke Tempo session key on-chain"));
+    let revoke_outcome = match revoke_result {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            handle_revoke_error(&provider, session_id, &entry).await;
+            return Err(err.wrap_err("failed to revoke Tempo session key on-chain"));
+        }
+    };
+
+    if revoke_outcome == KeychainTxOutcome::Aborted {
+        // Automatic cleanup uses `Fail` and must report an aborted on-chain revoke.
+        if unprovisioned_policy == UnprovisionedKeyPolicy::Fail {
+            eyre::bail!("EIP-7702 authorization disclosure was declined");
+        }
+        return Ok(());
     }
 
     retire_session_entry(session_id)?;

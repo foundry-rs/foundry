@@ -56,7 +56,7 @@ use crate::cmd::tempo_policy_args::{
 };
 
 use crate::{
-    cmd::send::cast_send,
+    cmd::{auth::confirm_auth_rpc_disclosure_during_build, send::cast_send},
     tx::{CastTxBuilder, CastTxSender, SendTxOpts},
 };
 
@@ -725,7 +725,7 @@ fn parse_auth_scopes_json_wrapped(s: &str) -> Result<AuthScopesJson, String> {
 
 impl KeychainSubcommand {
     #[allow(clippy::large_stack_frames)]
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, force: bool) -> Result<()> {
         match self {
             Self::List => run_list(),
             Self::Show { wallet_address } => run_show(wallet_address),
@@ -788,12 +788,15 @@ impl KeychainSubcommand {
                     admin,
                     tx,
                     send_tx,
+                    force,
                 )
                 .await
             }
-            Self::Revoke { key_address, tx, send_tx } => run_revoke(key_address, tx, send_tx).await,
+            Self::Revoke { key_address, tx, send_tx } => {
+                run_revoke(key_address, tx, send_tx, force).await
+            }
             Self::BurnWitness { witness, tx, send_tx } => {
-                run_burn_witness(witness, tx, send_tx).await
+                run_burn_witness(witness, tx, send_tx, force).await
             }
             Self::IsWitnessBurned { account, witness, rpc } => {
                 run_is_witness_burned(account, witness, rpc).await
@@ -811,15 +814,15 @@ impl KeychainSubcommand {
                 run_remaining_limit(wallet_address, key_address, token, rpc).await
             }
             Self::UpdateLimit { key_address, token, new_limit, tx, send_tx } => {
-                run_update_limit(key_address, token, new_limit, tx, send_tx).await
+                run_update_limit(key_address, token, new_limit, tx, send_tx, force).await
             }
             Self::SetScope { key_address, scope, tx, send_tx } => {
-                run_set_scope(key_address, scope, tx, send_tx).await
+                run_set_scope(key_address, scope, tx, send_tx, force).await
             }
             Self::RemoveScope { key_address, target, tx, send_tx } => {
-                run_remove_scope(key_address, target, tx, send_tx).await
+                run_remove_scope(key_address, target, tx, send_tx, force).await
             }
-            Self::Policy { command } => command.run().await,
+            Self::Policy { command } => command.run(force).await,
         }
     }
 }
@@ -839,7 +842,7 @@ impl KeyAuthorizationSubcommand {
 }
 
 impl KeychainPolicySubcommand {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, force: bool) -> Result<()> {
         match self {
             Self::AddCall {
                 key_address,
@@ -858,14 +861,15 @@ impl KeychainPolicySubcommand {
                     recipients,
                     tx,
                     send_tx,
+                    force,
                 )
                 .await
             }
             Self::SetLimit { key_address, token, amount, period, tx, send_tx } => {
-                run_policy_set_limit(key_address, token, amount, period, tx, send_tx).await
+                run_policy_set_limit(key_address, token, amount, period, tx, send_tx, force).await
             }
             Self::RemoveTarget { key_address, target, tx, send_tx } => {
-                run_remove_scope(key_address, target, tx, send_tx).await
+                run_remove_scope(key_address, target, tx, send_tx, force).await
             }
         }
     }
@@ -2766,6 +2770,7 @@ async fn run_authorize(
     admin: bool,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
@@ -2795,7 +2800,7 @@ async fn run_authorize(
             witness: witness.unwrap_or(B256::ZERO),
         }
         .abi_encode();
-        send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+        send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
         return Ok(());
     }
 
@@ -2851,7 +2856,7 @@ async fn run_authorize(
         .abi_encode()
     };
 
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3204,9 +3209,10 @@ async fn run_revoke(
     key_address: Address,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3215,6 +3221,7 @@ async fn run_burn_witness(
     witness: B256,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
@@ -3223,7 +3230,7 @@ async fn run_burn_witness(
     }
 
     let calldata = IAccountKeychain::burnKeyAuthorizationWitnessCall { witness }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3354,6 +3361,7 @@ async fn run_update_limit(
     new_limit: U256,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata = IAccountKeychain::updateSpendingLimitCall {
         keyId: key_address,
@@ -3361,7 +3369,7 @@ async fn run_update_limit(
         newLimit: new_limit,
     }
     .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3371,10 +3379,11 @@ async fn run_set_scope(
     scopes: Vec<CallScope>,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3384,14 +3393,16 @@ async fn run_remove_scope(
     target: Address,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
+#[allow(clippy::too_many_arguments)]
 async fn run_policy_add_call(
     key_address: Address,
     root_account: Option<Address>,
@@ -3400,6 +3411,7 @@ async fn run_policy_add_call(
     recipients: Vec<Address>,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let metadata = resolve_key_metadata(key_address, root_account)?;
     let config = send_tx.eth.load_config()?;
@@ -3450,7 +3462,7 @@ async fn run_policy_add_call(
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
             .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3462,6 +3474,7 @@ async fn run_policy_set_limit(
     period: Option<u64>,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     if period.is_some_and(|period| period != 0) {
         eyre::bail!(
@@ -3471,11 +3484,12 @@ async fn run_policy_set_limit(
     }
 
     // updateSpendingLimit authorizes against msg.sender; the root account is not part of calldata.
-    run_update_limit(key_address, token, amount, tx_opts, send_tx).await
+    run_update_limit(key_address, token, amount, tx_opts, send_tx, force).await
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KeychainTxOutcome {
+    Aborted,
     Submitted,
     PrintedSponsorHash,
 }
@@ -3541,11 +3555,13 @@ pub(crate) async fn send_keychain_tx(
     tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
     expected_from: Option<Address>,
+    force: bool,
 ) -> Result<KeychainTxOutcome> {
     let root_signer =
         resolve_keychain_root_signer(send_tx, expected_from, tx_opts.tempo.print_sponsor_hash)
             .await?;
-    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, || Ok(())).await
+    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, force, || Ok(()))
+        .await
 }
 
 /// Send AccountKeychain calldata with an already-resolved root signer.
@@ -3554,6 +3570,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
     root_signer: KeychainRootSigner,
+    force: bool,
     before_submit: impl FnOnce() -> Result<()>,
 ) -> Result<KeychainTxOutcome> {
     if tx_opts.tempo.sponsor_url.is_some() {
@@ -3587,6 +3604,10 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
+
+    if !confirm_auth_rpc_disclosure_during_build(&builder, root_signer.address(), force)? {
+        return Ok(KeychainTxOutcome::Aborted);
+    }
 
     if print_sponsor_hash {
         let from = root_signer.address();

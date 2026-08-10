@@ -2,13 +2,14 @@
 
 use alloy_consensus::{TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, U256, hex};
 use alloy_rlp::{Header, PayloadView};
+use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
-use foundry_test_utils::{TestCommand, util::OutputExt};
+use foundry_test_utils::{TestCommand, str, util::OutputExt};
 use path_slash::PathExt;
 use std::{
     fs,
@@ -34,6 +35,17 @@ mod accounts {
 
 fn path_usd() -> String {
     PATH_USD_ADDRESS.to_string()
+}
+
+fn signed_eip7702_authorization() -> String {
+    let signer: PrivateKeySigner = accounts::PK2.parse().unwrap();
+    let authorization = Authorization {
+        chain_id: U256::from(31337),
+        address: accounts::ADDR3.parse().unwrap(),
+        nonce: 0,
+    };
+    let signature = signer.sign_hash_sync(&authorization.signature_hash()).unwrap();
+    hex::encode_prefixed(alloy_rlp::encode(authorization.into_signed(signature)))
 }
 
 fn write_accounts_store(tempo_home: &Path, chain_id: u64) {
@@ -1184,6 +1196,39 @@ casttest!(keychain_show_json_no_match_returns_empty_array, |prj, cmd| {
     );
 });
 
+casttest!(keychain_eip7702_auth_disclosure, |_prj, cmd| {
+    let authorization = signed_eip7702_authorization();
+    let args = [
+        "keychain",
+        "revoke",
+        accounts::ADDR2,
+        "--auth",
+        &authorization,
+        "--private-key",
+        accounts::PK1,
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ];
+
+    cmd.args(args)
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let stderr =
+        cmd.cast_fuse().args(args).arg("--force").assert_failure().get_output().stderr_lossy();
+    assert!(!stderr.contains("Continue anyway?"), "unexpected stderr:\n{stderr}");
+    assert!(stderr.contains("error sending request"), "unexpected stderr:\n{stderr}");
+});
+
 casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
@@ -1201,6 +1246,32 @@ casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, c
             &rpc,
         ])
         .assert_success();
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let authorization = signed_eip7702_authorization();
+    cmd.args([
+        "wallet",
+        "session",
+        "revoke",
+        &session_id,
+        "--auth",
+        &authorization,
+        "--private-key",
+        accounts::PK1,
+        "--rpc-url",
+        &rpc,
+    ])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+    assert_accounts_store_key_signable(tempo_home.path(), "aborted revoke");
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
