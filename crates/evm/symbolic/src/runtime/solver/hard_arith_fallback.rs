@@ -112,25 +112,41 @@ pub(crate) fn hard_arith_fallback_model(
 
 /// Constructs and validates a concrete model for a checked-multiply guard branch.
 ///
-/// Solidity's guard is `x == 0 || (x * y) / x == y`. The three assignments below
-/// represent its semantic cases directly: the zero disjunct, a nonzero exact product, and a
-/// wrapping product. This does not perform the generic bounded candidate search, and a model is
-/// returned only when it satisfies every original constraint.
+/// Solidity's guard is `x == 0 || (x * y) / x == y`. The assignments below represent its
+/// semantic cases directly: the zero disjunct, a nonzero exact product, and wrapping products in
+/// either operand order. Simple support constraints are completed first so an exact operand value
+/// from the path is preserved instead of being overwritten by the semantic default. This does not
+/// perform the generic bounded candidate search, and a model is returned only when it satisfies
+/// every original constraint.
 pub(crate) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
     for constraint in constraints {
         let Some((zero_operand, expected, guard_is_true)) = checked_mul_guard_branch(constraint)
         else {
             continue;
         };
-        let assignments = [
-            Some(if guard_is_true { (U256::ZERO, U256::ZERO) } else { (U256::MAX, U256::from(2)) }),
-            guard_is_true.then_some((U256::ONE, U256::ONE)),
-        ];
-        for (zero_value, expected_value) in assignments.into_iter().flatten() {
+        let assignments = if guard_is_true {
+            [(U256::ZERO, U256::ZERO), (U256::ONE, U256::ONE)]
+        } else {
+            [(U256::MAX, U256::from(2)), (U256::from(2), U256::MAX)]
+        };
+        for (zero_default, expected_default) in assignments {
             let mut model = SymbolicModel::default();
-            if zero_operand.assign_model_value(&mut model, zero_value)
-                && expected.assign_model_value(&mut model, expected_value)
-                && fallback_model_satisfies_all_constraints(constraints, &model)
+            for support in constraints {
+                complete_support_constraint(support, &mut model);
+            }
+            let zero_assigned = match zero_operand.eval_model_if_complete(&model) {
+                Ok(Some(_)) => true,
+                Ok(None) => zero_operand.assign_model_value(&mut model, zero_default),
+                Err(_) => false,
+            };
+            let expected_assigned = match expected.eval_model_if_complete(&model) {
+                Ok(Some(_)) => true,
+                Ok(None) => expected.assign_model_value(&mut model, expected_default),
+                Err(_) => false,
+            };
+            if zero_assigned
+                && expected_assigned
+                && complete_fallback_support_model(constraints, &mut model)
             {
                 return Some(model);
             }
@@ -859,6 +875,51 @@ fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn checked_mul_guard_word(
+        cx: &mut SymCx,
+        zero_operand: &SymExpr,
+        expected: &SymExpr,
+    ) -> SymExpr {
+        let zero = SymExpr::zero(cx);
+        let operand_is_zero = SymBoolExpr::eq(cx, zero_operand.clone(), zero.clone());
+        let product = SymExpr::binop(cx, SymBinOp::Mul, zero_operand.clone(), expected.clone());
+        let quotient = SymExpr::binop(cx, SymBinOp::UDiv, product, zero_operand.clone());
+        let checked_product = SymExpr::ite(cx, operand_is_zero.clone(), zero, quotient);
+        let operand_is_zero_word = SymExpr::bool_word(cx, operand_is_zero);
+        let product_matches_expected = SymBoolExpr::eq(cx, checked_product, expected.clone());
+        let product_matches_expected_word = SymExpr::bool_word(cx, product_matches_expected);
+        SymExpr::binop(cx, SymBinOp::Or, operand_is_zero_word, product_matches_expected_word)
+    }
+
+    #[test]
+    fn checked_mul_guard_branch_model_preserves_exact_operand_constraints() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let guard = checked_mul_guard_word(&mut cx, &x, &y);
+        let zero = SymExpr::zero(&mut cx);
+        let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
+        let guard_is_true = guard_is_false.clone().not(&mut cx);
+
+        let seven = SymExpr::constant(&mut cx, U256::from(7));
+        let y_is_seven = SymBoolExpr::eq(&mut cx, y.clone(), seven);
+        let true_constraints = [guard_is_true, y_is_seven];
+        let true_model =
+            checked_mul_guard_branch_model(&true_constraints).expect("true guard branch model");
+        assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
+        assert_eq!(y.eval_model(&true_model).unwrap(), U256::from(7));
+        assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
+
+        let three = SymExpr::constant(&mut cx, U256::from(3));
+        let y_is_three = SymBoolExpr::eq(&mut cx, y.clone(), three);
+        let false_constraints = [guard_is_false, y_is_three];
+        let false_model =
+            checked_mul_guard_branch_model(&false_constraints).expect("false guard branch model");
+        assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
+        assert_eq!(y.eval_model(&false_model).unwrap(), U256::from(3));
+        assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
+    }
 
     #[test]
     fn hard_arith_fallback_ignores_unrelated_abi_vars() {
