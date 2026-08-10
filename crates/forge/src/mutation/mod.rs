@@ -430,7 +430,7 @@ impl MutationHandler {
         let mut mutant_cfg_hasher = DefaultHasher::new();
         // Version salt for this mutant-set cache schema. Bump this if the
         // inputs that define generated mutants change.
-        "mutant-set-v5".hash(&mut mutant_cfg_hasher);
+        "mutant-set-v7".hash(&mut mutant_cfg_hasher);
         for op in self.config.mutation.enabled_operators() {
             op.to_string().hash(&mut mutant_cfg_hasher);
         }
@@ -440,6 +440,21 @@ impl MutationHandler {
                 re.as_str().hash(&mut mutant_cfg_hasher);
             }
             None => "nofilter".hash(&mut mutant_cfg_hasher),
+        }
+        let mut exclusion_hashes = self
+            .mutation_exclusions
+            .iter()
+            .map(|exclusion| {
+                let mut hasher = DefaultHasher::new();
+                exclusion.hash(&mut hasher);
+                hasher.finish()
+            })
+            .collect::<Vec<_>>();
+        exclusion_hashes.sort_unstable();
+        "exclusions:".hash(&mut mutant_cfg_hasher);
+        exclusion_hashes.len().hash(&mut mutant_cfg_hasher);
+        for exclusion_hash in exclusion_hashes {
+            exclusion_hash.hash(&mut mutant_cfg_hasher);
         }
         let mutant_cfg_hash = mutant_cfg_hasher.finish();
 
@@ -597,6 +612,7 @@ impl MutationHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mutation::type_analysis::{AssignmentReplacement, MutationExclusion};
     use foundry_config::Config;
     use solar::ast::interface::BytePos;
     use tempfile::TempDir;
@@ -669,6 +685,31 @@ mod tests {
         let second = test_handler(second_config).cache_file_path("build", CacheKind::Mutants);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn mutation_cache_paths_include_type_analysis_exclusions() {
+        let (_temp, config) = test_config();
+        let without_exclusions = test_handler(config.clone());
+        let exclusion = MutationExclusion::assignment(
+            Span::new(BytePos(10), BytePos(20)),
+            AssignmentReplacement::Zero,
+        );
+        let with_exclusions = test_handler(config).with_mutation_exclusions([exclusion].into());
+        without_exclusions.persist_cached_mutants("build", &[mutant(10, 20, "account")]).unwrap();
+
+        assert!(with_exclusions.retrieve_cached_mutants("build").is_none());
+
+        for kind in [
+            CacheKind::Mutants,
+            CacheKind::Results { execution_key: "exec" },
+            CacheKind::Survived { execution_key: "exec" },
+        ] {
+            assert_ne!(
+                without_exclusions.cache_file_path("build", kind),
+                with_exclusions.cache_file_path("build", kind),
+            );
+        }
     }
 
     #[test]

@@ -1585,6 +1585,7 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    use foundry_evm_traces::InternalTraceMode;
     use revm::context::{Cfg, TxEnv};
     use std::{sync::mpsc, thread};
 
@@ -1701,6 +1702,48 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn set_trace_requirements_replaces_trace_mode_between_transactions() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        executor.evm_env_mut().cfg_env.disable_nonce_check = true;
+        let target = Address::repeat_byte(0x11);
+        // PUSH1 4; JUMP; STOP; JUMPDEST; PUSH1 1; PUSH1 0; SSTORE; STOP.
+        executor
+            .set_code(
+                target,
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x60, 0x04, 0x56, 0x00, 0x5b, 0x60, 0x01, 0x60, 0x00, 0x55, 0x00,
+                ])),
+            )
+            .unwrap();
+
+        let untraced = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(untraced.traces.is_none());
+
+        executor.set_trace_requirements(TraceRequirements::none().with_debug(true));
+        let debug = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        let debug_steps = &debug.traces.as_ref().unwrap().nodes()[0].trace.steps;
+        assert_eq!(debug_steps.len(), 7);
+        assert!(debug_steps.iter().all(|step| step.stack.is_some() && step.memory.is_some()));
+
+        executor.set_trace_requirements(
+            TraceRequirements::none().with_decode_internal(InternalTraceMode::Full),
+        );
+        let internal = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        let internal_steps = &internal.traces.as_ref().unwrap().nodes()[0].trace.steps;
+        assert_eq!(internal_steps.len(), 2);
+        assert!(internal_steps.iter().all(|step| step.stack.is_some() && step.memory.is_some()));
+
+        executor.set_trace_requirements(TraceRequirements::none());
+        let untraced = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(untraced.traces.is_none());
     }
 
     #[test]

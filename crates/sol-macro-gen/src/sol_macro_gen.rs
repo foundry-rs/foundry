@@ -14,10 +14,10 @@ use alloy_sol_macro_input::{SolInput, SolInputKind};
 use eyre::{Context, OptionExt, Result};
 use foundry_common::fs;
 use proc_macro2::{Span, TokenStream};
+use rayon::prelude::*;
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use heck::ToSnakeCase;
@@ -29,7 +29,7 @@ const SERDE_WITH_DEP: &str =
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
-    pub expansion: Option<TokenStream>,
+    pub expansion: Option<String>,
     needs_serde_with: bool,
 }
 
@@ -66,26 +66,24 @@ impl MultiSolMacroGen {
         for instance in &mut self.instances {
             let path = bindings_path.join(format!("{}.rs", instance.name.to_snake_case()));
             let expansion = fs::read_to_string(path).wrap_err("Failed to read file")?;
-
-            let tokens = TokenStream::from_str(&expansion)
+            expansion
+                .parse::<TokenStream>()
                 .map_err(|e| eyre::eyre!("Failed to parse TokenStream: {e}"))?;
-            instance.expansion = Some(tokens);
+            instance.expansion = Some(expansion);
         }
         Ok(())
     }
 
     pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
-        for instance in &mut self.instances {
+        self.instances.par_iter_mut().try_for_each(|instance| {
             Self::generate_binding(instance, all_derives).wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
                     instance.name
                 )
-            })?;
-        }
-
-        Ok(())
+            })
+        })
     }
 
     fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
@@ -113,7 +111,9 @@ impl MultiSolMacroGen {
         let (tokens, needs_serde_with) =
             if all_derives { add_large_array_serde_attrs(tokens)? } else { (tokens, false) };
 
-        instance.expansion = Some(tokens);
+        let file = syn::parse2(tokens).wrap_err("failed to parse generated tokens as an AST")?;
+        instance.expansion =
+            Some(qualify_shadowed_sibling_module_paths(prettyplease::unparse(&file)));
         instance.needs_serde_with = needs_serde_with;
         Ok(())
     }
@@ -184,18 +184,10 @@ edition = "2021"
         "#
         )?;
 
-        // Write src
-        let parse_error = |name: &str| {
-            format!("failed to parse generated tokens as an AST for {name};\nthis is likely a bug")
-        };
         for instance in &self.instances {
             let contents = instance.expansion.as_ref().unwrap();
-
             let name = instance.name.to_snake_case();
             let path = src.join(format!("{name}.rs"));
-            let file = syn::parse2(contents.clone())
-                .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
-            let contents = qualify_shadowed_sibling_module_paths(prettyplease::unparse(&file));
             if single_file {
                 write!(&mut lib_contents, "{contents}")?;
             } else {
@@ -205,7 +197,9 @@ edition = "2021"
         }
 
         let lib_path = src.join("lib.rs");
-        let lib_file = syn::parse_file(&lib_contents).wrap_err_with(|| parse_error("lib.rs"))?;
+        let lib_file = syn::parse_file(&lib_contents).wrap_err(
+            "failed to parse generated tokens as an AST for lib.rs;\nthis is likely a bug",
+        )?;
         let lib_contents = prettyplease::unparse(&lib_file);
         fs::write(lib_path, lib_contents).wrap_err("Failed to write lib.rs")?;
 
@@ -258,14 +252,11 @@ edition = "2021"
             } else {
                 // Module
                 write_mod_name(&mut mod_contents, &name)?;
-                let mut contents = String::new();
-
-                write!(contents, "{}", instance.expansion.as_ref().unwrap())?;
-                let file = syn::parse_file(&contents)?;
-
-                let contents = qualify_shadowed_sibling_module_paths(prettyplease::unparse(&file));
-                fs::write(bindings_path.join(format!("{name}.rs")), contents)
-                    .wrap_err("Failed to write file")?;
+                fs::write(
+                    bindings_path.join(format!("{name}.rs")),
+                    instance.expansion.as_ref().unwrap(),
+                )
+                .wrap_err("Failed to write file")?;
             }
         }
 
@@ -317,13 +308,12 @@ edition = "2021"
                 } else {
                     crate_path.join(format!("src/{name}.rs"))
                 };
-                let tokens = instance
+                let contents = instance
                     .expansion
                     .as_ref()
-                    .ok_or_eyre(format!("TokenStream for {path:?} does not exist"))?
-                    .to_string();
+                    .ok_or_eyre(format!("TokenStream for {path:?} does not exist"))?;
 
-                self.check_file_contents(&path, &tokens)?;
+                self.check_file_contents(&path, contents)?;
                 write_mod_name(&mut super_contents, &name)?;
             }
 
