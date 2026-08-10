@@ -252,11 +252,16 @@ fn compile_local_storage_layout(
         || !project.paths.artifacts.is_dir()
     {
         let output = compile_full_storage_layout(project, json)?;
-        return Ok(find_artifact_by_code(output, address_code).map(|(_, artifact)| artifact));
+        return Ok(output.into_artifacts().find_map(|(_, artifact)| {
+            (artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code))
+                .then_some(artifact)
+        }));
     }
 
     let output = ProjectCompiler::new().quiet(json).compile(project)?;
-    let Some((target, artifact)) = find_artifact_by_code(output, address_code) else {
+    let Some((target, artifact)) = output.into_artifacts().find(|(_, artifact)| {
+        artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code)
+    }) else {
         return Ok(None);
     };
 
@@ -271,14 +276,10 @@ fn compile_local_storage_layout(
     }
 
     let output = compile_full_storage_layout(project, json)?;
-    Ok(find_artifact_by_code(output, address_code).map(|(_, artifact)| artifact))
-}
-
-fn find_artifact_by_code(
-    output: ProjectCompileOutput,
-    address_code: &Bytes,
-) -> Option<(ArtifactId, ConfigurableContractArtifact)> {
-    output.into_artifacts().find(|(_, artifact)| matches_deployed_bytecode(artifact, address_code))
+    Ok(output.into_artifacts().find_map(|(_, artifact)| {
+        (artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code))
+            .then_some(artifact)
+    }))
 }
 
 fn find_target_artifact(
@@ -289,16 +290,9 @@ fn find_target_artifact(
     output.into_artifacts().find_map(|(id, artifact)| {
         (same_artifact(&id, target)
             && artifact.storage_layout.is_some()
-            && matches_deployed_bytecode(&artifact, address_code))
+            && artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code))
         .then_some(artifact)
     })
-}
-
-fn matches_deployed_bytecode(
-    artifact: &ConfigurableContractArtifact,
-    address_code: &Bytes,
-) -> bool {
-    artifact.get_deployed_bytecode_bytes().is_some_and(|bytecode| bytecode.as_ref() == address_code)
 }
 
 fn compile_target_storage_layout(
@@ -622,7 +616,8 @@ contract Target is Base {
         let (compiled, _) = output
             .artifact_ids()
             .find(|(id, artifact)| {
-                same_artifact(id, &target) && matches_deployed_bytecode(artifact, &address_code)
+                same_artifact(id, &target)
+                    && artifact.get_deployed_bytecode_bytes().as_deref() == Some(&address_code)
             })
             .unwrap();
         assert_eq!(compiled.version, target.version);
