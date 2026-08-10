@@ -1753,6 +1753,34 @@ impl SimpleCast {
         Ok(padded.parse::<B256>()?.to_string())
     }
 
+    /// Converts hex data to the word-aligned layout of a Solidity `bytes memory` value.
+    ///
+    /// The output contains a 32-byte big-endian length prefix followed by the data, right-padded
+    /// with zeros to a whole number of 32-byte words.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(
+    ///     Cast::to_bytes_memory("0x1234")?,
+    ///     "0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000"
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn to_bytes_memory(data: &str) -> Result<String> {
+        const WORD: usize = 32;
+
+        let data = hex::decode(data).wrap_err("Could not decode hex")?;
+        let padded_len = data.len().next_multiple_of(WORD);
+        let mut out = Vec::with_capacity(WORD + padded_len);
+        out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<WORD>());
+        out.extend_from_slice(&data);
+        out.resize(WORD + padded_len, 0);
+        Ok(hex::encode_prefixed(out))
+    }
+
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
         let str_bytes: &[u8] = s.as_bytes();
@@ -2677,7 +2705,7 @@ mod logs_bisecting {
 #[cfg(test)]
 mod tests {
     use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
-    use alloy_primitives::hex;
+    use alloy_primitives::{U256, hex};
 
     /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]
     /// implementation, which `sol!`-generated events use to compute indexed topics.
@@ -2922,6 +2950,22 @@ mod tests {
     }
 
     #[test]
+    fn to_bytes_memory() {
+        for len in [0, 31, 32, 33] {
+            let data = vec![0xab; len];
+            let out = Cast::to_bytes_memory(&hex::encode_prefixed(&data)).unwrap();
+            let out = hex::decode(out).unwrap();
+
+            assert_eq!(out.len(), 32 + len.next_multiple_of(32));
+            assert_eq!(U256::from_be_slice(&out[..32]), U256::from(len));
+            assert_eq!(&out[32..32 + len], data);
+            assert!(out[32 + len..].iter().all(|byte| *byte == 0));
+        }
+
+        assert!(Cast::to_bytes_memory("0x1").is_err());
+    }
+
+    #[test]
     fn from_rlp() {
         let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
         let item = Cast::from_rlp(rlp, false).unwrap();
@@ -2929,6 +2973,14 @@ mod tests {
             item,
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
         )
+    }
+
+    #[test]
+    fn to_base_accepts_uppercase_prefixes() {
+        assert_eq!(Cast::to_base("0B10", None, "dec").unwrap(), "2");
+        assert_eq!(Cast::to_base("0O10", None, "dec").unwrap(), "8");
+        assert_eq!(Cast::to_base("0X10", None, "dec").unwrap(), "16");
+        assert_eq!(Cast::to_base("-0X10", None, "dec").unwrap(), "-16");
     }
 
     #[test]

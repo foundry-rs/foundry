@@ -179,6 +179,16 @@ pub enum CastSubcommand {
         bytes: Option<String>,
     },
 
+    /// Convert hex data to the word-aligned layout of a Solidity `bytes memory` value.
+    ///
+    /// The output contains a 32-byte length prefix followed by the data, right-padded with zeros
+    /// to a whole number of 32-byte words.
+    #[command(visible_alias = "tbm")]
+    ToBytesMemory {
+        /// The hex data to convert.
+        data: Option<String>,
+    },
+
     /// Pads hex data to a specified length.
     #[command(visible_aliases = &["pd"])]
     Pad {

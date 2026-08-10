@@ -70,11 +70,11 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 1         ┆ 16.7%      │
+│ Survived ┆ 1         ┆ 20.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 4         ┆ 66.7%      │
+│ Killed   ┆ 4         ┆ 80.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 16.7%      │
+│ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
@@ -101,16 +101,13 @@ Survived mutants
 ────────────────────────────────────────────────────────────
 4 mutants killed
 
-────────────────────────────────────────────────────────────
-1 mutants invalid
-
 ════════════════════════════════════════════════════════════
 
 "#]]);
 
     // Run mutation testing with --json - verify the output contains valid mutation JSON
     cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
-{"summary":{"total":6,"killed":4,"survived":1,"invalid":1,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
 });
@@ -172,6 +169,70 @@ exclude_operators = [
 {"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Boundary.sol":[{"line":7,"column":16,"original":"value == 0","mutant":"value <= 0"}]}}
 
 "#]]);
+});
+
+forgetest_init!(mutation_testing_retains_storage_push_lvalue_mutants, |prj, cmd| {
+    prj.add_source(
+        "StoragePush.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract StoragePush {
+    int256[] private values;
+
+    function mutate() public returns (int256) {
+        return -values.push();
+    }
+
+    function value() public view returns (int256) {
+        return values[0];
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "StoragePush.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/StoragePush.sol";
+
+contract StoragePushTest {
+    function testMutate() public {
+        StoragePush target = new StoragePush();
+        assert(target.mutate() == 0);
+        assert(target.value() == 0);
+    }
+}
+"#,
+    );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[mutation]
+exclude_operators = [
+    "assembly",
+    "assignment",
+    "binary-op",
+    "delete-expression",
+    "elim-delegate",
+    "require",
+]
+"#,
+    )
+    .unwrap();
+
+    let output = cmd
+        .args(["test", "--mutate", "src/StoragePush.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success();
+    let summary = mutation_summary(&output.get_output().stdout_lossy());
+
+    assert_eq!(summary["total"], 5);
+    assert_eq!(summary["killed"], 5);
+    assert_eq!(summary["invalid"], 0);
+    assert_eq!(summary["skipped"], 0);
 });
 
 forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
