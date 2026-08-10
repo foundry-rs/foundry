@@ -3112,7 +3112,7 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
 }
 
 #[test]
-fn checked_mul_guard_witnesses_are_exact_sat_results() {
+fn checked_mul_guard_branches_use_constructive_models() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");

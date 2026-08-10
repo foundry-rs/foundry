@@ -678,11 +678,35 @@ contract SymbolicSaturatingMul {
         uint256 expected = success ? x * y : type(uint256).max;
         assert(SaturatingMath.saturatingMul(x, y) == expected);
     }
+
+    function checkSaturatingMulBoundaries(uint256 x, uint256 y) public view {
+        bool boundary =
+            (x == 0 && y == type(uint256).max) ||
+            (x == type(uint256).max && y == 0) ||
+            (x == type(uint256).max && y == 1) ||
+            (x == 1 && y == type(uint256).max) ||
+            (x == type(uint256).max && y == 2) ||
+            (x == 2 && y == type(uint256).max) ||
+            (x == 2 ** 255 && y == 2) ||
+            (x == 2 && y == 2 ** 255);
+        if (boundary) {
+            (bool success,) = address(this).staticcall(abi.encodeCall(this.mul, (x, y)));
+            uint256 expected = success ? x * y : type(uint256).max;
+            assert(SaturatingMath.saturatingMul(x, y) == expected);
+        }
+    }
+
+    function checkWrongOverflowResult(uint256 x, uint256 y) public pure {
+        if (x == type(uint256).max && y == 2) {
+            assert(SaturatingMath.saturatingMul(x, y) == 0);
+        }
+    }
 }
 "#,
     );
 
     let output = cmd
+        .forge_fuse()
         .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkSaturatingMul"])
         .assert_success()
         .get_output()
@@ -693,6 +717,41 @@ contract SymbolicSaturatingMul {
     assert_eq!(result["symbolic"]["status"], "pass");
     assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
     assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkSaturatingMulBoundaries",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSaturatingMulBoundaries(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkWrongOverflowResult",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
 forgetest_init!(symbolic_json_schema_reports_pass, |prj, cmd| {

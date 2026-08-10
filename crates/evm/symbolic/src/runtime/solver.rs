@@ -6,7 +6,9 @@ mod hard_arith_fallback;
 mod monotonic_product;
 mod opt;
 
-use hard_arith_fallback::{checked_mul_guard_model, constraints_prefer_hard_arith_fallback_first};
+use hard_arith_fallback::{
+    checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first,
+};
 pub(crate) use hard_arith_fallback::{
     fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
 };
@@ -398,10 +400,10 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if let Some(model) = checked_mul_guard_model(cx, &smt_constraints)
+        if let Some(model) = checked_mul_guard_branch_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
-            trace!("model: validated checked-multiply guard witness");
+            trace!("model: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
@@ -535,10 +537,10 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(true);
         }
-        if let Some(model) = checked_mul_guard_model(cx, &smt_constraints)
+        if let Some(model) = checked_mul_guard_branch_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
-            trace!("is_sat: validated checked-multiply guard witness");
+            trace!("is_sat: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key, true);
             return Ok(true);
         }

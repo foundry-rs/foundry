@@ -110,75 +110,108 @@ pub(crate) fn hard_arith_fallback_model(
     search.model(0, &mut model, &mut assignments)
 }
 
-/// Returns a concrete SAT witness for constraints containing Solidity's checked-multiply guard.
+/// Constructs and validates a concrete model for a checked-multiply guard branch.
 ///
-/// Unlike the generic hard-arithmetic fallback, this is limited to an exact expression shape.
-/// A returned assignment is still validated by the caller against the original constraints.
-pub(crate) fn checked_mul_guard_model(
-    cx: &SymCx,
-    constraints: &[SymBoolExpr],
-) -> Option<SymbolicModel> {
-    if !constraints.iter().any(bool_contains_checked_mul_guard) {
-        return None;
-    }
-    hard_arith_fallback_model(cx, constraints)
-}
-
-fn bool_contains_checked_mul_guard(expr: &SymBoolExpr) -> bool {
-    match expr.kind() {
-        SymBoolExprKind::Const(_) => false,
-        SymBoolExprKind::Not(expr) => bool_contains_checked_mul_guard(expr),
-        SymBoolExprKind::And(exprs) => exprs.iter().any(bool_contains_checked_mul_guard),
-        SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
-            is_checked_mul_guard_side(left, right)
-                || is_checked_mul_guard_side(right, left)
-                || expr_contains_checked_mul_guard(left)
-                || expr_contains_checked_mul_guard(right)
-        }
-        SymBoolExprKind::Cmp(_, left, right) => {
-            expr_contains_checked_mul_guard(left) || expr_contains_checked_mul_guard(right)
+/// Solidity's guard is `x == 0 || (x * y) / x == y`. The three assignments below
+/// represent its semantic cases directly: the zero disjunct, a nonzero exact product, and a
+/// wrapping product. This does not perform the generic bounded candidate search, and a model is
+/// returned only when it satisfies every original constraint.
+pub(crate) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+    for constraint in constraints {
+        let Some((zero_operand, expected, guard_is_true)) = checked_mul_guard_branch(constraint)
+        else {
+            continue;
+        };
+        let assignments = [
+            Some(if guard_is_true { (U256::ZERO, U256::ZERO) } else { (U256::MAX, U256::from(2)) }),
+            guard_is_true.then_some((U256::ONE, U256::ONE)),
+        ];
+        for (zero_value, expected_value) in assignments.into_iter().flatten() {
+            let mut model = SymbolicModel::default();
+            if zero_operand.assign_model_value(&mut model, zero_value)
+                && expected.assign_model_value(&mut model, expected_value)
+                && fallback_model_satisfies_all_constraints(constraints, &model)
+            {
+                return Some(model);
+            }
         }
     }
+    None
 }
 
-fn expr_contains_checked_mul_guard(expr: &SymExpr) -> bool {
-    match expr.kind() {
-        SymExprKind::Const(_)
-        | SymExprKind::Var(_)
-        | SymExprKind::GasLeft(_)
-        | SymExprKind::Keccak { .. }
-        | SymExprKind::Hash { .. } => false,
-        SymExprKind::Not(value) => expr_contains_checked_mul_guard(value),
-        SymExprKind::BinOp(_, left, right) => {
-            expr_contains_checked_mul_guard(left) || expr_contains_checked_mul_guard(right)
+fn checked_mul_guard_branch(constraint: &SymBoolExpr) -> Option<(SymExpr, SymExpr, bool)> {
+    let (comparison, guard_is_true) = match constraint.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => ((left, right), false),
+        SymBoolExprKind::Not(inner) => {
+            let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = inner.kind() else {
+                return None;
+            };
+            ((left, right), true)
         }
-        SymExprKind::TernOp(_, left, right, modulus) => {
-            expr_contains_checked_mul_guard(left)
-                || expr_contains_checked_mul_guard(right)
-                || expr_contains_checked_mul_guard(modulus)
-        }
-        SymExprKind::Ite(condition, left, right) => {
-            bool_contains_checked_mul_guard(condition)
-                || expr_contains_checked_mul_guard(left)
-                || expr_contains_checked_mul_guard(right)
-        }
-    }
-}
-
-fn is_checked_mul_guard_side(guarded_quotient: &SymExpr, expected: &SymExpr) -> bool {
-    let SymExprKind::Ite(zero_condition, zero, quotient) = guarded_quotient.kind() else {
-        return false;
+        _ => return None,
     };
-    if !zero.as_const().is_some_and(|value| value.is_zero()) {
-        return false;
+    let (left, right) = comparison;
+    let guard_word = if right.as_const().is_some_and(|value| value.is_zero()) {
+        left
+    } else if left.as_const().is_some_and(|value| value.is_zero()) {
+        right
+    } else {
+        return None;
+    };
+    let SymExprKind::BinOp(SymBinOp::Or, left, right) = guard_word.kind() else {
+        return None;
+    };
+
+    for (quotient_word, zero_word) in [(left, right), (right, left)] {
+        let Some(quotient_matches) = quotient_word.bool_word_condition() else {
+            continue;
+        };
+        let Some(zero_condition) = zero_word.bool_word_condition() else {
+            continue;
+        };
+        let Some((zero_operand, expected, quotient_zero_condition)) =
+            checked_mul_guard_operands(&quotient_matches)
+        else {
+            continue;
+        };
+        if zero_condition == quotient_zero_condition {
+            return Some((zero_operand, expected, guard_is_true));
+        }
     }
-    let Some(zero_operand) = zero_condition.zero_check_operand() else { return false };
-    let Some((numerator, denominator)) = quotient.udiv_operands() else { return false };
-    if denominator != zero_operand {
-        return false;
+    None
+}
+
+fn checked_mul_guard_operands(condition: &SymBoolExpr) -> Option<(SymExpr, SymExpr, SymBoolExpr)> {
+    let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = condition.kind() else {
+        return None;
+    };
+    for (guarded_quotient, expected) in [(left, right), (right, left)] {
+        let SymExprKind::Ite(zero_condition, zero, quotient) = guarded_quotient.kind() else {
+            continue;
+        };
+        if !zero.as_const().is_some_and(|value| value.is_zero()) {
+            continue;
+        }
+        let Some(zero_operand) = zero_condition.zero_check_operand() else {
+            continue;
+        };
+        let Some((numerator, denominator)) = quotient.udiv_operands() else {
+            continue;
+        };
+        if denominator != zero_operand {
+            continue;
+        }
+        let SymExprKind::BinOp(SymBinOp::Mul, product_left, product_right) = numerator.kind()
+        else {
+            continue;
+        };
+        if (product_left == denominator && product_right == expected)
+            || (product_right == denominator && product_left == expected)
+        {
+            return Some((zero_operand.clone(), expected.clone(), zero_condition.clone()));
+        }
     }
-    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else { return false };
-    (left == denominator && right == expected) || (right == denominator && left == expected)
+    None
 }
 
 fn fallback_search_vars(
