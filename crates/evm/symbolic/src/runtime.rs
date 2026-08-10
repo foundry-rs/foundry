@@ -30,8 +30,8 @@ pub(crate) use solver::{
 pub(crate) use solver::{
     SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, fallback_single_var_model,
     hard_arith_fallback_model, named_solver_command, normalize_bool_for_solver,
-    normalize_constraints_for_solver, normalize_expr_for_solver, normalize_polynomial_for_solver,
-    parse_model, product_monotonic_unsat, solver_commands_for_config, split_solver_command,
+    normalize_constraints_for_solver, normalize_expr_for_solver, parse_model,
+    product_monotonic_unsat, solver_commands_for_config, split_solver_command,
     validate_solver_model_output,
 };
 pub(crate) use state::*;

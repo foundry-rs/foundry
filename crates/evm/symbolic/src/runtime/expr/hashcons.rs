@@ -91,8 +91,9 @@ type HashConsHasher = FixedState;
 /// Hash-consing table for sharing structurally equal immutable values.
 ///
 /// The table stores weak references so interned values disappear when the rest of
-/// the symbolic state stops using them. `make` only looks up and inserts; dead
-/// weak entries are ignored and left in the table until the context is dropped.
+/// the symbolic state stops using them. `make` removes dead entries encountered
+/// while looking up the new value, keeping short-lived rewrites from growing the
+/// table for the lifetime of the context.
 pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
     hash_builder: HashConsHasher,
@@ -122,28 +123,41 @@ impl<T> HashCons<T> {
 impl<T: Eq + Hash> HashCons<T> {
     pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
         let hash = self.hash(&value);
-        let mut found = None;
-        match self.table.entry(
-            hash,
-            |entry| {
-                if entry.hash == hash
-                    && let Some(existing) = entry.value.upgrade()
-                    && existing.value == value
-                {
-                    found = Some(existing);
-                    true
-                } else {
-                    false
+        loop {
+            let mut found = None;
+            let mut matched_dead_entry = false;
+            match self.table.entry(
+                hash,
+                |entry| {
+                    if entry.hash != hash {
+                        return false;
+                    }
+                    match entry.value.upgrade() {
+                        Some(existing) if existing.value == value => {
+                            found = Some(existing);
+                            true
+                        }
+                        None => {
+                            matched_dead_entry = true;
+                            true
+                        }
+                        Some(_) => false,
+                    }
+                },
+                HashConsEntry::hash,
+            ) {
+                Entry::Occupied(entry) => {
+                    if let Some(inner) = found {
+                        return HashConsed { inner };
+                    }
+                    debug_assert!(matched_dead_entry);
+                    let _ = entry.remove();
                 }
-            },
-            HashConsEntry::hash,
-        ) {
-            Entry::Occupied(_) => HashConsed { inner: found.expect("matched live value") },
-            Entry::Vacant(entry) => {
-                let inner = HashConsedInner { hash, value };
-                let inner = Arc::new(inner);
-                entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
-                HashConsed { inner }
+                Entry::Vacant(entry) => {
+                    let inner = Arc::new(HashConsedInner { hash, value });
+                    entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
+                    return HashConsed { inner };
+                }
             }
         }
     }
@@ -187,6 +201,17 @@ mod tests {
 
         assert_eq!(second.value().as_str(), "same");
         assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn make_reclaims_repeatedly_dropped_values() {
+        let mut table = HashCons::<String>::new();
+
+        for _ in 0..128 {
+            drop(table.make("same".to_string()));
+        }
+
+        assert_eq!(table.table.len(), 1);
     }
 
     #[test]
