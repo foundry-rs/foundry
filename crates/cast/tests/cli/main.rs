@@ -2835,6 +2835,20 @@ casttest!(calldata_array, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(to_bytes_memory, |_prj, cmd| {
+    cmd.args(["to-bytes-memory", "0x1234"]).assert_success().stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
+casttest!(to_bytes_memory_alias_from_stdin, |_prj, cmd| {
+    cmd.arg("tbm").stdin("0x1234\n").assert_success().stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/2705>
 casttest!(run_succeeds, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();

@@ -106,15 +106,6 @@ the likelihood of the PR getting merged.
 Please also make sure that the following commands pass if you have changed the code:
 
 ```sh
-cargo check --all
-cargo test --all --all-features
-cargo +nightly fmt -- --check
-cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
-```
-
-or alternatively:
-
-```sh
 make build
 make pr
 ```
@@ -169,6 +160,8 @@ That said, if you have a number of commits that are "checkpoints" and don't repr
 #### Opening the pull request
 
 From within GitHub, opening a new pull request will present you with a template that should be filled out. Please try your best at filling out the details, but feel free to skip parts if you're not sure what to put.
+
+Pull requests must add or update a `.changelog/*.md` entry unless a maintainer applies the `L-ignore` label; see the [changelog instructions](.changelog/README.md#pull-requests).
 
 #### Discuss and update
 
