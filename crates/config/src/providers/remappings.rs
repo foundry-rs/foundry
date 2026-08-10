@@ -36,6 +36,8 @@ struct RemappingsOutput {
 pub struct Remappings {
     /// Remappings.
     remappings: Vec<Remapping>,
+    /// Normalized remapping names grouped by context for prefix lookups.
+    names_by_context: Option<HashMap<Option<String>, HashSet<String>>>,
     /// Source, test and script configured project dirs.
     /// Remappings of these dirs from libs are ignored.
     project_paths: Vec<Remapping>,
@@ -44,12 +46,12 @@ pub struct Remappings {
 impl Remappings {
     /// Create a new `Remappings` wrapper with an empty vector.
     pub const fn new() -> Self {
-        Self { remappings: Vec::new(), project_paths: Vec::new() }
+        Self { remappings: Vec::new(), names_by_context: None, project_paths: Vec::new() }
     }
 
     /// Create a new `Remappings` wrapper with a vector of remappings.
     pub const fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
-        Self { remappings, project_paths: Vec::new() }
+        Self { remappings, names_by_context: None, project_paths: Vec::new() }
     }
 
     /// Extract project paths that cannot be remapped by dependencies.
@@ -90,14 +92,25 @@ impl Remappings {
             return false;
         }
 
-        if self.remappings.iter().any(|existing| {
-            if remapping.name.ends_with(".sol") {
-                // For .sol files, only prevent duplicate source names in the same context
-                return existing.name == remapping.name
-                    && existing.context == remapping.context
-                    && existing.path == remapping.path;
+        if self.names_by_context.is_none() {
+            let mut names_by_context: HashMap<Option<String>, HashSet<String>> = HashMap::new();
+            for existing in &self.remappings {
+                names_by_context
+                    .entry(existing.context.clone())
+                    .or_default()
+                    .insert(existing.name.strip_suffix('/').unwrap_or(&existing.name).to_string());
             }
+            self.names_by_context = Some(names_by_context);
+        }
 
+        if if remapping.name.ends_with(".sol") {
+            self.remappings.iter().any(|existing| {
+                // For .sol files, only prevent duplicate source names in the same context
+                existing.name == remapping.name
+                    && existing.context == remapping.context
+                    && existing.path == remapping.path
+            })
+        } else {
             // Autodetected remappings are added from the root project down through its libraries,
             // so an existing root alias remains authoritative over an equal or more specific
             // dependency alias. For example, an existing `@utils/=src/` suppresses an incoming
@@ -106,13 +119,13 @@ impl Remappings {
             // `@prb/math/=src/math/` can coexist with an incoming `@prb/=lib/prb/`; the root alias
             // resolves its subtree while the dependency alias acts as a fallback for the rest of
             // the namespace.
-            let mut existing_name_path = existing.name.clone();
-            if !existing_name_path.ends_with('/') {
-                existing_name_path.push('/')
-            }
-            let is_conflicting = remapping.name.starts_with(&existing_name_path);
-            is_conflicting && existing.context == remapping.context
-        }) {
+            self.names_by_context.as_ref().unwrap().get(&remapping.context).is_some_and(|names| {
+                remapping
+                    .name
+                    .match_indices('/')
+                    .any(|(index, _)| names.contains(&remapping.name[..index]))
+            })
+        } {
             return false;
         };
 
@@ -126,6 +139,12 @@ impl Remappings {
             return false;
         };
 
+        self.names_by_context
+            .as_mut()
+            .unwrap()
+            .entry(remapping.context.clone())
+            .or_default()
+            .insert(remapping.name.strip_suffix('/').unwrap_or(&remapping.name).to_string());
         self.remappings.push(remapping);
         true
     }
