@@ -594,7 +594,8 @@ fn configured_auto_remapping(
     if let Some((_, (_, configured))) = configured_package_entries
         .iter()
         .filter(|(lib, configured)| {
-            configured.name == remapping.name && context.is_none_or(|context| lib != context)
+            configured.name == remapping.name
+                && context.is_none_or(|owner| lib != owner && lib.starts_with(owner))
         })
         .filter_map(|entry @ (lib, _)| {
             if path.starts_with(lib) {
@@ -1064,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_auto_remapping_uses_nearest_lexical_package() {
+    fn configured_auto_remapping_uses_nearest_owned_package() {
         let configured = vec![
             (
                 PathBuf::from("lib/shared"),
@@ -1083,19 +1084,29 @@ mod tests {
                 },
             ),
         ];
-        let candidate = |path: &str| Remapping {
-            context: Some("lib/shared/".to_string()),
+        let candidate = |context: &str, path: &str| Remapping {
+            context: Some(context.to_string()),
             name: "shared/".to_string(),
             path: path.to_string(),
         };
 
         assert_eq!(
-            configured_auto_remapping(candidate("lib/shared/lib/shared/src/"), &configured),
-            candidate("lib/shared/lib/shared/inner-src/")
+            configured_auto_remapping(
+                candidate("lib/shared/", "lib/shared/lib/shared/src/"),
+                &configured,
+            ),
+            candidate("lib/shared/", "lib/shared/lib/shared/inner-src/")
         );
         assert_eq!(
-            configured_auto_remapping(candidate("lib/shared/lib/"), &configured),
-            candidate("lib/shared/lib/shared/inner-src/")
+            configured_auto_remapping(candidate("lib/shared/", "lib/shared/lib/"), &configured),
+            candidate("lib/shared/", "lib/shared/lib/shared/inner-src/")
+        );
+
+        let nested = candidate("lib/shared/lib/nested/", "lib/shared/lib/nested/lib/shared/src/");
+        assert_eq!(
+            configured_auto_remapping(nested.clone(), &configured),
+            nested,
+            "configured ancestors must not rewrite remappings owned by nested dependencies",
         );
     }
 

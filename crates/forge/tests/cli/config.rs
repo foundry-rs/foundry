@@ -1368,9 +1368,9 @@ forgetest!(explicit_context_precedes_nested_auto_remapping, |prj, cmd| {
     cmd.forge_fuse().arg("lint").assert_success();
 
     prj.update_config(|config| config.remappings.clear());
-    let remapping = format!("{}:shared/=src/override/", a.display());
-    cmd.forge_fuse().args(["build", "--force", "--remappings", &remapping]).assert_success();
-    cmd.forge_fuse().args(["lint", "--remappings", &remapping]).assert_success();
+    let remapping = "lib/a/:shared/=src/override/";
+    cmd.forge_fuse().args(["build", "--force", "--remappings", remapping]).assert_success();
+    cmd.forge_fuse().args(["lint", "--remappings", remapping]).assert_success();
 
     #[cfg(unix)]
     {
