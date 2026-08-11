@@ -256,7 +256,7 @@ impl SendTxArgs {
                 if !confirm_auth_rpc_disclosure_during_build(&builder, signer, force)? {
                     return Ok(());
                 }
-                let (tx, _) = builder.build(from).await?;
+                let (tx, _) = builder.build(signer).await?;
                 (tx, from)
             };
             if let Some(fee_payer) = sponsor_fee_payer {

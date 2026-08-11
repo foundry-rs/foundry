@@ -219,7 +219,7 @@ impl MakeTxArgs {
                 if !confirm_auth_rpc_disclosure_during_build(&tx_builder, &signer, force)? {
                     return Ok(());
                 }
-                let (tx, _) = tx_builder.build(from).await?;
+                let (tx, _) = tx_builder.build(&signer).await?;
                 (tx, from)
             };
             if let Some(fee_payer) = sponsor_fee_payer {
