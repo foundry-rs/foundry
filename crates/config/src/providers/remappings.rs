@@ -15,7 +15,7 @@ use std::{
         BTreeMap, BTreeSet, HashMap, HashSet, btree_map::Entry, hash_map::Entry as HashEntry,
     },
     fs,
-    path::{MAIN_SEPARATOR, Path, PathBuf},
+    path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
 
 const GENERATED_REMAPPINGS_KEY: &str = "__generated_remappings";
@@ -69,18 +69,14 @@ impl Remappings {
         self
     }
 
-    /// Filters the remappings vector by name and context.
-    fn filter_key(r: &Remapping) -> String {
-        match &r.context {
-            Some(str) => str.clone() + &r.name.clone(),
-            None => r.name.clone(),
-        }
-    }
-
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut seen = HashSet::new();
-        self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect()
+        self.remappings
+            .iter()
+            .filter(|r| seen.insert((r.context.as_deref(), r.name.as_str())))
+            .cloned()
+            .collect()
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
@@ -625,6 +621,19 @@ fn rebase_nested_remapping(
     canonical: &Path,
     lexical: &Path,
 ) -> Remapping {
+    let normalize = |path: &Path| {
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                _ => normalized.push(component.as_os_str()),
+            }
+        }
+        normalized
+    };
     let rebase = |value: &str| {
         let path = Path::new(value);
         path.strip_prefix(canonical)
@@ -637,7 +646,7 @@ fn rebase_nested_remapping(
         *context = if Path::new(context).is_absolute() {
             rebase(context)
         } else {
-            lexical.join(&*context).display().to_string()
+            normalize(&lexical.join(&*context)).display().to_string()
         };
         if has_boundary && !context.ends_with(['/', '\\']) {
             context.push(MAIN_SEPARATOR);

@@ -1236,6 +1236,52 @@ shared/=deps-a/a/lib/shared/src/
     cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
 });
 
+forgetest!(contextual_remapping_dedup_uses_context_and_name, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let z = prj.root().join("lib/z");
+    for dependency in [&a, &z] {
+        pretty_err(dependency, fs::create_dir_all(dependency.join("src")));
+        pretty_err(dependency, fs::create_dir_all(dependency.join("lib/shared/src")));
+    }
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/collision")));
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("lib/z/shared/=src/collision/").unwrap().into()];
+    });
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; contract A is VersionA {}\n",
+        ),
+    );
+    pretty_err(
+        &z,
+        fs::write(
+            z.join("src/Z.sol"),
+            "import {VersionZ} from \"shared/Version.sol\"; contract Z is VersionZ {}\n",
+        ),
+    );
+    pretty_err(&a, fs::write(a.join("lib/shared/src/Version.sol"), "contract VersionA {}\n"));
+    pretty_err(&z, fs::write(z.join("lib/shared/src/Version.sol"), "contract VersionZ {}\n"));
+    prj.add_source(
+        "UsesDependencies.sol",
+        "import {A} from \"a/A.sol\"; import {Z} from \"z/Z.sol\"; contract UsesDependencies is A, Z {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/z/shared/=src/collision/
+lib/a/:shared/=lib/a/lib/shared/src/
+lib/z/:shared/=lib/z/lib/shared/src/
+a/=lib/a/src/
+shared/=lib/a/lib/shared/src/
+z/=lib/z/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
 forgetest!(contextual_auto_remapping_uses_configured_dependency_source, |prj, cmd| {
     let a = prj.root().join("lib/a");
     let b = prj.root().join("lib/b");
@@ -1399,7 +1445,7 @@ forgetest!(nested_contextual_remapping_precedes_auto_detection, |prj, cmd| {
         &a,
         fs::write(
             a.join("foundry.toml"),
-            "[profile.default]\nremappings = [\"src/:shared/=src/pinned/\"]\n",
+            "[profile.default]\nremappings = [\"src/../src/:shared/=src/pinned/\"]\n",
         ),
     );
     pretty_err(
