@@ -70,34 +70,92 @@ async fn test_fork_simulate_v1() {
     crate::init_tracing();
     let (_, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
-    let block_overrides =
-        Some(BlockOverrides { base_fee: Some(U256::from(9)), ..Default::default() });
-    let account_override =
-        AccountOverride { balance: Some(U256::from(999999999999u64)), ..Default::default() };
-    let state_overrides = Some(
-        StateOverridesBuilder::with_capacity(1)
-            .append(address!("0xc000000000000000000000000000000000000001"), account_override)
-            .build(),
-    );
-    let tx_request = TransactionRequest {
-        from: Some(address!("0xc000000000000000000000000000000000000001")),
-        to: Some(TxKind::from(address!("0xc000000000000000000000000000000000000001"))),
-        value: Some(U256::from(1)),
-        ..Default::default()
-    };
+    let from = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
     let payload = SimulatePayload {
         block_state_calls: vec![SimBlock {
-            block_overrides,
-            state_overrides,
-            calls: vec![tx_request],
+            calls: vec![
+                TransactionRequest {
+                    from: Some(from),
+                    to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000001"))),
+                    value: Some(U256::from(1)),
+                    ..Default::default()
+                },
+                TransactionRequest {
+                    from: Some(from),
+                    to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000002"))),
+                    value: Some(U256::from(1)),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
         }],
-        trace_transfers: true,
         validation: false,
-        return_full_transactions: true,
+        ..Default::default()
     };
-    let response = rpc_request(&handle.http_endpoint(), "eth_simulateV1", json!([payload])).await;
-    assert_eq!(response["error"]["code"], -32603);
-    assert_eq!(response["error"]["message"], "Required data unavailable");
+    let response =
+        rpc_request(&handle.http_endpoint(), "eth_simulateV1", json!([payload, "latest"])).await;
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["calls"].as_array().unwrap().len(), 2);
+    assert_ne!(response["result"][0]["stateRoot"], serde_json::to_value(B256::ZERO).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_state_root_matches_source_rpc() {
+    let (source_api, source_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    let contract = Address::with_last_byte(0x42);
+    source_api
+        .anvil_set_code(
+            contract,
+            Bytes::from_static(&[0x60, 0x01, 0x43, 0x60, 0x01, 0x03, 0x40, 0x55, 0x00]),
+        )
+        .await
+        .unwrap();
+    source_api.mine_one().await.unwrap();
+    let accounts = source_handle.dev_accounts().take(2).collect::<Vec<_>>();
+    let payload = json!({
+        "blockStateCalls": [
+            {
+                "calls": [{
+                    "from": accounts[0],
+                    "to": accounts[1],
+                    "value": "0x1"
+                }]
+            },
+            {
+                "calls": [{
+                    "from": accounts[0],
+                    "to": contract
+                }]
+            }
+        ],
+        "validation": false
+    });
+    let source_response = rpc_request(
+        &source_handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([payload.clone(), "0x1"]),
+    )
+    .await;
+    assert!(source_response.get("error").is_none(), "{source_response}");
+
+    let (_, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let fork_response =
+        rpc_request(&fork_handle.http_endpoint(), "eth_simulateV1", json!([payload, "latest"]))
+            .await;
+    assert!(fork_response.get("error").is_none(), "{fork_response}");
+    for index in 0..2 {
+        assert_eq!(
+            fork_response["result"][index]["stateRoot"],
+            source_response["result"][index]["stateRoot"]
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

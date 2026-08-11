@@ -70,6 +70,13 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
         self.maybe_as_full_db().cloned()
     }
 
+    /// Returns the local state changes layered on top of a remote fork.
+    ///
+    /// `None` identifies a complete database, while `Some` identifies a partial fork database.
+    fn maybe_fork_state(&self) -> Option<AddressMap<DbAccount>> {
+        None
+    }
+
     /// Returns whether snapshots of this database use structural sharing.
     fn is_persistent(&self) -> bool {
         false
@@ -102,6 +109,10 @@ where
         T::maybe_full_db(self)
     }
 
+    fn maybe_fork_state(&self) -> Option<AddressMap<DbAccount>> {
+        T::maybe_fork_state(self)
+    }
+
     fn is_persistent(&self) -> bool {
         T::is_persistent(self)
     }
@@ -129,6 +140,10 @@ where
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         T::maybe_full_db(self)
+    }
+
+    fn maybe_fork_state(&self) -> Option<AddressMap<DbAccount>> {
+        T::maybe_fork_state(self)
     }
 
     fn is_persistent(&self) -> bool {
@@ -159,6 +174,31 @@ pub trait MaybeForkedDatabase {
     fn maybe_flush_cache(&self) -> Result<(), String>;
 
     fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
+}
+
+/// Merges an account overlay into the local changes layered on top of a remote fork.
+pub(crate) fn merge_fork_account(
+    accounts: &mut AddressMap<DbAccount>,
+    address: Address,
+    overlay: &DbAccount,
+) {
+    if matches!(overlay.account_state, AccountState::NotExisting | AccountState::StorageCleared) {
+        accounts.insert(address, overlay.clone());
+        return;
+    }
+
+    let mut account = accounts.remove(&address).unwrap_or_default();
+    let reset_storage = matches!(account.account_state, AccountState::NotExisting);
+    let storage_cleared =
+        reset_storage || matches!(account.account_state, AccountState::StorageCleared);
+    if reset_storage {
+        account.storage.clear();
+    }
+    account.info = overlay.info.clone();
+    account.account_state =
+        if storage_cleared { AccountState::StorageCleared } else { overlay.account_state.clone() };
+    account.storage.extend(overlay.storage.clone());
+    accounts.insert(address, account);
 }
 
 /// `dyn Db` satisfies all `alloy_evm::Database` requirements via its supertraits, but the
@@ -421,6 +461,17 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
             account.account_state = overlay.account_state.clone();
             account.storage.extend(overlay.storage.clone());
             accounts.insert(*address, account);
+        }
+        Some(accounts)
+    }
+
+    fn maybe_fork_state(&self) -> Option<AddressMap<DbAccount>> {
+        let mut accounts = self.db.maybe_fork_state()?;
+        for (address, overlay) in &self.cache.accounts {
+            if overlay.account_state == AccountState::None {
+                continue;
+            }
+            merge_fork_account(&mut accounts, *address, overlay);
         }
         Some(accounts)
     }
@@ -962,6 +1013,50 @@ mod test {
             cache.maybe_full_db().map(|accounts| crate::mem::state::state_root(&accounts)),
             Some(crate::mem::state::state_root(&expected))
         );
+    }
+
+    #[test]
+    fn fork_state_merges_nested_overlays() {
+        let address = Address::with_last_byte(1);
+        let preserved_slot = U256::from(1);
+        let updated_slot = U256::from(2);
+        let mut accounts = AddressMap::from_iter([(
+            address,
+            DbAccount {
+                info: AccountInfo::from_balance(U256::from(1)),
+                account_state: AccountState::Touched,
+                storage: HashMap::from_iter([
+                    (preserved_slot, U256::from(10)),
+                    (updated_slot, U256::from(11)),
+                ]),
+            },
+        )]);
+        let overlay = DbAccount {
+            info: AccountInfo::from_balance(U256::from(2)),
+            account_state: AccountState::Touched,
+            storage: HashMap::from_iter([(updated_slot, U256::from(12))]),
+        };
+
+        merge_fork_account(&mut accounts, address, &overlay);
+        assert_eq!(accounts[&address].info.balance, U256::from(2));
+        assert_eq!(accounts[&address].storage[&preserved_slot], U256::from(10));
+        assert_eq!(accounts[&address].storage[&updated_slot], U256::from(12));
+
+        let cleared = DbAccount {
+            info: AccountInfo::from_balance(U256::from(3)),
+            account_state: AccountState::StorageCleared,
+            storage: HashMap::from_iter([(updated_slot, U256::from(13))]),
+        };
+        merge_fork_account(&mut accounts, address, &cleared);
+        assert_eq!(accounts[&address].info, cleared.info);
+        assert_eq!(accounts[&address].account_state, cleared.account_state);
+        assert_eq!(accounts[&address].storage, cleared.storage);
+
+        accounts.get_mut(&address).unwrap().account_state = AccountState::NotExisting;
+        merge_fork_account(&mut accounts, address, &overlay);
+        assert_eq!(accounts[&address].account_state, AccountState::StorageCleared);
+        assert!(!accounts[&address].storage.contains_key(&preserved_slot));
+        assert_eq!(accounts[&address].storage[&updated_slot], U256::from(12));
     }
 
     #[test]

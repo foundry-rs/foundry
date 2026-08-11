@@ -1,7 +1,7 @@
 use crate::eth::backend::db::{
     Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
     SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
-    cache_block_hash,
+    cache_block_hash, merge_fork_account,
 };
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
@@ -14,13 +14,17 @@ use foundry_evm::{
 };
 use revm::{
     context::BlockEnv,
-    database::{Database, DbAccount},
+    database::{AccountState, Database, DbAccount},
     state::AccountInfo,
 };
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 
 impl<N: Network> MaybeFullDatabase for SharedBackend<N> {
+    fn maybe_fork_state(&self) -> Option<AddressMap<DbAccount>> {
+        Some(AddressMap::default())
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         StateSnapshot::default()
     }
@@ -36,13 +40,21 @@ impl<N: Network> MaybeFullDatabase for SharedBackend<N> {
 
 impl<N: Network> Db for ForkedDatabase<N> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.database_mut().insert_account(address, account)
+        let database = self.database_mut();
+        database.insert_account(address, account);
+        database.cache.accounts.get_mut(&address).unwrap().account_state = AccountState::Touched;
     }
 
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
         let _ = Database::basic(self, address)?;
-        self.database_mut().set_storage_at(address, slot, val)
+        let database = self.database_mut();
+        database.set_storage_at(address, slot, val)?;
+        let account = database.cache.accounts.get_mut(&address).unwrap();
+        if account.account_state == AccountState::None {
+            account.account_state = AccountState::Touched;
+        }
+        Ok(())
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
@@ -117,6 +129,18 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         None
     }
 
+    fn maybe_fork_state(&self) -> Option<AddressMap<DbAccount>> {
+        Some(
+            self.database()
+                .cache
+                .accounts
+                .iter()
+                .filter(|(_, account)| account.account_state != AccountState::None)
+                .map(|(address, account)| (*address, account.clone()))
+                .collect(),
+        )
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
@@ -154,6 +178,16 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         None
+    }
+
+    fn maybe_fork_state(&self) -> Option<AddressMap<DbAccount>> {
+        let mut accounts = AddressMap::default();
+        for (address, account) in &self.local.cache.accounts {
+            if account.account_state != AccountState::None {
+                merge_fork_account(&mut accounts, *address, account);
+            }
+        }
+        Some(accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {

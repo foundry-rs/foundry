@@ -73,7 +73,7 @@ use alloy_network::{
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256, address, hex, keccak256,
-    map::{AddressMap, HashMap, HashSet},
+    map::{AddressMap, B256Map, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
@@ -105,7 +105,11 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
-use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
+use alloy_trie::{
+    EMPTY_ROOT_HASH, HashBuilder, Nibbles,
+    nodes::TrieNode,
+    proof::{ProofNodes, ProofRetainer},
+};
 use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
@@ -143,11 +147,16 @@ use foundry_primitives::{
     FoundryHeader, FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest,
     FoundryTxEnvelope, FoundryTxReceipt, TempoTransactionRequest,
 };
-use futures::channel::mpsc::{UnboundedSender, unbounded};
+use futures::{
+    StreamExt, TryStreamExt,
+    channel::mpsc::{UnboundedSender, unbounded},
+};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID};
 #[cfg(feature = "optimism")]
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+use reth_trie_common::{MultiProof, StorageMultiProof};
+use reth_trie_sparse::{LeafUpdate, SparseStateTrie, SparseTrie as _, TrieNodeEpoch};
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env`] and consumed by the OP transact path.
@@ -170,6 +179,238 @@ const HOLESKY_DEPOSIT_CONTRACT_ADDRESS: Address =
 
 /// Fixed transaction context for direct Tempo RPC simulations.
 const TEMPO_RPC_SIMULATION_CONTEXT: B256 = B256::new(*b"TEMPO_RPC_SIMULATION_MPP_CONTEXT");
+
+const FORK_PROOF_CONCURRENCY: usize = 16;
+
+#[derive(Clone, Default)]
+struct ForkProofTargets(AddressMap<HashSet<B256>>);
+
+impl ForkProofTargets {
+    fn record(&mut self, accounts: &AddressMap<DbAccount>) {
+        for (address, account) in accounts {
+            let slots = self.0.entry(*address).or_default();
+            if !matches!(
+                account.account_state,
+                AccountState::NotExisting | AccountState::StorageCleared
+            ) {
+                slots.extend(account.storage.keys().map(|slot| B256::from(*slot)));
+            }
+        }
+    }
+
+    fn missing(&self, accounts: &AddressMap<DbAccount>) -> Self {
+        let mut required = Self::default();
+        required.record(accounts);
+        required.0.retain(|address, slots| {
+            let Some(covered) = self.0.get(address) else { return true };
+            slots.retain(|slot| !covered.contains(slot));
+            !slots.is_empty()
+        });
+        required
+    }
+
+    fn extend(&mut self, other: Self) {
+        for (address, slots) in other.0 {
+            self.0.entry(address).or_default().extend(slots);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+struct ForkStateRoot {
+    trie: Option<SparseStateTrie>,
+    storage_roots: B256Map<B256>,
+    covered: ForkProofTargets,
+    missing: ForkProofTargets,
+    root: B256,
+    epoch: u64,
+}
+
+impl ForkStateRoot {
+    fn new(
+        proof: MultiProof,
+        storage_roots: B256Map<B256>,
+        covered: ForkProofTargets,
+        expected_root: B256,
+    ) -> Result<Self, BlockchainError> {
+        if proof.is_empty() {
+            return Ok(Self {
+                trie: None,
+                storage_roots,
+                covered,
+                missing: ForkProofTargets::default(),
+                root: expected_root,
+                epoch: 1,
+            });
+        }
+        let mut trie = SparseStateTrie::new();
+        trie.reveal_multiproof(proof)
+            .map_err(|err| BlockchainError::Message(format!("invalid fork state proof: {err}")))?;
+        let actual_root = trie
+            .root(TrieNodeEpoch::UNMODIFIED)
+            .map_err(|err| BlockchainError::Message(format!("invalid fork state proof: {err}")))?;
+        if actual_root != expected_root {
+            return Err(BlockchainError::Message(format!(
+                "fork state proof root mismatch: expected {expected_root}, got {actual_root}"
+            )));
+        }
+        Ok(Self {
+            trie: Some(trie),
+            storage_roots,
+            covered,
+            missing: ForkProofTargets::default(),
+            root: actual_root,
+            epoch: 1,
+        })
+    }
+
+    fn root(&mut self, accounts: &AddressMap<DbAccount>) -> Result<B256, BlockchainError> {
+        if accounts.is_empty() {
+            return Ok(self.root);
+        }
+        let missing = self.covered.missing(accounts);
+        if !missing.is_empty() {
+            self.missing.extend(missing);
+            return Err(BlockchainError::DataUnavailable);
+        }
+        let trie = self.trie.as_mut().ok_or(BlockchainError::DataUnavailable)?;
+        for (address, account) in accounts {
+            let hashed_address = keccak256(address);
+            let update = if account.account_state == AccountState::NotExisting {
+                LeafUpdate::Changed(Vec::new())
+            } else {
+                let storage_root = if account.account_state == AccountState::StorageCleared {
+                    storage_root(&account.storage)
+                } else if account.storage.is_empty() {
+                    self.storage_roots.get(&hashed_address).copied().unwrap_or(EMPTY_ROOT_HASH)
+                } else {
+                    let storage_trie = trie.storage_trie_mut(&hashed_address).ok_or_else(|| {
+                        BlockchainError::Message(format!(
+                            "missing fork storage proof for account {address}"
+                        ))
+                    })?;
+                    let mut updates = account
+                        .storage
+                        .iter()
+                        .map(|(slot, value)| {
+                            let value =
+                                if value.is_zero() { Vec::new() } else { alloy_rlp::encode(value) };
+                            (keccak256(slot.to_be_bytes::<32>()), LeafUpdate::Changed(value))
+                        })
+                        .collect::<B256Map<_>>();
+                    storage_trie.update_leaves(&mut updates, |_, _| {}).map_err(|err| {
+                        BlockchainError::Message(format!(
+                            "failed to update fork storage proof: {err}"
+                        ))
+                    })?;
+                    if !updates.is_empty() {
+                        return Err(BlockchainError::DataUnavailable);
+                    }
+                    storage_trie.root(TrieNodeEpoch::new(self.epoch))
+                };
+                LeafUpdate::Changed(alloy_rlp::encode(TrieAccount {
+                    nonce: account.info.nonce,
+                    balance: account.info.balance,
+                    storage_root,
+                    code_hash: account.info.code_hash,
+                }))
+            };
+
+            let mut updates = B256Map::from_iter([(hashed_address, update)]);
+            trie.trie_mut().update_leaves(&mut updates, |_, _| {}).map_err(|err| {
+                BlockchainError::Message(format!("failed to update fork state proof: {err}"))
+            })?;
+            if !updates.is_empty() {
+                return Err(BlockchainError::DataUnavailable);
+            }
+        }
+
+        let root = trie.root(TrieNodeEpoch::new(self.epoch)).map_err(|err| {
+            BlockchainError::Message(format!("failed to update fork root: {err}"))
+        })?;
+        self.epoch = self.epoch.saturating_add(1);
+        self.root = root;
+        Ok(root)
+    }
+
+    fn take_missing(&mut self) -> ForkProofTargets {
+        std::mem::take(&mut self.missing)
+    }
+}
+
+enum SimulationStateRoots<'a> {
+    Full,
+    Collect(&'a mut ForkProofTargets),
+    Fork(&'a mut ForkStateRoot),
+}
+
+impl SimulationStateRoots<'_> {
+    const fn is_collecting(&self) -> bool {
+        matches!(self, Self::Collect(_))
+    }
+
+    fn root<T: MaybeFullDatabase>(
+        &mut self,
+        database: &CacheDB<T>,
+    ) -> Result<B256, BlockchainError> {
+        match self {
+            Self::Full => {
+                let accounts = database.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                Ok(state_root(&accounts))
+            }
+            Self::Collect(targets) => {
+                let accounts =
+                    database.maybe_fork_state().ok_or(BlockchainError::DataUnavailable)?;
+                targets.record(&accounts);
+                Ok(B256::ZERO)
+            }
+            Self::Fork(state_root) => {
+                let accounts =
+                    database.maybe_fork_state().ok_or(BlockchainError::DataUnavailable)?;
+                state_root.root(&accounts)
+            }
+        }
+    }
+}
+
+fn merge_proof_nodes(
+    target: B256,
+    proof: &[Bytes],
+    nodes: &mut ProofNodes,
+) -> Result<(), alloy_rlp::Error> {
+    let target = Nibbles::unpack(target);
+    let mut path = Nibbles::default();
+    for encoded in proof {
+        let node = TrieNode::decode(&mut &encoded[..])?;
+        nodes.insert(path, encoded.clone());
+        match node {
+            TrieNode::Branch(_) if path.len() < target.len() => {
+                path.push(target.get_unchecked(path.len()))
+            }
+            TrieNode::Extension(extension) => path.extend(&extension.key),
+            TrieNode::EmptyRoot | TrieNode::Leaf(_) | TrieNode::Branch(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn normalize_storage_root(root: B256) -> B256 {
+    if root.is_zero() { EMPTY_ROOT_HASH } else { root }
+}
+
+struct SimulationBase {
+    block_env: BlockEnv,
+    number: u64,
+    timestamp: u64,
+    hash: B256,
+    next_base_fee: u64,
+    base_fee_per_gas: u64,
+    excess_blob_gas: u64,
+    blob_gas_used: u64,
+}
 
 /// Ethereum handler that skips blob fee cap validation for non-validating calls with a zero cap.
 struct SimulationHandler<EVM, ERROR, FRAME> {
@@ -512,6 +753,7 @@ struct SimulationPrecompileOverrides {
 }
 
 /// A block request, which includes the Pool Transactions if it's Pending
+#[derive(Clone)]
 pub enum BlockRequest<T> {
     Pending(Vec<Arc<PoolTransaction<T>>>),
     Number(u64),
@@ -6317,6 +6559,131 @@ impl Backend<FoundryNetwork> {
         .await?
     }
 
+    async fn with_simulation_base<F, T>(
+        &self,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, SimulationBase) -> T,
+    {
+        let block_request = match block_request {
+            Some(BlockRequest::Pending(pool_transactions)) => {
+                return Ok(self
+                    .with_pending_block(pool_transactions, |state, block| {
+                        let header = &block.block.header;
+                        let next_base_fee = self.fees.calculate_next_block_base_fee_per_gas(
+                            header.gas_used(),
+                            header.gas_limit(),
+                            header.base_fee_per_gas().unwrap_or_default(),
+                        );
+                        f(
+                            state,
+                            SimulationBase {
+                                block_env: block_env_from_header(header),
+                                number: header.number(),
+                                timestamp: header.timestamp(),
+                                hash: header.hash_slow(),
+                                next_base_fee,
+                                base_fee_per_gas: header.base_fee_per_gas().unwrap_or_default(),
+                                excess_blob_gas: header.excess_blob_gas().unwrap_or_default(),
+                                blob_gas_used: header.blob_gas_used().unwrap_or_default(),
+                            },
+                        )
+                    })
+                    .await);
+            }
+            block_request => block_request,
+        };
+
+        let base_block_number = match block_request.as_ref() {
+            Some(BlockRequest::Number(number)) => BlockNumber::Number(*number),
+            Some(BlockRequest::Pending(_)) => unreachable!(),
+            None => BlockNumber::Latest,
+        };
+        let base_block =
+            self.block_by_number(base_block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let header = &base_block.header;
+        let base = SimulationBase {
+            block_env: block_env_from_header(header),
+            number: header.number(),
+            timestamp: header.timestamp(),
+            hash: header.hash,
+            next_base_fee: self.fees.calculate_next_block_base_fee_per_gas(
+                header.gas_used(),
+                header.gas_limit(),
+                header.base_fee_per_gas().unwrap_or_default(),
+            ),
+            base_fee_per_gas: header.base_fee_per_gas().unwrap_or_default(),
+            excess_blob_gas: header.excess_blob_gas().unwrap_or_default(),
+            blob_gas_used: header.blob_gas_used().unwrap_or_default(),
+        };
+        self.with_database_at(block_request, |state, _| f(state, base)).await
+    }
+
+    async fn build_fork_state_root(
+        &self,
+        targets: ForkProofTargets,
+    ) -> Result<ForkStateRoot, BlockchainError> {
+        let fork = self.fork.read().clone().ok_or(BlockchainError::DataUnavailable)?;
+        let fork_number = fork.block_number();
+        let fork_block = self
+            .block_by_number(BlockNumber::Number(fork_number))
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        let expected_root = fork_block.header.state_root();
+
+        let proofs =
+            futures::stream::iter(targets.0.clone().into_iter().map(|(address, slots)| {
+                let fork = fork.clone();
+                async move {
+                    let proof = fork
+                        .get_proof(address, slots.into_iter().collect(), Some(fork_number.into()))
+                        .await?;
+                    Ok::<_, alloy_transport::TransportError>(proof)
+                }
+            }))
+            .buffer_unordered(FORK_PROOF_CONCURRENCY)
+            .try_collect::<Vec<_>>()
+            .await?;
+
+        let mut multiproof = MultiProof::default();
+        let mut storage_roots = B256Map::default();
+        for proof in proofs {
+            let hashed_address = keccak256(proof.address);
+            merge_proof_nodes(
+                hashed_address,
+                &proof.account_proof,
+                &mut multiproof.account_subtree,
+            )
+            .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
+
+            let storage_root = normalize_storage_root(proof.storage_hash);
+            storage_roots.insert(hashed_address, storage_root);
+            if !proof.storage_proof.is_empty() {
+                let mut subtree = ProofNodes::default();
+                for storage_proof in proof.storage_proof {
+                    merge_proof_nodes(
+                        keccak256(storage_proof.key.as_b256()),
+                        &storage_proof.proof,
+                        &mut subtree,
+                    )
+                    .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
+                }
+                multiproof.storages.insert(
+                    hashed_address,
+                    StorageMultiProof {
+                        root: storage_root,
+                        subtree,
+                        branch_node_masks: Default::default(),
+                    },
+                );
+            }
+        }
+
+        ForkStateRoot::new(multiproof, storage_roots, targets, expected_root)
+    }
+
     /// Simulates the payload by executing the calls in request.
     pub async fn simulate(
         &self,
@@ -6339,15 +6706,20 @@ impl Backend<FoundryNetwork> {
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         block_interval: u64,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
-        let simulate_at = |state: Box<dyn MaybeFullDatabase + '_>,
-                           base_block_env: BlockEnv,
-                           base_number,
-                           base_timestamp,
-                           base_hash,
-                           base_fee,
-                           base_base_fee_per_gas,
-                           base_excess_blob_gas,
-                           base_blob_gas_used| {
+        let simulate_at = |request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+                           state: Box<dyn MaybeFullDatabase + '_>,
+                           base: SimulationBase,
+                           state_roots: &mut SimulationStateRoots<'_>| {
+            let SimulationBase {
+                block_env: base_block_env,
+                number: base_number,
+                timestamp: base_timestamp,
+                hash: base_hash,
+                next_base_fee: base_fee,
+                base_fee_per_gas: base_base_fee_per_gas,
+                excess_blob_gas: base_excess_blob_gas,
+                blob_gas_used: base_blob_gas_used,
+            } = base;
             let SimulatePayload {
                 block_state_calls,
                 trace_transfers,
@@ -6675,9 +7047,11 @@ impl Backend<FoundryNetwork> {
                     let (response_logs, attempted_log_count) = inspector
                         .take_simulation_logs(&canonical_logs, result.is_success())
                         .expect("simulation log collector is installed");
-                    inspector.print_logs();
-                    if self.print_traces {
-                        inspector.into_print_traces(self.call_trace_decoder.clone());
+                    if !state_roots.is_collecting() {
+                        inspector.print_logs();
+                        if self.print_traces {
+                            inspector.into_print_traces(self.call_trace_decoder.clone());
+                        }
                     }
 
                     // REVM turns a previously deleted account into `Touched` when a later call
@@ -6692,9 +7066,7 @@ impl Backend<FoundryNetwork> {
                     cache_db.commit(state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     let post_state = if spec_id < SpecId::BYZANTIUM {
-                        let accounts =
-                            cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                        Some(state_root(&accounts))
+                        Some(state_roots.root(&cache_db)?)
                     } else {
                         None
                     };
@@ -6830,10 +7202,7 @@ impl Backend<FoundryNetwork> {
                     Default::default()
                 };
 
-                // TODO: Assess restoring fork-backed simulations by deriving a canonical
-                // post-state root.
-                let accounts = cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                let state_root = state_root(&accounts);
+                let state_root = state_roots.root(&cache_db)?;
                 let header = Header {
                     logs_bloom: receipts.iter().fold(Bloom::ZERO, |mut bloom, receipt| {
                         bloom.accrue_bloom(receipt.logs_bloom());
@@ -6922,62 +7291,45 @@ impl Backend<FoundryNetwork> {
             Ok(block_res)
         };
 
-        match block_request {
-            Some(BlockRequest::Pending(pool_transactions)) => {
-                self.with_pending_block(pool_transactions, |state, block| {
-                    let header = &block.block.header;
-                    let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                        header.gas_used(),
-                        header.gas_limit(),
-                        header.base_fee_per_gas().unwrap_or_default(),
-                    );
-                    simulate_at(
-                        state,
-                        block_env_from_header(header),
-                        header.number(),
-                        header.timestamp(),
-                        header.hash_slow(),
-                        base_fee,
-                        header.base_fee_per_gas().unwrap_or_default(),
-                        header.excess_blob_gas().unwrap_or_default(),
-                        header.blob_gas_used().unwrap_or_default(),
-                    )
+        if self.fork.read().is_some() {
+            let mut targets = ForkProofTargets::default();
+            {
+                // Fork databases only retain local changes. Run once to discover the remote
+                // account and storage proofs needed to authenticate those changes.
+                let mut state_roots = SimulationStateRoots::Collect(&mut targets);
+                self.with_simulation_base(block_request.clone(), |state, base| {
+                    simulate_at(request.clone(), state, base, &mut state_roots)
                 })
-                .await
+                .await??;
             }
-            block_request => {
-                let base_block_number = match block_request.as_ref() {
-                    Some(BlockRequest::Number(number)) => BlockNumber::Number(*number),
-                    Some(BlockRequest::Pending(_)) => unreachable!(),
-                    None => BlockNumber::Latest,
-                };
-                let base_block = self
-                    .block_by_number(base_block_number)
-                    .await?
-                    .ok_or(BlockchainError::BlockNotFound)?;
-                let base_number = base_block.header.number();
-                let base_timestamp = base_block.header.timestamp();
-                let base_hash = base_block.header.hash;
-                let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                    base_block.header.gas_used(),
-                    base_block.header.gas_limit(),
-                    base_block.header.base_fee_per_gas().unwrap_or_default(),
-                );
-                self.with_database_at(block_request, |state, block_env| {
-                    simulate_at(
-                        state,
-                        block_env,
-                        base_number,
-                        base_timestamp,
-                        base_hash,
-                        base_fee,
-                        base_block.header.base_fee_per_gas().unwrap_or_default(),
-                        base_block.header.excess_blob_gas().unwrap_or_default(),
-                        base_block.header.blob_gas_used().unwrap_or_default(),
-                    )
-                })
-                .await?
+
+            loop {
+                let mut fork_state_root = self.build_fork_state_root(targets.clone()).await?;
+                let mut state_roots = SimulationStateRoots::Fork(&mut fork_state_root);
+                let result = self
+                    .with_simulation_base(block_request.clone(), |state, base| {
+                        simulate_at(request.clone(), state, base, &mut state_roots)
+                    })
+                    .await?;
+                match result {
+                    Ok(blocks) => break Ok(blocks),
+                    Err(err) => {
+                        // A later block can take a different path once prior simulated block
+                        // hashes use canonical roots. Fetch any newly discovered proofs and retry.
+                        let missing = fork_state_root.take_missing();
+                        if missing.is_empty() {
+                            break Err(err);
+                        }
+                        targets.extend(missing);
+                    }
+                }
             }
+        } else {
+            let mut state_roots = SimulationStateRoots::Full;
+            self.with_simulation_base(block_request, |state, base| {
+                simulate_at(request, state, base, &mut state_roots)
+            })
+            .await?
         }
     }
 

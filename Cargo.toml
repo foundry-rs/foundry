@@ -413,6 +413,10 @@ revm = { version = "42.0.1", default-features = false }
 revm-inspectors = { version = "0.42.0", features = ["serde"] }
 op-revm = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753", default-features = false }
 
+## reth
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", rev = "10aa6a512ba7c4f5f01ff489b1f513da0745821f" }
+reth-trie-sparse = { git = "https://github.com/paradigmxyz/reth", rev = "10aa6a512ba7c4f5f01ff489b1f513da0745821f", default-features = false, features = ["std"] }
+
 ## cli
 anstream = "1.0"
 anstyle = "1.0"

@@ -77,6 +77,8 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 op-revm = { workspace = true, optional = true }
+reth-trie-common.workspace = true
+reth-trie-sparse.workspace = true
 
 # axum related
 axum.workspace = true
