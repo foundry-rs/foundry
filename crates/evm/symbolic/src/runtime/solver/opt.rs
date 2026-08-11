@@ -1820,17 +1820,25 @@ mod tests {
     #[test]
     fn polynomial_identity_stops_at_factor_limit() {
         let mut cx = SymCx::new();
-        let mut product_at_limit = SymExpr::one(&mut cx);
-        for index in 0..8 {
+        let mut prefix = SymExpr::one(&mut cx);
+        for index in 0..MAX_MONOMIAL_FACTORS - 1 {
             let factor = SymExpr::var(&mut cx, &format!("x_{index}"));
-            product_at_limit = SymExpr::binop(&mut cx, SymBinOp::Mul, product_at_limit, factor);
+            prefix = SymExpr::binop(&mut cx, SymBinOp::Mul, prefix, factor);
         }
         let left = SymExpr::var(&mut cx, "left");
         let right = SymExpr::var(&mut cx, "right");
-        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, left, right);
-        let expression = SymExpr::binop(&mut cx, SymBinOp::Mul, product_at_limit, sum);
+        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, left.clone(), right.clone());
+        let factored = SymExpr::binop(&mut cx, SymBinOp::Mul, prefix.clone(), sum);
+        let left_product = SymExpr::binop(&mut cx, SymBinOp::Mul, prefix.clone(), left);
+        let right_product = SymExpr::binop(&mut cx, SymBinOp::Mul, prefix, right);
+        let expanded = SymExpr::binop(&mut cx, SymBinOp::Add, left_product, right_product);
 
-        assert!(!polynomial_identity(&expression, &expression));
+        assert!(polynomial_identity(&factored, &expanded));
+
+        let extra = SymExpr::var(&mut cx, "extra");
+        let over_limit = SymExpr::binop(&mut cx, SymBinOp::Mul, factored, extra);
+
+        assert!(!polynomial_identity(&over_limit, &over_limit));
     }
 
     #[test]
