@@ -92,6 +92,10 @@ foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 
 const DEFAULT_CONFIRMATIONS: u64 = 1;
 
+pub(crate) const fn adjusted_gas_limit(estimate: u64, multiplier: u64, buffer: u64) -> u64 {
+    estimate * multiplier / 100 + buffer
+}
+
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
@@ -169,6 +173,10 @@ pub struct ScriptArgs {
     /// Relative percentage to multiply gas estimates by.
     #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
+
+    /// Fixed amount to add to gas estimates after applying the multiplier.
+    #[arg(long, default_value = "0")]
+    pub gas_buffer: u64,
 
     /// Override the sender's initial nonce for script execution and transaction generation.
     #[arg(
@@ -1088,6 +1096,11 @@ mod tests {
                 || message.contains("unknown block"),
             "unexpected orphaned block lookup error: {error:#}"
         );
+    }
+
+    #[test]
+    fn adjusts_gas_limit_with_multiplier_and_buffer() {
+        assert_eq!(adjusted_gas_limit(21_000, 130, 10_000), 37_300);
     }
 
     #[tokio::test(flavor = "multi_thread")]

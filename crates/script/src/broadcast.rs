@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, num::NonZeroU64, sync::Arc, time::Duration};
 
 use crate::{
-    ScriptArgs, ScriptConfig,
+    ScriptArgs, ScriptConfig, adjusted_gas_limit,
     build::LinkedBuildData,
     progress::ScriptProgress,
     sequence::ScriptSequenceKind,
@@ -58,6 +58,7 @@ pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
+    estimate_buffer: u64,
     tempo_browser: bool,
 ) -> Result<()>
 where
@@ -69,11 +70,9 @@ where
 
     let request =
         if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
-    tx.set_gas_limit(
-        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
-            * estimate_multiplier
-            / 100,
-    );
+    let estimate =
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
+    tx.set_gas_limit(adjusted_gas_limit(estimate, estimate_multiplier, estimate_buffer));
     Ok(())
 }
 
@@ -139,6 +138,7 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        estimate_buffer: u64,
         tempo_sponsor: Option<&TempoSponsor>,
         chain: Option<Chain>,
     ) -> Result<()> {
@@ -201,7 +201,7 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
+            estimate_gas(tx, provider, estimate_multiplier, estimate_buffer, tempo_browser).await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -271,6 +271,7 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        estimate_buffer: u64,
         tempo_sponsor: Option<&TempoSponsor>,
         chain: Option<Chain>,
     ) -> Result<TxHash> {
@@ -280,6 +281,7 @@ where
             is_fixed_gas_limit,
             estimate_via_rpc,
             estimate_multiplier,
+            estimate_buffer,
             tempo_sponsor,
             chain,
         )
@@ -655,6 +657,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             *is_fixed_gas_limit,
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
+                                            self.args.gas_buffer,
                                             tempo_sponsor.as_deref(),
                                             Some(sequence_chain.into()),
                                         )
@@ -701,6 +704,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             is_fixed_gas_limit,
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
+                                            self.args.gas_buffer,
                                             tempo_sponsor.as_deref(),
                                             Some(sequence_chain.into()),
                                         )
@@ -1205,8 +1209,14 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
-        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier, false)
-            .await?;
+        estimate_gas(
+            &mut batch_tx,
+            provider.as_ref(),
+            self.args.gas_estimate_multiplier,
+            self.args.gas_buffer,
+            false,
+        )
+        .await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 
@@ -1580,6 +1590,7 @@ mod tests {
                 true,
                 false,
                 100,
+                0,
                 None,
                 Some(Chain::from_named(NamedChain::Mainnet)),
             )

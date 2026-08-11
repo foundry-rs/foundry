@@ -1,4 +1,4 @@
-use super::ScriptResult;
+use super::{ScriptResult, adjusted_gas_limit};
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_network::{Network, TransactionBuilder};
@@ -150,6 +150,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         mut self,
         result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
+        gas_buffer: u64,
         linked_build_data: &LinkedBuildData,
     ) -> Self {
         let mut created_contracts =
@@ -166,8 +167,11 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         if !self.transaction.is_fixed_gas_limit
             && let Some(unsigned) = self.transaction.transaction.as_unsigned_mut()
         {
-            // We inflate the gas used by the user specified percentage
-            unsigned.set_gas_limit(result.gas_used * gas_estimate_multiplier / 100);
+            unsigned.set_gas_limit(adjusted_gas_limit(
+                result.gas_used,
+                gas_estimate_multiplier,
+                gas_buffer,
+            ));
         }
 
         self

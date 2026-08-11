@@ -4,9 +4,11 @@ use crate::{
     constants::TEMPLATE_CONTRACT,
     utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
+use alloy_consensus::Transaction as _;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, address, hex};
+use alloy_provider::Provider as _;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
@@ -906,6 +908,64 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]);
+});
+
+forgetest_async!(can_add_fixed_buffer_to_script_gas_estimate, |prj, cmd| {
+    const GAS_BUFFER: u64 = 12_345;
+    const SIMPLE_TRANSFER_GAS: u64 = 21_000;
+
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "GasBuffer.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract GasBufferScript is Script {
+    function run() external {
+        vm.broadcast();
+        (bool success,) = address(0xbeef).call("");
+        require(success, "call failed");
+    }
+}
+"#,
+    );
+    let gas_buffer = GAS_BUFFER.to_string();
+
+    for skip_simulation in [false, true] {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let target = format!("{}:GasBufferScript", script.display());
+        let endpoint = handle.http_endpoint();
+        let forge = cmd.forge_fuse().args([
+            "script",
+            &target,
+            "--fork-url",
+            &endpoint,
+            "--broadcast",
+            "--slow",
+            "--non-interactive",
+            "--gas-estimate-multiplier",
+            "100",
+            "--gas-buffer",
+            &gas_buffer,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ]);
+        if skip_simulation {
+            forge.arg("--skip-simulation");
+        }
+        forge.assert_success();
+
+        let block =
+            handle.http_provider().get_block_by_number(1.into()).full().await.unwrap().unwrap();
+        let transactions = block.transactions.as_transactions().unwrap();
+        assert_eq!(transactions.len(), 1);
+        let gas_limit = transactions[0].gas_limit();
+        if skip_simulation {
+            assert_eq!(gas_limit, SIMPLE_TRANSFER_GAS + GAS_BUFFER);
+        } else {
+            assert!(gas_limit >= SIMPLE_TRANSFER_GAS + GAS_BUFFER);
+        }
+    }
 });
 
 forgetest_async!(can_deploy_script_without_lib, |prj, cmd| {

@@ -165,6 +165,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .with_execution_result(
                         &result,
                         self.args.gas_estimate_multiplier,
+                        self.args.gas_buffer,
                         &self.build_data,
                     )
                     .build();
@@ -342,6 +343,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                             tx,
                             &provider_info.provider,
                             self.args.gas_estimate_multiplier,
+                            self.args.gas_buffer,
                             false,
                         )
                         .await
