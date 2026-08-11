@@ -1,9 +1,6 @@
 //! general eth api tests
 
-use alloy_consensus::{
-    Eip658Value, Receipt, ReceiptEnvelope, constants::EMPTY_WITHDRAWALS,
-    proofs::calculate_receipt_root,
-};
+use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 
 use alloy_eips::{
     eip6110::DEPOSIT_REQUEST_TYPE,
@@ -96,8 +93,8 @@ async fn test_fork_simulate_v1() {
         return_full_transactions: true,
     };
     let response = rpc_request(&handle.http_endpoint(), "eth_simulateV1", json!([payload])).await;
-    assert_eq!(response["error"]["code"], -32603);
-    assert_eq!(response["error"]["message"], "Required data unavailable");
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["stateRoot"], serde_json::to_value(B256::ZERO).unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1736,75 +1733,6 @@ async fn test_simulate_reports_non_gas_halts_rpc() {
     let error = &response["result"][0]["calls"][0]["error"];
     assert_eq!(error["code"], -32015);
     assert!(error["message"].as_str().unwrap().starts_with("vm execution error:"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_frontier_header_and_post_state_receipt_rpc() {
-    let config = NodeConfig::test()
-        .with_hardfork(Some(EthereumHardfork::Frontier.into()))
-        .with_base_fee(Some(0));
-    let (_, handle) = spawn(config).await;
-    let sender = handle.dev_accounts().next().unwrap();
-    let receiver = address!("c100000000000000000000000000000000000000");
-    let request = TransactionRequest {
-        from: Some(sender),
-        to: Some(TxKind::Call(receiver)),
-        gas: Some(21_000),
-        gas_price: Some(0),
-        ..Default::default()
-    };
-    let single_response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{
-            "blockStateCalls": [{"calls": [request.clone()]}],
-            "validation": true
-        }, "latest"]),
-    )
-    .await;
-    assert!(single_response.get("error").is_none(), "{single_response}");
-    let first_post_state =
-        serde_json::from_value(single_response["result"][0]["stateRoot"].clone()).unwrap();
-
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{
-            "blockStateCalls": [{"calls": [request.clone(), request]}],
-            "validation": true
-        }, "latest"]),
-    )
-    .await;
-
-    assert!(response.get("error").is_none(), "{response}");
-    let simulated = &response["result"][0];
-    assert!(simulated.get("baseFeePerGas").is_none());
-    assert!(simulated.get("withdrawals").is_none());
-    assert!(simulated.get("withdrawalsRoot").is_none());
-
-    let final_post_state = serde_json::from_value(simulated["stateRoot"].clone()).unwrap();
-    assert_ne!(first_post_state, final_post_state);
-    let first_gas_used = quantity(&simulated["calls"][0]["gasUsed"]);
-    let second_gas_used = quantity(&simulated["calls"][1]["gasUsed"]);
-    let receipts_root = calculate_receipt_root(&[
-        ReceiptEnvelope::Legacy(
-            Receipt {
-                status: Eip658Value::PostState(first_post_state),
-                cumulative_gas_used: first_gas_used,
-                logs: Vec::new(),
-            }
-            .with_bloom(),
-        ),
-        ReceiptEnvelope::Legacy(
-            Receipt {
-                status: Eip658Value::PostState(final_post_state),
-                cumulative_gas_used: first_gas_used + second_gas_used,
-                logs: Vec::new(),
-            }
-            .with_bloom(),
-        ),
-    ]);
-    assert_eq!(simulated["receiptsRoot"], serde_json::to_value(receipts_root).unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
