@@ -107,6 +107,31 @@ struct StableForkSnapshot {
     gas_price: u128,
 }
 
+/// Tracks whether `anvil_nodeInfo` has positively identified the endpoint as Anvil.
+#[derive(Clone, Copy, Debug, Default)]
+struct AnvilNodeInfoProbe {
+    identified: bool,
+}
+
+impl AnvilNodeInfoProbe {
+    const fn new(identified: bool) -> Self {
+        Self { identified }
+    }
+
+    async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
+        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
+            Ok(node_info) => {
+                self.identified = true;
+                Ok(Some(node_info))
+            }
+            Err(_) if !self.identified => Ok(None),
+            Err(error) => {
+                Err(error).wrap_err("failed to determine network family from fork endpoint")
+            }
+        }
+    }
+}
+
 /// One-shot source data for a transaction-hash fork replay.
 #[derive(Clone, Debug)]
 pub(crate) struct ForkTransactionReplay {
@@ -1495,103 +1520,88 @@ impl NodeConfig {
         provider: &RetryProvider,
         fallback_execution_chain_id: u64,
         source_chain_id_override: Option<u64>,
+        node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> Result<ForkEndpointIdentity> {
-        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
-            Ok(node_info) => {
-                let (
-                    execution_chain_id,
-                    source_chain_id,
-                    instance_id,
-                    source_fork_block_number,
-                    source_fork_block_hash,
-                ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()).await {
-                    Ok(metadata) => (
-                        metadata.chain_id,
-                        source_chain_id_override.unwrap_or_else(|| {
-                            metadata
-                                .forked_network
-                                .map(|fork| fork.chain_id)
-                                .unwrap_or(metadata.chain_id)
-                        }),
-                        Some(metadata.instance_id),
-                        metadata.forked_network.map(|fork| fork.fork_block_number),
-                        metadata.forked_network.map(|fork| fork.fork_block_hash),
-                    ),
-                    Err(error) if is_rpc_method_not_found(&error) => (
-                        fallback_execution_chain_id,
-                        source_chain_id_override.unwrap_or(fallback_execution_chain_id),
-                        None,
-                        None,
-                        None,
-                    ),
-                    Err(error) => {
-                        return Err(error)
-                            .wrap_err("failed to retrieve Anvil fork source identity");
-                    }
-                };
-                let identity_chain_id =
-                    if node_info.network.is_some() { execution_chain_id } else { source_chain_id };
-                let explicit_fallback = self
-                    .has_explicit_network_selection()
-                    .then(|| self.networks.canonical_execution_profile());
-                let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
-                    identity_chain_id,
-                    Some(node_info.network.as_deref()),
-                    explicit_fallback,
-                )
-                .map_err(eyre::Report::msg)?
-                .ok_or_else(|| {
-                    eyre::eyre!("Anvil metadata did not identify an execution profile")
-                })?;
-                let network = network_profile.execution_network();
-                let hardfork = network
-                    .parse_hardfork(&node_info.hard_fork)
-                    .map_err(eyre::Report::msg)
-                    .wrap_err_with(|| {
-                        format!(
-                            "unsupported hardfork `{}` reported for `{network}`",
-                            node_info.hard_fork
-                        )
-                    })?;
+        let Some(node_info) = node_info_probe.request(provider).await? else {
+            let source_chain_id = source_chain_id_override.unwrap_or(fallback_execution_chain_id);
+            let explicit_fallback = self
+                .has_explicit_network_selection()
+                .then(|| self.networks.canonical_execution_profile());
+            let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                source_chain_id,
+                None,
+                explicit_fallback,
+            )
+            .map_err(eyre::Report::msg)?;
+            return Ok(ForkEndpointIdentity {
+                execution_chain_id: fallback_execution_chain_id,
+                source_chain_id,
+                network: network_profile.map(|profile| profile.execution_network()),
+                network_profile,
+                hardfork: None,
+                instance_id: None,
+                source_fork_block_number: None,
+                source_fork_block_hash: None,
+            });
+        };
 
-                Ok(ForkEndpointIdentity {
-                    execution_chain_id,
-                    source_chain_id,
-                    network: Some(network),
-                    network_profile: Some(network_profile),
-                    hardfork: Some(hardfork),
-                    instance_id,
-                    source_fork_block_number,
-                    source_fork_block_hash,
-                })
-            }
-            Err(error) if is_rpc_method_not_found(&error) => {
-                let source_chain_id =
-                    source_chain_id_override.unwrap_or(fallback_execution_chain_id);
-                let explicit_fallback = self
-                    .has_explicit_network_selection()
-                    .then(|| self.networks.canonical_execution_profile());
-                let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
-                    source_chain_id,
-                    None,
-                    explicit_fallback,
-                )
-                .map_err(eyre::Report::msg)?;
-                Ok(ForkEndpointIdentity {
-                    execution_chain_id: fallback_execution_chain_id,
-                    source_chain_id,
-                    network: network_profile.map(|profile| profile.execution_network()),
-                    network_profile,
-                    hardfork: None,
-                    instance_id: None,
-                    source_fork_block_number: None,
-                    source_fork_block_hash: None,
-                })
-            }
+        let (
+            execution_chain_id,
+            source_chain_id,
+            instance_id,
+            source_fork_block_number,
+            source_fork_block_hash,
+        ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()).await {
+            Ok(metadata) => (
+                metadata.chain_id,
+                source_chain_id_override.unwrap_or_else(|| {
+                    metadata.forked_network.map(|fork| fork.chain_id).unwrap_or(metadata.chain_id)
+                }),
+                Some(metadata.instance_id),
+                metadata.forked_network.map(|fork| fork.fork_block_number),
+                metadata.forked_network.map(|fork| fork.fork_block_hash),
+            ),
+            Err(error) if is_rpc_method_not_found(&error) => (
+                fallback_execution_chain_id,
+                source_chain_id_override.unwrap_or(fallback_execution_chain_id),
+                None,
+                None,
+                None,
+            ),
             Err(error) => {
-                Err(error).wrap_err("failed to determine network family from fork endpoint")
+                return Err(error).wrap_err("failed to retrieve Anvil fork source identity");
             }
-        }
+        };
+        let identity_chain_id =
+            if node_info.network.is_some() { execution_chain_id } else { source_chain_id };
+        let explicit_fallback = self
+            .has_explicit_network_selection()
+            .then(|| self.networks.canonical_execution_profile());
+        let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
+            identity_chain_id,
+            Some(node_info.network.as_deref()),
+            explicit_fallback,
+        )
+        .map_err(eyre::Report::msg)?
+        .ok_or_else(|| eyre::eyre!("Anvil metadata did not identify an execution profile"))?;
+        let network = network_profile.execution_network();
+        let hardfork = network
+            .parse_hardfork(&node_info.hard_fork)
+            .map_err(eyre::Report::msg)
+            .wrap_err_with(|| {
+                format!("unsupported hardfork `{}` reported for `{network}`", node_info.hard_fork)
+            })?;
+
+        Ok(ForkEndpointIdentity {
+            execution_chain_id,
+            source_chain_id,
+            network: Some(network),
+            network_profile: Some(network_profile),
+            hardfork: Some(hardfork),
+            instance_id,
+            source_fork_block_number,
+            source_fork_block_hash,
+        })
     }
 
     fn offline_fork_identity(&self, chain_id: u64) -> Result<ForkEndpointIdentity> {
@@ -1617,17 +1627,18 @@ impl NodeConfig {
     async fn resolved_fork_endpoint_identity(
         &self,
         provider: &RetryProvider,
+        node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> Result<ForkEndpointIdentity> {
         let identity = if let Some(chain_id) = self.fork_chain_id {
             let chain_id = chain_id.to();
             // `fork_chain_id` avoids depending on `eth_chainId`, but an online Anvil endpoint can
             // still expose authoritative family, hardfork, and instance metadata. Probe it so
             // mirror validation and reset staging cannot mistake this node for its own upstream.
-            self.fork_endpoint_identity(provider, chain_id, Some(chain_id)).await
+            self.fork_endpoint_identity(provider, chain_id, Some(chain_id), node_info_probe).await
         } else {
             let execution_chain_id =
                 provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-            self.fork_endpoint_identity(provider, execution_chain_id, None).await
+            self.fork_endpoint_identity(provider, execution_chain_id, None, node_info_probe).await
         }?;
         ensure_fork_network_supported(identity.source_chain_id)?;
         Ok(identity)
@@ -1638,9 +1649,12 @@ impl NodeConfig {
         eth_rpc_url: &str,
     ) -> Result<Arc<RetryProvider>> {
         let provider = Arc::new(self.fork_provider(eth_rpc_url)?);
+        let mut node_info_probe = AnvilNodeInfoProbe::default();
         for _ in 0..3 {
-            let before = self.resolved_fork_endpoint_identity(&provider).await?;
-            let after = self.resolved_fork_endpoint_identity(&provider).await?;
+            let before =
+                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
+            let after =
+                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             if before == after {
                 return Ok(provider);
             }
@@ -1653,8 +1667,10 @@ impl NodeConfig {
         provider: &Arc<RetryProvider>,
         fork_overrides: ForkOverrides,
     ) -> Result<StableForkSnapshot> {
+        let mut node_info_probe = AnvilNodeInfoProbe::default();
         for _ in 0..3 {
-            let before = self.resolved_fork_endpoint_identity(provider).await?;
+            let before =
+                self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
             let (block_number, transaction_replay) = if let Some(fork_choice) = &self.fork_choice {
                 derive_block_and_replay(fork_choice, provider).await.wrap_err(
                     "failed to derive fork block and transaction replay from fork choice",
@@ -1676,7 +1692,8 @@ impl NodeConfig {
             } else {
                 provider.get_gas_price().await.unwrap_or(INITIAL_GAS_PRICE)
             };
-            let after = self.resolved_fork_endpoint_identity(provider).await?;
+            let after =
+                self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
@@ -1700,13 +1717,16 @@ impl NodeConfig {
         block_hash: B256,
     ) -> Result<bool> {
         let provider = self.fork_provider(eth_rpc_url)?;
+        let mut node_info_probe = AnvilNodeInfoProbe::new(expected.is_authoritative());
         for _ in 0..3 {
-            let before = self.resolved_fork_endpoint_identity(&provider).await?;
+            let before =
+                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             let block = provider
                 .get_block(BlockNumberOrTag::Number(block_number).into())
                 .await
                 .wrap_err("failed to confirm fork block context")?;
-            let after = self.resolved_fork_endpoint_identity(&provider).await?;
+            let after =
+                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             if before != after {
                 continue;
             }
@@ -1769,7 +1789,9 @@ impl NodeConfig {
         }
 
         let provider = self.fork_provider(eth_rpc_url)?;
-        let identity = self.resolved_fork_endpoint_identity(&provider).await?;
+        let mut node_info_probe = AnvilNodeInfoProbe::default();
+        let identity =
+            self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
         // Preserve Foundry's historical behavior for custom EVM chains that do not expose Anvil
         // metadata. Authoritative metadata still wins when present.
         Ok(identity.network_profile.unwrap_or_default())
@@ -2510,6 +2532,38 @@ mod tests {
         assert_eq!(
             NodeConfig::fork_urls_requiring_revalidation(&config.fork_urls, authoritative),
             config.fork_urls
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_authoritative_identity_keeps_node_info_probe_strict() {
+        let (_api, origin) =
+            crate::spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+        let fork_url = foundry_test_utils::rpc::spawn_rpc_proxy_rejecting_method_after(
+            origin.http_endpoint(),
+            "anvil_nodeInfo",
+            0,
+        )
+        .await;
+        let expected = ForkEndpointIdentity {
+            execution_chain_id: NamedChain::Mainnet as u64,
+            source_chain_id: NamedChain::Mainnet as u64,
+            network: Some(NetworkVariant::Ethereum),
+            network_profile: Some(NetworkConfigs::default()),
+            hardfork: Some(EthereumHardfork::Prague.into()),
+            instance_id: Some(B256::with_last_byte(1)),
+            source_fork_block_number: None,
+            source_fork_block_hash: None,
+        };
+
+        let error = NodeConfig::test()
+            .fork_context_matches(&fork_url, expected, 0, B256::ZERO)
+            .await
+            .unwrap_err();
+
+        assert!(
+            error.to_string().contains("failed to determine network family from fork endpoint"),
+            "{error}"
         );
     }
 

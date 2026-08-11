@@ -36,7 +36,10 @@ use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
-use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
+use foundry_test_utils::rpc::{
+    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_erroring_method_after,
+    spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_before,
+};
 use futures::StreamExt;
 use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
@@ -83,6 +86,40 @@ pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_allows_unavailable_anvil_node_info() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url =
+        spawn_rpc_proxy_erroring_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
+
+    try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rejects_node_info_failure_after_anvil_identification() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url =
+        spawn_rpc_proxy_rejecting_method_after(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
+
+    let result = try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
+    let Err(error) = result else { panic!("expected fork startup to fail") };
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_retries_when_anvil_node_info_becomes_available() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url =
+        spawn_rpc_proxy_rejecting_method_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
+
+    try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

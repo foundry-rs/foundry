@@ -177,6 +177,32 @@ enum EndpointHardforkPolicy {
     Required,
 }
 
+/// Tracks whether `anvil_nodeInfo` has positively identified the endpoint as Anvil.
+#[derive(Clone, Copy, Debug, Default)]
+struct AnvilNodeInfoProbe {
+    identified: bool,
+}
+
+impl AnvilNodeInfoProbe {
+    const fn new(identified: bool) -> Self {
+        Self { identified }
+    }
+
+    async fn request<N: Network, P: Provider<N>>(
+        &mut self,
+        provider: &P,
+    ) -> eyre::Result<Option<NodeInfo>> {
+        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
+            Ok(node_info) => {
+                self.identified = true;
+                Ok(Some(node_info))
+            }
+            Err(_) if !self.identified => Ok(None),
+            Err(error) => Err(error).wrap_err("failed to determine network family from endpoint"),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ForkBlockTarget {
     Configured(BlockNumberOrTag),
@@ -376,6 +402,17 @@ impl EvmOpts {
         }
     }
 
+    fn anvil_node_info_probe(&self) -> AnvilNodeInfoProbe {
+        let endpoint = self.fork_url.as_deref();
+        let identified = [self.fork_endpoint.as_ref(), self.expected_fork_endpoint.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|identity| {
+                Some(identity.endpoint.as_str()) == endpoint && identity.reported_hardfork.is_some()
+            });
+        AnvilNodeInfoProbe::new(identified)
+    }
+
     fn fork_source_headers(&self) -> Option<&[String]> {
         self.fork_headers.as_deref().or(self.rpc_headers.as_deref())
     }
@@ -417,7 +454,9 @@ impl EvmOpts {
             Some(block_number) => BlockNumberOrTag::Number(block_number),
             None => BlockNumberOrTag::Latest,
         });
-        let (_, block, context) = self.resolve_fork_block_with_context(&provider, target).await?;
+        let mut node_info_probe = self.anvil_node_info_probe();
+        let (_, block, context) =
+            self.resolve_fork_block_with_context(&provider, target, &mut node_info_probe).await?;
         Ok(Some(self.resolved_fork(fork_url, block, context)))
     }
 
@@ -493,8 +532,15 @@ impl EvmOpts {
         provider: &P,
         fork: &ResolvedFork,
     ) -> eyre::Result<()> {
-        let identity =
-            self.resolve_fork_endpoint_once(provider, EndpointHardforkPolicy::Required).await?;
+        let mut node_info_probe = self.anvil_node_info_probe();
+        node_info_probe.identified |= fork.context().hardfork.is_some();
+        let identity = self
+            .resolve_fork_endpoint_once(
+                provider,
+                &mut node_info_probe,
+                EndpointHardforkPolicy::Required,
+            )
+            .await?;
         self.ensure_expected_fork_endpoint(&identity)?;
         eyre::ensure!(
             fork.context().matches_identity(&identity),
@@ -599,12 +645,13 @@ impl EvmOpts {
         let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
         let unknown_fallback = self.endpoint_network_fallback();
+        let mut node_info_probe = self.anvil_node_info_probe();
         for _ in 0..3 {
             let before_chain_id = provider
                 .get_chain_id()
                 .await
                 .wrap_err("failed to retrieve chain ID from fork endpoint")?;
-            let before_node_info = Self::fork_node_info(&provider).await?;
+            let before_node_info = node_info_probe.request(&provider).await?;
             let before = Self::resolve_fork_endpoint_identity(
                 &provider,
                 fork_url,
@@ -618,7 +665,7 @@ impl EvmOpts {
                 .get_chain_id()
                 .await
                 .wrap_err("failed to confirm chain ID from fork endpoint")?;
-            let after_node_info = Self::fork_node_info(&provider).await?;
+            let after_node_info = node_info_probe.request(&provider).await?;
             let after = Self::resolve_fork_endpoint_identity(
                 &provider,
                 fork_url,
@@ -638,28 +685,19 @@ impl EvmOpts {
         );
     }
 
-    async fn fork_node_info<N: Network, P: Provider<N>>(
-        provider: &P,
-    ) -> eyre::Result<Option<NodeInfo>> {
-        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
-            Ok(node_info) => Ok(Some(node_info)),
-            Err(error) if is_rpc_method_not_found(&error) => Ok(None),
-            Err(error) => Err(error).wrap_err("failed to determine network family from endpoint"),
-        }
-    }
-
     /// Resolves one endpoint identity snapshot, using Anvil's authoritative node metadata when it
     /// is already known to be available.
     async fn resolve_fork_endpoint_once<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
+        node_info_probe: &mut AnvilNodeInfoProbe,
         hardfork_policy: EndpointHardforkPolicy,
     ) -> eyre::Result<ForkEndpointIdentity> {
         let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
         let cached_anvil = self.fork_endpoint.as_ref().is_some_and(|identity| {
             identity.endpoint == fork_url && identity.reported_hardfork.is_some()
         });
-        let node_info = Self::fork_node_info(provider).await?;
+        let node_info = node_info_probe.request(provider).await?;
         let execution_chain_id = if cached_anvil && let Some(node_info) = &node_info {
             node_info.environment.chain_id
         } else {
@@ -811,16 +849,21 @@ impl EvmOpts {
             return Ok((self.local_evm_env(), self.local_tx_env(), None));
         };
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
+        let mut node_info_probe = self.anvil_node_info_probe();
         for _ in 0..3 {
             let (evm_env, block, context) =
-                self.fork_evm_env_resolved_with_context(&provider).await?;
+                self.fork_evm_env_resolved_with_context(&provider, &mut node_info_probe).await?;
             let gas_price =
                 option_try_or_else(self.env.gas_price.map(|value| value as u128), async || {
                     provider.get_gas_price().await
                 })
                 .await?;
             let identity = self
-                .resolve_fork_endpoint_once(&provider, EndpointHardforkPolicy::Required)
+                .resolve_fork_endpoint_once(
+                    &provider,
+                    &mut node_info_probe,
+                    EndpointHardforkPolicy::Required,
+                )
                 .await?;
             self.ensure_expected_fork_endpoint(&identity)?;
             if context.matches_identity(&identity) {
@@ -879,16 +922,23 @@ impl EvmOpts {
         };
         let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
         let provider = self.provider_for_resolved_fork::<AnyNetwork>(fork)?;
+        let mut node_info_probe = self.anvil_node_info_probe();
+        node_info_probe.identified |= fork.context().hardfork.is_some();
         for _ in 0..3 {
-            let (evm_env, endpoint) =
-                self.fork_evm_env_at_resolved_with_context(&provider, fork).await?;
+            let (evm_env, endpoint) = self
+                .fork_evm_env_at_resolved_with_context(&provider, fork, &mut node_info_probe)
+                .await?;
             let gas_price =
                 option_try_or_else(self.env.gas_price.map(|value| value as u128), async || {
                     provider.get_gas_price().await
                 })
                 .await?;
             let identity = self
-                .resolve_fork_endpoint_once(&provider, EndpointHardforkPolicy::Required)
+                .resolve_fork_endpoint_once(
+                    &provider,
+                    &mut node_info_probe,
+                    EndpointHardforkPolicy::Required,
+                )
                 .await?;
             self.ensure_expected_fork_endpoint(&identity)?;
             if endpoint == fork.context() && endpoint.matches_identity(&identity) {
@@ -913,7 +963,9 @@ impl EvmOpts {
         &self,
         provider: &P,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, BlockNumber)> {
-        let (evm_env, block, _) = self.fork_evm_env_resolved_with_context(provider).await?;
+        let mut node_info_probe = self.anvil_node_info_probe();
+        let (evm_env, block, _) =
+            self.fork_evm_env_resolved_with_context(provider, &mut node_info_probe).await?;
         Ok((evm_env, block.number))
     }
 
@@ -927,7 +979,9 @@ impl EvmOpts {
         &self,
         provider: &P,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ForkContext)> {
-        let (evm_env, _, context) = self.fork_evm_env_resolved_with_context(provider).await?;
+        let mut node_info_probe = self.anvil_node_info_probe();
+        let (evm_env, _, context) =
+            self.fork_evm_env_resolved_with_context(provider, &mut node_info_probe).await?;
         Ok((evm_env, context))
     }
 
@@ -940,6 +994,7 @@ impl EvmOpts {
     >(
         &self,
         provider: &P,
+        node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, BlockNumHash, ForkContext)> {
         trace!(
             memory_limit = %self.memory_limit,
@@ -957,7 +1012,7 @@ impl EvmOpts {
             None => BlockNumberOrTag::Latest,
         });
         let (block, fork_block, context) =
-            self.resolve_fork_block_with_context(provider, target).await?;
+            self.resolve_fork_block_with_context(provider, target, node_info_probe).await?;
         let chain_id = self.chain_id_override().unwrap_or(context.execution_chain_id);
         let evm_env =
             self.fork_env_from_block::<SPEC, BLOCK, N>(chain_id, context.source_chain_id, &block);
@@ -979,12 +1034,17 @@ impl EvmOpts {
         &self,
         provider: &P,
         target: ForkBlockTarget,
+        node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> eyre::Result<(N::BlockResponse, BlockNumHash, ForkContext)> {
         let endpoint = self.fork_url.as_deref().unwrap_or_default();
         let mut stable = None;
         for _ in 0..3 {
             let before = self
-                .resolve_fork_endpoint_once(provider, EndpointHardforkPolicy::Required)
+                .resolve_fork_endpoint_once(
+                    provider,
+                    node_info_probe,
+                    EndpointHardforkPolicy::Required,
+                )
                 .await
                 .wrap_err_with(|| self.fork_env_error_context())?;
             let block = match target {
@@ -998,7 +1058,11 @@ impl EvmOpts {
                     .wrap_err("could not instantiate resolved fork environment")?,
             };
             let after = self
-                .resolve_fork_endpoint_once(provider, EndpointHardforkPolicy::Required)
+                .resolve_fork_endpoint_once(
+                    provider,
+                    node_info_probe,
+                    EndpointHardforkPolicy::Required,
+                )
                 .await
                 .wrap_err_with(|| self.fork_env_error_context())?;
             if before == after {
@@ -1085,9 +1149,14 @@ impl EvmOpts {
         &self,
         provider: &P,
         expected: &ResolvedFork,
+        node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ForkContext)> {
         let (block, _, context) = self
-            .resolve_fork_block_with_context(provider, ForkBlockTarget::Resolved(expected.block()))
+            .resolve_fork_block_with_context(
+                provider,
+                ForkBlockTarget::Resolved(expected.block()),
+                node_info_probe,
+            )
             .await?;
         eyre::ensure!(
             context == expected.context(),
@@ -1475,6 +1544,9 @@ mod tests {
     #[cfg(feature = "monad")]
     use alloy_rpc_types::anvil::Forking;
     use alloy_serde::WithOtherFields;
+    use foundry_test_utils::rpc::{
+        spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_before,
+    };
     #[cfg(feature = "optimism")]
     use op_revm::OpSpecId;
     use revm::context::{BlockEnv, TxEnv};
@@ -1573,6 +1645,39 @@ mod tests {
         evm_opts.infer_network_from_fork().await.unwrap();
         assert_eq!(evm_opts.fork_endpoint, None);
         assert_eq!(evm_opts.expected_fork_endpoint, None);
+    }
+
+    #[test]
+    fn fork_expected_anvil_identity_seeds_strict_node_info_probe() {
+        let authoritative = ForkEndpointIdentity {
+            endpoint: "http://localhost:8545".to_string(),
+            execution_chain_id: 1,
+            source_chain_id: 1,
+            network: NetworkVariant::Ethereum,
+            network_profile: NetworkConfigs::default(),
+            reported_hardfork: Some("Prague".to_string()),
+            hardfork: Some(FoundryHardfork::Ethereum(
+                foundry_evm_hardforks::EthereumHardfork::Prague,
+            )),
+            instance_id: Some(B256::with_last_byte(1)),
+            source_fork_block_number: None,
+            source_fork_block_hash: None,
+        };
+        let mut anonymous = authoritative.clone();
+        anonymous.reported_hardfork = None;
+        anonymous.hardfork = None;
+        anonymous.instance_id = None;
+        let mut evm_opts = EvmOpts {
+            fork_url: Some(authoritative.endpoint.clone()),
+            fork_endpoint: Some(anonymous),
+            expected_fork_endpoint: Some(authoritative),
+            ..Default::default()
+        };
+
+        assert!(evm_opts.anvil_node_info_probe().identified);
+
+        evm_opts.fork_url = Some("http://localhost:9545".to_string());
+        assert!(!evm_opts.anvil_node_info_probe().identified);
     }
 
     #[test]
@@ -2102,6 +2207,83 @@ mod tests {
         let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
 
         assert_eq!(evm_opts.fork_network().await.unwrap(), (chain_id, NetworkVariant::Ethereum));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_non_anvil_node_info_failure_is_optional() {
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
+                .await;
+        let fork_url =
+            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 0)
+                .await;
+        let networks = NetworkConfigs::with_ethereum();
+        let mut evm_opts =
+            EvmOpts { fork_url: Some(fork_url.clone()), networks, ..Default::default() };
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+
+        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
+        assert_eq!(evm_opts.networks, networks);
+        assert_eq!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork, None);
+        let (_, _, fork) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        assert_eq!(fork.unwrap().context().network, NetworkVariant::Ethereum);
+
+        #[cfg(feature = "optimism")]
+        {
+            let networks = NetworkConfigs::with_optimism();
+            let mut evm_opts = EvmOpts { fork_url: Some(fork_url), networks, ..Default::default() };
+            evm_opts.infer_network_from_fork().await.unwrap();
+            assert_eq!(evm_opts.networks, networks);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_node_info_failure_is_strict_after_anvil_is_identified() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let fork_url =
+            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 1)
+                .await;
+        let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+
+        let error = evm_opts.discover_fork_endpoint().await.unwrap_err();
+
+        assert!(
+            error.to_string().contains("failed to determine network family from endpoint"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_node_info_probe_becomes_strict_after_initial_failure() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let fork_url =
+            spawn_rpc_proxy_rejecting_method_before(handle.http_endpoint(), "anvil_nodeInfo", 1)
+                .await;
+        let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+
+        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
+
+        assert!(identity.reported_hardfork.is_some());
+        assert!(identity.instance_id.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_cached_anvil_identity_keeps_node_info_probe_strict() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let fork_url =
+            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 2)
+                .await;
+        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+        evm_opts.infer_network_from_fork().await.unwrap();
+        assert!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork.is_some());
+
+        let error = evm_opts.fork_network().await.unwrap_err();
+
+        assert!(
+            error.to_string().contains("failed to determine network family from endpoint"),
+            "{error}"
+        );
     }
 
     #[test]

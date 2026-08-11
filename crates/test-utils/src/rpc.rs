@@ -1,7 +1,7 @@
 //! RPC testing utilities.
 
 use alloy_primitives::B256;
-use axum::{Json, Router, routing::post};
+use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
 use foundry_config::{
     NamedChain::{
         self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
@@ -263,6 +263,122 @@ pub async fn spawn_canonical_monad_system_rpc(endpoint: String, target_hash: B25
                 canonicalize_monad_system_response(&request, &mut response, &target_hash);
 
                 Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+/// Spawns an RPC proxy that rejects `method` after forwarding `successful_calls` requests.
+///
+/// Rejections use an HTTP 403 response with a vendor-specific JSON-RPC error code. This models
+/// gateways that deny unknown or custom methods without using the standard method-not-found code.
+pub async fn spawn_rpc_proxy_rejecting_method_after(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::After(successful_calls),
+        StatusCode::FORBIDDEN,
+    )
+    .await
+}
+
+/// Spawns an RPC proxy that rejects the first `rejected_calls` requests to `method`.
+pub async fn spawn_rpc_proxy_rejecting_method_before(
+    endpoint: String,
+    method: &'static str,
+    rejected_calls: usize,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::Before(rejected_calls),
+        StatusCode::FORBIDDEN,
+    )
+    .await
+}
+
+/// Spawns an RPC proxy that returns a vendor-specific JSON-RPC error for `method` after
+/// forwarding `successful_calls` requests.
+pub async fn spawn_rpc_proxy_erroring_method_after(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::After(successful_calls),
+        StatusCode::OK,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum RpcMethodRejection {
+    Before(usize),
+    After(usize),
+}
+
+impl RpcMethodRejection {
+    const fn rejects(self, call: usize) -> bool {
+        match self {
+            Self::Before(rejected_calls) => call < rejected_calls,
+            Self::After(successful_calls) => call >= successful_calls,
+        }
+    }
+}
+
+async fn spawn_rpc_proxy_rejecting_method(
+    endpoint: String,
+    method: &'static str,
+    rejection: RpcMethodRejection,
+    rejection_status: StatusCode,
+) -> String {
+    let client = reqwest::Client::new();
+    let calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let calls = calls.clone();
+            async move {
+                if request.get("method").and_then(Value::as_str) == Some(method)
+                    && rejection.rejects(calls.fetch_add(1, Ordering::Relaxed))
+                {
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    return (
+                        rejection_status,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32004,
+                                "message": "method is not allowed",
+                            },
+                        })),
+                    )
+                        .into_response();
+                }
+
+                let response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response).into_response()
             }
         }),
     );
