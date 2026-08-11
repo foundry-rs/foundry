@@ -541,16 +541,13 @@ async fn test_tempo_fork_executes_request_extensions_locally() {
         "blockStateCalls": [{"calls": [request]}],
         "returnFullTransactions": true,
     });
-    let error = provider
+    provider
         .raw_request::<_, serde_json::Value>(
             "eth_simulateV1".into(),
             serde_json::json!([payload, "latest"]),
         )
         .await
-        .unwrap_err();
-    let error = error.as_error_resp().unwrap();
-    assert_eq!(error.code, -32603);
-    assert_eq!(error.message, "Required data unavailable");
+        .unwrap();
 }
 
 sol! {

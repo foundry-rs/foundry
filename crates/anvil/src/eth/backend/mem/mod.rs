@@ -3759,14 +3759,16 @@ where
 
     /// Returns all receipts of the block
     pub fn mined_receipts(&self, hash: B256) -> Option<Vec<N::ReceiptEnvelope>> {
-        let block = self.mined_block_by_hash(hash)?;
-        let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions.hashes() {
-            let receipt = storage.transactions.get(&tx)?.receipt.clone();
-            receipts.push(receipt);
-        }
-        Some(receipts)
+        let block = storage.blocks.get(&hash)?;
+        block
+            .body
+            .transactions
+            .iter()
+            .map(|transaction| {
+                storage.transactions.get(&transaction.hash()).map(|tx| tx.receipt.clone())
+            })
+            .collect()
     }
 }
 
@@ -6689,13 +6691,6 @@ impl Backend<FoundryNetwork> {
                     // commit the transaction
                     cache_db.commit(state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
-                    let post_state = if spec_id < SpecId::BYZANTIUM {
-                        let accounts =
-                            cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                        Some(state_root(&accounts))
-                    } else {
-                        None
-                    };
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used
@@ -6741,7 +6736,6 @@ impl Backend<FoundryNetwork> {
                         &result,
                         canonical_logs.clone(),
                         cumulative_gas_used,
-                        post_state,
                         deposit_nonce,
                         deposit_receipt_version,
                     ));
@@ -6828,10 +6822,11 @@ impl Backend<FoundryNetwork> {
                     Default::default()
                 };
 
-                // TODO: Assess restoring fork-backed simulations by deriving a canonical
-                // post-state root.
-                let accounts = cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                let state_root = state_root(&accounts);
+                // Fork databases are partial, so their synthetic blocks use a zero state root.
+                let state_root = cache_db
+                    .maybe_full_db()
+                    .map(|accounts| state_root(&accounts))
+                    .unwrap_or_default();
                 let header = Header {
                     logs_bloom: receipts.iter().fold(Bloom::ZERO, |mut bloom, receipt| {
                         bloom.accrue_bloom(receipt.logs_bloom());
