@@ -1343,36 +1343,28 @@ impl SymExpr {
         &self,
         cx: &mut SymCx,
     ) -> Option<SymBoolExpr> {
-        let mut conditions = HashMap::default();
-        let mut remaining = MAX_BITWISE_BOOL_WORD_NODES;
-        self.bitwise_bool_word_condition_cached(cx, &mut conditions, &mut remaining)
-    }
-
-    fn bitwise_bool_word_condition_cached(
-        &self,
-        cx: &mut SymCx,
-        conditions: &mut HashMap<Self, Option<SymBoolExpr>>,
-        remaining: &mut usize,
-    ) -> Option<SymBoolExpr> {
-        if let Some(condition) = conditions.get(self) {
-            return condition.clone();
+        let mut pending = vec![self.clone()];
+        let mut seen_words = HashSet::<Self>::default();
+        let mut leaf_conditions = IndexSet::<SymBoolExpr>::default();
+        while let Some(word) = pending.pop() {
+            if !seen_words.insert(word.clone()) {
+                continue;
+            }
+            if seen_words.len() > MAX_BITWISE_BOOL_WORD_NODES {
+                return None;
+            }
+            if let Some(condition) = word.bool_word_condition() {
+                leaf_conditions.insert(condition);
+                continue;
+            }
+            let SymExprKind::BinOp(SymBinOp::Or, left, right) = word.kind() else {
+                return None;
+            };
+            pending.push(right.clone());
+            pending.push(left.clone());
         }
-        if *remaining == 0 {
-            return None;
-        }
-        *remaining -= 1;
 
-        let condition = if let Some(condition) = self.bool_word_condition() {
-            Some(condition)
-        } else if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
-            let left = left.bitwise_bool_word_condition_cached(cx, conditions, remaining)?;
-            let right = right.bitwise_bool_word_condition_cached(cx, conditions, remaining)?;
-            Some(if left == right { left } else { SymBoolExpr::or(cx, vec![left, right]) })
-        } else {
-            None
-        };
-        conditions.insert(self.clone(), condition.clone());
-        condition
+        Some(SymBoolExpr::or(cx, leaf_conditions.into_iter().collect()))
     }
 
     fn bool_word_condition_from_parts(
@@ -2092,7 +2084,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bitwise_bool_word_condition_memoizes_shared_or_dag() {
+    fn bitwise_bool_word_condition_deduplicates_shared_or_dag() {
         let mut cx = SymCx::new();
         let base = SymExpr::var(&mut cx, "base");
         let selected = SymExpr::var(&mut cx, "selected");
@@ -2115,6 +2107,30 @@ mod tests {
         };
         assert_eq!(then_expr, &selected);
         assert_eq!(else_expr, &base);
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_deduplicates_overlapping_or_dag() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+        let mut previous = SymExpr::bool_word(&mut cx, first.clone());
+        let mut current = SymExpr::bool_word(&mut cx, second.clone());
+        for _ in 0..28 {
+            let next = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Or, current.clone(), previous.clone()),
+            );
+            previous = current;
+            current = next;
+        }
+
+        let actual = current.bitwise_bool_word_condition(&mut cx).expect("boolean condition");
+        let expected = SymBoolExpr::or(&mut cx, vec![second, first]);
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
