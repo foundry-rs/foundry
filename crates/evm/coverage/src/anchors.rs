@@ -1,4 +1,4 @@
-use super::{CallAnchor, CallAnchorKind, CoverageItemKind, ItemAnchor, SourceLocation};
+use super::{CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, SourceLocation};
 use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use eyre::ensure;
@@ -55,20 +55,22 @@ pub fn find_anchors(
         .collect()
 }
 
-/// Finds call-based anchors for empty receive and fallback functions in a contract.
-pub fn find_call_anchors(
+/// Finds execution-based anchors for empty constructors, receive functions, and fallbacks in a
+/// contract.
+pub fn find_execution_anchors(
     source_id: u32,
     contract_name: &str,
     analysis: &SourceAnalysis,
-) -> Vec<CallAnchor> {
+) -> Vec<ExecutionAnchor> {
     analysis
         .empty_special_function_ids(source_id, contract_name)
         .filter_map(|item_id| {
-            analysis.empty_special_function_kind(item_id).map(|kind| CallAnchor {
+            analysis.empty_special_function_kind(item_id).map(|kind| ExecutionAnchor {
                 item_id,
                 kind: match kind {
-                    EmptySpecialFunctionKind::Receive => CallAnchorKind::Receive,
-                    EmptySpecialFunctionKind::Fallback => CallAnchorKind::Fallback,
+                    EmptySpecialFunctionKind::Constructor => ExecutionAnchorKind::Constructor,
+                    EmptySpecialFunctionKind::Receive => ExecutionAnchorKind::Receive,
+                    EmptySpecialFunctionKind::Fallback => ExecutionAnchorKind::Fallback,
                 },
             })
         })

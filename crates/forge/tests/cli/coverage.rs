@@ -1948,13 +1948,15 @@ end_of_record
 "#]]);
 });
 
-// Test that inherited empty receive and fallback functions have distinct coverage anchors.
+// Test that inherited empty constructors, receive functions, and fallbacks have distinct anchors.
 forgetest!(empty_special_functions_are_distinct, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
         r#"
 contract Base {
+    constructor() {}
+
     receive() external payable {}
 
     fallback() external {}
@@ -1988,18 +1990,21 @@ contract AContractTest is DSTest {
 TN:
 SF:src/AContract.sol
 DA:5,1
-FN:5,Base.receive
+FN:5,Base.constructor
+FNDA:1,Base.constructor
+DA:7,1
+FN:7,Base.receive
 FNDA:1,Base.receive
-DA:7,0
-FN:7,Base.fallback
-FNDA:0,Base.fallback
 DA:9,0
-FN:9,Base.increment
+FN:9,Base.fallback
+FNDA:0,Base.fallback
+DA:11,0
+FN:11,Base.increment
 FNDA:0,Base.increment
-FNF:3
-FNH:1
-LF:3
-LH:1
+FNF:4
+FNH:2
+LF:4
+LH:2
 BRF:0
 BRH:0
 end_of_record
@@ -2015,7 +2020,7 @@ forgetest!(empty_fallback_without_receive, |prj, cmd| {
         "AContract.sol",
         r#"
 contract AContract {
-    fallback() external {}
+    fallback() external payable {}
 }
     "#,
     );
@@ -2029,7 +2034,7 @@ import "./AContract.sol";
 contract AContractTest is DSTest {
     function test_fallback() public {
         AContract a = new AContract();
-        (bool success,) = address(a).call("");
+        (bool success,) = address(a).call{value: 1}("");
         require(success);
         (success,) = address(a).call(hex"01");
         require(success);
@@ -2052,6 +2057,54 @@ FNF:1
 FNH:1
 LF:1
 LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
+
+// Test that a nonpayable fallback is not covered by a rejected value-bearing call.
+forgetest!(empty_nonpayable_fallback_rejects_value, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    fallback() external {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_rejected_fallback() public {
+        AContract a = new AContract();
+        (bool success,) = address(a).call{value: 1}(hex"deadbeef");
+        require(!success);
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,0
+FN:5,AContract.fallback
+FNDA:0,AContract.fallback
+FNF:1
+FNH:0
+LF:1
+LH:0
 BRF:0
 BRH:0
 end_of_record
@@ -2138,6 +2191,52 @@ end_of_record
 ╰-------------------+--------------+---------------+------------+--------------╯
 
 "#]]);
+});
+
+// Test empty constructor coverage when via-IR source maps contain no matching span.
+forgetest!(empty_constructor_ir_minimum, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    constructor() {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_constructor() public {
+        new AContract();
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--ir-minimum"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,1
+FN:5,AContract.constructor
+FNDA:1,AContract.constructor
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
 });
 
 // https://github.com/foundry-rs/foundry/issues/9322

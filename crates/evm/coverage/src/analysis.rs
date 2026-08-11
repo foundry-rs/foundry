@@ -45,6 +45,7 @@ struct SourceVisitorCheckpoint {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EmptySpecialFunctionKind {
+    Constructor,
     Receive,
     Fallback,
 }
@@ -74,11 +75,19 @@ fn resolve_empty_special_functions(
     for contract_id in gcx.hir.contract_ids() {
         let contract = gcx.hir.contract(contract_id);
         let Some(&contract_source_id) = hir_source_ids.get(&contract.source) else { continue };
-        for (function_id, kind) in [
+        let constructors = contract.linearized_bases.iter().filter_map(|&base_id| {
+            gcx.hir
+                .contract(base_id)
+                .ctor
+                .map(|function_id| (function_id, EmptySpecialFunctionKind::Constructor))
+        });
+        let runtime_functions = [
             (contract.receive, EmptySpecialFunctionKind::Receive),
             (contract.fallback, EmptySpecialFunctionKind::Fallback),
-        ] {
-            let Some(function_id) = function_id else { continue };
+        ]
+        .into_iter()
+        .filter_map(|(function_id, kind)| function_id.map(|function_id| (function_id, kind)));
+        for (function_id, kind) in constructors.chain(runtime_functions) {
             let function = gcx.hir.function(function_id);
             if !function.body.is_some_and(|body| body.is_empty()) {
                 continue;
