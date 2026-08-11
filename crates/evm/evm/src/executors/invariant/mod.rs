@@ -992,6 +992,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         actual_worker_count,
                         gas_report_samples,
                     );
+                    if output.is_err() {
+                        campaign_state.request_terminal_stop();
+                    }
                     debug!("finished in {:?}", timer.elapsed());
                     output
                 })

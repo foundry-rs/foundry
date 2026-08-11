@@ -1512,6 +1512,77 @@ contract InterruptedCorpusTest is Test {
     assert!(!stdout.contains("failed corpus replays"), "{stdout}");
 });
 
+forgetest_init!(parallel_invariant_worker_error_stops_campaign, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.depth = 64;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "CorpusSetupFailureTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CorpusSetupFailureHandler {
+    uint256 public value;
+
+    function set(uint256 next) external {
+        value = next;
+    }
+}
+
+contract CorpusSetupFailureTest is Test {
+    CorpusSetupFailureHandler handler;
+
+    function setUp() public {
+        handler = new CorpusSetupFailureHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    // Finish compilation before timing how promptly a worker setup error stops its sibling.
+    cmd.args(["build", "-q"]).assert_success();
+    let worker1 =
+        prj.root().join("invariant_corpus").join("CorpusSetupFailureTest").join("worker1");
+    std::fs::create_dir_all(worker1.parent().unwrap()).unwrap();
+    std::fs::write(&worker1, b"not a directory").unwrap();
+
+    cmd.forge_fuse().args([
+        "test",
+        "--mc",
+        "CorpusSetupFailureTest",
+        "--mt",
+        "invariant_ok",
+        "--fuzz-seed",
+        "0x574",
+        "-q",
+    ]);
+    cmd.cmd().stdout(Stdio::null()).stderr(Stdio::null());
+    let mut child = cmd.cmd().spawn().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break None;
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+
+    let status = status.expect("worker corpus setup error did not stop the parallel campaign");
+    assert!(!status.success(), "worker corpus setup error unexpectedly succeeded");
+});
+
 forgetest_init!(optimization_invariants_use_function_level_corpus_dir, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
