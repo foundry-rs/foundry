@@ -95,6 +95,10 @@ impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
                 };
                 Self { base, enveloped_tx: None, deposit: Default::default() }
             }
+            #[cfg(feature = "base")]
+            FoundryTxEnvelope::Eip8130(_) => {
+                unreachable!("EIP-8130 transaction in Optimism context")
+            }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
         }
     }
@@ -163,6 +167,10 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for OpTransaction<TxEnv> {
                     ..Default::default()
                 };
                 Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
+            }
+            #[cfg(feature = "base")]
+            FoundryTxEnvelope::Eip8130(_) => {
+                unreachable!("EIP-8130 transaction in Optimism context")
             }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
         }

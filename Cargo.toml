@@ -556,6 +556,7 @@ base-common-genesis = { git = "https://github.com/base/base", rev = "2467b964e41
 base-common-network = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
 base-common-precompiles = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
 base-common-rpc-types = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
+base-execution-eip8130 = { git = "https://github.com/base/base", rev = "2467b964e4125ed8771022e0a5a887c46ec1188a", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 

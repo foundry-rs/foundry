@@ -1544,6 +1544,8 @@ mod tests {
     #[cfg(feature = "monad")]
     use alloy_rpc_types::anvil::Forking;
     use alloy_serde::WithOtherFields;
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_before,
     };
@@ -2124,6 +2126,8 @@ mod tests {
             assert!(!evm_opts.networks.is_tempo());
             #[cfg(feature = "optimism")]
             assert!(!evm_opts.networks.is_optimism());
+            #[cfg(feature = "base")]
+            assert!(!evm_opts.networks.is_base());
             assert!(!evm_opts.networks.is_celo());
             assert_eq!(evm_opts.networks, NetworkConfigs::default());
         }
@@ -2152,6 +2156,8 @@ mod tests {
         profiles.push(NetworkConfigs::with_optimism());
         #[cfg(feature = "monad")]
         profiles.push(NetworkConfigs::with_monad());
+        #[cfg(feature = "base")]
+        profiles.push(NetworkConfigs::with_base());
 
         for networks in profiles {
             let mut evm_opts = EvmOpts {
@@ -2207,6 +2213,61 @@ mod tests {
         let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
 
         assert_eq!(evm_opts.fork_network().await.unwrap(), (chain_id, NetworkVariant::Ethereum));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "base")]
+    async fn base_endpoint_identity_uses_generic_chain_profile() {
+        let endpoint = "http://127.0.0.1:1";
+        let provider = EvmOpts::default().fork_provider_with_url::<AnyNetwork>(endpoint).unwrap();
+
+        let identity = EvmOpts::resolve_fork_endpoint_identity(
+            &provider,
+            endpoint,
+            NamedChain::Base as u64,
+            None,
+            None,
+            EndpointHardforkPolicy::Optional,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(identity.execution_chain_id, NamedChain::Base as u64);
+        assert_eq!(identity.source_chain_id, NamedChain::Base as u64);
+        assert_eq!(identity.network, NetworkVariant::Base);
+        assert!(identity.network_profile.is_base());
+        assert_eq!(identity.reported_hardfork, None);
+        assert_eq!(identity.hardfork, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "base")]
+    async fn base_anvil_identity_uses_generic_network_and_hardfork_parsing() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let endpoint = handle.http_endpoint();
+        let provider = EvmOpts::default().fork_provider_with_url::<AnyNetwork>(&endpoint).unwrap();
+        let execution_chain_id = provider.get_chain_id().await.unwrap();
+        let mut node_info =
+            provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.unwrap();
+        node_info.network = Some("base".to_string());
+        node_info.hard_fork = "Beryl".to_string();
+
+        let identity = EvmOpts::resolve_fork_endpoint_identity(
+            &provider,
+            &endpoint,
+            execution_chain_id,
+            Some(node_info),
+            None,
+            EndpointHardforkPolicy::Required,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(identity.network, NetworkVariant::Base);
+        assert!(identity.network_profile.is_base());
+        assert_eq!(identity.reported_hardfork.as_deref(), Some("Beryl"));
+        assert_eq!(identity.hardfork, Some(FoundryHardfork::Base(BaseUpgrade::Beryl)));
+        assert!(identity.instance_id.is_some());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2636,6 +2697,29 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(feature = "base")]
+    fn unknown_base_endpoint_hardfork_is_optional_only_for_remote_execution() {
+        assert_eq!(NetworkVariant::from_node_info_name("base").unwrap(), NetworkVariant::Base);
+        assert_eq!(
+            endpoint_hardfork(NetworkVariant::Base, "BaseFuture", EndpointHardforkPolicy::Optional)
+                .unwrap(),
+            None
+        );
+
+        let error =
+            endpoint_hardfork(NetworkVariant::Base, "BaseFuture", EndpointHardforkPolicy::Required)
+                .unwrap_err();
+        assert!(
+            error.to_string().contains("unsupported hardfork `BaseFuture` reported for `base`")
+        );
+        assert_eq!(
+            endpoint_hardfork(NetworkVariant::Base, "Beryl", EndpointHardforkPolicy::Required)
+                .unwrap(),
+            Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     #[cfg(feature = "monad")]
     async fn fork_network_detects_monad_anvil() {
@@ -2660,6 +2744,22 @@ mod tests {
 
         assert!(error.to_string().contains("failed to retrieve chain ID"));
         assert!(evm_opts.networks.is_monad());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "base")]
+    async fn infer_network_base_propagates_unavailable_rpc() {
+        let mut evm_opts = EvmOpts {
+            fork_url: Some("http://127.0.0.1:1".to_string()),
+            networks: NetworkConfigs::with_base(),
+            ..Default::default()
+        };
+
+        let error = evm_opts.infer_network_from_fork().await.unwrap_err();
+
+        assert!(error.to_string().contains("failed to retrieve chain ID"));
+        assert!(evm_opts.networks.is_base());
+        assert_eq!(evm_opts.fork_endpoint, None);
     }
 
     #[tokio::test(flavor = "multi_thread")]

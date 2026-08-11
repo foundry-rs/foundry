@@ -2,11 +2,13 @@ use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt, ReceiptResponse};
 use alloy_primitives::{Address, B256, BlockHash, TxHash};
 use alloy_rpc_types::{ConversionError, Log, TransactionReceipt};
 use alloy_serde::WithOtherFields;
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Receipt;
 use derive_more::AsRef;
 use serde::{Deserialize, Serialize};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 
-#[cfg(feature = "optimism")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 use super::optimism::build_deposit_receipt_envelope;
 use crate::FoundryReceiptEnvelope;
 
@@ -149,8 +151,13 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x02 => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
                     0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
+                    #[cfg(feature = "base")]
+                    0x79 => FoundryReceiptEnvelope::Eip8130(alloy_consensus::ReceiptWithBloom {
+                        receipt: Eip8130Receipt::new(receipt_with_bloom.receipt, Vec::new()),
+                        logs_bloom: receipt_with_bloom.logs_bloom,
+                    }),
                     TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
-                    #[cfg(feature = "optimism")]
+                    #[cfg(any(feature = "base", feature = "optimism"))]
                     0x7E => build_deposit_receipt_envelope(receipt_with_bloom, &other),
                     _ => {
                         let tx_type = r#type;

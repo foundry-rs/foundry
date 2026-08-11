@@ -39,6 +39,29 @@ pub struct Params<T> {
     pub params: T,
 }
 
+/// Parameters accepted by `eth_getTransactionCount`.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum TransactionCountParams {
+    /// Address only.
+    Address((Address,)),
+    /// Standard address and block query.
+    Standard((Address, Option<BlockId>)),
+    /// EIP-8130 address, block, and nonce-key query.
+    Eip8130((Address, Option<BlockId>, U256)),
+}
+
+impl TransactionCountParams {
+    /// Splits the request into address, block, and optional EIP-8130 nonce key.
+    pub const fn into_parts(self) -> (Address, Option<BlockId>, Option<U256>) {
+        match self {
+            Self::Address((address,)) => (address, None, None),
+            Self::Standard((address, block)) => (address, block, None),
+            Self::Eip8130((address, block, nonce_key)) => (address, block, Some(nonce_key)),
+        }
+    }
+}
+
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(tag = "method", content = "params")]
@@ -139,7 +162,7 @@ pub enum EthRequest {
     EthGetBlockAccessListRaw(BlockId),
 
     #[serde(rename = "eth_getTransactionCount")]
-    EthGetTransactionCount(Address, Option<BlockId>),
+    EthGetTransactionCount(TransactionCountParams),
 
     #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
     EthGetTransactionCountByHash(B256),

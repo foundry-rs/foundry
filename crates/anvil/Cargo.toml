@@ -37,6 +37,23 @@ tempo-precompiles.workspace = true
 tempo-evm.workspace = true
 tempo-revm.workspace = true
 
+# Base
+base-common-chains = { workspace = true, optional = true, features = ["std"] }
+base-common-consensus = { workspace = true, optional = true, features = ["evm", "k256", "serde", "std"] }
+base-common-evm = { workspace = true, optional = true, features = [
+    "blst",
+    "c-kzg",
+    "memory_limit",
+    "optional_block_gas_limit",
+    "optional_eip3607",
+    "optional_no_base_fee",
+    "serde",
+    "std",
+] }
+base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["eip8130", "serde", "std"] }
+base-execution-eip8130 = { workspace = true, optional = true }
+
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
 alloy-op-evm = { workspace = true, optional = true }
@@ -137,6 +154,23 @@ monad = [
     "foundry-evm/monad",
     "foundry-evm-networks/monad",
     "foundry-cli?/monad",
+]
+base = [
+    "dep:base-common-chains",
+    "dep:base-common-consensus",
+    "dep:base-common-evm",
+    "dep:base-common-precompiles",
+    "dep:base-common-rpc-types",
+    "dep:base-execution-eip8130",
+    "dep:op-alloy-consensus",
+    "dep:op-revm",
+    "anvil-core/base",
+    "foundry-primitives/base",
+    "foundry-common/base",
+    "foundry-config/base",
+    "foundry-evm/base",
+    "foundry-evm-networks/base",
+    "foundry-cli?/base",
 ]
 optimism = [
     "dep:op-alloy-consensus",

@@ -17,6 +17,8 @@ use foundry_evm::hardfork::MonadHardfork;
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
+#[cfg(feature = "base")]
+use foundry_evm::hardforks::BaseUpgrade;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -90,6 +92,11 @@ pub struct NodeArgs {
     /// [default: latest]
     #[arg(long)]
     pub hardfork: Option<String>,
+
+    /// Override the Base activation-registry administrator.
+    #[cfg(feature = "base")]
+    #[arg(long, value_name = "ADDRESS")]
+    pub base_activation_admin: Option<Address>,
 
     /// Block time in seconds for interval mining.
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
@@ -253,6 +260,8 @@ impl NodeArgs {
         }
 
         let funded_accounts = self.parse_funded_accounts()?;
+        #[cfg(feature = "base")]
+        let base_activation_admin = self.base_activation_admin;
 
         let local_chain_id = self
             .evm
@@ -280,7 +289,7 @@ impl NodeArgs {
             networks
         };
 
-        Ok(NodeConfig::default()
+        let config = NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
             .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
@@ -341,7 +350,10 @@ impl NodeArgs {
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)
-            .with_funded_accounts(funded_accounts))
+            .with_funded_accounts(funded_accounts);
+        #[cfg(feature = "base")]
+        let config = config.with_base_activation_admin(base_activation_admin);
+        Ok(config)
     }
 
     fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {
@@ -905,6 +917,11 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
         return Ok(hardfork);
     }
 
+    #[cfg(feature = "base")]
+    if networks.is_base() {
+        return Ok(BaseUpgrade::from_str(hf)?.into());
+    }
+
     #[cfg(feature = "optimism")]
     if networks.is_optimism() {
         return Ok(OpHardfork::from_str(hf)?.into());
@@ -1004,6 +1021,46 @@ mod tests {
         assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_base_hardfork_from_network() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "base", "--hardfork", "Beryl"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork, Some(BaseUpgrade::Beryl.into()));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_namespaced_base_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--hardfork", "base:Beryl"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork, Some(BaseUpgrade::Beryl.into()));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_base_activation_admin() {
+        let admin = Address::repeat_byte(0xaa);
+        let admin_arg = admin.to_string();
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--base",
+            "--hardfork",
+            "base:Beryl",
+            "--base-activation-admin",
+            admin_arg.as_str(),
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.base_activation_admin, Some(admin));
+    }
+
     #[cfg(feature = "optimism")]
     #[test]
     fn chain_id_infers_optimism_network_in_node_config() {
@@ -1011,6 +1068,15 @@ mod tests {
         let config = args.into_node_config().unwrap();
 
         assert!(config.networks.is_optimism());
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn chain_id_infers_base_network_in_node_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "8453"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
     }
 
     #[test]
