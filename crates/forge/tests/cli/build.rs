@@ -1124,6 +1124,8 @@ forgetest_init!(build_locked_reports_all_mismatches_in_path_order, |prj, cmd| {
     });
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
+    let git_trace = root.join("git-trace.json");
+    cmd.env("GIT_TRACE2_EVENT", &git_trace);
     cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
 Error: foundry.lock does not match installed dependencies:
   lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
@@ -1131,6 +1133,19 @@ Error: foundry.lock does not match installed dependencies:
   lib/stale: dependency submodule is missing (expected 1111111111111111111111111111111111111111)
 
 "#]]);
+
+    let status_commands = fs::read_to_string(git_trace)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| {
+            event["event"] == "start"
+                && event["argv"].as_array().is_some_and(|args| {
+                    args.windows(2).any(|args| args[0] == "submodule" && args[1] == "status")
+                })
+        })
+        .count();
+    assert_eq!(status_commands, 1);
 });
 
 forgetest_init!(build_locked_supports_custom_dependency_directory, |prj, cmd| {

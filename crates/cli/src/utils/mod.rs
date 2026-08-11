@@ -810,6 +810,7 @@ ignore them in the `.gitignore` file."
             .exec()?;
         let (_, mappings) = self.submodule_mappings_at(worktree_root)?;
         let mut gitlinks = BTreeMap::new();
+        let mut status_paths = Vec::new();
         for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
             let Some(separator) = entry.iter().position(|byte| *byte == b'\t') else {
                 return Err(eyre::eyre!("invalid index entry"));
@@ -856,27 +857,51 @@ ignore them in the `.gitignore` file."
                 );
                 continue;
             }
+            status_paths.push(submodule_path);
+        }
 
-            let status = self
+        if !status_paths.is_empty() {
+            let output = self
                 .cmd()
-                .args(["--literal-pathspecs", "submodule", "status", "--"])
-                .arg(&submodule_path)
+                .args([
+                    "-c",
+                    "core.quotePath=false",
+                    "--literal-pathspecs",
+                    "submodule",
+                    "status",
+                    "--",
+                ])
+                .args(&status_paths)
                 .get_stdout_lossy()?;
-            let (status, rev) = match status.as_bytes().first() {
-                Some(b'-') => (SubmoduleCheckoutStatus::Uninitialized, &status[1..]),
-                Some(b'+') => (SubmoduleCheckoutStatus::Modified, &status[1..]),
-                Some(b'U') => (SubmoduleCheckoutStatus::Conflicted, &status[1..]),
-                Some(_) => (SubmoduleCheckoutStatus::Current, status.as_str()),
-                None => return Err(eyre::eyre!("missing submodule status")),
-            };
-            let rev = rev
-                .split_ascii_whitespace()
-                .next()
-                .ok_or_else(|| eyre::eyre!("invalid submodule status"))?;
-            gitlinks.insert(
-                submodule_path.clone(),
-                SubmoduleCheckout { status, rev: rev.to_string(), path: submodule_path },
-            );
+            let mut lines = output.lines();
+            for path in status_paths {
+                let line = lines.next().ok_or_else(|| eyre::eyre!("missing submodule status"))?;
+                let (status, line) = match line.as_bytes().first() {
+                    Some(b'-') => (SubmoduleCheckoutStatus::Uninitialized, &line[1..]),
+                    Some(b'+') => (SubmoduleCheckoutStatus::Modified, &line[1..]),
+                    Some(b'U') => (SubmoduleCheckoutStatus::Conflicted, &line[1..]),
+                    Some(_) => (SubmoduleCheckoutStatus::Current, line),
+                    None => return Err(eyre::eyre!("missing submodule status")),
+                };
+                let line = line.trim_start();
+                let rev_end = line
+                    .find(|c: char| c.is_ascii_whitespace())
+                    .ok_or_else(|| eyre::eyre!("invalid submodule status"))?;
+                let (rev, reported_path) = (&line[..rev_end], line[rev_end..].trim_start());
+                let expected_path = path.to_string_lossy();
+                if reported_path != expected_path
+                    && !reported_path
+                        .strip_prefix(expected_path.as_ref())
+                        .is_some_and(|suffix| suffix.starts_with(" ("))
+                {
+                    return Err(eyre::eyre!("unexpected submodule status path"));
+                }
+                gitlinks
+                    .insert(path.clone(), SubmoduleCheckout { status, rev: rev.to_string(), path });
+            }
+            if lines.next().is_some() {
+                return Err(eyre::eyre!("unexpected extra submodule status"));
+            }
         }
         Ok(gitlinks.into_values().collect())
     }
