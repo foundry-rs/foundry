@@ -34,6 +34,7 @@ pub(crate) enum StepOutcome {
 pub(crate) enum CheatcodeOutcome {
     Continue(Vec<SymExpr>),
     ContinueData(SymReturnData),
+    Revert(SymReturnData),
     AssumeRejected,
     Failure,
 }

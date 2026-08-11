@@ -3,7 +3,7 @@ use std::{
     fmt,
     pin::Pin,
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicU64, Ordering},
     },
     task::{Context, Poll},
@@ -391,19 +391,6 @@ where
         header: &impl BlockHeader,
         blob_params: BlobParams,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
-        // percentile list from 0.0 to 100.0 with a 0.5 resolution.
-        // this will create 200 percentile points
-        let reward_percentiles: Vec<f64> = {
-            let mut percentile: f64 = 0.0;
-            (0..=200)
-                .map(|_| {
-                    let val = percentile;
-                    percentile += 0.5;
-                    val
-                })
-                .collect()
-        };
-
         let mut block_number: Option<u64> = None;
         let base_fee = header.base_fee_per_gas().unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
@@ -411,6 +398,7 @@ where
         let base_fee_per_blob_gas = header.blob_fee(blob_params);
 
         let mut item = FeeHistoryCacheItem {
+            block_hash: hash,
             base_fee: base_fee as u128,
             gas_used_ratio: 0f64,
             blob_gas_used_ratio: 0f64,
@@ -459,23 +447,9 @@ where
             // sort by effective reward asc
             transactions.sort_by_key(|(_, reward)| *reward);
 
-            // calculate percentile rewards
-            item.rewards = reward_percentiles
-                .into_iter()
-                .filter_map(|p| {
-                    let target_gas = (p * gas_used / 100f64) as u64;
-                    let mut sum_gas = 0;
-                    for (gas_used, effective_reward) in transactions.iter().copied() {
-                        sum_gas += gas_used;
-                        if target_gas <= sum_gas {
-                            return Some(effective_reward);
-                        }
-                    }
-                    None
-                })
-                .collect();
+            item.rewards = reward_percentiles(&transactions, gas_used);
         } else {
-            item.rewards = vec![0; reward_percentiles.len()];
+            item.rewards = vec![0; REWARD_PERCENTILES.len()];
         }
         (item, block_number)
     }
@@ -497,17 +471,125 @@ where
                 return;
             }
             cache.insert(block_number, item);
-
-            // adhere to cache limit
-            let pop_next = block_number.saturating_sub(self.fee_history_limit);
-
-            let num_remove = (cache.len() as u64).saturating_sub(self.fee_history_limit);
-            for num in 0..num_remove {
-                let key = pop_next - num;
-                cache.remove(&key);
+            while cache.len() as u64 > self.fee_history_limit {
+                cache.pop_first();
             }
         }
     }
+}
+
+/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
+///
+/// Constant across blocks, so it is computed once instead of being rebuilt on every
+/// `create_fee_history_cache_item` call.
+static REWARD_PERCENTILES: LazyLock<Vec<f64>> = LazyLock::new(|| {
+    let mut percentile: f64 = 0.0;
+    (0..=200)
+        .map(|_| {
+            let val = percentile;
+            percentile += 0.5;
+            val
+        })
+        .collect()
+});
+
+/// Calculates percentile rewards from transactions sorted by effective reward.
+///
+/// [`REWARD_PERCENTILES`] must remain ascending because the transaction cursor never rewinds.
+fn reward_percentiles(transactions: &[(u64, u128)], block_gas_used: f64) -> Vec<u128> {
+    let mut rewards = Vec::with_capacity(REWARD_PERCENTILES.len());
+    let mut transactions = transactions.iter().copied();
+    let Some((mut cumulative_gas, mut current_reward)) = transactions.next() else {
+        return rewards;
+    };
+
+    for &percentile in REWARD_PERCENTILES.iter() {
+        let target_gas = (percentile * block_gas_used / 100f64) as u64;
+        while target_gas > cumulative_gas {
+            let Some((tx_gas_used, effective_reward)) = transactions.next() else { return rewards };
+            cumulative_gas += tx_gas_used;
+            current_reward = effective_reward;
+        }
+        rewards.push(current_reward);
+    }
+
+    rewards
+}
+
+/// Builds the [`FeeHistoryCacheItem`] for a single block.
+///
+/// Shared by the async [`FeeHistoryService`] and by `eth_feeHistory` itself: the service can lag
+/// the chain head (it only runs when the node task is polled), so the RPC handler computes any
+/// missing entry on demand with the same logic instead of returning a short response.
+pub(crate) fn create_fee_history_cache_item<N: Network>(
+    hash: B256,
+    header: &impl BlockHeader,
+    storage_info: &StorageInfo<N>,
+    blob_params: BlobParams,
+) -> (FeeHistoryCacheItem, Option<u64>)
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+{
+    let mut block_number: Option<u64> = None;
+    let base_fee = header.base_fee_per_gas().unwrap_or_default();
+    let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
+    let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
+    let base_fee_per_blob_gas = header.blob_fee(blob_params);
+
+    let mut item = FeeHistoryCacheItem {
+        block_hash: hash,
+        base_fee: base_fee as u128,
+        gas_used_ratio: 0f64,
+        blob_gas_used_ratio: 0f64,
+        rewards: Vec::new(),
+        excess_blob_gas,
+        base_fee_per_blob_gas,
+        blob_gas_used,
+    };
+
+    let current_block = storage_info.block(hash);
+    let current_receipts = storage_info.receipts(hash);
+
+    if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
+        block_number = Some(block.header.number());
+
+        let gas_used = block.header.gas_used() as f64;
+        let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
+        item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
+        item.blob_gas_used_ratio = blob_gas_used
+            .map(|g| {
+                let max = blob_params.max_blob_gas_per_block() as f64;
+                if max == 0.0 { 0.0 } else { g / max }
+            })
+            .unwrap_or(0.0);
+
+        // extract useful tx info (gas_used, effective_reward)
+        let mut transactions: Vec<(_, _)> = receipts
+            .iter()
+            .enumerate()
+            .map(|(i, receipt)| {
+                let cumulative = receipt.cumulative_gas_used();
+                let prev_cumulative = if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
+                let gas_used = cumulative - prev_cumulative;
+                let effective_reward = block
+                    .body
+                    .transactions
+                    .get(i)
+                    .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
+                    .unwrap_or(0);
+
+                (gas_used, effective_reward)
+            })
+            .collect();
+
+        // sort by effective reward asc
+        transactions.sort_by_key(|(_, reward)| *reward);
+
+        item.rewards = reward_percentiles(&transactions, gas_used);
+    } else {
+        item.rewards = vec![0; REWARD_PERCENTILES.len()];
+    }
+    (item, block_number)
 }
 
 // An endless future that listens for new blocks and updates the cache
@@ -556,6 +638,7 @@ pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 /// A single item in the whole fee history cache
 #[derive(Clone, Debug)]
 pub struct FeeHistoryCacheItem {
+    pub block_hash: B256,
     pub base_fee: u128,
     pub gas_used_ratio: f64,
     pub base_fee_per_blob_gas: Option<u128>,
@@ -656,6 +739,34 @@ impl fmt::Debug for FeeDetails {
 mod tests {
     use super::*;
 
+    fn reward_percentiles_reference(
+        transactions: &[(u64, u128)],
+        block_gas_used: f64,
+    ) -> Vec<u128> {
+        REWARD_PERCENTILES
+            .iter()
+            .filter_map(|&percentile| {
+                let target_gas = (percentile * block_gas_used / 100f64) as u64;
+                let mut cumulative_gas = 0;
+                for (tx_gas_used, effective_reward) in transactions.iter().copied() {
+                    cumulative_gas += tx_gas_used;
+                    if target_gas <= cumulative_gas {
+                        return Some(effective_reward);
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
+    fn assert_reward_percentiles_match(transactions: &mut [(u64, u128)], gas_used: u64) {
+        transactions.sort_by_key(|(_, reward)| *reward);
+        assert_eq!(
+            reward_percentiles(transactions, gas_used as f64),
+            reward_percentiles_reference(transactions, gas_used as f64)
+        );
+    }
+
     fn fee_manager(spec_id: SpecId) -> FeeManager {
         FeeManager::new(
             spec_id,
@@ -682,5 +793,49 @@ mod tests {
             london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
             0
         );
+    }
+
+    #[test]
+    fn reward_percentile_sweep_preserves_boundaries_and_empty_results() {
+        assert_reward_percentiles_match(&mut [], 0);
+
+        let mut transactions = [(5, 1), (0, 2), (5, 3)];
+        assert_reward_percentiles_match(&mut transactions, 1_000);
+        assert_eq!(reward_percentiles(&transactions, 1_000f64), [1, 1, 3]);
+
+        let mut transactions = [(0, 10), (1, 20)];
+        assert_reward_percentiles_match(&mut transactions, 1);
+        let rewards = reward_percentiles(&transactions, 1f64);
+        assert_eq!(&rewards[..200], &[10; 200]);
+        assert_eq!(rewards[200], 20);
+    }
+
+    #[test]
+    fn reward_percentile_sweep_matches_reference_for_randomized_inputs() {
+        let mut state = 0x4d59_5df4_d0f3_3173u64;
+        for _ in 0..2_000 {
+            let len = (next_random(&mut state) % 129) as usize;
+            let mut transactions = (0..len)
+                .map(|_| {
+                    let gas_used = next_random(&mut state) % 100;
+                    let effective_reward = (next_random(&mut state) % 16) as u128;
+                    (gas_used, effective_reward)
+                })
+                .collect::<Vec<_>>();
+            let total_gas = transactions.iter().map(|(gas_used, _)| gas_used).sum::<u64>();
+            let header_gas_used = match next_random(&mut state) % 4 {
+                0 => total_gas,
+                1 => next_random(&mut state) % (total_gas.saturating_add(1)),
+                2 => total_gas.saturating_add(next_random(&mut state) % 1_000),
+                _ => 0,
+            };
+
+            assert_reward_percentiles_match(&mut transactions, header_gas_used);
+        }
+    }
+
+    fn next_random(state: &mut u64) -> u64 {
+        *state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        *state
     }
 }

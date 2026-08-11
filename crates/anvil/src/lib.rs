@@ -141,9 +141,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
+    let init_state = config.init_state.take();
     let (backend, fork_transaction_replay) = config.setup::<FoundryNetwork>().await?;
 
-    if let Some(state) = config.init_state.clone() {
+    if let Some(state) = init_state {
         backend.load_state(state).await.wrap_err("failed to load init state")?;
     }
 

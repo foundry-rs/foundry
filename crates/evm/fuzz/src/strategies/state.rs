@@ -322,7 +322,8 @@ impl Default for FuzzDictionary {
 }
 
 impl FuzzDictionary {
-    pub fn new(config: FuzzDictionaryConfig) -> Self {
+    pub fn new(mut config: FuzzDictionaryConfig) -> Self {
+        config.max_fuzz_dictionary_values = config.max_fuzz_dictionary_values.max(1);
         let mut dictionary = Self {
             config,
             samples_seeded: false,
@@ -896,6 +897,19 @@ mod tests {
         assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
         assert!(dictionary.state_values.contains(&B256::from(U256::from(2))));
         assert!(!dictionary.state_values.contains(&B256::from(U256::from(3))));
+    }
+
+    #[test]
+    fn zero_value_capacity_keeps_only_required_seed() {
+        let mut dictionary = FuzzDictionary::new(FuzzDictionaryConfig {
+            max_fuzz_dictionary_values: 0,
+            ..Default::default()
+        });
+
+        assert_eq!(dictionary.config.max_fuzz_dictionary_values, 1);
+        assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
+        assert!(!dictionary.insert_value(B256::from(U256::from(1))));
+        assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
     }
 
     #[test]

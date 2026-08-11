@@ -103,6 +103,9 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// Derive accounts from a mnemonic
@@ -181,6 +184,10 @@ pub enum WalletSubcommands {
 
         #[arg(long)]
         chain: Option<Chain>,
+
+        /// Skip the confirmation prompt for wildcard chain authorizations.
+        #[arg(long)]
+        force: bool,
 
         /// If set, indicates the authorization will be broadcast by the signing account itself.
         /// This means the nonce used will be the current nonce + 1 (to account for the
@@ -571,16 +578,20 @@ impl WalletSubcommands {
             Self::Vanity(cmd) => {
                 cmd.run()?;
             }
-            Self::Address { wallet, private_key_override } => {
-                let wallet = private_key_override
-                    .map(|pk| WalletOpts {
+            Self::Address { wallet, browser, private_key_override } => {
+                let addr = if let Some(pk) = private_key_override {
+                    WalletOpts {
                         raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
-                    })
-                    .unwrap_or(wallet)
+                    }
                     .signer()
-                    .await?;
-                let addr = wallet.address();
+                    .await?
+                    .address()
+                } else if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                    browser.address()
+                } else {
+                    wallet.signer().await?.address()
+                };
                 print_scalar(addr.to_checksum(None))?;
             }
             Self::Derive { mnemonic, accounts, insecure } => {
@@ -707,9 +718,25 @@ impl WalletSubcommands {
                     print_scalar(format!("0x{}", hex::encode(sig.as_bytes())))?;
                 }
             }
-            Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast } => {
-                let wallet = wallet.signer().await?;
+            Self::SignAuth { rpc, nonce, chain, force, wallet, address, self_broadcast } => {
                 let provider = utils::get_provider(&rpc.load_config()?)?;
+                let chain_id = if let Some(chain) = chain {
+                    chain.id()
+                } else {
+                    provider.get_chain_id().await?
+                };
+                if chain_id == 0 && !force {
+                    sh_warn!(
+                        "Chain ID 0 creates an EIP-7702 authorization that is valid on every chain."
+                    )?;
+                    let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
+                    if !matches!(response.trim(), "y" | "Y") {
+                        sh_status!("Aborted.")?;
+                        return Ok(());
+                    }
+                }
+
+                let wallet = wallet.signer().await?;
                 let nonce = if let Some(nonce) = nonce {
                     nonce
                 } else {
@@ -721,11 +748,6 @@ impl WalletSubcommands {
                     } else {
                         current_nonce
                     }
-                };
-                let chain_id = if let Some(chain) = chain {
-                    chain.id()
-                } else {
-                    provider.get_chain_id().await?
                 };
                 let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;

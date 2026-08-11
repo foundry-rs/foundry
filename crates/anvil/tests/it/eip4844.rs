@@ -140,7 +140,7 @@ async fn fork_reset_updates_fee_history_blob_params() {
         BlobParams::cancun().update_fraction as u64,
     ));
     let (cancun_api, cancun_handle) = spawn(cancun_config).await;
-    cancun_api.mine_one().await;
+    cancun_api.mine_one().await.unwrap();
 
     let mut prague_config = NodeConfig::test()
         .with_chain_id(Some(1u64))
@@ -151,7 +151,7 @@ async fn fork_reset_updates_fee_history_blob_params() {
         BlobParams::prague().update_fraction as u64,
     ));
     let (prague_api, prague_handle) = spawn(prague_config).await;
-    prague_api.mine_one().await;
+    prague_api.mine_one().await.unwrap();
 
     let (api, handle) = spawn(
         NodeConfig::test()
@@ -403,11 +403,11 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     tx.set_nonce(1);
     let second_tx = provider.send_transaction(tx).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let first_receipt = first_tx.get_receipt().await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let second_receipt = second_tx.get_receipt().await.unwrap();
 
     let (first_block, second_block) = tokio::join!(

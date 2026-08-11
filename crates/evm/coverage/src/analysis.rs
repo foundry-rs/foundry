@@ -120,11 +120,14 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn push_lines(&mut self) {
         self.all_lines.sort_unstable();
         self.all_lines.dedup();
-        let mut lines = Vec::new();
+        let mut lines = Vec::with_capacity(self.all_lines.len());
+        // Items are already ordered by line, so advance through them only once.
+        let mut items = self.items.iter().peekable();
         for &line in &self.all_lines {
-            if let Some(reference_item) =
-                self.items.iter().find(|item| item.loc.lines.start == line)
-            {
+            while items.peek().is_some_and(|item| item.loc.lines.start < line) {
+                items.next();
+            }
+            if let Some(reference_item) = items.peek().filter(|item| item.loc.lines.start == line) {
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
                     loc: reference_item.loc.clone(),
@@ -471,9 +474,8 @@ impl SourceAnalysis {
     /// source ID the item is in, the source code range of the item, and the contract name the item
     /// is in.
     ///
-    /// Note: Source IDs are only unique per compilation job; that is, a code base compiled with
-    /// two different solc versions will produce overlapping source IDs if the compiler version is
-    /// not taken into account.
+    /// Note: Source IDs are only unique per compilation job, so report-level source identity must
+    /// also include the compiler build ID.
     #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
@@ -572,9 +574,9 @@ impl SourceAnalysis {
     }
 }
 
-/// A list of versioned sources and their ASTs.
+/// A list of sources from one compiler build.
 #[derive(Default)]
 pub struct SourceFiles {
-    /// The versioned sources.
+    /// The sources keyed by their IDs within the compiler build.
     pub sources: HashMap<u32, PathBuf>,
 }

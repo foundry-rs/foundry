@@ -12,7 +12,8 @@ use revm::{
     },
     inspector::InspectorHandler,
     interpreter::{
-        FrameInput, SharedMemory, interpreter::EthInterpreter, interpreter_action::FrameInit,
+        FrameInput, GasTracker, SharedMemory, interpreter::EthInterpreter,
+        interpreter_action::FrameInit,
     },
     primitives::hardfork::SpecId,
 };
@@ -78,8 +79,6 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = EthEvmHandler::<I>::default();
-        let reservoir = frame.reservoir();
-
         // Create first frame
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
@@ -89,7 +88,12 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
         let mut frame_result = handler.inspect_run_exec_loop(self, first_frame_input)?;
 
         // Handle last frame result
-        handler.last_frame_result(self, reservoir, &mut frame_result)?;
+        let mut parent_gas = GasTracker::new(
+            frame_result.gas().limit(),
+            frame_result.gas().remaining(),
+            frame_result.gas().reservoir(),
+        );
+        handler.last_frame_result(self, &mut frame_result, &mut parent_gas)?;
 
         Ok(frame_result)
     }

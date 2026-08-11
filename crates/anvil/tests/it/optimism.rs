@@ -21,14 +21,14 @@ const CANYON_TIMESTAMP: u64 = 1_704_992_401;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reset_rejects_network_family_change_atomically() {
     let (ethereum_api, ethereum_handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
-    ethereum_api.mine_one().await;
+    ethereum_api.mine_one().await.unwrap();
     let (optimism_api, optimism_handle) = spawn(
         NodeConfig::test()
             .with_networks(NetworkConfigs::with_optimism())
             .with_chain_id(Some(10u64)),
     )
     .await;
-    optimism_api.mine_one().await;
+    optimism_api.mine_one().await.unwrap();
 
     let (api, _) = spawn(
         NodeConfig::test()
@@ -115,7 +115,7 @@ async fn test_inferred_optimism_fork_reset_to_memory_stays_coherent() {
             .with_chain_id(Some(10u64)),
     )
     .await;
-    source_api.mine_one().await;
+    source_api.mine_one().await.unwrap();
 
     let (api, _) = spawn(
         NodeConfig::test()
@@ -144,7 +144,7 @@ async fn test_reset_refreshes_optimism_base_fee_params() {
             .with_genesis_timestamp(Some(pre_canyon_timestamp)),
     )
     .await;
-    pre_canyon_api.mine_one().await;
+    pre_canyon_api.mine_one().await.unwrap();
     let (post_canyon_api, post_canyon_handle) = spawn(
         NodeConfig::test()
             .with_networks(NetworkConfigs::with_optimism())
@@ -153,7 +153,7 @@ async fn test_reset_refreshes_optimism_base_fee_params() {
             .with_genesis_timestamp(Some(post_canyon_timestamp)),
     )
     .await;
-    post_canyon_api.mine_one().await;
+    post_canyon_api.mine_one().await.unwrap();
 
     let (api, _) = spawn(
         NodeConfig::test()
@@ -210,7 +210,7 @@ async fn test_reset_refreshes_optimism_base_fee_params() {
 
     api.anvil_reset(None).await.unwrap();
     let gas_limit = api.backend.gas_limit();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let expected =
         calc_next_block_base_fee(0, gas_limit, INITIAL_BASE_FEE, BaseFeeParams::optimism_canyon());
     assert_eq!(api.backend.base_fee(), expected);

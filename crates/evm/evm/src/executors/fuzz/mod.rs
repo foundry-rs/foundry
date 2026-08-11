@@ -1,6 +1,9 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
-    corpus::{GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget, WorkerCorpus},
+    corpus::{
+        CorpusSyncCoordinator, GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget,
+        WorkerCorpus,
+    },
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -240,6 +243,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         let worker_ids = self.worker_ids();
         debug!(n = worker_ids.len(), "spawning workers");
+        let final_sync = (worker_ids.len() > 1 && self.config.corpus.corpus_dir.is_some())
+            .then(|| Arc::new(CorpusSyncCoordinator::new(worker_ids.len())));
         let workers = worker_ids
             .into_par_iter()
             .map(|worker_id| {
@@ -254,7 +259,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     rd,
                     &shared_state,
                     progress,
+                    final_sync.as_deref(),
                 );
+                if r.is_err()
+                    && let Some(final_sync) = &final_sync
+                {
+                    final_sync.abort();
+                }
                 debug!("finished in {:?}", timer.elapsed());
                 r
             })
@@ -505,11 +516,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
         result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
         let (_, last_run_worker_idx) = last_run_worker.expect("at least one worker");
+        let mut output_worker_idx = last_run_worker_idx;
 
         if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
             result.success = false;
 
             let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
+            output_worker_idx = failed_worker_idx;
             let failed_worker = &mut workers[failed_worker_idx];
 
             let counterexample = failed_worker.counterexample.take();
@@ -555,7 +568,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
 
         if !self.config.show_logs {
-            result.logs = workers[last_run_worker_idx].logs.clone();
+            result.logs = workers[output_worker_idx].logs.clone();
         }
 
         for mut worker in workers {
@@ -612,6 +625,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         rd: &RevertDecoder,
         shared_state: &SharedFuzzState,
         progress: Option<&ProgressBar>,
+        final_sync: Option<&CorpusSyncCoordinator>,
     ) -> Result<WorkerState<FEN>> {
         // Prepare
         let fuzz_seed = shared_state.state.fork();
@@ -686,6 +700,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 }
             }
         }
+        let mut generated_inputs = 0;
 
         let mut persisted_failure =
             self.persisted_failure.as_ref().filter(|_| worker_id == 0 && self.config.run.is_none());
@@ -746,7 +761,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     runs_since_sync = 0;
                 }
 
-                let fuzz_run = self.config.run.unwrap_or(worker.runs + 1);
+                let fuzz_run = self.config.run.unwrap_or_else(|| {
+                    generated_inputs += 1;
+                    generated_inputs
+                });
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
                     && let Some(seed) = self.config.seed
                 {
@@ -875,7 +893,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         } else {
                             rd.maybe_decode(&outcome.1.result, status)
                         };
-                        worker.logs.extend(outcome.1.logs.clone());
+                        if self.config.show_logs {
+                            worker.logs.extend(outcome.1.logs.clone());
+                        } else {
+                            worker.logs.clone_from(&outcome.1.logs);
+                        }
                         worker.counterexample = Some(outcome);
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         shared_state.try_claim_failure(worker_id);
@@ -910,6 +932,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     }
                 },
             }
+        }
+
+        if let Some(final_sync) = final_sync {
+            corpus.finalize_sync(&executor, replay_target, final_sync)?;
         }
 
         if worker_id == 0 {

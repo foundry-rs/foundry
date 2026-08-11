@@ -600,12 +600,10 @@ contract ForkTest is Test {
     }
 
     // Verify struct decoding for transaction objects (original issue #7858).
-    // Hardcode the DRPC URL to avoid provider-specific non-standard fields
-    // (e.g. `blockTimestamp` from PublicNode) that shift ABI decoding offsets.
     // <https://github.com/foundry-rs/foundry/issues/7858>
     function testRpcTransactionByHash() public {
         bytes memory data = vm.rpc(
-            "https://sepolia.drpc.org",
+            "sepolia",
             "eth_getTransactionByHash",
             '["0xe1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"]'
         );

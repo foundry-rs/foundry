@@ -1,4 +1,5 @@
 use super::{install, watch::WatchArgs};
+use crate::Lockfile;
 use clap::Parser;
 use eyre::Result;
 use forge_lint::{
@@ -33,7 +34,7 @@ use solar::{
     interface::{Session, config::CompileOpts},
     sema::Compiler,
 };
-use std::path::PathBuf;
+use std::{fmt::Write, path::PathBuf};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
 
@@ -89,8 +90,12 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
-    pub async fn run(self) -> Result<ProjectCompileOutput> {
+    pub async fn run(self, locked: bool) -> Result<ProjectCompileOutput> {
         let mut config = self.load_config()?;
+
+        if locked {
+            self.check_foundry_lock_consistency(&config, true)?;
+        }
 
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
@@ -99,7 +104,9 @@ impl BuildArgs {
         }
 
         self.check_soldeer_lock_consistency(&config).await;
-        self.check_foundry_lock_consistency(&config);
+        if !locked {
+            self.check_foundry_lock_consistency(&config, false)?;
+        }
 
         let project = config.project()?;
 
@@ -128,7 +135,7 @@ impl BuildArgs {
                 config
                     .code_size_limit
                     .map(ContractSizeLimits::with_runtime_limit)
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| ContractSizeLimits::for_spec_id(config.evm_spec_id())),
             )
             .bail(!format_json)
             .compile(&project)?;
@@ -300,59 +307,34 @@ impl BuildArgs {
         }
     }
 
-    /// Check foundry.lock file consistency with git submodules
-    fn check_foundry_lock_consistency(&self, config: &Config) {
-        use crate::lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
-
-        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
-        if !foundry_lock_path.exists() {
-            return;
-        }
-
+    /// Checks foundry.lock file consistency with Git submodules.
+    fn check_foundry_lock_consistency(&self, config: &Config, locked: bool) -> Result<()> {
         let git = Git::new(&config.root);
-
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-        if let Err(e) = lockfile.read() {
-            if !e.to_string().contains("Lockfile not found") {
-                sh_warn!("Failed to parse foundry.lock: {}", e).ok();
+        let mismatches = match lockfile.check() {
+            Ok(mismatches) => mismatches,
+            Err(err) if locked => return Err(err),
+            Err(err) => {
+                sh_warn!("Failed to check foundry.lock: {err}")?;
+                return Ok(());
             }
-            return;
+        };
+        if mismatches.is_empty() {
+            return Ok(());
         }
 
-        for (dep_path, dep_identifier) in lockfile.iter() {
-            let full_path = config.root.join(dep_path);
-
-            if !full_path.exists() {
-                sh_warn!("Dependency '{}' not found at expected path", dep_path.display()).ok();
-                continue;
+        if locked {
+            let mut message = String::from("foundry.lock does not match installed dependencies:");
+            for mismatch in mismatches {
+                write!(message, "\n  {mismatch}")?;
             }
-
-            let actual_rev = match git.get_rev("HEAD", &full_path) {
-                Ok(rev) => rev,
-                Err(_) => {
-                    sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display())
-                        .ok();
-                    continue;
-                }
-            };
-
-            // Compare with the expected revision from lockfile
-            let expected_rev = match dep_identifier {
-                DepIdentifier::Branch { rev, .. }
-                | DepIdentifier::Tag { rev, .. }
-                | DepIdentifier::Rev { rev, .. } => rev.clone(),
-            };
-
-            if actual_rev != expected_rev {
-                sh_warn!(
-                    "Dependency '{}' revision mismatch: expected '{}', found '{}'",
-                    dep_path.display(),
-                    expected_rev,
-                    actual_rev
-                )
-                .ok();
-            }
+            return Err(eyre::eyre!(message));
         }
+
+        for mismatch in mismatches {
+            sh_warn!("{mismatch}")?;
+        }
+        Ok(())
     }
 }
 

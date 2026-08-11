@@ -3,7 +3,9 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
-            fork::{ClientFork, ClientForkConfig, ClientForkRuntime},
+            fork::{
+                ClientFork, ClientForkConfig, ClientForkRuntime, ensure_fork_network_supported,
+            },
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
             time::duration_since_unix_epoch,
@@ -201,7 +203,7 @@ pub struct NodeConfig {
     pub prune_history: PruneStateHistoryConfig,
     /// Max number of states cached on disk.
     pub max_persisted_states: Option<usize>,
-    /// The file where to load the state from
+    /// The initial state to apply and consume during startup.
     pub init_state: Option<SerializableState>,
     /// max number of blocks with transactions in memory
     pub transaction_block_keeper: Option<usize>,
@@ -1404,7 +1406,6 @@ impl NodeConfig {
         Option<ForkTransactionReplay>,
     )> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
-
         // Always bootstrap with the primary URL only to avoid race conditions
         // where discovery calls (get_chain_id, find_latest_fork_block, get_block)
         // hit different endpoints that may be at different chain tips.
@@ -1419,31 +1420,60 @@ impl NodeConfig {
                 .wrap_err("failed to establish provider to fork url")?,
         );
 
-        let (fork_block_number, fork_chain_id, fork_transaction_replay) = if let Some(fork_choice) =
-            &self.fork_choice
-        {
-            let (fork_block_number, fork_transaction_replay) =
-                derive_block_and_replay(fork_choice, &provider).await.wrap_err(
-                    "failed to derive fork block and transaction replay from fork choice",
-                )?;
-            let chain_id = if let Some(chain_id) = self.fork_chain_id {
-                Some(chain_id)
-            } else if self.hardfork.is_none() {
-                let chain_id =
-                    provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-                Some(U256::from(chain_id))
-            } else {
-                None
-            };
-
-            (fork_block_number, chain_id, fork_transaction_replay)
+        let source_chain_id = if let Some(chain_id) = self.fork_chain_id {
+            eyre::ensure!(
+                self.fork_urls.len() == 1,
+                "multiple fork URLs cannot be validated with --fork-chain-id; remove \
+                 --fork-chain-id to validate every endpoint"
+            );
+            chain_id.to()
         } else {
-            // pick the last block number but also ensure it's not pending anymore
-            let bn = find_latest_fork_block(&provider)
+            let chain_id = provider
+                .get_chain_id()
                 .await
-                .wrap_err("failed to get fork block number")?;
-            (bn, None, None)
+                .wrap_err_with(|| format!("failed to fetch network chain ID from {eth_rpc_url}"))?;
+            ensure_fork_network_supported(chain_id)?;
+
+            for url in self.fork_urls.iter().skip(1) {
+                let endpoint_provider = ProviderBuilder::<AnyNetwork>::new(url)
+                    .timeout(self.fork_request_timeout)
+                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                    .compute_units_per_second(self.compute_units_per_second)
+                    .max_retry(self.fork_request_retries)
+                    .headers(self.fork_headers.clone())
+                    .build()
+                    .wrap_err_with(|| format!("failed to establish provider to fork url {url}"))?;
+                let endpoint_chain_id = endpoint_provider
+                    .get_chain_id()
+                    .await
+                    .wrap_err_with(|| format!("failed to fetch network chain ID from {url}"))?;
+                ensure_fork_network_supported(endpoint_chain_id)?;
+                if endpoint_chain_id != chain_id {
+                    eyre::bail!(
+                        "fork endpoints must use the same chain ID: expected {chain_id}, got \
+                         {endpoint_chain_id} from {url}"
+                    );
+                }
+            }
+
+            chain_id
         };
+        ensure_fork_network_supported(source_chain_id)?;
+
+        let (fork_block_number, fork_transaction_replay) =
+            if let Some(fork_choice) = &self.fork_choice {
+                let (fork_block_number, fork_transaction_replay) =
+                    derive_block_and_replay(fork_choice, &provider).await.wrap_err(
+                        "failed to derive fork block and transaction replay from fork choice",
+                    )?;
+                (fork_block_number, fork_transaction_replay)
+            } else {
+                // pick the last block number but also ensure it's not pending anymore
+                let bn = find_latest_fork_block(&provider)
+                    .await
+                    .wrap_err("failed to get fork block number")?;
+                (bn, None)
+            };
 
         let block = provider
             .get_block(BlockNumberOrTag::Number(fork_block_number).into())
@@ -1512,11 +1542,7 @@ latest block number: {latest_block}"
         let override_networks = self.networks;
 
         // Resolve remote provenance independently from the local RPC/signing identity.
-        let remote_chain_id = if let Some(fork_chain_id) = self.fork_chain_id.or(fork_chain_id) {
-            fork_chain_id.to()
-        } else {
-            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-        };
+        let remote_chain_id = source_chain_id;
         self.networks = self.networks.with_chain_id(remote_chain_id);
         let chain_id = if let Some(chain_id) = self.chain_id {
             evm_env.cfg_env.chain_id = chain_id;
@@ -2058,7 +2084,7 @@ mod tests {
         )
         .await;
         source_api.evm_set_next_block_timestamp(1_618_481_224u64).unwrap();
-        source_api.mine_one().await;
+        source_api.mine_one().await.unwrap();
 
         let (api, handle) = crate::spawn(
             NodeConfig::test()

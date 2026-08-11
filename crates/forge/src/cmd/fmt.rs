@@ -4,11 +4,15 @@ use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::{errors::convert_solar_errors, fs};
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
-use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
+use foundry_config::{
+    Config, filter::expand_globs, find_project_root, fmt::FormatterConfig,
+    impl_figment_convert_basic,
+};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use solar::sema::Compiler;
 use std::{
+    collections::{HashMap, hash_map::Entry},
     fmt::{self, Write},
     io,
     io::Write as _,
@@ -31,6 +35,10 @@ pub struct FmtArgs {
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
 
+    /// Use each input file's nearest `foundry.toml` for formatter settings.
+    #[arg(long, conflicts_with = "root")]
+    nearest: bool,
+
     /// Run in 'check' mode.
     ///
     /// Exits with 0 if input is formatted correctly.
@@ -50,14 +58,26 @@ impl_figment_convert_basic!(FmtArgs);
 
 impl FmtArgs {
     pub fn run(self) -> Result<()> {
+        if self.nearest {
+            for var in ["FOUNDRY_CONFIG", "FOUNDRY_ROOT", "DAPP_ROOT"] {
+                if std::env::var_os(var).is_some() {
+                    eyre::bail!("`--nearest` cannot be used when `{var}` is set");
+                }
+            }
+        }
         let config = self.load_config()?;
         let cwd = std::env::current_dir()?;
 
-        // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
-            .iter()
-            .flat_map(fs::canonicalize_path)
-            .collect::<Vec<_>>();
+        // Expand ignore globs and canonicalize from the get go. In nearest mode, ignores are
+        // expanded from the config nearest each input file instead.
+        let ignored = if self.nearest {
+            Vec::new()
+        } else {
+            expand_globs(&config.root, config.fmt.ignore.iter())?
+                .iter()
+                .flat_map(fs::canonicalize_path)
+                .collect::<Vec<_>>()
+        };
 
         // Expand lib globs separately - we only exclude these during discovery, not explicit paths
         let libs = expand_globs(&config.root, config.libs.iter().filter_map(|p| p.to_str()))?
@@ -65,28 +85,29 @@ impl FmtArgs {
             .flat_map(fs::canonicalize_path)
             .collect::<Vec<_>>();
 
-        // Helper to check if a file path is under any ignored or lib directory
-        let is_under_ignored_dir = |file_path: &Path, include_libs: bool| -> bool {
+        // Helper to check if a file path is under any of the given directories.
+        let is_under_dir = |file_path: &Path, dirs: &[PathBuf]| -> bool {
             let check_against_dir = |dir: &PathBuf| {
                 file_path.starts_with(dir)
                     || cwd.join(file_path).starts_with(dir)
                     || fs::canonicalize_path(file_path).is_ok_and(|p| p.starts_with(dir))
             };
 
-            ignored.iter().any(&check_against_dir)
-                || (include_libs && libs.iter().any(&check_against_dir))
+            dirs.iter().any(check_against_dir)
         };
 
-        let input = match &self.paths[..] {
+        let mut input = match &self.paths[..] {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones and libs.
                 let project_paths: Vec<PathBuf> = config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
                     .filter(|p| {
-                        !(ignored.contains(p)
-                            || ignored.contains(&cwd.join(p))
-                            || is_under_ignored_dir(p, true))
+                        !((!self.nearest
+                            && (ignored.contains(p)
+                                || ignored.contains(&cwd.join(p))
+                                || is_under_dir(p, &ignored)))
+                            || is_under_dir(p, &libs))
                     })
                     .collect();
                 Input::Paths(project_paths)
@@ -96,7 +117,8 @@ impl FmtArgs {
                 let mut inputs = Vec::with_capacity(paths.len());
                 for path in paths {
                     // Check if path is in ignored directories
-                    if !ignored.is_empty()
+                    if !self.nearest
+                        && !ignored.is_empty()
                         && ((path.is_absolute() && ignored.contains(path))
                             || ignored.contains(&cwd.join(path)))
                     {
@@ -105,13 +127,15 @@ impl FmtArgs {
 
                     if path.is_dir() {
                         // If the input directory is not a lib directory, make sure to ignore libs.
-                        let exclude_libs = !is_under_ignored_dir(path, true);
+                        let exclude_libs = !is_under_dir(path, &libs);
                         inputs.extend(
                             foundry_compilers::utils::source_files_iter(path, SOLC_EXTENSIONS)
                                 .filter(|p| {
-                                    !(ignored.contains(p)
-                                        || ignored.contains(&cwd.join(p))
-                                        || is_under_ignored_dir(p, exclude_libs))
+                                    !((!self.nearest
+                                        && (ignored.contains(p)
+                                            || ignored.contains(&cwd.join(p))
+                                            || is_under_dir(p, &ignored)))
+                                        || (exclude_libs && is_under_dir(p, &libs)))
                                 }),
                         );
                     } else if path.is_sol() {
@@ -123,6 +147,49 @@ impl FmtArgs {
                 }
                 Input::Paths(inputs)
             }
+        };
+
+        let nearest_fmt_configs = if self.nearest {
+            let Input::Paths(paths) = &mut input else {
+                eyre::bail!("`--nearest` cannot be used with stdin");
+            };
+            let mut root_configs: HashMap<PathBuf, (Arc<FormatterConfig>, Vec<PathBuf>)> =
+                HashMap::new();
+            let mut path_configs = HashMap::new();
+            let mut filtered_paths = Vec::with_capacity(paths.len());
+
+            for path in std::mem::take(paths) {
+                let path = fs::canonicalize_path(path)?;
+                let root = find_project_root(path.parent())?;
+                let (fmt_config, ignored) = match root_configs.entry(root) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let nearest_config = Config::load_with_root(entry.key())?.sanitized();
+                        if entry.key() != &config.root {
+                            for warning in &nearest_config.warnings {
+                                let _ = sh_warn!("{warning}");
+                            }
+                        }
+                        let ignored =
+                            expand_globs(&nearest_config.root, nearest_config.fmt.ignore.iter())?
+                                .iter()
+                                .flat_map(fs::canonicalize_path)
+                                .collect();
+                        entry.insert((Arc::new(nearest_config.fmt), ignored))
+                    }
+                };
+                // Both the input path and expanded ignore paths are canonicalized above, so a
+                // component-wise prefix check correctly covers ignored files and directories.
+                if ignored.iter().any(|ignored| path.starts_with(ignored)) {
+                    continue;
+                }
+                path_configs.insert(path.clone(), fmt_config.clone());
+                filtered_paths.push(path);
+            }
+            *paths = filtered_paths;
+            Some(path_configs)
+        } else {
+            None
         };
 
         let mut compiler = Compiler::new(
@@ -156,7 +223,28 @@ impl FmtArgs {
                 .filter_map(|source_unit| {
                     let path = source_unit.file.name.as_real();
                     let original = source_unit.file.src.as_str();
-                    let formatted = forge_fmt::format_ast(gcx, source_unit, fmt_config.clone())?;
+                    let source_fmt_config =
+                        if let Some(nearest_fmt_configs) = nearest_fmt_configs.as_ref() {
+                            let Some(source_path) = path else {
+                                return Some(Err(eyre::eyre!(
+                                    "could not resolve formatter config for stdin"
+                                )));
+                            };
+                            let source_path = match fs::canonicalize_path(source_path) {
+                                Ok(path) => path,
+                                Err(err) => return Some(Err(err.into())),
+                            };
+                            let Some(fmt_config) = nearest_fmt_configs.get(&source_path) else {
+                                return Some(Err(eyre::eyre!(
+                                    "could not resolve formatter config for {}",
+                                    source_path.display()
+                                )));
+                            };
+                            fmt_config.clone()
+                        } else {
+                            fmt_config.clone()
+                        };
+                    let formatted = forge_fmt::format_ast(gcx, source_unit, source_fmt_config)?;
                     let from_stdin = path.is_none();
 
                     // Return formatted code when read from stdin and raw enabled.
