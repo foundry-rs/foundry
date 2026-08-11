@@ -2975,37 +2975,77 @@ contract ReportScript {
     );
 });
 
-// A file of only file-level (free) functions must still appear in the coverage report.
+// forge coverage must report file-level (free) functions, and attribute them at file level
+// rather than leaking the scope of a contract declared earlier in the same file.
 // Regression for https://github.com/foundry-rs/foundry/issues/16085
 forgetest!(coverage_reports_free_functions, |prj, cmd| {
     prj.insert_ds_test();
+    // A contract declared *before* a free function in the same file. The contract method calls
+    // the free function, so the test below executes both.
     prj.add_source(
-        "Free.sol",
+        "Mixed.sol",
         r#"
-function double(uint256 x) pure returns (uint256) {
-    return x * 2;
+contract Counter {
+    function bump(uint256 x) public pure returns (uint256) {
+        return triple(x);
+    }
+}
+
+function triple(uint256 x) pure returns (uint256) {
+    return x * 3;
 }
 "#,
     );
     prj.add_source(
-        "FreeTest.sol",
+        "MixedTest.sol",
         r#"
 import "./test.sol";
-import {double} from "./Free.sol";
+import {Counter} from "./Mixed.sol";
 
-contract FreeTest is DSTest {
-    function testDouble() public {
-        require(double(3) == 6);
+contract MixedTest is DSTest {
+    function testMixed() public {
+        Counter c = new Counter();
+        require(c.bump(2) == 6);
     }
 }
 "#,
     );
 
-    let output = cmd.arg("coverage").assert_success().get_output().stdout_lossy();
-    // Before the fix, a file of only free functions produced no coverage record at all.
+    cmd.args(["coverage", "--report=lcov", "--lcov-version=2"]).assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+
+    // The file is reported at all (before the fix a free-function-only file was dropped).
+    assert!(lcov.contains("SF:src/Mixed.sol"), "coverage must include Mixed.sol:\n{lcov}");
+    // The contract method keeps its contract scope.
     assert!(
-        output.contains("src/Free.sol"),
-        "free-function-only file must appear in coverage:\n{output}"
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",Counter.bump")),
+        "contract function must be scoped as `Counter.bump`:\n{lcov}"
+    );
+    // The free function is attributed at file level: bare `triple`, with no contract prefix
+    // (`Counter.triple`) and no malformed empty scope (`.triple`).
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",triple")),
+        "free function must be attributed as bare `triple`:\n{lcov}"
+    );
+    assert!(
+        !lcov.contains(",Counter.triple"),
+        "free function must not leak into the contract scope:\n{lcov}"
+    );
+    assert!(
+        !lcov.contains(",.triple"),
+        "free function must not be emitted with a malformed empty scope:\n{lcov}"
+    );
+    // Both functions were executed, so both record a nonzero hit count.
+    assert!(
+        lcov.lines()
+            .any(|l| l.starts_with("FNDA:") && !l.starts_with("FNDA:0,") && l.ends_with(",triple")),
+        "free function must record its hits:\n{lcov}"
+    );
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FNDA:")
+            && !l.starts_with("FNDA:0,")
+            && l.ends_with(",Counter.bump")),
+        "contract function must record its hits:\n{lcov}"
     );
 });
 
