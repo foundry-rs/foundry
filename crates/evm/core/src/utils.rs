@@ -1,4 +1,4 @@
-use crate::{EvmEnv, FoundryBlock};
+use crate::{EvmEnv, FoundryBlock, hardfork::FoundryHardfork};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
@@ -32,7 +32,19 @@ pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockH
 
 /// Applies chain-specific changes required to replay transactions accepted on-chain.
 pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut EvmEnv<SPEC, BLOCK>) {
-    if NamedChain::try_from(evm_env.cfg_env.chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
+    let chain_id = evm_env.cfg_env.chain_id;
+    apply_chain_specific_tx_replay_env_changes_for_chain(evm_env, chain_id);
+}
+
+/// Applies replay normalization for the provided source chain.
+///
+/// This keeps fork-specific transaction validation independent from an execution `CHAINID`
+/// override.
+pub fn apply_chain_specific_tx_replay_env_changes_for_chain<SPEC, BLOCK>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+    source_chain_id: ChainId,
+) {
+    if NamedChain::try_from(source_chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
         // Arbitrum does not enforce the EIP-1559 priority fee ordering constraint.
         evm_env.cfg_env.disable_priority_fee_check = true;
     }
@@ -54,9 +66,28 @@ pub fn apply_chain_and_block_specific_env_changes<
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
+    let chain_id = evm_env.cfg_env.chain_id;
+    apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
+        evm_env, block, chain_id, configs,
+    );
+}
+
+/// Applies block normalization for the provided source chain.
+///
+/// This keeps fork-specific header handling independent from an execution `CHAINID` override.
+pub fn apply_chain_and_block_specific_env_changes_for_chain<
+    N: Network,
+    SPEC: Into<SpecId> + Copy,
+    BLOCK: FoundryBlock,
+>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+    block: &N::BlockResponse,
+    source_chain_id: ChainId,
+    configs: NetworkConfigs,
+) {
     use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
 
-    if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
+    if let Ok(chain) = NamedChain::try_from(source_chain_id) {
         let block_number = block.header().number();
 
         match chain {
@@ -97,9 +128,7 @@ pub fn apply_chain_and_block_specific_env_changes<
         }
     }
 
-    if configs.bypass_prevrandao(evm_env.cfg_env.chain_id)
-        && evm_env.block_env.prevrandao().is_none()
-    {
+    if configs.bypass_prevrandao(source_chain_id) && evm_env.block_env.prevrandao().is_none() {
         // <https://github.com/foundry-rs/foundry/issues/4232>
         evm_env.block_env.set_prevrandao(Some(B256::random()));
     }
@@ -154,6 +183,23 @@ pub fn get_blob_params_by_spec_id(spec: SpecId) -> BlobParams {
     }
 }
 
+/// Returns the blob parameters selected by an explicit Foundry hardfork.
+pub fn get_blob_params_by_hardfork(hardfork: FoundryHardfork) -> BlobParams {
+    match hardfork {
+        FoundryHardfork::Ethereum(EthereumHardfork::Prague) => BlobParams::prague(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Osaka) => BlobParams::osaka(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Bpo1) => BlobParams::bpo1(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Bpo2) => BlobParams::bpo2(),
+        FoundryHardfork::Ethereum(
+            EthereumHardfork::Bpo3
+            | EthereumHardfork::Bpo4
+            | EthereumHardfork::Bpo5
+            | EthereumHardfork::Amsterdam,
+        ) => BlobParams::bpo2(),
+        _ => get_blob_params_by_spec_id(hardfork.into()),
+    }
+}
+
 /// Returns the blob base fee update fraction based on the spec id.
 pub fn get_blob_base_fee_update_fraction_by_spec_id(spec: SpecId) -> u64 {
     get_blob_params_by_spec_id(spec).update_fraction as u64
@@ -173,6 +219,39 @@ pub fn get_function<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
+    use alloy_rpc_types::{Block, BlockTransactions};
+    use revm::context::{BlockEnv, CfgEnv};
+
+    #[test]
+    fn block_normalization_uses_source_chain() {
+        let header = AnyHeader { number: 500, ..Default::default() };
+        let mut block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x64"));
+
+        let mut cfg_env = CfgEnv::<SpecId>::default();
+        cfg_env.chain_id = NamedChain::Mainnet as u64;
+        let mut evm_env = EvmEnv {
+            cfg_env,
+            block_env: BlockEnv { number: U256::from(500), ..Default::default() },
+        };
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Arbitrum as u64,
+            NetworkConfigs::default(),
+        );
+
+        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
+        assert_eq!(evm_env.block_env.number, U256::from(100));
+    }
 
     #[test]
     fn tx_replay_env_changes_disable_priority_fee_check_only_for_arbitrum() {
@@ -193,6 +272,23 @@ mod tests {
     }
 
     #[test]
+    fn tx_replay_env_changes_use_source_chain() {
+        let mut evm_env = EvmEnv::new(
+            revm::context::CfgEnv::<SpecId>::default(),
+            revm::context::BlockEnv::default(),
+        );
+        evm_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
+
+        apply_chain_specific_tx_replay_env_changes_for_chain(
+            &mut evm_env,
+            NamedChain::Arbitrum as u64,
+        );
+
+        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
+        assert!(evm_env.cfg_env.disable_priority_fee_check);
+    }
+
+    #[test]
     fn blob_params_by_spec_id_tracks_latest_known_blob_schedule() {
         assert_eq!(get_blob_params_by_spec_id(SpecId::CANCUN), BlobParams::cancun());
         assert_eq!(get_blob_params_by_spec_id(SpecId::PRAGUE), BlobParams::prague());
@@ -202,5 +298,19 @@ mod tests {
             get_blob_base_fee_update_fraction_by_spec_id(SpecId::AMSTERDAM),
             BlobParams::bpo2().update_fraction as u64
         );
+    }
+
+    #[test]
+    fn blob_params_by_explicit_hardfork() {
+        for (hardfork, expected) in [
+            (EthereumHardfork::Cancun, BlobParams::cancun()),
+            (EthereumHardfork::Prague, BlobParams::prague()),
+            (EthereumHardfork::Osaka, BlobParams::osaka()),
+            (EthereumHardfork::Bpo1, BlobParams::bpo1()),
+            (EthereumHardfork::Bpo2, BlobParams::bpo2()),
+            (EthereumHardfork::Amsterdam, BlobParams::bpo2()),
+        ] {
+            assert_eq!(get_blob_params_by_hardfork(hardfork.into()), expected);
+        }
     }
 }

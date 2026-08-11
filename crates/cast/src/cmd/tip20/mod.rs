@@ -278,31 +278,37 @@ pub(crate) async fn send_tip20_transaction(
 
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
-        let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
-        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-        if let Some(sponsor) = &tempo_sponsor {
-            attach_sponsor(
-                sponsor,
-                (!config.eth_rpc_curl).then_some(&provider),
-                chain,
-                &mut tx,
-                browser.address(),
-            )
-            .await?;
-        } else {
-            let fee_token = resolve_and_set_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                &mut tx,
-                Some(browser.address()),
-            )
-            .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
-        }
-        let tx_hash = browser.send_transaction_via_browser(tx).await?;
-        CastTxSender::new(&provider)
-            .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-            .await?;
+        // Keep the browser wallet's transaction state off the parent frame as well.
+        Box::pin(async {
+            let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                attach_sponsor(
+                    sponsor,
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    chain,
+                    &mut tx,
+                    browser.address(),
+                )
+                .await?;
+            } else {
+                let fee_token = resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(browser.address()),
+                )
+                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
+            }
+            let tx_hash = browser.send_transaction_via_browser(tx).await?;
+            CastTxSender::new(&provider)
+                .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+                .await?;
+            eyre::Ok(())
+        })
+        .await?;
     } else if let Some(ak) = access_key {
         let (mut tx, _, prepared) = builder.build_with_tempo_wallet(&ak).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;

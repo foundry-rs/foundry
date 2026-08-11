@@ -21,15 +21,15 @@ use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
-use foundry_config::NamedChain;
+use foundry_config::{Chain, FoundryHardfork, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    hardforks::TempoHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
+        debug::ContractSources,
         decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
@@ -264,10 +264,13 @@ impl RpcData {
 
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
     async fn check_shanghai_support(&mut self) -> Result<()> {
-        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
-            Some((rpc.clone(), provider.get_chain_id().await.ok()?))
-        });
+        let chain_ids =
+            self.total_rpcs.iter().filter(|rpc| !self.chain_ids.contains_key(*rpc)).map(
+                |rpc| async move {
+                    let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
+                    Some((rpc.clone(), provider.get_chain_id().await.ok()?))
+                },
+            );
 
         self.chain_ids.extend(join_all(chain_ids).await.into_iter().flatten());
         let iter = self
@@ -341,6 +344,11 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             }
         }
         let mut rpc_data = RpcData::from_transactions(&txs);
+        if let Some(identity) = &self.script_config.evm_opts.fork_endpoint
+            && rpc_data.total_rpcs.contains(&identity.endpoint)
+        {
+            rpc_data.chain_ids.insert(identity.endpoint.clone(), identity.execution_chain_id);
+        }
 
         if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
@@ -354,7 +362,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             rpc_data.check_shanghai_support().await?;
         }
 
-        let decoder = self.build_trace_decoder(&self.build_data.known_contracts, &rpc_data).await?;
+        let decoder = self.build_trace_decoder(&rpc_data).await?;
 
         Ok(PreSimulationState {
             args: self.args,
@@ -369,58 +377,27 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     }
 
     /// Builds [CallTraceDecoder] from the execution result and known contracts.
-    async fn build_trace_decoder(
-        &self,
-        known_contracts: &ContractsByArtifact,
-        rpc_data: &RpcData,
-    ) -> Result<CallTraceDecoder> {
-        let chain_id = match self
-            .script_config
-            .evm_opts
-            .fork_url
-            .as_ref()
-            .and_then(|url| rpc_data.chain_ids.get(url))
-        {
-            Some(chain_id) => Some((*chain_id).into()),
+    async fn build_trace_decoder(&self, rpc_data: &RpcData) -> Result<CallTraceDecoder> {
+        let chain_id = self.script_config.source_chain_id.map(Chain::from).or_else(|| {
+            self.script_config
+                .evm_opts
+                .fork_url
+                .as_ref()
+                .and_then(|url| rpc_data.chain_ids.get(url))
+                .map(|chain_id| (*chain_id).into())
+        });
+        let chain_id = match chain_id {
+            Some(chain_id) => Some(chain_id),
             None => self.script_config.evm_opts.get_remote_chain_id().await,
         };
-        let is_tempo = self.script_config.evm_opts.networks.is_tempo()
-            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
-        let mut tracing = self.script_config.config.tracing.clone();
-        tracing.labels.extend(self.execution_result.labeled_addresses.clone());
-
-        let mut decoder = CallTraceDecoderBuilder::new()
-            .with_tracing_config(&tracing)
-            .with_known_contracts(known_contracts)
-            .with_signature_identifier(SignaturesIdentifier::from_config(
-                &self.script_config.config,
-            )?)
-            .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(
-                is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
-            )
-            .build();
-
-        if tracing.decode_internal {
-            decoder.debug_identifier =
-                Some(DebugTraceIdentifier::new(self.build_data.sources.clone()));
-        }
-
-        let use_debug_bytecodes =
-            self.args.debug && !self.execution_result.debug_bytecodes.is_empty();
-        let mut identifier = if use_debug_bytecodes {
-            TraceIdentifiers::new()
-                .with_local_and_bytecodes(known_contracts, &self.execution_result.debug_bytecodes)
-        } else {
-            TraceIdentifiers::new().with_local(known_contracts)
-        }
-        .with_external(&self.script_config.config, chain_id)?;
-
-        for (_, trace) in &self.execution_result.traces {
-            decoder.identify(trace, &mut identifier);
-        }
-
-        Ok(decoder)
+        build_trace_decoder_for_context(
+            &self.args,
+            &self.script_config,
+            &self.build_data.known_contracts,
+            &self.build_data.sources,
+            &self.execution_result,
+            chain_id,
+        )
     }
 
     /// Collects the return values from the execution result.
@@ -460,6 +437,60 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 
         Ok(returns)
     }
+}
+
+/// Builds a trace decoder for the exact execution context of a script runner.
+pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
+    args: &ScriptArgs,
+    script_config: &ScriptConfig<FEN>,
+    known_contracts: &ContractsByArtifact,
+    sources: &ContractSources,
+    execution_result: &ScriptResult<FEN::Network>,
+    chain_id: Option<Chain>,
+) -> Result<CallTraceDecoder> {
+    let resolved_hardfork = script_config.hardfork;
+    let mut tracing = script_config.config.tracing.clone();
+    tracing.labels.extend(execution_result.labeled_addresses.clone());
+
+    #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+    let mut builder = CallTraceDecoderBuilder::new()
+        .with_tracing_config(&tracing)
+        .with_known_contracts(known_contracts)
+        .with_signature_identifier(SignaturesIdentifier::from_config(&script_config.config)?)
+        .with_networks(script_config.config.networks)
+        .with_chain_id(chain_id.map(|chain| chain.id()))
+        .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+            FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+            _ => None,
+        }));
+    #[cfg(feature = "monad")]
+    {
+        builder =
+            builder.with_monad_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Monad(hardfork) => Some(hardfork),
+                _ => None,
+            }));
+    }
+    let mut decoder = builder.build();
+
+    if tracing.decode_internal {
+        decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources.clone()));
+    }
+
+    let use_debug_bytecodes = args.debug && !execution_result.debug_bytecodes.is_empty();
+    let mut identifier = if use_debug_bytecodes {
+        TraceIdentifiers::new()
+            .with_local_and_bytecodes(known_contracts, &execution_result.debug_bytecodes)
+    } else {
+        TraceIdentifiers::new().with_local(known_contracts)
+    }
+    .with_external(&script_config.config, chain_id)?;
+
+    for (_, trace) in &execution_result.traces {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    Ok(decoder)
 }
 
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {

@@ -46,6 +46,8 @@ pub struct Fuzzer {
     observed_calls: Vec<ObservedCall>,
     /// Current EVM call depth. 0 means no active call, 1 means top-level call.
     call_depth: u32,
+    /// Additional network-specific cheatcode addresses that must not be overridden.
+    extra_cheatcode_addresses: &'static [Address],
 }
 
 impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
@@ -135,7 +137,14 @@ impl Fuzzer {
             record_calls: false,
             observed_calls: Vec::new(),
             call_depth: 0,
+            extra_cheatcode_addresses: &[],
         }
+    }
+
+    /// Sets additional network-specific cheatcode addresses that must not be overridden.
+    pub const fn with_extra_cheatcode_addresses(mut self, addresses: &'static [Address]) -> Self {
+        self.extra_cheatcode_addresses = addresses;
+        self
     }
 
     /// Enables or disables sub-call buffering.
@@ -179,6 +188,11 @@ impl Fuzzer {
         self.record_calls && self.call_depth > 1 && matches!(scheme, CallScheme::Call)
     }
 
+    #[inline]
+    fn is_cheatcode_address(&self, address: Address) -> bool {
+        address == CHEATCODE_ADDRESS || self.extra_cheatcode_addresses.contains(&address)
+    }
+
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
     fn collect_data(&mut self, interpreter: &Interpreter) {
@@ -211,6 +225,7 @@ impl Fuzzer {
     ///
     /// This simulates malicious contracts that immediately reenter when called.
     fn override_call<CTX: ContextTr>(&mut self, ecx: &mut CTX, call: &mut CallInputs) {
+        let target_is_cheatcode = self.is_cheatcode_address(call.target_address);
         let Some(ref mut call_generator) = self.call_generator else {
             return;
         };
@@ -228,7 +243,7 @@ impl Fuzzer {
         if call.caller == call_generator.test_address
             || call.scheme != CallScheme::Call
             || call_generator.override_depth > 0
-            || call.target_address == CHEATCODE_ADDRESS
+            || target_is_cheatcode
         {
             return;
         }
@@ -278,10 +293,21 @@ impl Fuzzer {
 mod tests {
     use super::*;
     use alloy_primitives::keccak256;
+    use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
     use revm::bytecode::Bytecode;
 
     fn fuzzer(record_calls: bool) -> Fuzzer {
         Fuzzer::new(16, None).with_call_recording(record_calls)
+    }
+
+    #[test]
+    fn network_cheatcode_addresses_are_opt_in() {
+        let ethereum = Fuzzer::new(16, None);
+        assert!(!ethereum.is_cheatcode_address(MONAD_CHEATCODE_ADDRESS));
+
+        let monad =
+            Fuzzer::new(16, None).with_extra_cheatcode_addresses(&[MONAD_CHEATCODE_ADDRESS]);
+        assert!(monad.is_cheatcode_address(MONAD_CHEATCODE_ADDRESS));
     }
 
     #[test]
