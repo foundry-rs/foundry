@@ -110,6 +110,10 @@ pub(crate) fn hard_arith_fallback_model(
     search.model(0, &mut model, &mut assignments)
 }
 
+// Constructive checked-multiply modeling is optional. Bound repeated support scans to keep a miss
+// from consuming more work than the solver fallback it is intended to avoid.
+const MAX_CHECKED_MUL_SUPPORT_VISITS: usize = 256;
+
 /// Constructs and validates a concrete model for a checked-multiply guard branch.
 ///
 /// Solidity's guard is `x == 0 || (x * y) / x == y`. The assignments below represent its
@@ -119,6 +123,7 @@ pub(crate) fn hard_arith_fallback_model(
 /// perform the generic bounded candidate search, and a model is returned only when it satisfies
 /// every original constraint.
 pub(super) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+    let mut remaining_support_visits = MAX_CHECKED_MUL_SUPPORT_VISITS;
     for constraint in constraints {
         let Some((zero_operand, expected, guard_is_true)) = checked_mul_guard_branch(constraint)
         else {
@@ -136,7 +141,14 @@ pub(super) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Opt
             ];
             for seeds in seed_orders {
                 let mut model = SymbolicModel::default();
-                if !propagate_fallback_support_constraints(constraints, &mut model) {
+                if !propagate_fallback_support_constraints(
+                    constraints,
+                    &mut model,
+                    &mut remaining_support_visits,
+                ) {
+                    if remaining_support_visits == 0 {
+                        return None;
+                    }
                     continue;
                 }
                 let mut valid = true;
@@ -146,14 +158,33 @@ pub(super) fn checked_mul_guard_branch_model(constraints: &[SymBoolExpr]) -> Opt
                         Ok(None) => operand.assign_model_value(&mut model, default),
                         Err(_) => false,
                     };
-                    if !assigned || !propagate_fallback_support_constraints(constraints, &mut model)
-                    {
+                    if !assigned {
+                        valid = false;
+                        break;
+                    }
+                    if !propagate_fallback_support_constraints(
+                        constraints,
+                        &mut model,
+                        &mut remaining_support_visits,
+                    ) {
+                        if remaining_support_visits == 0 {
+                            return None;
+                        }
                         valid = false;
                         break;
                     }
                 }
-                if valid && complete_fallback_support_model(constraints, &mut model) {
-                    return Some(model);
+                if valid {
+                    if complete_fallback_support_model(
+                        constraints,
+                        &mut model,
+                        &mut remaining_support_visits,
+                    ) {
+                        return Some(model);
+                    }
+                    if remaining_support_visits == 0 {
+                        return None;
+                    }
                 }
             }
         }
@@ -357,8 +388,13 @@ impl FallbackSearch<'_> {
                 return None;
             }
             let mut completed = model.clone();
-            return complete_fallback_support_model(self.constraints, &mut completed)
-                .then_some(completed);
+            let mut remaining_support_visits = usize::MAX;
+            return complete_fallback_support_model(
+                self.constraints,
+                &mut completed,
+                &mut remaining_support_visits,
+            )
+            .then_some(completed);
         }
 
         for candidate in &self.candidates[index] {
@@ -388,9 +424,15 @@ fn fallback_model_satisfies_all_constraints(
     constraints.iter().all(|constraint| constraint.eval_model(model).unwrap_or(false))
 }
 
-fn complete_fallback_support_model(constraints: &[SymBoolExpr], model: &mut SymbolicModel) -> bool {
+fn complete_fallback_support_model(
+    constraints: &[SymBoolExpr],
+    model: &mut SymbolicModel,
+    remaining_support_visits: &mut usize,
+) -> bool {
     for _ in 0..constraints.len() {
-        let Some(mut changed) = complete_support_constraints_once(constraints, model) else {
+        let Some(mut changed) =
+            complete_support_constraints_once(constraints, model, remaining_support_visits)
+        else {
             return false;
         };
         if changed {
@@ -403,6 +445,10 @@ fn complete_fallback_support_model(constraints: &[SymBoolExpr], model: &mut Symb
                 Ok(Some(true)) => {}
                 Ok(Some(false)) | Err(_) => return false,
                 Ok(None) => {
+                    if *remaining_support_visits == 0 {
+                        return false;
+                    }
+                    *remaining_support_visits -= 1;
                     changed |= complete_default_support_constraint(constraint, model);
                 }
             }
@@ -417,9 +463,10 @@ fn complete_fallback_support_model(constraints: &[SymBoolExpr], model: &mut Symb
 fn propagate_fallback_support_constraints(
     constraints: &[SymBoolExpr],
     model: &mut SymbolicModel,
+    remaining_support_visits: &mut usize,
 ) -> bool {
     for _ in 0..constraints.len() {
-        match complete_support_constraints_once(constraints, model) {
+        match complete_support_constraints_once(constraints, model, remaining_support_visits) {
             Some(true) => {}
             Some(false) => return true,
             None => return false,
@@ -431,9 +478,14 @@ fn propagate_fallback_support_constraints(
 fn complete_support_constraints_once(
     constraints: &[SymBoolExpr],
     model: &mut SymbolicModel,
+    remaining_support_visits: &mut usize,
 ) -> Option<bool> {
     let mut changed = false;
     for constraint in constraints {
+        if *remaining_support_visits == 0 {
+            return None;
+        }
+        *remaining_support_visits -= 1;
         match constraint.eval_model_if_complete(model) {
             Ok(Some(true)) => {}
             Ok(Some(false)) | Err(_) => return None,
@@ -976,6 +1028,31 @@ mod tests {
         assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
         assert_eq!(y.eval_model(&false_model).unwrap(), U256::MAX);
         assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
+    }
+
+    #[test]
+    fn checked_mul_guard_branch_model_stops_at_shared_support_budget() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let guard = checked_mul_guard_word(&mut cx, &x, &y);
+        let zero = SymExpr::zero(&mut cx);
+        let mut constraints = vec![SymBoolExpr::eq(&mut cx, guard, zero).not(&mut cx)];
+
+        let support = (0..MAX_CHECKED_MUL_SUPPORT_VISITS)
+            .map(|index| SymExpr::var(&mut cx, &format!("support_{index}")))
+            .collect::<Vec<_>>();
+        for pair in support.windows(2) {
+            constraints.push(SymBoolExpr::eq(&mut cx, pair[0].clone(), pair[1].clone()));
+        }
+        let one = SymExpr::one(&mut cx);
+        constraints.push(SymBoolExpr::eq(
+            &mut cx,
+            support.last().expect("support chain is non-empty").clone(),
+            one,
+        ));
+
+        assert!(checked_mul_guard_branch_model(&constraints).is_none());
     }
 
     #[test]
