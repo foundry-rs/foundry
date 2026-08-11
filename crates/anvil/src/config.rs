@@ -20,7 +20,7 @@ use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
-    Address, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
+    Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
@@ -38,7 +38,7 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
+    backend::{BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
     hardforks::latest_active_tempo_hardfork,
@@ -107,6 +107,18 @@ const BANNER: &str = r"
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
 ";
+
+fn fork_source_id(urls: &[String], headers: &[String]) -> B256 {
+    let mut encoded = Vec::new();
+    for parts in [urls, headers] {
+        encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
+        for part in parts {
+            encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
+            encoded.extend_from_slice(part.as_bytes());
+        }
+    }
+    keccak256(encoded)
+}
 
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
@@ -1599,15 +1611,11 @@ latest block number: {latest_block}"
             self.networks,
         );
 
-        let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
-        let block_chain_db = if self.fork_chain_id.is_some() {
-            BlockchainDb::new_skip_check(
-                meta,
-                self.block_cache_path_for_rpc(fork_block_number, &eth_rpc_url),
-            )
-        } else {
-            BlockchainDb::new(meta, self.block_cache_path_for_rpc(fork_block_number, &eth_rpc_url))
-        };
+        let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
+        let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
+            .with_fork_identity(block_hash, source_id);
+        let block_chain_db =
+            BlockchainDb::new(meta, self.block_cache_path_for_rpc(fork_block_number, &eth_rpc_url));
 
         // After bootstrap, rebuild the provider with round-robin if multiple URLs are
         // configured. This ensures bootstrap used only the primary endpoint for consistency,
@@ -1630,12 +1638,14 @@ latest block number: {latest_block}"
 
         // This will spawn the background thread that will use the provider to fetch
         // blockchain data from the other client
-        let backend = SharedBackend::spawn_backend(
-            Arc::clone(&provider),
-            block_chain_db.clone(),
-            Some(fork_block_number.into()),
-        )
-        .await;
+        let anchor = ForkBlock::with_rpc_number(
+            evm_env.block_env.number.saturating_to(),
+            fork_block_number,
+            block_hash,
+        );
+        let (backend, handler) =
+            SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor);
+        tokio::spawn(handler);
 
         let config = ClientForkConfig {
             fork_urls: self.fork_urls.clone(),
@@ -1988,6 +1998,17 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_source_identity_includes_all_urls_and_headers() {
+        let urls = ["http://primary".to_string(), "http://fallback".to_string()];
+        let headers = ["Authorization: secret".to_string()];
+        let identity = fork_source_id(&urls, &headers);
+
+        assert_ne!(identity, fork_source_id(&urls[..1], &headers));
+        assert_ne!(identity, fork_source_id(&urls, &[]));
+        assert_ne!(identity, fork_source_id(&[urls[1].clone(), urls[0].clone()], &headers));
+    }
 
     #[test]
     fn test_prune_history() {

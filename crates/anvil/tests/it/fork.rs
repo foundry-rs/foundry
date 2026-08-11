@@ -2551,46 +2551,6 @@ async fn test_fork_reset_after_set_rpc_url_does_not_reuse_old_cache() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_client_fork_reset_then_backend_reset_rebuilds_database() {
-    let address = Address::random();
-    let first_balance = U256::from(1337u64);
-    let second_balance = U256::from(42u64);
-    let timestamp = 1_000_000u64;
-    let chain_id =
-        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
-    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
-    let _ = std::fs::remove_dir_all(&cache_dir);
-
-    async {
-        let first_origin = NodeConfig::test()
-            .with_chain_id(Some(chain_id))
-            .with_genesis_timestamp(Some(timestamp))
-            .with_funded_accounts([(address, first_balance)].into_iter().collect());
-        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
-        let second_origin = NodeConfig::test()
-            .with_chain_id(Some(chain_id))
-            .with_genesis_timestamp(Some(timestamp))
-            .with_funded_accounts([(address, second_balance)].into_iter().collect());
-        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
-        let fork_config = NodeConfig::test()
-            .with_chain_id(Some(chain_id))
-            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()));
-        let (api, handle) = spawn(fork_config).await;
-        let provider = handle.http_provider();
-
-        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
-
-        let fork = api.get_fork().unwrap();
-        fork.reset(vec![second_origin_handle.http_endpoint()], fork.block_number()).await.unwrap();
-        api.anvil_reset(Some(Forking::default())).await.unwrap();
-
-        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
-    }
-    .await;
-    let _ = std::fs::remove_dir_all(cache_dir);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_get_account() {
     let (_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();

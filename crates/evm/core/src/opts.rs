@@ -334,7 +334,7 @@ impl EvmOpts {
     }
 
     /// Returns the EVM environment and block identity fetched from the fork endpoint.
-    async fn fork_evm_env_resolved<
+    pub(crate) async fn fork_evm_env_resolved<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
         N: Network,
@@ -414,7 +414,7 @@ impl EvmOpts {
         message
     }
 
-    async fn fork_evm_env_at_resolved<
+    pub(crate) async fn fork_evm_env_at_resolved<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
         N: Network,
@@ -546,6 +546,27 @@ impl EvmOpts {
         chain_id: u64,
         fork_block_number: Option<BlockNumber>,
     ) -> Option<CreateFork> {
+        self.get_fork_with_identity(config, chain_id, fork_block_number, None)
+    }
+
+    /// Returns a fork configuration pinned to an already resolved block identity.
+    pub fn get_fork_resolved(
+        &self,
+        config: &Config,
+        chain_id: u64,
+        fork: Option<&ResolvedFork>,
+    ) -> Option<CreateFork> {
+        let fork_block_number = fork.map(ResolvedFork::number);
+        self.get_fork_with_identity(config, chain_id, fork_block_number, fork.cloned())
+    }
+
+    fn get_fork_with_identity(
+        &self,
+        config: &Config,
+        chain_id: u64,
+        fork_block_number: Option<BlockNumber>,
+        resolved: Option<ResolvedFork>,
+    ) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
         let enable_caching = config.enable_caching(&url, chain_id);
 
@@ -555,7 +576,7 @@ impl EvmOpts {
         let mut evm_opts = self.clone();
         evm_opts.fork_block_number = evm_opts.fork_block_number.or(fork_block_number);
 
-        Some(CreateFork { url, enable_caching, evm_opts })
+        Some(CreateFork { url, enable_caching, evm_opts, resolved })
     }
 
     /// Returns the gas limit to use

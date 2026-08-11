@@ -89,10 +89,12 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, resolved) =
+            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
-        let fork = evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block).unwrap();
+        let fork = evm_opts
+            .get_fork_resolved(config, evm_env.cfg_env.chain_id, resolved.as_ref())
+            .unwrap();
         let networks = evm_opts.networks.with_chain_id(evm_env.cfg_env.chain_id);
         config
             .labels

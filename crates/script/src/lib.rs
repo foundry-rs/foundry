@@ -959,17 +959,16 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let resolved = self.ensure_resolved_fork().await?;
         let (evm_env, mut tx_env) =
             self.evm_opts.env_with_resolved_fork::<_, _, TxEnvFor<FEN>>(resolved.as_ref()).await?;
-        let fork_block_number = resolved.as_ref().map(ResolvedFork::number);
 
         let db = if self.evm_opts.fork_url.is_some() {
             let resolved = resolved.context("fork must be resolved")?;
             if let Some(backend) = self.backends.get(&resolved) {
                 backend.clone()
             } else {
-                let fork = self.evm_opts.get_fork(
+                let fork = self.evm_opts.get_fork_resolved(
                     &self.config,
                     evm_env.cfg_env.chain_id,
-                    fork_block_number,
+                    Some(&resolved),
                 );
                 let backend = Backend::spawn(fork)?;
                 self.backends.insert(resolved, backend.clone());

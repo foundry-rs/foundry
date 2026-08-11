@@ -2528,7 +2528,6 @@ impl TestArgs {
             evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
         let create2_deployer_available =
             evm_opts.can_use_create2_deployer_resolved(fork.as_ref()).await?;
-        let fork_block_number = fork.as_ref().map(|fork| fork.number());
 
         let config = Arc::new(config);
         let showmap = self.showmap_config()?;
@@ -2538,7 +2537,7 @@ impl TestArgs {
             .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block_number))
+            .with_fork(evm_opts.get_fork_resolved(&config, evm_env.cfg_env.chain_id, fork.as_ref()))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .set_coverage(execution.coverage)
@@ -2566,13 +2565,12 @@ impl TestArgs {
             evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
         let create2_deployer_available =
             evm_opts.can_use_create2_deployer_resolved(fork.as_ref()).await?;
-        let fork_block_number = fork.as_ref().map(|fork| fork.number());
 
         let config = Arc::new(config);
         MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block_number))
+            .with_fork(evm_opts.get_fork_resolved(&config, evm_env.cfg_env.chain_id, fork.as_ref()))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .with_multi_network(options.multi_network)

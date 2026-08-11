@@ -15,6 +15,7 @@ use foundry_config::{Config, SolcReq};
 use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
+    fork::ResolvedFork,
     opts::EvmOpts,
 };
 use semver::Version;
@@ -284,6 +285,9 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     /// In-memory REVM db for the session's runner.
     #[serde(skip)]
     pub backend: Option<Backend<FEN>>,
+    /// Exact fork identity used to construct the cached backend.
+    #[serde(skip)]
+    pub resolved_fork: Option<ResolvedFork>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution

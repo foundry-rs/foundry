@@ -193,20 +193,32 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
-            self.config.evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
-
-        let backend = match self.config.backend.clone() {
-            Some(backend) => backend,
+        let (evm_env, tx_env, backend) = match self.config.backend.clone() {
+            Some(backend) => {
+                let (evm_env, tx_env) = self
+                    .config
+                    .evm_opts
+                    .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(
+                        self.config.resolved_fork.as_ref(),
+                    )
+                    .await?;
+                (evm_env, tx_env, backend)
+            }
             None => {
-                let fork = self.config.evm_opts.get_fork(
+                let (evm_env, tx_env, resolved_fork) = self
+                    .config
+                    .evm_opts
+                    .env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+                    .await?;
+                let fork = self.config.evm_opts.get_fork_resolved(
                     &self.config.foundry_config,
                     evm_env.cfg_env.chain_id,
-                    fork_block,
+                    resolved_fork.as_ref(),
                 );
                 let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
-                backend
+                self.config.resolved_fork = resolved_fork;
+                (evm_env, tx_env, backend)
             }
         };
 

@@ -1,12 +1,12 @@
 use alloy_eips::{BlockId, BlockNumHash};
-use alloy_primitives::{B256, BlockNumber};
+use alloy_primitives::{B256, BlockNumber, keccak256};
 use std::fmt;
 
 /// A fork selector and block identity resolved from a configured RPC source.
 ///
 /// This context binds exact preflight reads and EVM environment reconstruction to the source,
-/// selector, and block that were resolved together. The fork database itself remains
-/// number-pinned.
+/// selector, and block that were resolved together. The fork database uses the resolved hash for
+/// state reads and block ancestry.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedFork {
     source: ForkSource,
@@ -70,6 +70,22 @@ impl ResolvedFork {
     pub(crate) const fn block(&self) -> BlockNumHash {
         self.block
     }
+
+    /// Returns an opaque identity for the endpoint and header configuration.
+    pub(crate) fn source_id(&self) -> B256 {
+        let mut encoded = Vec::new();
+        encode_source_part(&mut encoded, self.source.url.as_bytes());
+        for header in &self.source.headers {
+            encode_source_part(&mut encoded, header.as_bytes());
+        }
+        keccak256(encoded)
+    }
+}
+
+fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
+    let len = u64::try_from(part.len()).expect("source identity part length exceeds u64");
+    encoded.extend_from_slice(&len.to_be_bytes());
+    encoded.extend_from_slice(part);
 }
 
 impl fmt::Debug for ResolvedFork {

@@ -3361,48 +3361,18 @@ impl<N: Network> Backend<N> {
                     )));
                 }
             }
+            let fork_url = target_rpc_url
+                .clone()
+                .ok_or_else(|| BlockchainError::InvalidUrl("fork URL is missing".to_string()))?;
+            let fork = self
+                .reset_block_number(fork_url, fork_block_number, forking.json_rpc_url.is_some())
+                .await?;
             let fork_block = fork
-                .block_by_number(fork_block_number)
+                .block_by_hash(fork.block_hash())
                 .await?
                 .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
             {
-                if let Some(fork_url) = forking.json_rpc_url {
-                    self.reset_block_number(fork_url, fork_block_number, true).await?;
-                } else {
-                    // If rpc url is unspecified, then update the fork with the new block number and
-                    // existing rpc url, this updates the cache path
-                    if let Some(fork_url) = target_rpc_url.clone() {
-                        self.reset_block_number(fork_url, fork_block_number, false).await?;
-                    }
-
-                    let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
-                    let mut env = self.evm_env.write();
-
-                    env.cfg_env.chain_id = fork.chain_id();
-                    env.block_env = BlockEnv {
-                        number: U256::from(fork_block_number),
-                        timestamp: U256::from(fork_block.header.timestamp()),
-                        gas_limit,
-                        difficulty: fork_block.header.difficulty(),
-                        prevrandao: Some(fork_block.header.mix_hash().unwrap_or_default()),
-                        // Keep previous `beneficiary` and `basefee` value
-                        beneficiary: env.block_env.beneficiary,
-                        basefee: env.block_env.basefee,
-                        ..env.block_env.clone()
-                    };
-
-                    // this is the base fee of the current block, but we need the base fee of
-                    // the next block
-                    let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                        fork_block.header.gas_used(),
-                        gas_limit,
-                        fork_block.header.base_fee_per_gas().unwrap_or_default(),
-                    );
-
-                    self.fees.set_base_fee(next_block_base_fee);
-                }
-
                 // reset the time to the timestamp of the forked block
                 self.time.reset(fork_block.header.timestamp());
                 // drop any pending next-block prevrandao override so it does not leak into a block
@@ -3504,8 +3474,10 @@ impl<N: Network> Backend<N> {
         fork_url: String,
         fork_block_number: u64,
         validated_url: bool,
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<ClientFork, BlockchainError> {
         let mut node_config = self.node_config.read().await.clone();
+        // Recompute the next block's base fee from the newly resolved fork block.
+        node_config.base_fee.take();
         node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
         let override_chain_id =
             self.get_fork().and_then(|fork| fork.config.read().override_chain_id);
@@ -3523,10 +3495,10 @@ impl<N: Network> Backend<N> {
         *self.db.write().await = Box::new(forked_db);
         let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
         *self.node_config.write().await = node_config;
-        *self.fork.write() = Some(fork);
+        *self.fork.write() = Some(fork.clone());
         *self.evm_env.write() = evm_env;
 
-        Ok(())
+        Ok(fork)
     }
 
     /// Reverts the state to the state snapshot identified by the given `id`.

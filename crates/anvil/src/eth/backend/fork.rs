@@ -433,29 +433,6 @@ impl<N: Network> ClientFork<N> {
         self.provider().raw_request("trace_blockOpcodeGas".into(), (block_id,)).await
     }
 
-    /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub async fn reset(
-        &self,
-        urls: Vec<String>,
-        block_number: impl Into<BlockId>,
-    ) -> Result<(), BlockchainError> {
-        let block_number = block_number.into();
-        self.prepare_reset(urls.clone(), block_number).await?;
-        {
-            self.database
-                .write()
-                .await
-                .maybe_reset(urls.clone(), block_number)
-                .map_err(BlockchainError::Internal)?;
-        }
-
-        let number = self.block_number();
-        let block_hash = self.block_hash();
-        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
-
-        Ok(())
-    }
-
     /// Updates the fork configuration for a reset without modifying the current database.
     pub(crate) async fn prepare_reset(
         &self,

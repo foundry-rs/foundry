@@ -366,7 +366,10 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
     pub(crate) fn set_fork(&mut self, url: Option<String>) -> Result<()> {
         let Some(url) = url else {
-            self.source_mut().config.evm_opts.fork_url = None;
+            let config = &mut self.source_mut().config;
+            config.evm_opts.fork_url = None;
+            config.backend = None;
+            config.resolved_fork = None;
             sh_println!("Now using local environment.")?;
             return Ok(());
         };
@@ -393,6 +396,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // Clear the backend so that it is re-instantiated with the new fork
         // upon the next execution of the session source.
         self.source_mut().config.backend = None;
+        self.source_mut().config.resolved_fork = None;
 
         Ok(())
     }

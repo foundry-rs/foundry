@@ -81,6 +81,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         no_vm: args.no_vm,
         evm_opts,
         backend: None,
+        resolved_fork: None,
         calldata: None,
         ir_minimum: args.ir_minimum,
     })?;

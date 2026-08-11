@@ -17,4 +17,6 @@ pub struct CreateFork {
     pub url: String,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
+    /// Exact source and block identity resolved before fork construction.
+    pub resolved: Option<ResolvedFork>,
 }
