@@ -7,6 +7,7 @@
 
 pub mod access_list;
 pub mod artifact;
+mod auth;
 pub mod b2e_payload;
 pub mod batch_mktx;
 pub mod batch_send;

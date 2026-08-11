@@ -19,7 +19,7 @@ use foundry_compilers::{
     ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
         ConfigurableContractArtifact, Settings, StorageLayout,
-        output_selection::ContractOutputSelection,
+        output_selection::{ContractOutputSelection, OutputSelection},
         remappings::{RelativeRemapping, Remapping},
     },
     compilers::solc::Solc,
@@ -715,7 +715,11 @@ fn source_import(root: &Path, index: usize, path: &Path) -> Result<String> {
 pub fn compile_project(root: &Path) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root)?.sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
-    let project = config.project()?;
+    let mut project = config.project()?;
+    project.no_artifacts = true;
+    project.update_output_selection(|selection| {
+        *selection = OutputSelection::common_output_selection(["storageLayout".to_string()]);
+    });
     let compiler = ProjectCompiler::new();
     compiler.compile(&project)
 }
@@ -1097,7 +1101,8 @@ mod tests {
     #[expect(clippy::disallowed_macros)]
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
         println!("project_root: {root:#?}");
-        compile_project(root).expect("compilation failure")
+        let config = Config::load_with_root(root).unwrap().sanitized();
+        ProjectCompiler::new().compile(&config.project().unwrap()).expect("compilation failure")
     }
 
     fn assert_compilation_result(
@@ -1292,7 +1297,11 @@ mod tests {
              import * as CloneSource1 from \"../lib/dependency/src/Helper.sol\";\n\
              import * as CloneSource2 from \"../lib/other/src/Helper.sol\";\n"
         );
-        compile_project(temp.path()).unwrap();
+        let output = compile_project(temp.path()).unwrap();
+        let (_, artifact) = find_main_contract(&output, "AToken").unwrap();
+        assert!(artifact.storage_layout.is_some());
+        assert!(artifact.bytecode.is_none());
+        assert!(!temp.path().join("out").exists());
     }
 
     #[test]
