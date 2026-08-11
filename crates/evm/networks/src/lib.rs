@@ -344,22 +344,7 @@ impl std::fmt::Display for NetworkVariant {
 
 impl From<ChainId> for NetworkVariant {
     fn from(chain_id: ChainId) -> Self {
-        let chain = Chain::from_id(chain_id);
-        if chain.is_tempo() {
-            return Self::Tempo;
-        }
-        if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
-            return Self::Ethereum;
-        }
-        #[cfg(feature = "monad")]
-        if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
-            return Self::Monad;
-        }
-        #[cfg(feature = "optimism")]
-        if chain.is_optimism() {
-            return Self::Optimism;
-        }
-        Self::Ethereum
+        Self::from_known_chain_id(chain_id).ok().flatten().unwrap_or(Self::Ethereum)
     }
 }
 
@@ -602,26 +587,30 @@ impl NetworkConfigs {
         self.bypass_prevrandao
     }
 
+    /// Infers an execution profile from `chain_id` unless one was selected explicitly.
+    ///
+    /// Unknown chain IDs preserve the unresolved configuration so endpoint metadata can still
+    /// identify their execution profile. A known chain whose feature is unavailable is rejected
+    /// instead of silently falling back to Ethereum semantics.
+    pub fn try_with_chain_id(self, chain_id: u64) -> Result<Self, String> {
+        if self.has_network_selection() {
+            return Ok(self);
+        }
+
+        match NetworkVariant::from_known_chain_id(chain_id).map_err(|error| {
+            format!("cannot infer execution network from chain ID {chain_id}: {error}")
+        })? {
+            Some(network) => Ok(self.with_rpc_identity(network, chain_id)),
+            None => Ok(self),
+        }
+    }
+
+    /// Best-effort execution-profile inference for trusted, programmatic chain IDs.
+    ///
+    /// User-provided chain IDs must be handled with [`Self::try_with_chain_id`] so an unavailable
+    /// feature cannot silently select Ethereum semantics.
     pub fn with_chain_id(self, chain_id: u64) -> Self {
-        let chain = Chain::from_id(chain_id);
-        if self.resolved_network().is_some() || self.celo {
-            return self;
-        }
-        if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
-            return Self { celo: true, ..self };
-        }
-        if chain.is_tempo() {
-            return Self::with_tempo();
-        }
-        #[cfg(feature = "monad")]
-        if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
-            return Self::with_monad();
-        }
-        #[cfg(feature = "optimism")]
-        if chain.is_optimism() {
-            return Self::with_optimism();
-        }
-        self
+        self.try_with_chain_id(chain_id).unwrap_or(self)
     }
 
     /// Applies an RPC endpoint's resolved EVM family to this configuration.
@@ -932,6 +921,65 @@ mod tests {
             NetworkVariant::from_known_chain_id(NamedChain::Mainnet as u64).unwrap(),
             Some(NetworkVariant::Ethereum)
         );
+        assert_eq!(NetworkVariant::from(98_765_432), NetworkVariant::Ethereum);
+    }
+
+    #[test]
+    fn fallible_chain_id_inference_preserves_unknown_chains() {
+        let networks = NetworkConfigs { bypass_prevrandao: true, ..Default::default() };
+        assert_eq!(networks.try_with_chain_id(98_765_432).unwrap(), networks);
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn fallible_chain_id_inference_rejects_disabled_monad() {
+        for chain_id in [NamedChain::Monad as u64, NamedChain::MonadTestnet as u64] {
+            let unavailable = "network family `monad` is not enabled in this build";
+            let expected =
+                format!("cannot infer execution network from chain ID {chain_id}: {unavailable}");
+            assert_eq!(
+                NetworkConfigs::default().try_with_chain_id(chain_id).unwrap_err(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "optimism"))]
+    fn fallible_chain_id_inference_rejects_disabled_optimism() {
+        let chain_id = NamedChain::Optimism as u64;
+        assert_eq!(
+            NetworkConfigs::default().try_with_chain_id(chain_id).unwrap_err(),
+            format!(
+                "cannot infer execution network from chain ID {chain_id}: network family \
+                 `optimism` is not enabled in this build"
+            )
+        );
+    }
+
+    #[test]
+    fn explicit_ethereum_overrides_known_chain_inference() {
+        let ethereum = NetworkConfigs::with_ethereum();
+        for chain_id in [NamedChain::Monad as u64, NamedChain::Optimism as u64] {
+            assert_eq!(ethereum.try_with_chain_id(chain_id).unwrap(), ethereum);
+        }
+    }
+
+    #[test]
+    fn fallible_chain_id_inference_preserves_orthogonal_configuration() {
+        let networks = NetworkConfigs { bypass_prevrandao: true, ..Default::default() };
+        let inferred = networks.try_with_chain_id(NamedChain::Tempo as u64).unwrap();
+
+        assert!(inferred.is_tempo());
+        assert!(inferred.bypass_prevrandao(NamedChain::Mainnet as u64));
+    }
+
+    #[test]
+    #[cfg(feature = "optimism")]
+    fn fallible_chain_id_inference_detects_optimism() {
+        let chain_id = NamedChain::Optimism as u64;
+        assert_eq!(NetworkVariant::from(chain_id), NetworkVariant::Optimism);
+        assert!(NetworkConfigs::default().try_with_chain_id(chain_id).unwrap().is_optimism());
     }
 
     #[test]
@@ -1098,9 +1146,12 @@ mod tests {
 
     #[test]
     fn chain_id_inference_preserves_explicit_networks() {
-        assert!(NetworkConfigs::default().with_chain_id(NamedChain::Celo as u64).is_celo());
+        assert!(
+            NetworkConfigs::default().try_with_chain_id(NamedChain::Celo as u64).unwrap().is_celo()
+        );
         let celo = NetworkConfigs { bypass_prevrandao: true, ..Default::default() }
-            .with_chain_id(NamedChain::Celo as u64);
+            .try_with_chain_id(NamedChain::Celo as u64)
+            .unwrap();
         assert!(celo.is_celo());
         assert!(celo.bypass_prevrandao(NamedChain::Mainnet as u64));
 
@@ -1110,13 +1161,13 @@ mod tests {
             NetworkConfigs::with_celo(),
         ];
         for networks in explicit {
-            assert_eq!(networks.with_chain_id(NamedChain::Celo as u64), networks);
+            assert_eq!(networks.try_with_chain_id(NamedChain::Celo as u64).unwrap(), networks);
         }
 
         #[cfg(feature = "monad")]
         {
             let monad = NetworkConfigs::with_monad();
-            assert_eq!(monad.with_chain_id(NamedChain::Celo as u64), monad);
+            assert_eq!(monad.try_with_chain_id(NamedChain::Celo as u64).unwrap(), monad);
         }
     }
 
@@ -1502,7 +1553,7 @@ mod tests {
         assert_eq!(NetworkVariant::from(143), NetworkVariant::Monad);
         assert_eq!(NetworkVariant::from(10143), NetworkVariant::Monad);
 
-        assert!(NetworkConfigs::default().with_chain_id(143).is_monad());
+        assert!(NetworkConfigs::default().try_with_chain_id(143).unwrap().is_monad());
     }
 
     #[cfg(feature = "optimism")]

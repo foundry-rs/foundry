@@ -200,6 +200,10 @@ pub enum CallSubcommands {
     },
 }
 
+fn infer_network_from_chain_id(networks: NetworkConfigs, chain_id: u64) -> Result<NetworkConfigs> {
+    networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)
+}
+
 impl CallArgs {
     fn resolve_tracing(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
         if self.debug_trace_call {
@@ -229,7 +233,7 @@ impl CallArgs {
             return self.run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts).await;
         }
         if let Some(chain) = self.chain {
-            evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+            evm_opts.networks = infer_network_from_chain_id(evm_opts.networks, chain.id())?;
         }
         evm_opts.infer_network_from_fork().await?;
         if self.chain.is_none()
@@ -927,6 +931,26 @@ mod tests {
         let config = Config::from_provider(Config::figment().merge(&args)).unwrap();
 
         assert_eq!(config.chain, Some(Chain::mainnet()));
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn chain_id_rejects_disabled_monad_network() {
+        let error = infer_network_from_chain_id(NetworkConfigs::default(), 143).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 143: network family `monad` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    fn explicit_ethereum_overrides_chain_id_inference() {
+        let ethereum = NetworkConfigs::with_ethereum();
+        let inferred = infer_network_from_chain_id(ethereum, 143).unwrap();
+
+        assert_eq!(inferred, ethereum);
     }
 
     #[test]

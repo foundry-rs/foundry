@@ -53,9 +53,8 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     // Load configuration
     let (mut config, mut evm_opts) = args.load_config_and_evm_opts()?;
 
-    if let Some(chain) = config.chain {
-        evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
-    }
+    evm_opts.networks =
+        infer_network_from_chain_id(evm_opts.networks, config.chain.map(|chain| chain.id()))?;
     evm_opts.infer_network_from_fork().await?;
     evm_opts.pin_fork_block().await?;
     config.networks = evm_opts.networks;
@@ -105,6 +104,17 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         local_chain_id,
     ))
     .await
+}
+
+fn infer_network_from_chain_id(
+    networks: NetworkConfigs,
+    chain_id: Option<u64>,
+) -> Result<NetworkConfigs> {
+    if let Some(chain_id) = chain_id {
+        networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)
+    } else {
+        Ok(networks)
+    }
 }
 
 async fn run_command_with_network<FEN: FoundryEvmNetwork>(
@@ -262,5 +272,25 @@ mod tests {
     #[test]
     fn verify_cli() {
         Chisel::command().debug_assert();
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn chain_id_rejects_disabled_monad_network() {
+        let error = infer_network_from_chain_id(NetworkConfigs::default(), Some(143)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 143: network family `monad` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    fn explicit_ethereum_overrides_chain_id_inference() {
+        let ethereum = NetworkConfigs::with_ethereum();
+        let inferred = infer_network_from_chain_id(ethereum, Some(143)).unwrap();
+
+        assert_eq!(inferred, ethereum);
     }
 }
