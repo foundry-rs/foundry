@@ -19,6 +19,28 @@ use revm::{
 use serde_json::{Value, json};
 use std::str::FromStr;
 
+#[tokio::test(flavor = "multi_thread")]
+async fn executes_rpc_notification_without_response() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let account = address!("0000000000000000000000000000000000000001");
+    let balance = U256::from(42);
+
+    let response = reqwest::Client::new()
+        .post(handle.http_endpoint())
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "anvil_setBalance",
+            "params": [account, balance],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert!(response.bytes().await.unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_balance(account).await.unwrap(), balance);
+}
+
 async fn state_without_block_history() -> (Value, Address, U256, u64) {
     let account = address!("0000000000000000000000000000000000010363");
     let balance = U256::from(10363);
