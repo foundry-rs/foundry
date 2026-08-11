@@ -3870,6 +3870,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             assertion_failure,
                             is_revert,
                         ),
+                        storage,
                     ));
                     continue;
                 }
@@ -4400,8 +4401,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
-        for (name, failure) in replayed_secondary_failures {
-            invariant_result.errors.entry(name).or_insert(failure);
+        let mut replayed_secondary_storage = BTreeMap::new();
+        for (name, failure, storage) in replayed_secondary_failures {
+            if !invariant_result.errors.contains_key(&name) {
+                replayed_secondary_storage.insert(name.clone(), storage);
+                invariant_result.errors.insert(name, failure);
+            }
         }
         // Merge coverage collected during invariant run with test setup coverage.
         self.result.merge_coverages(invariant_result.line_coverage);
@@ -4562,6 +4567,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     | InvariantFuzzError::Revert(case_data) = error
                     && let TestError::Fail(_, ref calls) = case_data.test_error
                 {
+                    let replayed_storage = replayed_secondary_storage.get(&invariant.name);
                     let original_seq_len = calls.len();
                     // On Ctrl+C: skip the (potentially long) replay+shrink, but still persist
                     // the un-shrunk sequence so the next run targeting this invariant picks it
@@ -4579,13 +4585,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 )
                             })
                             .collect::<Vec<_>>();
-                        record_invariant_failure(
-                            failure_dir.as_path(),
-                            persisted_failure.as_path(),
-                            &unshrunk_sequence,
-                            &current_settings,
-                            case_data.assertion_failure,
-                        );
+                        if replayed_storage.is_none() {
+                            record_invariant_failure(
+                                failure_dir.as_path(),
+                                persisted_failure.as_path(),
+                                &unshrunk_sequence,
+                                &current_settings,
+                                case_data.assertion_failure,
+                            );
+                        }
                         any_failure_persisted = true;
                         None
                     } else {
@@ -4602,18 +4610,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             &invariant.signature(),
                             &invariant.signature(),
-                            &[],
+                            replayed_storage.map(Vec::as_slice).unwrap_or_default(),
                             progress.as_ref(),
                             Some((position, total_broken)),
                         ) {
                             Ok(replayed) if !replayed.call_sequence.is_empty() => {
-                                record_invariant_failure(
-                                    failure_dir.as_path(),
-                                    persisted_failure.as_path(),
-                                    &replayed.call_sequence,
-                                    &current_settings,
-                                    case_data.assertion_failure,
-                                );
+                                // Keep all replay metadata for a seeded persisted failure. A fresh
+                                // campaign error takes precedence above and is persisted normally.
+                                if replayed_storage.is_none() {
+                                    record_invariant_failure(
+                                        failure_dir.as_path(),
+                                        persisted_failure.as_path(),
+                                        &replayed.call_sequence,
+                                        &current_settings,
+                                        case_data.assertion_failure,
+                                    );
+                                }
                                 any_failure_persisted = true;
                                 Some((
                                     CounterExample::Sequence(

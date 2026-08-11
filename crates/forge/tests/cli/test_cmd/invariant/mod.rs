@@ -2591,6 +2591,67 @@ PersistedSecondaryReplayTest invariants: 1/2 invariants broken
     assert!(!stdout.contains("[FAIL: secondary still broken] invariant_secondary"), "{stdout}");
 });
 
+// Verifies that a cached secondary sequence-call revert is attributed to that predicate when
+// fail-on-revert is enabled and the fresh campaign has no budget.
+forgetest_init!(secondary_persisted_replays_fail_on_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "PersistedSecondaryRevertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RevertingTarget {
+    uint256 public calls;
+
+    function fail() public {
+        calls++;
+        revert("secondary revert");
+    }
+}
+
+contract PersistedSecondaryRevertTest is Test {
+    RevertingTarget public target;
+
+    function setUp() public {
+        target = new RevertingTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_anchor() public pure {}
+
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_secondary() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj.root().join(
+        "cache/invariant/failures/PersistedSecondaryRevertTest/invariants/invariant_secondary",
+    );
+    assert!(persisted.is_file());
+    std::fs::remove_file(persisted.with_file_name("invariant_anchor")).unwrap();
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: secondary revert] invariant_secondary
+...
+PersistedSecondaryRevertTest invariants: 1/2 invariants broken
+...
+ PersistedSecondaryRevertTest invariants (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});
+
 // Verifies that a compatible persisted secondary remains in the report while the campaign
 // continues to discover another predicate failure.
 forgetest_init!(secondary_persisted_continues_campaign, |prj, cmd| {

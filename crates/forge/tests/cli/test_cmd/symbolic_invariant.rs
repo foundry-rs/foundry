@@ -249,6 +249,101 @@ invariant_notHit()
     );
 });
 
+forgetest_init!(symbolic_secondary_replay_preserves_storage, |prj, cmd| {
+    skip_unless_z3!("symbolic_secondary_replay_preserves_storage");
+
+    prj.add_test(
+        "SymbolicSecondaryStorage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ArbitraryStorageVm {
+    function setArbitraryStorage(address target) external;
+}
+
+contract SecondaryExternalStore {
+    uint256 public value;
+}
+
+contract SecondaryStorageTarget {
+    SecondaryExternalStore store;
+    bool public hit;
+
+    constructor(SecondaryExternalStore store_) {
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42);
+        hit = true;
+    }
+}
+
+contract SymbolicSecondaryStorage is Test {
+    SecondaryExternalStore store;
+    SecondaryStorageTarget target;
+
+    function setUp() public {
+        store = new SecondaryExternalStore();
+        target = new SecondaryStorageTarget(store);
+        ArbitraryStorageVm(address(vm)).setArbitraryStorage(address(store));
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_secondary() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--json",
+        "--fuzz-runs",
+        "0",
+        "--match-test",
+        "invariant_secondary",
+    ])
+    .assert_failure();
+
+    let persisted = prj
+        .root()
+        .join("cache/invariant/failures/SymbolicSecondaryStorage/invariants/invariant_secondary");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    assert_eq!(original["storage"].as_array().expect("storage assignments").len(), 1);
+    assert_eq!(original["storage"][0]["value"], "0x2a");
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    for _ in 0..2 {
+        let stdout = cmd
+            .forge_fuse()
+            .args(["test", "--match-test", "invariant_"])
+            .assert_failure()
+            .get_output()
+            .stdout_lossy();
+        assert_relevant_lines(
+            &stdout,
+            str![[r#"
+[FAIL: hit] invariant_secondary
+	[Sequence] (original: 1, shrunk: 1)
+calldata=useStore() args=[]
+"#]],
+        );
+
+        let replayed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+        assert_eq!(replayed, original);
+    }
+});
+
 forgetest_init!(symbolic_predicate_artifact_rejects_handler_assertion_replay, |prj, cmd| {
     skip_unless_z3!("symbolic_predicate_artifact_rejects_handler_assertion_replay");
 
