@@ -19,6 +19,28 @@ use revm::{
 use serde_json::{Value, json};
 use std::str::FromStr;
 
+#[tokio::test(flavor = "multi_thread")]
+async fn executes_rpc_notification_without_response() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let account = address!("0000000000000000000000000000000000000001");
+    let balance = U256::from(42);
+
+    let response = reqwest::Client::new()
+        .post(handle.http_endpoint())
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "anvil_setBalance",
+            "params": [account, balance],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert!(response.bytes().await.unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_balance(account).await.unwrap(), balance);
+}
+
 async fn state_without_block_history() -> (Value, Address, U256, u64) {
     let account = address!("0000000000000000000000000000000000010363");
     let balance = U256::from(10363);
@@ -71,6 +93,253 @@ async fn can_load_state() {
     assert_eq!(num, num2);
 
     assert_eq!(num, U256::from(num_from_tag));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/10331>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_continues_saved_timeline() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    // Move the chain's timeline one year ahead of wall-clock time, then mine on it.
+    let one_year_ahead =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+            + 31_536_000;
+    api.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+    api.mine_one().await.unwrap();
+
+    let saved_head_timestamp = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+    assert_eq!(saved_head_timestamp, one_year_ahead);
+
+    let state = api.serialized_state(false).await.unwrap();
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state(Some(state))).await;
+
+    api.mine_one().await.unwrap();
+    let new_head_timestamp = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+
+    // The block mined after loading the state must continue the saved timeline instead of
+    // falling back to the wall-clock anchor of the fresh node.
+    assert!(
+        new_head_timestamp >= saved_head_timestamp,
+        "block after load_state went back in time: {new_head_timestamp} < {saved_head_timestamp}"
+    );
+}
+
+// Loading a state whose head has the same number as the fork block must keep the fork time
+// anchor: the canonical head stays the fork block, so the saved timeline does not apply.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_equal_height_fork_keeps_fork_anchor() {
+    // The state source: one block mined a year ahead of wall-clock time.
+    let (api_state, _handle_state) = spawn(NodeConfig::test()).await;
+    let one_year_ahead =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+            + 31_536_000;
+    api_state.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+    api_state.mine_one().await.unwrap();
+    let state = api_state.serialized_state(false).await.unwrap();
+
+    // The fork source: one block mined on the wall-clock timeline, same height as the state.
+    let (api_remote, handle_remote) = spawn(NodeConfig::test()).await;
+    api_remote.mine_one().await.unwrap();
+    let remote_head_timestamp = api_remote
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+
+    // Fork the remote head (height 1) and load the state (best height 1 as well): the
+    // canonical head keeps being the fork block, so its time anchor must be preserved.
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(handle_remote.http_endpoint()))
+            .with_init_state(Some(state)),
+    )
+    .await;
+
+    api.mine_one().await.unwrap();
+    let new_head_timestamp = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+
+    assert!(
+        new_head_timestamp < one_year_ahead,
+        "block after load_state jumped to the loaded state's timeline instead of keeping the \
+         fork anchor: {new_head_timestamp} >= {one_year_ahead}"
+    );
+    assert!(
+        new_head_timestamp >= remote_head_timestamp,
+        "block after load_state went back in time: {new_head_timestamp} < \
+         {remote_head_timestamp}"
+    );
+}
+
+// Loading a legacy account-only state at the fork head must still reset timestamp controls to
+// the canonical fork timeline, even though the state has no block environment.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_blockless_state_reanchors_time_to_fork_head() {
+    let (api_remote, handle_remote) = spawn(NodeConfig::test()).await;
+    api_remote.mine_one().await.unwrap();
+    let remote_head = api_remote
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(handle_remote.http_endpoint()))).await;
+    let one_year_ahead = remote_head.timestamp + 31_536_000;
+    api.evm_increase_time(U256::from(60)).await.unwrap();
+    api.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+
+    let state = SerializableState::default();
+    let state = Bytes::from(serde_json::to_vec(&state).unwrap());
+    assert!(api.anvil_load_state(state).await.unwrap());
+
+    api.mine_one().await.unwrap();
+    let new_head = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+    assert_eq!(new_head.parent_hash, remote_head.hash);
+    assert!(
+        new_head.timestamp < one_year_ahead,
+        "block after loading a blockless state reused pending timestamp controls: {} >= {}",
+        new_head.timestamp,
+        one_year_ahead
+    );
+}
+
+// When `anvil_loadState` rolls an already-advanced fork back to its fork head (state file at
+// or below the fork block), the discarded local timeline must not leak into the next block:
+// block time re-anchors to the fork head, exactly like `anvil_reset`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_fork_rollback_reanchors_time_to_fork_head() {
+    // The state source: a plain node dumped at genesis (height 0).
+    let (api_state, _handle_state) = spawn(NodeConfig::test()).await;
+    let state = api_state.anvil_dump_state(None).await.unwrap();
+
+    // The fork source: one block mined on the wall-clock timeline.
+    let (api_remote, handle_remote) = spawn(NodeConfig::test()).await;
+    api_remote.mine_one().await.unwrap();
+    let remote_head = api_remote
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+
+    // Fork the remote head (height 1), then mine a local block one year ahead of wall-clock.
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(handle_remote.http_endpoint()))).await;
+    let one_year_ahead =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+            + 31_536_000;
+    api.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+    api.mine_one().await.unwrap();
+
+    // Loading the height-0 state rolls the canonical head back to the exact fork head.
+    assert!(api.anvil_load_state(state).await.unwrap());
+    let head = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+    assert_eq!(head.hash, remote_head.hash, "canonical head must return to the exact fork head");
+
+    // The next block continues from the fork head's timeline, not from the discarded
+    // future-dated local block.
+    api.mine_one().await.unwrap();
+    let new_head = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+    assert_eq!(new_head.parent_hash, remote_head.hash);
+    assert!(
+        new_head.timestamp >= remote_head.timestamp,
+        "block after fork rollback went back in time: {} < {}",
+        new_head.timestamp,
+        remote_head.timestamp
+    );
+    assert!(
+        new_head.timestamp < one_year_ahead,
+        "block after the fork rollback reused the discarded local timeline: {} >= {}",
+        new_head.timestamp,
+        one_year_ahead
+    );
+}
+
+// A state file can carry stale blocks above its own best block: dump an older state, keep
+// mining, load that older dump back (best rolls back, the higher block stays in storage),
+// then dump again. Loading such a file must anchor block time on the canonical best block,
+// not on the highest stale block and not on the node's startup anchor.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_stale_blocks_do_not_leak_into_timeline() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let one_year_ahead = now + 31_536_000;
+    let two_years_ahead = now + 63_072_000;
+
+    // Head at height 1, one year ahead: this is the canonical timeline to preserve.
+    api.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+    api.mine_one().await.unwrap();
+    let older_dump = api.anvil_dump_state(None).await.unwrap();
+
+    // Advance to height 2, two years ahead, then roll best back to height 1 by loading the
+    // older dump: the height-2 block stays in storage above the restored best block.
+    api.evm_set_next_block_timestamp(two_years_ahead).unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.anvil_load_state(older_dump).await.unwrap());
+    let stale_dump = api.serialized_state(false).await.unwrap();
+    let max_block = stale_dump.blocks.iter().map(|b| b.header.number).max().unwrap();
+    assert_eq!(max_block, 2, "the dump must carry the stale height-2 block");
+    assert_eq!(stale_dump.best_block_number, Some(1));
+
+    // A fresh node loading that file continues the canonical (height 1) timeline.
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state(Some(stale_dump))).await;
+    api.mine_one().await.unwrap();
+    let new_head = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+    assert!(
+        new_head.timestamp >= one_year_ahead && new_head.timestamp < two_years_ahead,
+        "block after loading a dump with stale blocks must continue the canonical timeline: \
+         got {}, expected within [{}, {})",
+        new_head.timestamp,
+        one_year_ahead,
+        two_years_ahead
+    );
 }
 
 // <https://github.com/foundry-rs/foundry/issues/12645>

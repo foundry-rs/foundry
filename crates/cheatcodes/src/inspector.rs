@@ -1333,7 +1333,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
-                        charged_new_account_state_gas: false,
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
                     });
                 }
             };
@@ -1354,7 +1354,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
+                    charged_new_account_state_gas: call.charged_new_account_state_gas,
                 }),
                 Err(err) => Some(CallOutcome {
                     result: InterpreterResult {
@@ -1365,7 +1365,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: false,
                     precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
+                    charged_new_account_state_gas: call.charged_new_account_state_gas,
                 }),
             };
         }
@@ -1490,7 +1490,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
-                                charged_new_account_state_gas: false,
+                                charged_new_account_state_gas: call.charged_new_account_state_gas,
                             });
                         }
                     }
@@ -1510,7 +1510,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
+                    charged_new_account_state_gas: call.charged_new_account_state_gas,
                 });
             }
         }
@@ -1551,7 +1551,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             memory_offset: call.return_memory_offset.clone(),
                             was_precompile_called: false,
                             precompile_call_logs: vec![],
-                            charged_new_account_state_gas: false,
+                            charged_new_account_state_gas: call.charged_new_account_state_gas,
                         });
                     }
 
@@ -1587,7 +1587,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
-                                charged_new_account_state_gas: false,
+                                charged_new_account_state_gas: call.charged_new_account_state_gas,
                             });
                         }
                         tx_req.set_blob_sidecar(blob_sidecar);
@@ -1633,7 +1633,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
-                        charged_new_account_state_gas: false,
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
                     });
                 }
             }
@@ -2715,6 +2715,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return Some(CreateOutcome {
                 result: InterpreterResult { result: InstructionResult::Revert, output, gas },
                 address: None,
+                charged_create_state_gas: input.charged_create_state_gas(),
             });
         }
 
@@ -2763,6 +2764,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         gas,
                     },
                     address: None,
+                    charged_create_state_gas: input.charged_create_state_gas(),
                 });
             }
 

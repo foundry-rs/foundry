@@ -47,6 +47,7 @@ impl PrecompileFactory for FailingHistoryPrecompile {
                 gas_used: 0,
                 gas_refunded: 0,
                 state_gas_used: 0,
+                state_gas_spilled: 0,
                 reservoir: input.reservoir,
             })
         });
@@ -70,6 +71,7 @@ impl PrecompileFactory for OrderedBlockStartPrecompiles {
                 gas_used: 0,
                 gas_refunded: 0,
                 state_gas_used: 0,
+                state_gas_spilled: 0,
                 reservoir: input.reservoir,
             })
         });
@@ -87,6 +89,7 @@ impl PrecompileFactory for OrderedBlockStartPrecompiles {
                 gas_used: 0,
                 gas_refunded: 0,
                 state_gas_used: 0,
+                state_gas_spilled: 0,
                 reservoir: input.reservoir,
             })
         });
@@ -169,6 +172,7 @@ impl PrecompileFactory for CountingPostBlockPrecompiles {
                         gas_used: 0,
                         gas_refunded: 0,
                         state_gas_used: 0,
+                        state_gas_spilled: 0,
                         reservoir: input.reservoir,
                     })
                 });

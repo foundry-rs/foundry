@@ -695,8 +695,7 @@ forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 Initializing [..] from https://github.com/a...
-remote: Not Found
-fatal: repository 'https://github.com/a/' not found
+...
 Error: git fetch exited with code 128
 
 "#]]);

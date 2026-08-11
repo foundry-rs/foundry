@@ -577,14 +577,22 @@ pub struct TestArgs {
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
     /// are consuming the most gas overall in a sorted manner.
-    #[arg(long, conflicts_with_all = ["flamechart", "evm_profile", "json", "junit", "list"])]
+    #[arg(
+        long,
+        group = "trace_output",
+        conflicts_with_all = ["flamechart", "evm_profile", "json", "junit", "list"]
+    )]
     flamegraph: bool,
 
     /// Generate a flamechart for a single test. Implies `--decode-internal`.
     ///
     /// A flame chart shows the gas usage over time, illustrating when each function is
     /// called (execution order) and how much gas it consumes at each point in the timeline.
-    #[arg(long, conflicts_with_all = ["flamegraph", "evm_profile", "json", "junit", "list"])]
+    #[arg(
+        long,
+        group = "trace_output",
+        conflicts_with_all = ["flamegraph", "evm_profile", "json", "junit", "list"]
+    )]
     flamechart: bool,
 
     /// Generate an execution profile for a single test.
@@ -598,14 +606,15 @@ pub struct TestArgs {
         num_args = 0..=1,
         default_missing_value = "speedscope",
         value_enum,
+        group = "trace_output",
         conflicts_with_all = ["flamegraph", "flamechart", "json", "junit", "list"]
     )]
     evm_profile: Option<EvmProfileFormat>,
 
-    /// Don't open the profile in the browser (for `--evm-profile`).
+    /// Don't open the generated profile, flamegraph, or flamechart.
     ///
     /// The profile is saved to disk without starting the local viewer server.
-    #[arg(long, requires = "evm_profile")]
+    #[arg(long, requires = "trace_output")]
     no_open: bool,
 
     #[command(flatten)]
@@ -2205,7 +2214,9 @@ impl TestArgs {
                     .wrap_err("failed to write svg")?;
                     sh_println!("Saved to {file_name}")?;
 
-                    if let Err(e) = opener::open(&file_name) {
+                    if !self.no_open
+                        && let Err(e) = opener::open(&file_name)
+                    {
                         sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
                     }
                 }

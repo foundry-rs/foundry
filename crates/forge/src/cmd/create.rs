@@ -50,6 +50,7 @@ merge_impl_figment_convert!(CreateArgs, build, eth);
 
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
+#[command(mut_arg("auth", |arg| arg.hide(true)))]
 pub struct CreateArgs {
     /// The contract identifier in the form `<path>:<contractname>`.
     contract: ContractInfo,
@@ -913,6 +914,12 @@ mod tests {
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
         assert_eq!(args.license_type.as_deref(), Some("13"));
+    }
+
+    #[test]
+    fn create_help_hides_auth() {
+        let help = <CreateArgs as clap::CommandFactory>::command().render_long_help().to_string();
+        assert!(!help.contains("--auth"));
     }
 
     #[test]

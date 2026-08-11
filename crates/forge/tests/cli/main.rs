@@ -33,6 +33,7 @@ mod test_cmd;
 mod verify;
 mod verify_bytecode;
 mod version;
+mod watch;
 
 mod ext_integration;
 mod fmt;

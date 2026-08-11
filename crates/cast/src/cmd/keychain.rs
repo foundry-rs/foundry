@@ -653,6 +653,7 @@ fn abi_scope_to_auth_scope(scope: CallScope) -> AuthCallScope {
 }
 /// Represents a single scope entry in JSON format for `--scopes`.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct JsonCallScope {
     target: Address,
     #[serde(default)]
@@ -4254,6 +4255,13 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].selectorRules.len(), 1);
         assert_eq!(result[0].selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scopes_json_deny_unknown_scope_fields() {
+        let json =
+            r#"[{"target":"0x20c0000000000000000000000000000000000001","selector":["transfer"]}]"#;
+        assert!(parse_scopes_json(json).is_err());
     }
 
     #[test]

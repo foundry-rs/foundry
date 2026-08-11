@@ -646,7 +646,9 @@ pub struct WorkerCorpus {
     current_mutated_index: Option<usize>,
     /// Config
     config: Arc<FuzzCorpusConfig>,
-    /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
+    /// Whether this corpus participates in stateless worker synchronization.
+    worker_sync_enabled: bool,
+    /// Sorted indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
     new_entry_indices: Vec<usize>,
     /// Corpus directories the master loaded at startup and still needs to distribute.
     initial_export_dirs: Option<Vec<PathBuf>>,
@@ -871,7 +873,9 @@ impl WorkerCorpus {
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
-        Self::from_seed(id, config, sequence_generator, seed)
+        let mut corpus = Self::from_seed(id, config, sequence_generator, seed)?;
+        corpus.worker_sync_enabled = true;
+        Ok(corpus)
     }
 
     pub(crate) fn from_seed(
@@ -906,6 +910,7 @@ impl WorkerCorpus {
             sequence_generator,
             current_mutated_index: None,
             config: config.into(),
+            worker_sync_enabled: false,
             new_entry_indices: Default::default(),
             initial_export_dirs,
             worker_dir,
@@ -1070,7 +1075,9 @@ impl WorkerCorpus {
 
     fn push_corpus_entry(&mut self, corpus: CorpusEntry) {
         let new_index = self.in_memory_corpus.len();
-        self.new_entry_indices.push(new_index);
+        if self.worker_sync_enabled {
+            self.new_entry_indices.push(new_index);
+        }
         self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
     }
@@ -1229,13 +1236,16 @@ impl WorkerCorpus {
 
         self.insert_corpus_entry(corpus, insertion_mode)
     }
-    /// Flush the oldest corpus mutated more than configured max mutations unless they are
-    /// favored.
+    /// Flush the oldest corpus mutated more than configured max mutations unless it is favored
+    /// or pending synchronization.
     fn evict_oldest_corpus(&mut self) -> Result<()> {
         if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
-            && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
-                corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
-            })
+            && let Some(index) =
+                self.in_memory_corpus.iter().enumerate().position(|(index, corpus)| {
+                    self.new_entry_indices.binary_search(&index).is_err()
+                        && corpus.total_mutations > self.config.corpus_min_mutations
+                        && !corpus.is_favored
+                })
         {
             let corpus = &self.in_memory_corpus[index];
 
@@ -1328,7 +1338,7 @@ impl WorkerCorpus {
     ) {
         corpus.timestamp = timestamp;
         corpus.persisted_file_name = Some(file_name);
-        if self.id == 0 {
+        if self.worker_sync_enabled && self.id == 0 {
             self.new_entry_indices.push(self.in_memory_corpus.len());
         }
         self.in_memory_corpus.push(corpus);
@@ -1886,7 +1896,9 @@ mod tests {
         let config = corpus_config(corpus_root);
         let generator =
             test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
-        WorkerCorpus::from_seed(id, config, generator, seed).unwrap()
+        let mut corpus = WorkerCorpus::from_seed(id, config, generator, seed).unwrap();
+        corpus.worker_sync_enabled = true;
+        corpus
     }
 
     fn empty_worker_corpus(id: usize, corpus_root: PathBuf) -> WorkerCorpus {
@@ -2315,6 +2327,7 @@ mod tests {
         let generator =
             test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
         let mut flat_master = WorkerCorpus::from_seed(0, config, generator, seed).unwrap();
+        flat_master.worker_sync_enabled = true;
         let pending = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
         let pending_name = pending.file_name(false);
         pending.write_to_disk_in(&flat_root.join("worker0").join(CORPUS_DIR), false).unwrap();
@@ -2328,28 +2341,28 @@ mod tests {
     }
 
     #[test]
-    fn master_fanout_indices_remain_valid_after_eviction() {
+    fn pending_master_fanout_entries_are_not_evicted() {
         let corpus_root = temp_corpus_dir();
         let mut master = empty_worker_corpus(0, corpus_root.clone());
         master.initial_export_dirs = None;
-        let mut evicted = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
-        evicted.total_mutations = 1;
+        let mut pending = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        pending.total_mutations = 1;
         let retained = CorpusEntry::new(vec![basic_tx_with_calldata([2])]);
-        let evicted_name = evicted.file_name(false);
+        let pending_name = pending.file_name(false);
         let retained_name = retained.file_name(false);
-        let evicted_timestamp = evicted.timestamp;
+        let pending_timestamp = pending.timestamp;
         let retained_timestamp = retained.timestamp;
         let master_corpus = corpus_root.join("worker0").join(CORPUS_DIR);
-        evicted.write_to_disk_in(&master_corpus, false).unwrap();
+        pending.write_to_disk_in(&master_corpus, false).unwrap();
         retained.write_to_disk_in(&master_corpus, false).unwrap();
-        master.push_synced_corpus_entry(evicted, evicted_timestamp, evicted_name.clone());
+        master.push_synced_corpus_entry(pending, pending_timestamp, pending_name.clone());
         master.push_synced_corpus_entry(retained, retained_timestamp, retained_name.clone());
 
         master.evict_oldest_corpus().unwrap();
         master.export_to_workers(2).unwrap();
 
         let worker_sync = corpus_root.join("worker1").join(SYNC_DIR);
-        assert!(!worker_sync.join(evicted_name).exists());
+        assert!(worker_sync.join(pending_name).is_file());
         assert!(worker_sync.join(retained_name).is_file());
     }
 
@@ -3093,5 +3106,26 @@ mod tests {
 
         // Ensure the evicted one was the non-favored uuid.
         assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
+    }
+
+    #[test]
+    fn non_synchronizing_entries_remain_evictable() {
+        let corpus_root = temp_corpus_dir();
+        let config = corpus_config(corpus_root);
+        let generator =
+            test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
+        let mut manager =
+            WorkerCorpus::from_seed(0, config, generator, WorkerCorpusSeed::default()).unwrap();
+        let mut evictable = CorpusEntry::new(vec![basic_tx_with_calldata([1])]);
+        evictable.total_mutations = 1;
+        let evictable_uuid = evictable.uuid;
+        manager.push_corpus_entry(evictable);
+        manager.push_corpus_entry(CorpusEntry::new(vec![basic_tx_with_calldata([2])]));
+
+        manager.evict_oldest_corpus().unwrap();
+
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert!(manager.in_memory_corpus.iter().all(|entry| entry.uuid != evictable_uuid));
+        assert!(manager.new_entry_indices.is_empty());
     }
 }
