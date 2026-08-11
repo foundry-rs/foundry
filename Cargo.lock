@@ -137,7 +137,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -175,7 +175,7 @@ dependencies = [
  "futures",
  "futures-util",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -223,7 +223,7 @@ dependencies = [
  "crc",
  "rand 0.8.7",
  "serde",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -265,7 +265,7 @@ dependencies = [
  "k256",
  "rand 0.8.7",
  "serde",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -280,7 +280,7 @@ dependencies = [
  "borsh",
  "once_cell",
  "serde",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -320,7 +320,7 @@ dependencies = [
  "alloy-provider",
  "alloy-sol-types",
  "async-trait",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -339,7 +339,7 @@ dependencies = [
  "auto_impl",
  "derive_more",
  "revm",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -395,7 +395,7 @@ dependencies = [
  "http 1.5.0",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -422,7 +422,7 @@ dependencies = [
  "futures-utils-wasm",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -452,7 +452,7 @@ dependencies = [
  "op-alloy",
  "op-revm",
  "revm",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -537,7 +537,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "url",
@@ -670,7 +670,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -725,7 +725,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -754,7 +754,7 @@ dependencies = [
  "alloy-serde",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -795,7 +795,7 @@ dependencies = [
  "either",
  "elliptic-curve 0.13.8",
  "k256",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -813,7 +813,7 @@ dependencies = [
  "aws-sdk-kms",
  "k256",
  "spki 0.7.3",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -831,7 +831,7 @@ dependencies = [
  "gcloud-sdk",
  "k256",
  "spki 0.7.3",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -851,7 +851,7 @@ dependencies = [
  "coins-ledger",
  "futures-util",
  "semver 1.0.28",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -871,7 +871,7 @@ dependencies = [
  "eth-keystore",
  "k256",
  "rand 0.8.7",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "zeroize",
 ]
 
@@ -887,7 +887,7 @@ dependencies = [
  "alloy-signer",
  "async-trait",
  "semver 1.0.28",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "trezor-client",
 ]
@@ -903,7 +903,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "async-trait",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "turnkey_client",
 ]
@@ -996,7 +996,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tower",
  "tracing",
@@ -1056,7 +1056,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "time",
  "tokio",
  "tokio-tungstenite",
@@ -1100,7 +1100,7 @@ dependencies = [
  "proptest-derive 0.7.0",
  "serde",
  "smallvec",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -1118,9 +1118,9 @@ dependencies = [
 
 [[package]]
 name = "android_system_properties"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
+checksum = "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc"
 dependencies = [
  "libc",
 ]
@@ -1197,7 +1197,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1221,7 +1221,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1288,13 +1288,13 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-evm",
- "tempo-hardfork",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-revm",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1323,7 +1323,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1349,7 +1349,7 @@ dependencies = [
  "pin-project",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio-util",
  "tower-http 0.7.0",
  "tracing",
@@ -1390,9 +1390,9 @@ dependencies = [
 
 [[package]]
 name = "archery"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70e0a5f99dfebb87bb342d0f53bb92c81842e100bbb915223e38349580e5441d"
+checksum = "33ca55ee147b1926dbea904f50fe4902494e97bc742205abbbf10c709e43815f"
 
 [[package]]
 name = "ark-bls12-381"
@@ -1925,9 +1925,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.3"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00bdb5da18dac48ca2cc7cd4a98e533e8635a58e2361d13a1a4ee3888e0d72f1"
+checksum = "ce2b2dcc879c3bae0d371e77c99f2238400ef24ec001394befa67b6e543add9e"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -1936,9 +1936,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.43.0"
+version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43103168cc76fe62678a375e722fc9cb3a0146159ac5828bc4f0dfd755c2224c"
+checksum = "f09fae7be8bb3174e05c6afdb34199e6dc0c7c04ba9fa237b1967adfbde27483"
 dependencies = [
  "cc",
  "cmake",
@@ -2519,9 +2519,9 @@ dependencies = [
 
 [[package]]
 name = "blake3"
-version = "1.8.5"
+version = "1.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0aa83c34e62843d924f905e0f5c866eb1dd6545fc4d719e803d9ba6030371fce"
+checksum = "76ae7bad254120e9e4c63bafc385310756f90c484eac0e36b8317cf09cb92a77"
 dependencies = [
  "arrayref",
  "arrayvec",
@@ -2642,7 +2642,7 @@ dependencies = [
  "tag_ptr",
  "tap",
  "thin-vec",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "time",
  "xsum",
 ]
@@ -2737,7 +2737,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.23.0",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -2788,9 +2788,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f7dc094d718f2e1c1559ad110e27eeaae14a5465d3d56dd6dbd793079fbd530"
+checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
 dependencies = [
  "memchr",
  "regex-automata",
@@ -2826,13 +2826,13 @@ dependencies = [
 
 [[package]]
 name = "bytemuck_derive"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f65693059b6b9c588b9f62fed1cedbf0a8b805631457ea162d68f0de186f3de5"
+checksum = "fc0e56a716f1e132ff6bf4bdac1c944a3fcdc1cae65f70a4a2a1ac3b401d2d1f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -2905,7 +2905,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2978,10 +2978,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
- "tempo-contracts",
- "tempo-hardfork",
- "tempo-primitives",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tokio",
  "tower",
  "tracing",
@@ -3001,9 +3001,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.4.0"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5add81bb678e6cb321aff7fa0dc7689ad82b112dbc032cea19f91d6b8e3582b9"
+checksum = "5d262e149917187838d5b42777c8253bcb64500067342904e7d429499a6f277e"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -3145,9 +3145,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.5"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "301b56658598e48f3648647ac6fc887be7e7108eddfa4e9b63fcf3ec58c0cadf"
+checksum = "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -3165,9 +3165,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.5"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94a65403d1a1bd28f7dc68eb8506e8874808ee5eecb59298de588e2e1407a078"
+checksum = "7b48fea5a88e9ae728a2dcbedbfc0e730f7d60da42e1cb049a83c9fb8b789889"
 dependencies = [
  "anstream",
  "anstyle",
@@ -3180,9 +3180,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.6.8"
+version = "4.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f84a88507dbd05c695f2cb5e8558e747179134005e9893882dec964190ed89"
+checksum = "3be2ad0423bdbbb0e25bc89add796f3559706d4a95e1bc98e4d9662a957b6a19"
 dependencies = [
  "clap",
 ]
@@ -3223,16 +3223,16 @@ checksum = "d669bb552908e336ad5681789752033b45566b7e591aeaac7a614e58e5d6d8f2"
 dependencies = [
  "nix 0.31.3",
  "terminfo",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "cliclack"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd2a475e9dff35ddebd459b0523aab732572581f7fe53133edd20b3330a0ce6"
+checksum = "134778b6a125729ff495c23ba32f64e0c26d61edd52f1f6715a0d036785cf30b"
 dependencies = [
  "console",
  "indicatif",
@@ -3384,7 +3384,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3441,7 +3441,7 @@ dependencies = [
  "commonware-p2p",
  "commonware-runtime",
  "commonware-utils",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -3457,7 +3457,7 @@ dependencies = [
  "commonware-macros",
  "paste",
  "rand_chacha 0.10.0",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3488,7 +3488,7 @@ dependencies = [
  "commonware-utils",
  "num-rational",
  "rayon",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3518,7 +3518,7 @@ dependencies = [
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rayon",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -3559,7 +3559,7 @@ dependencies = [
  "rand_chacha 0.10.0",
  "rand_core 0.10.1",
  "sha2 0.11.0",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
 ]
@@ -3634,7 +3634,7 @@ dependencies = [
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_distr",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -3669,7 +3669,7 @@ dependencies = [
  "futures",
  "rand 0.10.2",
  "rand_core 0.10.1",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -3706,7 +3706,7 @@ dependencies = [
  "rayon",
  "sha2 0.11.0",
  "sysinfo",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
@@ -3745,7 +3745,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hashbrown 0.16.1",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "zstd",
 ]
@@ -3765,7 +3765,7 @@ dependencies = [
  "commonware-utils",
  "futures",
  "rand_core 0.10.1",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
 ]
@@ -3794,7 +3794,7 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "rand 0.10.2",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "zeroize",
@@ -4410,7 +4410,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4609,7 +4609,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4916,7 +4916,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5140,9 +5140,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
 
 [[package]]
 name = "fixed-cache"
@@ -5306,8 +5306,8 @@ dependencies = [
  "soldeer-core",
  "svm-rs",
  "tempfile",
- "tempo-alloy",
- "thiserror 2.0.19",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "tokio",
  "toml_edit",
  "tower-http 0.7.0",
@@ -5363,7 +5363,7 @@ dependencies = [
  "heck",
  "solar-compiler",
  "solar-lint",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -5408,9 +5408,9 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
- "tempo-primitives",
- "thiserror 2.0.19",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "yansi",
@@ -5527,7 +5527,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -5579,11 +5579,11 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "tempfile",
- "tempo-contracts",
- "tempo-hardfork",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-precompiles",
- "tempo-primitives",
- "thiserror 2.0.19",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "toml 1.1.4+spec-1.1.0",
  "tracing",
  "walkdir",
@@ -5642,7 +5642,7 @@ dependencies = [
  "solar-compiler",
  "strsim",
  "tempfile",
- "tempo-primitives",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tikv-jemallocator",
  "tokio",
  "toml 1.1.4+spec-1.1.0",
@@ -5719,9 +5719,9 @@ dependencies = [
  "sha2 0.11.0",
  "solar-compiler",
  "tempfile",
- "tempo-alloy",
- "tempo-primitives",
- "thiserror 2.0.19",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "tokio",
  "tower",
  "tracing",
@@ -5752,7 +5752,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
- "tempo-alloy",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "yansi",
 ]
 
@@ -5769,7 +5769,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "path-slash",
  "rand 0.10.2",
  "rayon",
@@ -5781,7 +5781,7 @@ dependencies = [
  "svm-rs",
  "svm-rs-builds",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "winnow 1.0.4",
  "yansi",
@@ -5811,7 +5811,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "yansi",
 ]
@@ -5844,7 +5844,7 @@ dependencies = [
  "serde_json",
  "svm-rs",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "walkdir",
  "xxhash-rust",
@@ -5883,7 +5883,7 @@ dependencies = [
  "soldeer-core",
  "strum 0.28.0",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "toml 1.1.4+spec-1.1.0",
  "toml_edit",
  "tracing",
@@ -5946,8 +5946,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-precompiles",
- "tempo-primitives",
- "thiserror 2.0.19",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "uuid 1.24.0",
@@ -6009,14 +6009,14 @@ dependencies = [
  "revm-inspectors",
  "serde",
  "serde_json",
- "tempo-alloy",
- "tempo-contracts",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-evm",
- "tempo-hardfork",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-revm",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "url",
@@ -6059,7 +6059,7 @@ dependencies = [
  "revm",
  "serde",
  "solar-compiler",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -6075,7 +6075,7 @@ dependencies = [
  "op-revm",
  "revm",
  "serde",
- "tempo-hardfork",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
 ]
 
 [[package]]
@@ -6092,7 +6092,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "tempo-contracts",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
 ]
 
 [[package]]
@@ -6119,7 +6119,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "wait-timeout",
 ]
@@ -6154,7 +6154,7 @@ dependencies = [
  "snapbox",
  "solar-compiler",
  "tempfile",
- "tempo-contracts",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-precompiles",
  "tokio",
  "tracing",
@@ -6176,7 +6176,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "url",
@@ -6191,7 +6191,7 @@ dependencies = [
  "foundry-compilers",
  "rayon",
  "semver 1.0.28",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -6226,8 +6226,8 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-revm",
 ]
 
@@ -6298,8 +6298,8 @@ dependencies = [
  "rusb",
  "serde",
  "serde_json",
- "tempo-alloy",
- "thiserror 2.0.19",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+ "thiserror 2.0.20",
  "time",
  "tokio",
  "tower",
@@ -6515,8 +6515,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -6970,7 +6970,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -7330,7 +7330,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7399,10 +7399,12 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb-platform",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -7427,6 +7429,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jiff-tzdb"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "142bd39932ad231f10513df9ab62661fead8719872150b7ad02a2df79f4e141e"
+
+[[package]]
+name = "jiff-tzdb-platform"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875a5a69ac2bab1a891711cf5eccbec1ce0341ea805560dcd90b7a2e925132e8"
+dependencies = [
+ "jiff-tzdb",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7438,7 +7455,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "walkdir",
  "windows-link 0.2.1",
 ]
@@ -7487,9 +7504,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.103"
+version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
+checksum = "0e0c1080212aad755ea003d18543e8768dd432c48819efd73a7bf1e39b7a5a3a"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -7548,7 +7565,7 @@ checksum = "bde5057d6143cc94e861d90f591b9303d6716c6b9602309150bd068853c10899"
 dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -7562,9 +7579,9 @@ dependencies = [
 
 [[package]]
 name = "keccak"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e24a010dd405bd7ed803e5253182815b41bf2e6a80cc3bfc066658e03a198aa"
+checksum = "ffd9697dc4a9a62e2da93389f34400b77a28f0287711263cabb203b3ccb9c0e4"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -7994,8 +8011,8 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2 0.11.0",
  "subtle",
- "tempo-alloy",
- "thiserror 2.0.19",
+ "tempo-alloy 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+ "thiserror 2.0.20",
  "time",
  "tokio",
  "tokio-tungstenite",
@@ -8151,7 +8168,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8431,7 +8448,7 @@ dependencies = [
  "reth-zstd-compressors",
  "serde",
  "serde_with",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -8484,7 +8501,7 @@ dependencies = [
  "reth-rpc-traits",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -8504,7 +8521,7 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "snap",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -8551,7 +8568,7 @@ dependencies = [
  "futures-sink",
  "js-sys",
  "pin-project-lite",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -8581,7 +8598,7 @@ dependencies = [
  "opentelemetry_sdk",
  "prost 0.14.4",
  "reqwest 0.13.4",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -8608,7 +8625,7 @@ dependencies = [
  "percent-encoding",
  "portable-atomic",
  "rand 0.9.5",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-stream",
 ]
@@ -9096,9 +9113,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.14.0"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d20d5497ef88037a52ff98267d066e7f11fcc5e99bbfbd58a42336193aacec3"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "portable-atomic-util"
@@ -9426,7 +9443,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -9502,7 +9519,7 @@ dependencies = [
  "newtype-uuid",
  "quick-xml 0.41.0",
  "strip-ansi-escapes",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "uuid 1.24.0",
 ]
 
@@ -9538,7 +9555,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "web-time",
@@ -9561,7 +9578,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tinyvec",
  "tracing",
  "web-time",
@@ -9578,7 +9595,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9782,7 +9799,7 @@ dependencies = [
  "palette",
  "serde",
  "strum 0.28.0",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.2.2",
@@ -9883,7 +9900,7 @@ checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
 dependencies = [
  "getrandom 0.2.17",
  "libredox",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10099,7 +10116,7 @@ dependencies = [
  "auto_impl",
  "reth-execution-types",
  "reth-primitives-traits",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10253,7 +10270,7 @@ dependencies = [
  "alloy-rlp",
  "nybbles",
  "reth-storage-errors",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10284,7 +10301,7 @@ dependencies = [
  "alloy-rlp",
  "secp256k1 0.30.0",
  "serde_with",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "url",
 ]
 
@@ -10317,7 +10334,7 @@ dependencies = [
  "revm-state",
  "secp256k1 0.30.0",
  "serde",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10332,7 +10349,7 @@ dependencies = [
  "reth-codecs",
  "serde",
  "strum 0.27.2",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -10361,7 +10378,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-signer",
  "reth-primitives-traits",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10431,7 +10448,7 @@ dependencies = [
  "reth-prune-types",
  "reth-static-file-types",
  "revm",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10571,7 +10588,7 @@ dependencies = [
  "revm-primitives",
  "revm-state",
  "serde",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10628,7 +10645,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10703,7 +10720,7 @@ dependencies = [
  "nix 0.30.1",
  "regex",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10819,7 +10836,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
 dependencies = [
  "hashbrown 0.16.1",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -10963,7 +10980,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11022,7 +11039,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11462,9 +11479,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.21.0"
+version = "3.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
+checksum = "ee78f1fbe43ac4a0e47aadb3dbd357b69eb0d3793e948624cd03dd2750ab1c0a"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -11472,6 +11489,7 @@ dependencies = [
  "hex",
  "indexmap 1.9.3",
  "indexmap 2.14.0",
+ "jiff",
  "schemars 0.9.0",
  "schemars 1.2.2",
  "serde_core",
@@ -11482,9 +11500,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.21.0"
+version = "3.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
+checksum = "8705578779c2b6bd90d84d66eb2e206b708b1a4d7b9f17641b293545bf1c7e46"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -11575,7 +11593,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
 dependencies = [
  "digest 0.11.3",
- "keccak 0.2.0",
+ "keccak 0.2.1",
 ]
 
 [[package]]
@@ -11710,7 +11728,7 @@ checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
 dependencies = [
  "num-bigint",
  "num-traits",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "time",
 ]
 
@@ -11790,7 +11808,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11916,7 +11934,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -11928,7 +11946,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -11962,7 +11980,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -12045,7 +12063,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml_edit",
  "uuid 1.24.0",
@@ -12291,7 +12309,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "url",
  "zip 8.6.0",
 ]
@@ -12430,7 +12448,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -12465,10 +12483,50 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempo-chainspec",
- "tempo-contracts",
- "tempo-primitives",
- "thiserror 2.0.19",
+ "tempo-chainspec 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+ "thiserror 2.0.20",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "tempo-alloy"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-json-rpc",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport",
+ "async-trait",
+ "base64 0.22.1",
+ "dashmap",
+ "derive_more",
+ "dirs-next",
+ "futures",
+ "http 1.5.0",
+ "p256 0.13.2",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempo-chainspec 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "tower",
  "tracing",
 ]
@@ -12477,6 +12535,22 @@ dependencies = [
 name = "tempo-chainspec"
 version = "1.10.1"
 source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+dependencies = [
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "once_cell",
+ "paste",
+ "serde",
+ "serde_json",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+]
+
+[[package]]
+name = "tempo-chainspec"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12492,8 +12566,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-dkg-onchain-artifacts",
- "tempo-hardfork",
- "tempo-primitives",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
 ]
 
 [[package]]
@@ -12505,13 +12579,25 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "serde",
- "tempo-hardfork",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+]
+
+[[package]]
+name = "tempo-contracts"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
+dependencies = [
+ "alloy-contract",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "serde",
+ "tempo-hardfork 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
 ]
 
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12523,7 +12609,7 @@ dependencies = [
 [[package]]
 name = "tempo-evm"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12541,13 +12627,13 @@ dependencies = [
  "reth-evm-ethereum",
  "reth-primitives-traits",
  "reth-revm",
- "tempo-chainspec",
- "tempo-contracts",
+ "tempo-chainspec 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-dkg-onchain-artifacts",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-revm",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -12555,6 +12641,17 @@ dependencies = [
 name = "tempo-hardfork"
 version = "1.10.1"
 source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+dependencies = [
+ "alloy-eips",
+ "alloy-hardforks",
+ "paste",
+ "serde",
+]
+
+[[package]]
+name = "tempo-hardfork"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12566,7 +12663,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "alloy",
  "alloy-evm",
@@ -12578,18 +12675,18 @@ dependencies = [
  "paste",
  "revm",
  "scoped-tls",
- "tempo-chainspec",
- "tempo-contracts",
+ "tempo-chainspec 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-precompiles-macros",
- "tempo-primitives",
- "thiserror 2.0.19",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -12601,6 +12698,31 @@ dependencies = [
 name = "tempo-primitives"
 version = "1.10.1"
 source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde",
+ "base64 0.22.1",
+ "commonware-cryptography",
+ "derive_more",
+ "once_cell",
+ "p256 0.13.2",
+ "reth-codecs",
+ "reth-ethereum-primitives",
+ "reth-primitives-traits",
+ "revm",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643)",
+]
+
+[[package]]
+name = "tempo-primitives"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -12622,13 +12744,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempo-contracts",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
 ]
 
 [[package]]
 name = "tempo-revm"
 version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=c93d08a9b6b26baa3026a4f280e5d82aa2d65643#c93d08a9b6b26baa3026a4f280e5d82aa2d65643"
+source = "git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181#f4079dcdf59d11956447c32ffee50e42a5cc9181"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12639,11 +12761,11 @@ dependencies = [
  "reth-evm",
  "reth-storage-api",
  "revm",
- "tempo-chainspec",
- "tempo-contracts",
+ "tempo-chainspec 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "tempo-contracts 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
  "tempo-precompiles",
- "tempo-primitives",
- "thiserror 2.0.19",
+ "tempo-primitives 1.10.1 (git+https://github.com/tempoxyz/tempo?rev=f4079dcdf59d11956447c32ffee50e42a5cc9181)",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -12654,7 +12776,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -12703,11 +12825,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.19"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
+checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
 dependencies = [
- "thiserror-impl 2.0.19",
+ "thiserror-impl 2.0.20",
 ]
 
 [[package]]
@@ -12723,9 +12845,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.19"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd"
+checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13254,7 +13376,7 @@ dependencies = [
  "hex",
  "protobuf",
  "rusb",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -13279,7 +13401,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -13295,7 +13417,7 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -13311,7 +13433,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "turnkey_api_key_stamper",
 ]
@@ -13724,9 +13846,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.126"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
+checksum = "1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -13737,9 +13859,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.76"
+version = "0.4.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
+checksum = "6b7777d5cc23d0e91404e53ce2d5e8ec7acae3026b16233dba62cd3246457950"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -13747,9 +13869,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.126"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
+checksum = "77775f8f3f7217702089053b94958f8f54061a3f663417df76e19cbdcca29bc1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -13757,9 +13879,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.126"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
+checksum = "e11d33f857dc2fb11b8bc75aee111aa9cbeb12cd9f25efd3d4c2a3dd4e235284"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -13770,9 +13892,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.126"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
+checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
 dependencies = [
  "unicode-ident",
 ]
@@ -13817,13 +13939,13 @@ dependencies = [
  "miette",
  "normalize-path",
  "notify",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13844,7 +13966,7 @@ checksum = "3fd4537617a323437550d34c73a6aeeb1b489bbcc526e63f044ca3e59347101f"
 dependencies = [
  "miette",
  "nix 0.30.1",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -13863,9 +13985,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.103"
+version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
+checksum = "c435338968042f4f59a557f690a253676d47ce13ceb55d70100e7facf6620a30"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -13883,9 +14005,9 @@ dependencies = [
 
 [[package]]
 name = "webbrowser"
-version = "1.2.3"
+version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d6eb50cc7b133f0c7720a64661fbd8e520b882f8ab9015deea5e00d5cd809c4"
+checksum = "62c35be770821a214dbc362fc26908c853e776c0004294d0b10b8a6bad582f94"
 dependencies = [
  "jni",
  "log",
@@ -13971,7 +14093,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -14412,7 +14534,7 @@ dependencies = [
  "pharos",
  "rustc_version 0.4.1",
  "send_wrapper",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -14490,18 +14612,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.55"
+version = "0.8.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5a105cd7b140f6eeec8acff2ea38135d3cab283ada58540f629fe51e46696eb"
+checksum = "556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.55"
+version = "0.8.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fe976fb70c78cd64cccfe3a6fc142244e8a77b70959b30faf9d0ac37ee228eb"
+checksum = "f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -14619,7 +14741,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fa5b9958fd0b5b685af54f2c3fa21fca05fe295ebaf3e77b6d24d96c4174037"
 dependencies = [
  "log",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "zip 4.6.1",
 ]
 
