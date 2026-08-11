@@ -3089,8 +3089,12 @@ contract MixedTest is DSTest {
 "#,
     );
 
-    cmd.args(["coverage", "--report=lcov", "--lcov-version=2"]).assert_success();
+    cmd.args(["coverage", "--report=lcov", "--report=attribution", "--lcov-version=2"])
+        .assert_success();
     let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    let attribution =
+        std::fs::read_to_string(prj.root().join("coverage-attribution.json")).unwrap();
+    let attribution: Value = serde_json::from_str(&attribution).unwrap();
 
     assert!(lcov.contains("SF:src/Mixed.sol"), "coverage must include Mixed.sol:\n{lcov}");
     // The contract method keeps its contract scope.
@@ -3123,6 +3127,19 @@ contract MixedTest is DSTest {
             && !l.starts_with("FNDA:0,")
             && l.ends_with(",Counter.bump")),
         "contract function must record its hits:\n{lcov}"
+    );
+    let covered = attribution["tests"][0]["covered"].as_array().unwrap();
+    assert_eq!(
+        covered
+            .iter()
+            .filter(|item| {
+                item["source"] == "src/Mixed.sol"
+                    && item["contract"] == "Counter"
+                    && item["kind"] == "statement"
+            })
+            .count(),
+        2,
+        "the return statement and its deferred call must retain the contract scope:\n{attribution}"
     );
 });
 
