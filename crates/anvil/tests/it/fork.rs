@@ -1885,7 +1885,7 @@ async fn test_fork_reset_moonbeam() {
     crate::init_tracing();
     let (api, handle) = spawn(
         fork_config()
-            .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
+            .with_eth_rpc_url(Some("https://moonbeam-rpc.publicnode.com".to_string()))
             .with_fork_block_number(None::<u64>),
     )
     .await;
@@ -1904,7 +1904,7 @@ async fn test_fork_reset_moonbeam() {
 
     // reset to check timestamp works after resetting
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some("https://rpc.api.moonbeam.network".to_string()),
+        json_rpc_url: Some("https://moonbeam-rpc.publicnode.com".to_string()),
         block_number: None,
     }))
     .await

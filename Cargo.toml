@@ -411,7 +411,7 @@ alloy-op-evm = "0.32.0"
 # revm
 revm = { version = "42.0.1", default-features = false }
 revm-inspectors = { version = "0.42.0", features = ["serde"] }
-op-revm = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2", default-features = false }
+op-revm = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753", default-features = false }
 
 ## cli
 anstream = "1.0"
@@ -512,10 +512,10 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-alloy-transport-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "1241b29975eedcfd82bfb85fac186b92cc6dac16", default-features = false, features = [
+alloy-transport-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "d7bf697983d51bb369bc996ce35525c53d412b9c", default-features = false, features = [
     "aws-lc-rs",
 ] }
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "1241b29975eedcfd82bfb85fac186b92cc6dac16", default-features = false, features = [
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "d7bf697983d51bb369bc996ce35525c53d412b9c", default-features = false, features = [
     "tempo",
     "client",
     "sqlite",
@@ -553,9 +553,9 @@ solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e22
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 
 ## foundry-core
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "2a5b28096bb94c048e79f0a76748e59d89444d00" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "2a5b28096bb94c048e79f0a76748e59d89444d00" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "2a5b28096bb94c048e79f0a76748e59d89444d00" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "94b10d5c0108da0a4e58eb05fefe24b717a5c8f0" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "94b10d5c0108da0a4e58eb05fefe24b717a5c8f0" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "94b10d5c0108da0a4e58eb05fefe24b717a5c8f0" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
@@ -607,11 +607,11 @@ foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "2
 
 ## op-revm / op-alloy / alloy-op-evm
 ## Pinned to foundry-rs forks for the revm 42 stack.
-alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
-op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
-op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
-op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
-alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "4ce11c64258bc5d0bcad64ed49e1ea54b41a72c2" }
+alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753" }
+op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753" }
+op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "c93d08a9b6b26baa3026a4f280e5d82aa2d65643" }
