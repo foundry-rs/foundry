@@ -2319,6 +2319,58 @@ mod tests {
     }
 
     #[test]
+    fn commutative_branchless_rewrites_produce_canonical_ites() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let first_condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+        let second_condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+
+        let one = SymExpr::one(&mut cx);
+        let two = SymExpr::constant(&mut cx, U256::from(2));
+        let three = SymExpr::constant(&mut cx, U256::from(3));
+        let four = SymExpr::constant(&mut cx, U256::from(4));
+        let first_offset = SymExpr::ite(&mut cx, first_condition.clone(), one, two);
+        let second_offset = SymExpr::ite(&mut cx, second_condition.clone(), three, four);
+        let add_forward =
+            SymExpr::binop(&mut cx, SymBinOp::Add, first_offset.clone(), second_offset.clone());
+        let add_reverse = SymExpr::binop(&mut cx, SymBinOp::Add, second_offset, first_offset);
+        assert_eq!(add_forward, add_reverse);
+        let SymExprKind::Ite(_, then_expr, else_expr) = add_forward.kind() else {
+            panic!("dual ITE addition did not rewrite");
+        };
+        assert!(matches!(then_expr.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _)));
+        assert!(matches!(else_expr.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _)));
+
+        let first_word = SymExpr::bool_word(&mut cx, first_condition.clone());
+        let second_word = SymExpr::bool_word(&mut cx, second_condition.clone());
+        let mul_forward =
+            SymExpr::binop(&mut cx, SymBinOp::Mul, first_word.clone(), second_word.clone());
+        let mul_reverse = SymExpr::binop(&mut cx, SymBinOp::Mul, second_word, first_word);
+        assert_eq!(mul_forward, mul_reverse);
+        let SymExprKind::Ite(_, then_expr, else_expr) = mul_forward.kind() else {
+            panic!("dual boolean-word multiplication did not rewrite");
+        };
+        assert!(matches!(then_expr.kind(), SymExprKind::Ite(..)));
+        assert!(else_expr.as_const().is_some_and(|value| value.is_zero()));
+
+        let zero = SymExpr::zero(&mut cx);
+        let first_value = SymExpr::var(&mut cx, "first_value");
+        let second_value = SymExpr::var(&mut cx, "second_value");
+        let first_selected = SymExpr::ite(&mut cx, first_condition, first_value, zero.clone());
+        let second_selected = SymExpr::ite(&mut cx, second_condition, second_value, zero);
+        let xor_forward =
+            SymExpr::binop(&mut cx, SymBinOp::Xor, first_selected.clone(), second_selected.clone());
+        let xor_reverse = SymExpr::binop(&mut cx, SymBinOp::Xor, second_selected, first_selected);
+        assert_eq!(xor_forward, xor_reverse);
+        let SymExprKind::Ite(_, then_expr, else_expr) = xor_forward.kind() else {
+            panic!("dual zero-ITE XOR did not rewrite");
+        };
+        assert!(matches!(then_expr.kind(), SymExprKind::Ite(..)));
+        assert!(matches!(else_expr.kind(), SymExprKind::Ite(..)));
+    }
+
+    #[test]
     fn bitwise_bool_word_condition_bounds_bit_width_analysis() {
         let mut cx = SymCx::new();
         let one = SymExpr::one(&mut cx);
