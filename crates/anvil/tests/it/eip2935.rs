@@ -249,6 +249,32 @@ async fn eip2935_contract_deployed_at_genesis() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn reset_restores_ethereum_system_contracts() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let addresses = [
+        BEACON_ROOTS_ADDRESS,
+        HISTORY_STORAGE_ADDRESS,
+        WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+        CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+    ];
+
+    for address in addresses {
+        assert!(!provider.get_code_at(address).await.unwrap().is_empty(), "missing {address}");
+    }
+
+    api.anvil_reset(None).await.unwrap();
+
+    for address in addresses {
+        assert!(
+            !provider.get_code_at(address).await.unwrap().is_empty(),
+            "reset removed {address}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn eip2935_stores_parent_block_hash() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (api, handle) = spawn(node_config).await;

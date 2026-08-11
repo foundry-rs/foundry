@@ -345,6 +345,39 @@ async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_updates_bpo_blob_params() {
+    let bpo1_timestamp = EthereumHardfork::Bpo1.mainnet_activation_timestamp().unwrap();
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Bpo1.into()))
+            .with_genesis_timestamp(Some(bpo1_timestamp - 1)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(bpo1_timestamp).unwrap();
+    let provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let target = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(*target.tx_hash()))
+            .with_no_mining(true),
+    )
+    .await;
+
+    assert_eq!(fork_api.backend.blob_params(), alloy_eips::eip7840::BlobParams::bpo1());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
     // Real chain ID so the hardfork can be resolved from chain + timestamp.
     const MAINNET_CHAIN_ID: u64 = 1;

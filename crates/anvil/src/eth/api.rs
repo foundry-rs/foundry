@@ -237,7 +237,10 @@ impl<N: Network> EthApi<N> {
     /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
     fn lowest_suggestion_tip(&self) -> u128 {
         let block_number = self.backend.best_number();
-        let cache = self.fee_history_cache.lock();
+        // Never hold the fee-history lock while reading blockchain storage. Reset publication and
+        // fee-history population lock storage before the cache, so doing the reverse here can
+        // deadlock with either writer.
+        let cache = self.fee_history_cache.lock().clone();
         let latest_tip = self
             .backend
             .get_block_with_hash(block_number)

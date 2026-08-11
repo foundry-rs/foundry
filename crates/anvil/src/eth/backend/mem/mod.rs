@@ -138,8 +138,7 @@ use foundry_evm::{
     },
     utils::{
         apply_chain_specific_tx_replay_env_changes, block_env_from_header,
-        get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id,
-        get_blob_params_by_spec_id,
+        get_blob_base_fee_update_fraction, get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -1000,9 +999,9 @@ impl<N: Network> Backend<N> {
         system_contracts
     }
 
-    /// Returns [`BlobParams`] corresponding to the current spec.
+    /// Returns the active [`BlobParams`].
     pub fn blob_params(&self) -> BlobParams {
-        get_blob_params_by_spec_id(self.spec_id())
+        self.fees.blob_params()
     }
 
     fn simulation_blob_params_at_timestamp(&self, timestamp: u64) -> BlobParams {
@@ -3332,27 +3331,7 @@ impl<N: Network> Backend<N> {
             // the evm
             db.insert_block_hash(U256::from(self.best_number()), self.best_hash());
 
-            if let Some(transitions) =
-                self.ethereum_block_transitions(self.hardfork(), None, BlockExecutionKind::Complete)
-            {
-                if transitions.hardfork >= EthereumHardfork::Cancun {
-                    db.set_code(eip4788::BEACON_ROOTS_ADDRESS, eip4788::BEACON_ROOTS_CODE.clone())?;
-                }
-                if transitions.hardfork >= EthereumHardfork::Prague {
-                    db.set_code(
-                        eip2935::HISTORY_STORAGE_ADDRESS,
-                        eip2935::HISTORY_STORAGE_CODE.clone(),
-                    )?;
-                    db.set_code(
-                        eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-                        eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_CODE.clone(),
-                    )?;
-                    db.set_code(
-                        eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-                        eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_CODE.clone(),
-                    )?;
-                }
-            }
+            self.apply_ethereum_genesis_contracts(&mut **db, self.hardfork())?;
         }
 
         // apply the genesis.json alloc
@@ -3382,6 +3361,34 @@ impl<N: Network> Backend<N> {
 
         trace!(target: "backend", "set genesis balances");
 
+        Ok(())
+    }
+
+    /// Installs protocol contracts activated at Ethereum genesis.
+    fn apply_ethereum_genesis_contracts(
+        &self,
+        db: &mut dyn Db,
+        hardfork: FoundryHardfork,
+    ) -> DatabaseResult<()> {
+        let Some(transitions) =
+            self.ethereum_block_transitions(hardfork, None, BlockExecutionKind::Complete)
+        else {
+            return Ok(());
+        };
+        if transitions.hardfork >= EthereumHardfork::Cancun {
+            db.set_code(eip4788::BEACON_ROOTS_ADDRESS, eip4788::BEACON_ROOTS_CODE.clone())?;
+        }
+        if transitions.hardfork >= EthereumHardfork::Prague {
+            db.set_code(eip2935::HISTORY_STORAGE_ADDRESS, eip2935::HISTORY_STORAGE_CODE.clone())?;
+            db.set_code(
+                eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+                eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_CODE.clone(),
+            )?;
+            db.set_code(
+                eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+                eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_CODE.clone(),
+            )?;
+        }
         Ok(())
     }
 
@@ -3485,6 +3492,11 @@ impl<N: Network> Backend<N> {
             // a new endpoint is queried unless the user explicitly forced a chain ID.
             node_config.set_chain_id(fork.override_chain_id());
             node_config.networks = fork.override_networks();
+        }
+        if rpc_url_changed {
+            // `--fork-chain-id` only describes the endpoint used at startup. A replacement endpoint
+            // must be queried instead of inheriting that offline-cache override.
+            node_config.fork_chain_id = None;
         }
         node_config.fork_urls = vec![target_rpc_url.clone()];
         node_config.fork_choice =
@@ -3624,9 +3636,7 @@ impl<N: Network> Backend<N> {
             db.insert_account(account, info);
         }
         db.insert_block_hash(U256::from(genesis_number), storage.best_hash);
-        if fallback_spec_id >= SpecId::PRAGUE {
-            db.set_code(eip2935::HISTORY_STORAGE_ADDRESS, eip2935::HISTORY_STORAGE_CODE.clone())?;
-        }
+        self.apply_ethereum_genesis_contracts(&mut db, fallback_hardfork)?;
         self.genesis.apply_genesis_json_alloc_to(&mut db)?;
 
         // Tempo advances its configured genesis seed according to the active hardfork. Other
@@ -3983,6 +3993,7 @@ where
         let current_base_fee = self.base_fee();
         let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
         let mut evm_env = self.evm_env.read().clone();
+        let parent_base_fee = evm_env.block_env.basefee;
         if evm_env.block_env.basefee == 0 {
             evm_env.cfg_env.disable_base_fee = true;
         }
@@ -4014,15 +4025,36 @@ where
         let hardfork =
             FoundryHardfork::from_chain_and_timestamp(evm_env.cfg_env.chain_id, timestamp)
                 .unwrap_or_else(|| self.hardfork());
+        let mut replay_blob_params = self.fees.blob_params();
         if !self.is_optimism() && !self.is_tempo() {
             replay_env.cfg_env.spec = SpecId::from(hardfork);
             // Cancun requires blob excess gas even for non-blob txs.
-            if replay_env.cfg_env.spec >= SpecId::CANCUN
-                && replay_env.block_env.blob_excess_gas_and_price.is_none()
-            {
+            if replay_env.cfg_env.spec >= SpecId::CANCUN {
+                replay_blob_params =
+                    Self::simulation_blob_params_for_hardfork(hardfork, replay_env.cfg_env.spec);
+                let (parent_excess_blob_gas, parent_blob_gas_used) = self
+                    .fork
+                    .read()
+                    .as_ref()
+                    .map(|fork| {
+                        let config = fork.config.read();
+                        (
+                            config
+                                .blob_excess_gas_and_price
+                                .map(|value| value.excess_blob_gas)
+                                .unwrap_or_default(),
+                            config.blob_gas_used.unwrap_or_default() as u64,
+                        )
+                    })
+                    .unwrap_or_default();
+                let replay_excess_blob_gas = replay_blob_params.next_block_excess_blob_gas_osaka(
+                    parent_excess_blob_gas,
+                    parent_blob_gas_used,
+                    parent_base_fee,
+                );
                 replay_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
-                    0,
-                    get_blob_base_fee_update_fraction_by_spec_id(replay_env.cfg_env.spec),
+                    replay_excess_blob_gas,
+                    replay_blob_params.update_fraction as u64,
                 ));
             }
         }
@@ -4108,14 +4140,16 @@ where
             header.gas_limit,
             header.base_fee_per_gas.unwrap_or_default(),
         );
-        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+        let next_block_excess_blob_gas = replay_blob_params.next_block_excess_blob_gas_osaka(
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
+            header.base_fee_per_gas.unwrap_or_default(),
         );
         self.fees.set_base_fee(next_block_base_fee);
+        self.fees.set_blob_params(replay_blob_params);
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
-            get_blob_base_fee_update_fraction_by_spec_id(*self.evm_env.read().spec_id()),
+            replay_blob_params.update_fraction as u64,
         ));
         self.notify_on_new_block(header.into_inner(), block_hash);
 
@@ -4467,7 +4501,7 @@ where
 
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
-            get_blob_base_fee_update_fraction_by_spec_id(*self.evm_env.read().spec_id()),
+            self.fees.blob_params().update_fraction as u64,
         ));
 
         // notify all listeners

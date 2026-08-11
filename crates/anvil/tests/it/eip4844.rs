@@ -237,6 +237,29 @@ async fn fork_reset_updates_fee_history_blob_params() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn fork_reset_updates_active_bpo_blob_params() {
+    let bpo1_timestamp = EthereumHardfork::Bpo1.mainnet_activation_timestamp().unwrap();
+    let (source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Bpo1.into()))
+            .with_genesis_timestamp(Some(bpo1_timestamp)),
+    )
+    .await;
+    source_api.mine_one().await.unwrap();
+
+    let (api, _) = spawn(NodeConfig::test()).await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(api.backend.blob_params(), BlobParams::bpo1());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction_eth_send_transaction() {
     let node_config = NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
