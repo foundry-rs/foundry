@@ -6830,10 +6830,12 @@ impl Backend<FoundryNetwork> {
                     Default::default()
                 };
 
-                // TODO: Assess restoring fork-backed simulations by deriving a canonical
-                // post-state root.
-                let accounts = cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                let state_root = state_root(&accounts);
+                // Fork-backed databases do not contain the full state required to calculate a
+                // canonical root. Match Reth's default `eth_simulateV1` behavior in that case.
+                let state_root = cache_db
+                    .maybe_full_db()
+                    .map(|accounts| state_root(&accounts))
+                    .unwrap_or_default();
                 let header = Header {
                     logs_bloom: receipts.iter().fold(Bloom::ZERO, |mut bloom, receipt| {
                         bloom.accrue_bloom(receipt.logs_bloom());

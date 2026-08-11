@@ -68,8 +68,12 @@ fn deposit_event_runtime(event: DepositEvent) -> Bytes {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_simulate_v1() {
     crate::init_tracing();
-    let (_, handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
+    let (_, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+            .with_fork_block_number(Some(24_000_000u64)),
+    )
+    .await;
     let block_overrides =
         Some(BlockOverrides { base_fee: Some(U256::from(9)), ..Default::default() });
     let account_override =
@@ -96,8 +100,8 @@ async fn test_fork_simulate_v1() {
         return_full_transactions: true,
     };
     let response = rpc_request(&handle.http_endpoint(), "eth_simulateV1", json!([payload])).await;
-    assert_eq!(response["error"]["code"], -32603);
-    assert_eq!(response["error"]["message"], "Required data unavailable");
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["calls"][0]["status"], "0x1");
 }
 
 #[tokio::test(flavor = "multi_thread")]
