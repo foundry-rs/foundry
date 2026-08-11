@@ -235,6 +235,95 @@ exclude_operators = [
     assert_eq!(summary["skipped"], 0);
 });
 
+forgetest_init!(mutation_testing_filters_invalid_compound_assignments, |prj, cmd| {
+    prj.add_source(
+        "CompoundAssignments.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract CompoundAssignments {
+    uint256 public unsignedTotal;
+    int256 public signedTotal;
+
+    function update(uint256 unsignedAmount, int256 signedAmount) public {
+        unsignedTotal += unsignedAmount;
+        signedTotal += signedAmount;
+    }
+
+    function shift(int256 value, uint8 amount) public pure returns (int256) {
+        value <<= amount;
+        return value;
+    }
+
+    function shiftLeftLiteral(int256 value) public pure returns (int256) {
+        value <<= 2;
+        return value;
+    }
+
+    function shiftRightLiteral(int256 value) public pure returns (int256) {
+        value >>= 3;
+        return value;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "CompoundAssignments.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/CompoundAssignments.sol";
+
+contract CompoundAssignmentsTest {
+    CompoundAssignments private target = new CompoundAssignments();
+
+    function testUpdate() public {
+        target.update(3, 4);
+        assert(target.unsignedTotal() == 3);
+        assert(target.signedTotal() == 4);
+    }
+
+    function testShift() public view {
+        assert(target.shift(1, 2) == 4);
+    }
+
+    function testShiftLiterals() public view {
+        assert(target.shiftLeftLiteral(32) == 128);
+        assert(target.shiftRightLiteral(32) == 4);
+    }
+}
+"#,
+    );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[mutation]
+exclude_operators = [
+    "assembly",
+    "binary-op",
+    "delete-expression",
+    "elim-delegate",
+    "require",
+    "unary-op",
+]
+"#,
+    )
+    .unwrap();
+
+    let output = cmd
+        .args(["test", "--mutate", "src/CompoundAssignments.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success();
+    let summary = mutation_summary(&output.get_output().stdout_lossy());
+
+    assert_eq!(summary["total"], 6);
+    assert_eq!(summary["killed"], 6);
+    assert_eq!(summary["survived"], 0);
+    assert_eq!(summary["invalid"], 0);
+    assert_eq!(summary["skipped"], 0);
+});
+
 forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
     prj.add_source(
         "Comparisons.sol",
