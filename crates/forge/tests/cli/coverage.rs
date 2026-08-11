@@ -1867,10 +1867,10 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-// https://github.com/foundry-rs/foundry/issues/9270, https://github.com/foundry-rs/foundry/issues/9444
-// Test that special functions with no statements are not counted.
-// TODO: We should support this, but for now just ignore them.
-// See TODO in `visit_function_definition`: https://github.com/foundry-rs/foundry/issues/9458
+// https://github.com/foundry-rs/foundry/issues/9270,
+// https://github.com/foundry-rs/foundry/issues/9444,
+// https://github.com/foundry-rs/foundry/issues/9458
+// Test coverage for functions with no statements.
 forgetest!(empty_functions, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
@@ -1880,6 +1880,8 @@ contract AContract {
     constructor() {}
 
     receive() external payable {}
+
+    fallback() external {}
 
     function increment() public {}
 }
@@ -1898,6 +1900,8 @@ contract AContractTest is DSTest {
         a.increment();
         (bool success,) = address(a).call{value: 1}("");
         require(success);
+        (success,) = address(a).call(hex"deadbeef");
+        require(success);
     }
 }
     "#,
@@ -1908,9 +1912,142 @@ contract AContractTest is DSTest {
         str![[r#"
 TN:
 SF:src/AContract.sol
+DA:5,1
+FN:5,AContract.constructor
+FNDA:1,AContract.constructor
+DA:7,1
+FN:7,AContract.receive
+FNDA:1,AContract.receive
 DA:9,1
-FN:9,AContract.increment
+FN:9,AContract.fallback
+FNDA:1,AContract.fallback
+DA:11,1
+FN:11,AContract.increment
 FNDA:1,AContract.increment
+FNF:4
+FNH:4
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+------------+---------------╮
+| File              | % Lines       | % Statements | % Branches | % Funcs       |
++===============================================================================+
+| src/AContract.sol | 100.00% (4/4) | N/A (0/0)    | N/A (0/0)  | 100.00% (4/4) |
+|-------------------+---------------+--------------+------------+---------------|
+| Total             | 100.00% (4/4) | N/A (0/0)    | N/A (0/0)  | 100.00% (4/4) |
+╰-------------------+---------------+--------------+------------+---------------╯
+
+"#]]);
+});
+
+// Test that inherited empty receive and fallback functions have distinct coverage anchors.
+forgetest!(empty_special_functions_are_distinct, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract Base {
+    receive() external payable {}
+
+    fallback() external {}
+
+    function increment() public {}
+}
+
+contract AContract is Base {}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_receive() public {
+        AContract a = new AContract();
+        (bool success,) = address(a).call{value: 1}("");
+        require(success);
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,1
+FN:5,Base.receive
+FNDA:1,Base.receive
+DA:7,0
+FN:7,Base.fallback
+FNDA:0,Base.fallback
+DA:9,0
+FN:9,Base.increment
+FNDA:0,Base.increment
+FNF:3
+FNH:1
+LF:3
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
+
+// Test that a fallback without a receive uses the same anchor for empty and non-empty calldata.
+forgetest!(empty_fallback_without_receive, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    fallback() external {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_fallback() public {
+        AContract a = new AContract();
+        (bool success,) = address(a).call("");
+        require(success);
+        (success,) = address(a).call(hex"01");
+        require(success);
+        (success,) = address(a).call(hex"deadbeef");
+        require(success);
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,3
+FN:5,AContract.fallback
+FNDA:3,AContract.fallback
 FNF:1
 FNH:1
 LF:1
@@ -1921,19 +2058,6 @@ end_of_record
 
 "#]],
     );
-
-    // Assert there's only one function (`increment`) reported.
-    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
-...
-╭-------------------+---------------+--------------+------------+---------------╮
-| File              | % Lines       | % Statements | % Branches | % Funcs       |
-+===============================================================================+
-| src/AContract.sol | 100.00% (1/1) | N/A (0/0)    | N/A (0/0)  | 100.00% (1/1) |
-|-------------------+---------------+--------------+------------+---------------|
-| Total             | 100.00% (1/1) | N/A (0/0)    | N/A (0/0)  | 100.00% (1/1) |
-╰-------------------+---------------+--------------+------------+---------------╯
-
-"#]]);
 });
 
 // Test coverage for `receive` functions.
@@ -1952,6 +2076,8 @@ contract AContract {
     receive() external payable {
         counter = msg.value;
     }
+
+    fallback() external {}
 }
     "#,
     );
@@ -1973,7 +2099,7 @@ contract AContractTest is DSTest {
     "#,
     );
 
-    // Assert both constructor and receive functions coverage reported and appear in LCOV.
+    // Assert the constructor and receive are covered while the empty fallback is not.
     assert_lcov(
         cmd.arg("coverage"),
         str![[r#"
@@ -1987,9 +2113,12 @@ DA:11,1
 FN:11,AContract.receive
 FNDA:1,AContract.receive
 DA:12,1
-FNF:2
+DA:15,0
+FN:15,AContract.fallback
+FNDA:0,AContract.fallback
+FNF:3
 FNH:2
-LF:4
+LF:5
 LH:4
 BRF:0
 BRH:0
@@ -2000,13 +2129,13 @@ end_of_record
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
-╭-------------------+---------------+---------------+------------+---------------╮
-| File              | % Lines       | % Statements  | % Branches | % Funcs       |
-+================================================================================+
-| src/AContract.sol | 100.00% (4/4) | 100.00% (2/2) | N/A (0/0)  | 100.00% (2/2) |
-|-------------------+---------------+---------------+------------+---------------|
-| Total             | 100.00% (4/4) | 100.00% (2/2) | N/A (0/0)  | 100.00% (2/2) |
-╰-------------------+---------------+---------------+------------+---------------╯
+╭-------------------+--------------+---------------+------------+--------------╮
+| File              | % Lines      | % Statements  | % Branches | % Funcs      |
++==============================================================================+
+| src/AContract.sol | 80.00% (4/5) | 100.00% (2/2) | N/A (0/0)  | 66.67% (2/3) |
+|-------------------+--------------+---------------+------------+--------------|
+| Total             | 80.00% (4/5) | 100.00% (2/2) | N/A (0/0)  | 66.67% (2/3) |
+╰-------------------+--------------+---------------+------------+--------------╯
 
 "#]]);
 });

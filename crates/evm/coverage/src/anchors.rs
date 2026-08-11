@@ -1,5 +1,5 @@
-use super::{CoverageItemKind, ItemAnchor, SourceLocation};
-use crate::analysis::SourceAnalysis;
+use super::{CallAnchor, CallAnchorKind, CoverageItemKind, ItemAnchor, SourceLocation};
+use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
@@ -20,6 +20,9 @@ pub fn find_anchors(
         .filter(|&source| seen_sources.insert(source))
         .flat_map(|source| analysis.items_for_source_enumerated(source))
         .filter_map(|(item_id, item)| {
+            if analysis.empty_special_function_kind(item_id).is_some() {
+                return None;
+            }
             let anchor_loc = item.anchor_loc.as_ref().unwrap_or(&item.loc);
             match item.kind {
                 CoverageItemKind::Branch { path_id, is_first_opcode: true, .. }
@@ -48,6 +51,26 @@ pub fn find_anchors(
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
+        })
+        .collect()
+}
+
+/// Finds call-based anchors for empty receive and fallback functions in a contract.
+pub fn find_call_anchors(
+    source_id: u32,
+    contract_name: &str,
+    analysis: &SourceAnalysis,
+) -> Vec<CallAnchor> {
+    analysis
+        .empty_special_function_ids(source_id, contract_name)
+        .filter_map(|item_id| {
+            analysis.empty_special_function_kind(item_id).map(|kind| CallAnchor {
+                item_id,
+                kind: match kind {
+                    EmptySpecialFunctionKind::Receive => CallAnchorKind::Receive,
+                    EmptySpecialFunctionKind::Fallback => CallAnchorKind::Fallback,
+                },
+            })
         })
         .collect()
 }

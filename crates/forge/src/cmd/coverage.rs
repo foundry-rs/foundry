@@ -8,7 +8,7 @@ use crate::coverage::{
     CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
     ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
-    anchors::find_anchors,
+    anchors::{find_anchors, find_call_anchors},
 };
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueHint};
@@ -353,6 +353,21 @@ impl CoverageArgs {
                 })
                 .collect_vec_list();
             report.add_anchors(anchors.into_iter().flatten());
+            for artifact in
+                artifacts.iter().filter(|artifact| artifact.contract_id.build_id == *build_id)
+            {
+                let call_anchors = find_call_anchors(
+                    artifact.contract_id.source_id as u32,
+                    &artifact.contract_id.contract_name,
+                    &source_analysis,
+                );
+                report.add_call_anchors(
+                    artifact.contract_id.clone(),
+                    call_anchors,
+                    artifact.function_selectors.iter().copied(),
+                    artifact.has_receive,
+                );
+            }
             report.add_analysis(build_id.clone(), source_analysis);
         }
 
@@ -526,10 +541,18 @@ pub struct ArtifactData {
     pub contract_id: ContractId,
     pub creation: BytecodeData,
     pub deployed: BytecodeData,
+    pub function_selectors: Vec<[u8; 4]>,
+    pub has_receive: bool,
 }
 
 impl ArtifactData {
     pub fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
+        let abi = artifact.get_abi();
+        let function_selectors = abi
+            .as_ref()
+            .map(|abi| abi.functions().map(|function| function.selector().into()).collect())
+            .unwrap_or_default();
+        let has_receive = abi.as_ref().is_some_and(|abi| abi.receive.is_some());
         Some(Self {
             contract_id: ContractId {
                 version: id.version.clone(),
@@ -549,6 +572,8 @@ impl ArtifactData {
                     .get_deployed_bytecode()
                     .and_then(|bytecode| dummy_link_deployed_bytecode(bytecode.into_owned()))?,
             ),
+            function_selectors,
+            has_receive,
         })
     }
 }

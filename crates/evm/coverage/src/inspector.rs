@@ -1,4 +1,4 @@
-use crate::{HitMap, HitMaps};
+use crate::{CallData, HitMap, HitMaps};
 use alloy_primitives::B256;
 use revm::{
     Inspector,
@@ -34,7 +34,12 @@ impl Default for LineCoverageCollector {
 
 impl<CTX> Inspector<CTX> for LineCoverageCollector {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
+        let call = {
+            let input = interpreter.input.input.as_bytes_memory(&interpreter.memory);
+            CallData::new(&input)
+        };
         let map = self.get_or_insert_map(interpreter);
+        map.call(call);
         // Reserve some space early to avoid reallocating too often.
         map.reserve(8192.min(interpreter.bytecode.len()));
     }
