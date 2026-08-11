@@ -1962,6 +1962,16 @@ Continue anyway? [y/N] "#]])
         .get_output()
         .stdout_lossy();
     assert!(output.trim().parse::<u64>().unwrap() > 21_000);
+
+    let output = cmd
+        .cast_fuse()
+        .args(args)
+        .args(["--quiet", "--force"])
+        .assert_success()
+        .stderr_eq(str![""])
+        .get_output()
+        .stdout_lossy();
+    assert!(output.trim().parse::<u64>().unwrap() > 21_000);
 });
 
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly

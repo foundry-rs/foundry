@@ -12,9 +12,10 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder, shell};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
-use std::str::FromStr;
+use serde::Serialize;
+use std::{fmt::Display, str::FromStr};
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast estimate`.
@@ -159,10 +160,23 @@ impl EstimateArgs {
             let gas_price_wei = provider.get_gas_price().await?;
             let cost = gas_price_wei * gas as u128;
             let cost_eth = cost as f64 / 1e18;
-            print_scalar(cost_eth)?;
+            print_estimate_result(cost_eth)?;
         } else {
-            print_scalar(gas)?;
+            print_estimate_result(gas)?;
         }
+        Ok(())
+    }
+}
+
+fn print_estimate_result(value: impl Serialize + Display) -> Result<()> {
+    if shell::is_json() {
+        print_scalar(value)
+    } else {
+        // Bypass the shell verbosity layer so `--quiet` does not suppress the primary result.
+        let mut shell = shell::Shell::get();
+        let out = shell.out();
+        writeln!(out, "{value}")?;
+        out.flush()?;
         Ok(())
     }
 }
