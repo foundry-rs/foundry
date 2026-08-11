@@ -26,7 +26,8 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_primitives::{
-    Address, B256, Bytes, Selector, U256, address, hex, keccak256, map::HashMap,
+    Address, B256, Bytes, Selector, U256, address, hex, keccak256,
+    map::{Entry, HashMap},
 };
 use eyre::Result;
 use foundry_common::{
@@ -4403,9 +4404,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
         let mut replayed_secondary_storage = BTreeMap::new();
         for (name, failure, storage) in replayed_secondary_failures {
-            if !invariant_result.errors.contains_key(&name) {
-                replayed_secondary_storage.insert(name.clone(), storage);
-                invariant_result.errors.insert(name, failure);
+            if let Entry::Vacant(entry) = invariant_result.errors.entry(name) {
+                replayed_secondary_storage.insert(entry.key().clone(), storage);
+                entry.insert(failure);
             }
         }
         // Merge coverage collected during invariant run with test setup coverage.
