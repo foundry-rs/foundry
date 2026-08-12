@@ -126,6 +126,12 @@ pub(super) fn checked_mul_guard_branch_model(
     constraints: &[SymBoolExpr],
     original_constraints: &[SymBoolExpr],
 ) -> Option<SymbolicModel> {
+    if original_constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
+        || original_constraints.iter().any(SymBoolExpr::contains_gasleft)
+    {
+        return None;
+    }
+
     let mut remaining_support_visits = MAX_CHECKED_MUL_SUPPORT_VISITS;
     for constraint in constraints {
         let Some((zero_operand, expected, guard_is_true)) = checked_mul_guard_branch(constraint)
@@ -1073,6 +1079,38 @@ mod tests {
 
         assert_eq!(model.get(&slot_symbol), Some(&U256::ZERO));
         assert!(fallback_model_satisfies_all_constraints(&original, &model));
+    }
+
+    #[test]
+    fn checked_mul_guard_branch_model_rejects_symbolic_hash_assignments() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let guard = checked_mul_guard_word(&mut cx, &x, &y);
+        let zero = SymExpr::zero(&mut cx);
+        let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
+        let y_is_zero = SymBoolExpr::eq(&mut cx, y.clone(), zero.clone());
+        let hash_symbol = cx.intern("sha256_y");
+        let hash = SymExpr::hash_symbol(&mut cx, hash_symbol, "sha256", vec![y]);
+        let hash_is_zero = SymBoolExpr::eq(&mut cx, hash, zero);
+        let constraints = [guard_is_true, y_is_zero, hash_is_zero];
+
+        assert!(checked_mul_guard_branch_model(&constraints, &constraints).is_none());
+    }
+
+    #[test]
+    fn checked_mul_guard_branch_model_rejects_gasleft_assignments() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let guard = checked_mul_guard_word(&mut cx, &x, &y);
+        let zero = SymExpr::zero(&mut cx);
+        let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
+        let gas_left = SymExpr::gas_left(&mut cx, 0);
+        let gas_is_zero = SymBoolExpr::eq(&mut cx, gas_left, zero);
+        let constraints = [guard_is_true, gas_is_zero];
+
+        assert!(checked_mul_guard_branch_model(&constraints, &constraints).is_none());
     }
 
     #[test]
