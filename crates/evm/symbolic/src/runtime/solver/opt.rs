@@ -844,13 +844,10 @@ impl ConstraintContext {
 
     fn masked_word_side_eq_self_shape(masked: &SymExpr, value: &SymExpr) -> Option<usize> {
         let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else { return None };
-        let Some((source, mask)) = right
+        let (source, mask) = right
             .as_const()
             .map(|mask| (left, mask))
-            .or_else(|| left.as_const().map(|mask| (right, mask)))
-        else {
-            return None;
-        };
+            .or_else(|| left.as_const().map(|mask| (right, mask)))?;
         let bits = mask_low_bits(mask)?;
         (source == value).then_some(bits)
     }
@@ -1048,7 +1045,7 @@ impl ConstraintContext {
         quotient: &'a SymExpr,
         expected: &SymExpr,
     ) -> Option<(&'a SymExpr, &'a SymExpr)> {
-        let Some((numerator, denominator)) = quotient.udiv_operands() else { return None };
+        let (numerator, denominator) = quotient.udiv_operands()?;
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
             return None;
         };
