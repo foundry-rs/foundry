@@ -6,7 +6,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest, anvil::Forking};
 use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use foundry_evm::hardfork::OpHardfork;
@@ -15,6 +15,42 @@ use foundry_primitives::FoundryReceiptEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
 use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inferred_optimism_forks_allow_non_monad_source_resets() {
+    let (_optimism_api, optimism_handle) = spawn(NodeConfig::test().with_optimism()).await;
+    let (ethereum_api, _) = spawn(NodeConfig::test()).await;
+
+    ethereum_api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(optimism_handle.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap();
+    let node_info = ethereum_api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("ethereum"));
+    assert_eq!(node_info.fork_config.fork_url, Some(optimism_handle.http_endpoint()));
+
+    let (optimism_api, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(optimism_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let (_ethereum_origin_api, ethereum_origin) = spawn(NodeConfig::test()).await;
+    optimism_api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(ethereum_origin.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap();
+    let node_info = optimism_api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("optimism"));
+    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
@@ -429,4 +465,49 @@ async fn test_optimism_base_fee_params() {
         INITIAL_BASE_FEE + ethereum_increase,
         "Should not be using Ethereum base fee params"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inferred_optimism_fork_uses_optimism_base_fee_params() {
+    let (_origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_gas_limit(Some(GAS_TRANSFER)),
+    )
+    .await;
+    let origin_wallet = origin_handle.dev_wallets().next().unwrap();
+    let origin_provider =
+        http_provider_with_signer(&origin_handle.http_endpoint(), origin_wallet.into());
+    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::from(1));
+    origin_provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().network.as_deref(), Some("optimism"));
+
+    let fork_wallet = fork_handle.dev_wallets().next().unwrap();
+    let fork_provider = http_provider_with_signer(&fork_handle.http_endpoint(), fork_wallet.into());
+    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::from(1));
+    fork_provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let block = fork_provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.base_fee_per_gas, Some(INITIAL_BASE_FEE + INITIAL_BASE_FEE * 5 / 250));
 }

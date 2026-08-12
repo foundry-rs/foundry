@@ -180,6 +180,31 @@ impl From<WalletSigner> for SenderKind<'_> {
     }
 }
 
+/// Validates that `sender` can resolve every EIP-7702 authorization.
+pub(crate) fn validate_authorizations(
+    authorizations: &[CliAuthorizationList],
+    sender: &SenderKind<'_>,
+) -> Result<()> {
+    let address_auth_count = authorizations
+        .iter()
+        .filter(|auth| matches!(auth, CliAuthorizationList::Address(_)))
+        .count();
+    if address_auth_count > 1 {
+        eyre::bail!(
+            "Multiple address-based authorizations provided. Only one address can be specified; \
+             use pre-signed authorizations (hex-encoded) for multiple authorizations."
+        );
+    }
+    if address_auth_count == 1 && sender.as_signer().is_none() {
+        eyre::bail!(
+            "No signer available to sign authorization. \
+             Provide a pre-signed authorization (hex-encoded) instead."
+        );
+    }
+
+    Ok(())
+}
+
 /// Prevents a misconfigured hwlib from sending a transaction that defies user-specified --from
 pub fn validate_from_address(
     specified_from: Option<Address>,
@@ -444,25 +469,7 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
 
     /// Validates that the configured sender can resolve all EIP-7702 authorizations.
     pub(crate) fn validate_auth(&self, sender: &SenderKind<'_>) -> Result<()> {
-        let address_auth_count = self
-            .auth
-            .iter()
-            .filter(|auth| matches!(auth, CliAuthorizationList::Address(_)))
-            .count();
-        if address_auth_count > 1 {
-            eyre::bail!(
-                "Multiple address-based authorizations provided. Only one address can be specified; \
-                use pre-signed authorizations (hex-encoded) for multiple authorizations."
-            );
-        }
-        if address_auth_count == 1 && sender.as_signer().is_none() {
-            eyre::bail!(
-                "No signer available to sign authorization. \
-                Provide a pre-signed authorization (hex-encoded) instead."
-            );
-        }
-
-        Ok(())
+        validate_authorizations(&self.auth, sender)
     }
 
     /// Returns whether building this request will disclose an EIP-7702 authorization to an RPC
