@@ -1764,6 +1764,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         test_name: &str,
         artifact_file_name: &str,
         symbolic_storage: &[SymbolicStorageAssignment],
+        invariant_failure: Option<SymbolicInvariantArtifactFailure>,
         progress: Option<&indicatif::ProgressBar>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayedInvariantSequence> {
@@ -1782,7 +1783,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             SymbolicCounterexampleReplaySemantics {
                 fail_on_revert: self.config.invariant.fail_on_revert,
             },
-            None,
+            invariant_failure,
             progress,
             position,
         )
@@ -3871,6 +3872,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             is_revert,
                         ),
                         storage,
+                        confirmed_failure_site,
                     ));
                     continue;
                 }
@@ -4401,10 +4403,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
-        let mut replayed_secondary_storage = BTreeMap::new();
-        for (name, failure, storage) in replayed_secondary_failures {
+        let mut replayed_secondary_metadata = BTreeMap::new();
+        for (name, failure, storage, failure_site) in replayed_secondary_failures {
             if let Entry::Vacant(entry) = invariant_result.errors.entry(name) {
-                replayed_secondary_storage.insert(entry.key().clone(), storage);
+                replayed_secondary_metadata.insert(entry.key().clone(), (storage, failure_site));
                 entry.insert(failure);
             }
         }
@@ -4500,6 +4502,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &invariant_contract.anchor().signature(),
                             &invariant_contract.anchor().signature(),
                             &[],
+                            None,
                             progress.as_ref(),
                             Some((1, total_broken)),
                         ) {
@@ -4567,7 +4570,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     | InvariantFuzzError::Revert(case_data) = error
                     && let TestError::Fail(_, ref calls) = case_data.test_error
                 {
-                    let replayed_storage = replayed_secondary_storage.get(&invariant.name);
+                    let replayed_metadata = replayed_secondary_metadata.get(&invariant.name);
                     let original_seq_len = calls.len();
                     // On Ctrl+C: skip the (potentially long) replay+shrink, but still persist
                     // the un-shrunk sequence so the next run targeting this invariant picks it
@@ -4585,7 +4588,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 )
                             })
                             .collect::<Vec<_>>();
-                        if replayed_storage.is_none() {
+                        if replayed_metadata.is_none() {
                             record_invariant_failure(
                                 failure_dir.as_path(),
                                 persisted_failure.as_path(),
@@ -4600,7 +4603,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         let position = next_position;
                         next_position += 1;
                         let mut replay_config = invariant_config.clone();
-                        if replayed_storage.is_some() {
+                        if replayed_metadata.is_some() {
                             // The persisted failure site was validated before entering the
                             // campaign. The generic shrinker only preserves failure, not its site,
                             // so shrinking here could misattribute a different failure to this
@@ -4618,14 +4621,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             &invariant.signature(),
                             &invariant.signature(),
-                            replayed_storage.map(Vec::as_slice).unwrap_or_default(),
+                            replayed_metadata
+                                .map(|(storage, _)| storage.as_slice())
+                                .unwrap_or_default(),
+                            replayed_metadata.map(|(_, site)| {
+                                SymbolicInvariantArtifactFailure::Predicate {
+                                    name: invariant.name.clone(),
+                                    site: Some(*site),
+                                }
+                            }),
                             progress.as_ref(),
                             Some((position, total_broken)),
                         ) {
                             Ok(replayed) if !replayed.call_sequence.is_empty() => {
                                 // Keep all replay metadata for a seeded persisted failure. A fresh
                                 // campaign error takes precedence above and is persisted normally.
-                                if replayed_storage.is_none() {
+                                if replayed_metadata.is_none() {
                                     record_invariant_failure(
                                         failure_dir.as_path(),
                                         persisted_failure.as_path(),

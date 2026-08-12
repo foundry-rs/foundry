@@ -300,16 +300,26 @@ contract SymbolicSecondaryStorage is Test {
 "#,
     );
 
-    cmd.args([
-        "test",
-        "--symbolic",
-        "--json",
-        "--fuzz-runs",
-        "0",
-        "--match-test",
-        "invariant_secondary",
-    ])
-    .assert_failure();
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_secondary",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_secondary()");
+    let artifact_ref = &result["invariant_failures"][0]["artifact"];
+    let original_artifact = read_artifact_ref(artifact_ref);
+    assert_eq!(original_artifact["invariant_failure"]["kind"], "predicate");
+    assert_eq!(original_artifact["invariant_failure"]["name"], "invariant_secondary");
+    assert!(original_artifact["invariant_failure"]["site"].is_object());
 
     let persisted = prj
         .root()
@@ -341,6 +351,9 @@ calldata=useStore() args=[]
         let replayed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
         assert_eq!(replayed, original);
+
+        let replayed_artifact = read_artifact_ref(artifact_ref);
+        assert_eq!(replayed_artifact["invariant_failure"], original_artifact["invariant_failure"]);
     }
 });
 
