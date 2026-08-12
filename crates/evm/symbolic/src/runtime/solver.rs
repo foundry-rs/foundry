@@ -398,9 +398,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if let Some(model) = checked_mul_guard_branch_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
-        {
+        if let Some(model) = checked_mul_guard_branch_model(&smt_constraints, constraints) {
             trace!("model: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
@@ -535,9 +533,7 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(true);
         }
-        if let Some(model) = checked_mul_guard_branch_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
-        {
+        if checked_mul_guard_branch_model(&smt_constraints, constraints).is_some() {
             trace!("is_sat: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key, true);
             return Ok(true);
