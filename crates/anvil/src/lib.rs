@@ -177,7 +177,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         ..
     } = config.clone();
 
-    let pool = Arc::new(Pool::default());
+    let pool = Arc::new(Pool::new(backend.reset_generation()));
 
     let mode = if let Some(block_time) = block_time {
         if mixed_mining {
@@ -213,14 +213,18 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
-        backend.fees().clone(),
-        backend.new_block_notifications(),
+        backend.reset_generation(),
+        backend.fee_history_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),
     );
     // create an entry for the best block
     if let Some(header) = backend.get_block(backend.best_number()).map(|block| block.header) {
-        fee_history_service.insert_cache_entry_for_block(header.hash_slow(), &header);
+        fee_history_service.insert_cache_entry_for_block(
+            header.hash_slow(),
+            &header,
+            backend.fees().blob_params(),
+        );
     }
 
     let filters = Filters::default();

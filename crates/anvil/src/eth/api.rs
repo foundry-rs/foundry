@@ -762,7 +762,7 @@ impl<N: Network> EthApi<N> {
             let _mining = self.backend.lock_mining().await;
             self.backend.commit_fork_reset(staged).await?;
             self.reset_instance_id();
-            self.pool.clear();
+            self.pool.reset();
             self.fee_history_cache.lock().clear();
         } else {
             let _lifecycle = self.lifecycle_lock.write().await;
@@ -772,7 +772,7 @@ impl<N: Network> EthApi<N> {
             let staged = self.backend.prepare_memory_reset().await?;
             self.backend.commit_memory_reset(staged).await?;
             self.reset_instance_id();
-            self.pool.clear();
+            self.pool.reset();
             self.fee_history_cache.lock().clear();
         }
         Ok(())
@@ -4561,11 +4561,13 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
-        let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await?;
+        let batch = self.pool.mining_batch(None);
+        let Some((generation, outcome)) = self.backend.mine_pool_batch(batch).await? else {
+            return Ok(());
+        };
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
-        self.pool.on_mined_block(outcome);
+        self.pool.on_mined_block_at_generation(generation, outcome);
         Ok(())
     }
 
@@ -5047,6 +5049,18 @@ fn merge_pre_fork_fee_history(
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reset_discards_previously_selected_mining_batch() {
+        let (api, _) = spawn(NodeConfig::test()).await;
+        let batch = api.pool.mining_batch(None);
+
+        api.anvil_reset(None).await.unwrap();
+        let best_number = api.backend.best_number();
+
+        assert!(api.backend.mine_pool_batch(batch).await.unwrap().is_none());
+        assert_eq!(api.backend.best_number(), best_number);
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn memory_reset_stages_live_fees_after_active_mining() {

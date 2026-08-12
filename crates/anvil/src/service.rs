@@ -3,8 +3,11 @@
 use crate::{
     NodeResult,
     eth::{
-        backend::validate::TransactionValidator, error::BlockchainError, fees::FeeHistoryService,
-        miner::Miner, pool::Pool,
+        backend::validate::TransactionValidator,
+        error::BlockchainError,
+        fees::FeeHistoryService,
+        miner::{Miner, MiningWork},
+        pool::Pool,
     },
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
@@ -86,9 +89,9 @@ where
             // advance block production until pending
             while let Poll::Ready(Some(result)) = pin.block_producer.poll_next_unpin(cx) {
                 match result {
-                    BlockProduction::Mined(outcome) => {
+                    BlockProduction::Mined(generation, outcome) => {
                         trace!(target: "node", "mined block {}", outcome.block_number);
-                        pin.pool.on_mined_block(outcome);
+                        pin.pool.on_mined_block_at_generation(generation, outcome);
                     }
                     BlockProduction::Failed(generation) => {
                         pin.miner.handle_failed_candidate(generation);
@@ -124,11 +127,14 @@ where
     }
 }
 
-type MiningResult<N> =
-    (Result<MinedBlockOutcome<<N as Network>::TxEnvelope>, BlockchainError>, Arc<Backend<N>>, u64);
+type MiningResult<N> = (
+    Result<Option<(u64, MinedBlockOutcome<<N as Network>::TxEnvelope>)>, BlockchainError>,
+    Arc<Backend<N>>,
+    u64,
+);
 
 enum BlockProduction<T> {
-    Mined(MinedBlockOutcome<T>),
+    Mined(u64, MinedBlockOutcome<T>),
     Failed(u64),
 }
 
@@ -140,7 +146,7 @@ struct BlockProducer<N: Network> {
     /// Single active future that mines a new block
     block_mining: Option<JoinHandle<MiningResult<N>>>,
     /// backlog of sets of transactions ready to be mined
-    queued: VecDeque<crate::eth::miner::MiningWork<N::TxEnvelope>>,
+    queued: VecDeque<MiningWork<N::TxEnvelope>>,
 }
 
 impl<N: Network> BlockProducer<N>
@@ -179,8 +185,8 @@ where
                 let mining = tokio::task::spawn_blocking(move || {
                     handle.block_on(async move {
                         trace!(target: "miner", "creating new block");
-                        let block = backend.mine_block(work.transactions).await;
-                        if let Ok(block) = &block {
+                        let block = backend.mine_pool_batch(work.batch).await;
+                        if let Ok(Some((_, block))) = &block {
                             trace!(target: "miner", "created new block: {}", block.block_number);
                         }
                         (block, backend, generation)
@@ -193,15 +199,20 @@ where
         if let Some(mut mining) = pin.block_mining.take() {
             if let Poll::Ready(res) = mining.poll_unpin(cx) {
                 return match res {
-                    Ok((Ok(outcome), backend, _)) => {
+                    Ok((Ok(Some((generation, outcome))), backend, _)) => {
                         pin.idle_backend = Some(backend);
-                        Poll::Ready(Some(BlockProduction::Mined(outcome)))
+                        Poll::Ready(Some(BlockProduction::Mined(generation, outcome)))
                     }
-                    Ok((Err(error), backend, generation)) => {
+                    Ok((Err(error), backend, mode_generation)) => {
                         pin.idle_backend = Some(backend);
                         pin.queued.clear();
                         warn!(target: "miner", %error, "failed to finalize block");
-                        Poll::Ready(Some(BlockProduction::Failed(generation)))
+                        Poll::Ready(Some(BlockProduction::Failed(mode_generation)))
+                    }
+                    Ok((Ok(None), backend, _)) => {
+                        pin.idle_backend = Some(backend);
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
                     }
                     Err(err) => {
                         panic!("miner task failed: {err}");

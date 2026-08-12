@@ -25,7 +25,9 @@ use crate::{
                 state::{state_root, storage_root, trie_accounts},
                 storage::MinedTransactionReceipt,
             },
-            notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
+            notifications::{
+                ChainNotification, ChainNotifications, FeeHistoryNotification, NewBlockNotification,
+            },
             replay::{
                 ExecutedHistoricalReplay, HistoricalReplayTransaction,
                 PreparedForkTransactionReplay, execute_historical_replay,
@@ -38,7 +40,7 @@ use crate::{
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
-        pool::transactions::PoolTransaction,
+        pool::{MiningBatch, transactions::PoolTransaction},
         preserve_simulation_request_fields,
     },
     mem::{
@@ -208,7 +210,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -1029,6 +1031,8 @@ pub struct Backend<N: Network> {
     /// Listeners for new blocks that get notified when a new block was imported or when logs were
     /// removed from the canonical chain due to a reorg.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
+    /// Internal block notifications with reset lifecycle metadata.
+    fee_history_listeners: Arc<Mutex<Vec<UnboundedSender<FeeHistoryNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
     active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
@@ -1047,6 +1051,8 @@ pub struct Backend<N: Network> {
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
+    /// Generation used to reject work selected before a reset.
+    reset_generation: Arc<AtomicU64>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
     /// Keeps startup fork-cache rollback armed until startup initialization completes.
@@ -1072,6 +1078,7 @@ impl<N: Network> Clone for Backend<N> {
             fees: self.fees.clone(),
             genesis: self.genesis.clone(),
             new_block_listeners: self.new_block_listeners.clone(),
+            fee_history_listeners: self.fee_history_listeners.clone(),
             active_state_snapshots: self.active_state_snapshots.clone(),
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
@@ -1083,6 +1090,7 @@ impl<N: Network> Clone for Backend<N> {
             slots_in_an_epoch: self.slots_in_an_epoch,
             precompile_factory: self.precompile_factory.clone(),
             mining: self.mining.clone(),
+            reset_generation: self.reset_generation.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
             startup_fork_cache_user: self.startup_fork_cache_user.clone(),
         }
@@ -2108,6 +2116,22 @@ impl<N: Network> Backend<N> {
         rx
     }
 
+    pub(crate) fn fee_history_notifications(
+        &self,
+    ) -> futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification> {
+        let (tx, rx) = unbounded();
+        self.fee_history_listeners.lock().push(tx);
+        rx
+    }
+
+    pub(crate) fn reset_generation(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.reset_generation)
+    }
+
+    pub(crate) fn current_reset_generation(&self) -> u64 {
+        self.reset_generation.load(Ordering::Acquire)
+    }
+
     /// Returns the number of new-block listeners. Closed listeners are pruned lazily on the next
     /// new block notification.
     pub fn new_block_listeners_count(&self) -> usize {
@@ -2120,8 +2144,18 @@ impl<N: Network> Backend<N> {
         // sender half for the set
         self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
 
-        let notification =
-            ChainNotification::Block(NewBlockNotification { hash, header: Arc::new(header) });
+        let header = Arc::new(header);
+        let fee_history_notification = FeeHistoryNotification {
+            hash,
+            header: Arc::clone(&header),
+            generation: self.current_reset_generation(),
+            blob_params: self.fees.blob_params(),
+        };
+        self.fee_history_listeners
+            .lock()
+            .retain(|tx| tx.unbounded_send(fee_history_notification.clone()).is_ok());
+
+        let notification = ChainNotification::Block(NewBlockNotification { hash, header });
 
         self.new_block_listeners
             .lock()
@@ -2183,9 +2217,10 @@ impl<N: Network> Backend<N> {
         let _mining_guard = self.mining.lock().await;
         let next_number = highest.checked_add(1)?;
         if let Some(block) = self.get_block(next_number) {
+            let blob_params = self.simulation_blob_params_at_timestamp(block.header.timestamp);
             Some((
                 block.header.base_fee_per_gas.unwrap_or_default() as u128,
-                block.header.blob_fee(self.blob_params()).unwrap_or_default(),
+                block.header.blob_fee(blob_params).unwrap_or_default(),
             ))
         } else if highest == self.best_number() {
             Some((self.fees().base_fee() as u128, self.fees().base_fee_per_blob_gas()))
@@ -4364,6 +4399,7 @@ impl<N: Network> Backend<N> {
             time: TimeManager::new(start_timestamp),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
+            fee_history_listeners: Default::default(),
             fees,
             genesis,
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
@@ -4377,6 +4413,7 @@ impl<N: Network> Backend<N> {
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
+            reset_generation: Arc::new(AtomicU64::new(0)),
             disable_pool_balance_checks,
             startup_fork_cache_user,
         };
@@ -5384,6 +5421,19 @@ where
         self.do_mine_block(pool_transactions).await
     }
 
+    /// Mines a pool batch unless it was selected before the latest reset.
+    pub(crate) async fn mine_pool_batch(
+        &self,
+        batch: MiningBatch<FoundryTxEnvelope>,
+    ) -> Result<Option<(u64, MinedBlockOutcome<FoundryTxEnvelope>)>, BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
+        if batch.generation != self.current_reset_generation() {
+            return Ok(None);
+        }
+        let outcome = self.do_mine_block_locked(batch.transactions).await?;
+        Ok(Some((batch.generation, outcome)))
+    }
+
     /// Replays a transaction-hash fork prefix before the live pool and miner are created.
     pub(crate) async fn apply_fork_transaction_replay(
         &self,
@@ -5782,6 +5832,13 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
+        self.do_mine_block_locked(pool_transactions).await
+    }
+
+    async fn do_mine_block_locked(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {

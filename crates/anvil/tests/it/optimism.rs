@@ -2,7 +2,7 @@
 
 use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{Eip658Value, Receipt, proofs::calculate_receipt_root};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip2718::Encodable2718};
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
@@ -15,6 +15,117 @@ use foundry_primitives::FoundryReceiptEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
 use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
+
+const CANYON_TIMESTAMP: u64 = 1_704_992_401;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_inferred_optimism_fork_reset_to_memory_stays_coherent() {
+    let (source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64)),
+    )
+    .await;
+    source_api.mine_one().await.unwrap();
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert!(api.backend.is_optimism());
+
+    api.anvil_reset(None).await.unwrap();
+
+    assert!(api.backend.is_optimism());
+    assert!(matches!(api.backend.hardfork(), foundry_evm::hardfork::FoundryHardfork::Optimism(_)));
+    assert_eq!(api.backend.spec_id(), api.backend.hardfork().into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_refreshes_optimism_base_fee_params() {
+    let pre_canyon_timestamp = CANYON_TIMESTAMP - 2;
+    let post_canyon_timestamp = CANYON_TIMESTAMP + 1;
+    let (pre_canyon_api, pre_canyon_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64))
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_genesis_timestamp(Some(pre_canyon_timestamp)),
+    )
+    .await;
+    pre_canyon_api.mine_one().await.unwrap();
+    let (post_canyon_api, post_canyon_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(10u64))
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_genesis_timestamp(Some(post_canyon_timestamp)),
+    )
+    .await;
+    post_canyon_api.mine_one().await.unwrap();
+
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_genesis_timestamp(Some(post_canyon_timestamp))
+            .with_eth_rpc_url(Some(pre_canyon_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+
+    let parent =
+        pre_canyon_handle.http_provider().get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let expected = calc_next_block_base_fee(
+        parent.header.gas_used,
+        parent.header.gas_limit,
+        parent.header.base_fee_per_gas.unwrap(),
+        BaseFeeParams::optimism(),
+    );
+    assert_eq!(api.backend.base_fee(), expected);
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(post_canyon_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let parent =
+        post_canyon_handle.http_provider().get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let expected = calc_next_block_base_fee(
+        parent.header.gas_used,
+        parent.header.gas_limit,
+        parent.header.base_fee_per_gas.unwrap(),
+        BaseFeeParams::optimism_canyon(),
+    );
+    assert_eq!(api.backend.base_fee(), expected);
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(pre_canyon_handle.http_endpoint()),
+        block_number: Some(1u64),
+    }))
+    .await
+    .unwrap();
+
+    let parent =
+        pre_canyon_handle.http_provider().get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let expected = calc_next_block_base_fee(
+        parent.header.gas_used,
+        parent.header.gas_limit,
+        parent.header.base_fee_per_gas.unwrap(),
+        BaseFeeParams::optimism(),
+    );
+    assert_eq!(api.backend.base_fee(), expected);
+
+    api.anvil_reset(None).await.unwrap();
+    let gas_limit = api.backend.gas_limit();
+    api.mine_one().await.unwrap();
+    let expected =
+        calc_next_block_base_fee(0, gas_limit, INITIAL_BASE_FEE, BaseFeeParams::optimism_canyon());
+    assert_eq!(api.backend.base_fee(), expected);
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inferred_optimism_forks_allow_non_monad_source_resets() {

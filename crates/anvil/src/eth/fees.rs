@@ -2,7 +2,10 @@ use std::{
     collections::BTreeMap,
     fmt,
     pin::Pin,
-    sync::{Arc, LazyLock},
+    sync::{
+        Arc, LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll},
 };
 
@@ -16,7 +19,7 @@ use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 use crate::eth::{
-    backend::{info::StorageInfo, notifications::ChainNotifications},
+    backend::{info::StorageInfo, notifications::FeeHistoryNotification},
     error::BlockchainError,
 };
 
@@ -280,10 +283,10 @@ pub struct FeeHistoryService<N: Network>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    /// Live fee rules, including blob parameters replaced by fork resets.
-    fees: FeeManager,
-    /// incoming notifications about new blocks
-    new_blocks: ChainNotifications,
+    /// Current reset generation.
+    generation: Arc<AtomicU64>,
+    /// New blocks with the fee rules active when each block was mined.
+    new_blocks: futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification>,
     /// contains all fee history related entries
     cache: FeeHistoryCache,
     /// number of items to consider
@@ -296,14 +299,14 @@ impl<N: Network> FeeHistoryService<N>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    pub const fn new(
-        fees: FeeManager,
-        new_blocks: ChainNotifications,
+    pub(crate) const fn new(
+        generation: Arc<AtomicU64>,
+        new_blocks: futures::channel::mpsc::UnboundedReceiver<FeeHistoryNotification>,
         cache: FeeHistoryCache,
         storage_info: StorageInfo<N>,
     ) -> Self {
         Self {
-            fees,
+            generation,
             new_blocks,
             cache,
             fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
@@ -317,45 +320,30 @@ where
     }
 
     /// Inserts a new cache entry for the given block
-    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256, header: &impl BlockHeader) {
-        let (result, block_number) = self.create_cache_entry(hash, header);
-        self.insert_cache_entry(result, block_number);
-    }
-
-    /// Create a new history entry for the block
-    fn create_cache_entry(
+    pub(crate) fn insert_cache_entry_for_block(
         &self,
         hash: B256,
         header: &impl BlockHeader,
-    ) -> (FeeHistoryCacheItem, Option<u64>) {
-        create_fee_history_cache_item(hash, header, &self.storage_info, self.fees.blob_params())
+        blob_params: BlobParams,
+    ) {
+        let (item, block_number) =
+            create_fee_history_cache_item(hash, header, &self.storage_info, blob_params);
+        self.insert_cache_entry(item, block_number, self.generation.load(Ordering::Acquire));
     }
 
-    fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
-        insert_fee_history_cache_item(&self.cache, item, block_number, self.fee_history_limit);
-    }
-}
-
-/// Inserts an entry into the fee history cache and trims it back to `fee_history_limit`.
-///
-/// Used by the async [`FeeHistoryService`]. The `eth_feeHistory` fallback applies the same bounded
-/// insertion policy to a batch under one lock.
-pub(crate) fn insert_fee_history_cache_item(
-    cache: &FeeHistoryCache,
-    item: FeeHistoryCacheItem,
-    block_number: Option<u64>,
-    fee_history_limit: u64,
-) {
-    if let Some(block_number) = block_number {
-        trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
-        let mut cache = cache.lock();
+    fn insert_cache_entry(
+        &self,
+        item: FeeHistoryCacheItem,
+        block_number: Option<u64>,
+        generation: u64,
+    ) {
+        let Some(block_number) = block_number else { return };
+        let mut cache = self.cache.lock();
+        if generation != self.generation.load(Ordering::Acquire) {
+            return;
+        }
         cache.insert(block_number, item);
-
-        // Trim to the cache limit by dropping the oldest entries (smallest block numbers).
-        // `pop_first` is saturating and correct regardless of insertion order, unlike the
-        // previous index math which could underflow when the `eth_feeHistory` fallback inserts
-        // entries out of order.
-        while cache.len() as u64 > fee_history_limit {
+        while cache.len() as u64 > self.fee_history_limit {
             cache.pop_first();
         }
     }
@@ -486,10 +474,16 @@ where
         let pin = self.get_mut();
 
         while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
-            // add the imported block.
-            if let Some(block) = notification.as_new_block() {
-                pin.insert_cache_entry_for_block(block.hash, block.header.as_ref());
+            if notification.generation != pin.generation.load(Ordering::Acquire) {
+                continue;
             }
+            let (item, block_number) = create_fee_history_cache_item(
+                notification.hash,
+                notification.header.as_ref(),
+                &pin.storage_info,
+                notification.blob_params,
+            );
+            pin.insert_cache_entry(item, block_number, notification.generation);
         }
 
         Poll::Pending
