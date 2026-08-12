@@ -355,9 +355,9 @@ impl Cheatcode for loadAllocsCall {
 
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
-        db.load_allocs(&allocs, inner)
-            .map(|()| Vec::default())
-            .map_err(|e| fmt_err!("failed to load allocs: {e}"))
+        db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
+        Ok(Default::default())
     }
 }
 
@@ -371,6 +371,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -773,6 +774,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
         Ok(Default::default())
     }
 }

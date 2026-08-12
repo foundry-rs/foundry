@@ -1345,10 +1345,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Roll back all previously applied deals
         // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
         // which rolls back any transfers.
+        let mut restored = false;
         while let Some(record) = self.eth_deals.pop() {
             if let Some(acc) = ecx.journal_mut().evm_state_mut().get_mut(&record.address) {
                 acc.info.balance = record.old_balance;
+                restored = true;
             }
+        }
+        if restored {
+            refresh_context_after_state_change::<FEN>(ecx);
         }
     }
 
@@ -4109,6 +4114,15 @@ const fn will_exit(action: &InterpreterAction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "monad")]
+    use foundry_evm_core::{MonadContextAux, backend::Backend, evm::MonadEvmNetwork};
+    #[cfg(feature = "monad")]
+    use monad_revm::{
+        MonadHardfork, monad_context_with_db, reserve_balance::tracker::ReserveBalanceInit,
+        staking::constants::MON,
+    };
+    #[cfg(feature = "monad")]
+    use revm::state::{Account, AccountInfo};
 
     fn cheats(flag: bool, broadcast: Option<Broadcast>) -> Cheatcodes {
         let config = CheatsConfig { batch_rewrite_creates: flag, ..Default::default() };
@@ -4227,6 +4241,54 @@ mod tests {
             Default::default(),
         ));
         assert!(cheats.has_log_hooks());
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn deal_rollback_refreshes_monad_reserve_context() {
+        let tracked = Address::with_last_byte(1);
+        let sender = Address::with_last_byte(2);
+        let original_balance = U256::from(12) * MON;
+        let violated_balance = U256::from(9) * MON;
+        let mut account =
+            Account::from(AccountInfo { balance: original_balance, ..Default::default() });
+        account.info.balance = violated_balance;
+
+        let mut backend = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
+        let db: &mut dyn DatabaseExt<<MonadEvmNetwork as FoundryEvmNetwork>::EvmFactory> =
+            &mut backend;
+        let mut ecx = monad_context_with_db(db);
+        ecx.journal_mut().evm_state_mut().insert(tracked, account.clone());
+
+        let mut aux = MonadContextAux::default();
+        aux.reserve_balance.init(ReserveBalanceInit {
+            chain: &aux.chain,
+            spec: MonadHardfork::MonadNine,
+            sender,
+            effective_gas_price: 0,
+            gas_limit: 0,
+            sender_is_delegated: false,
+            sender_account: None,
+        });
+        aux.reserve_balance.on_debit(Some(&account), tracked);
+        assert!(aux.reserve_balance.has_violation());
+        ecx.set_aux_state(aux);
+
+        ecx.journal_mut().evm_state_mut().get_mut(&tracked).unwrap().info.balance =
+            original_balance;
+        refresh_context_after_state_change::<MonadEvmNetwork>(&mut ecx);
+        assert!(!ecx.aux_state().reserve_balance.has_violation());
+
+        let mut cheats = Cheatcodes::<MonadEvmNetwork>::new(Arc::default());
+        cheats.eth_deals.push(DealRecord {
+            address: tracked,
+            old_balance: violated_balance,
+            new_balance: original_balance,
+        });
+        cheats.on_revert(&mut ecx);
+
+        assert_eq!(ecx.journal().evm_state()[&tracked].info.balance, violated_balance);
+        assert!(ecx.aux_state().reserve_balance.has_violation());
     }
 
     #[test]
