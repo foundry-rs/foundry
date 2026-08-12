@@ -3209,7 +3209,7 @@ fn solver_excludes_hidden_mul_div_candidates_from_context() {
     let factor_3 = SymExpr::constant(&mut cx, U256::from(3));
     let product_3 = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), factor_3.clone());
     let quotient_3 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_3, factor_3);
-    let identity_3 = SymBoolExpr::eq(&mut cx, quotient_3.clone(), x.clone());
+    let identity_3 = SymBoolExpr::eq(&mut cx, quotient_3.clone(), x);
     let past_boundary = boundary + U256::ONE;
     let past_boundary_expr = SymExpr::constant(&mut cx, past_boundary);
     let quotient_3_is_past_boundary = SymBoolExpr::eq(&mut cx, quotient_3, past_boundary_expr);
