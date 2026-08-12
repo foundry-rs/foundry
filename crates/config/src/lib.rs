@@ -3347,11 +3347,10 @@ mod tests {
         .into();
 
         let mut absolute_alias = relative.clone();
-        absolute_alias.context = Some(format!(
-            "{}{}",
-            config.root.join("dependency").display(),
-            std::path::MAIN_SEPARATOR
-        ));
+        let mut absolute_context =
+            config.root.join("dependency").display().to_string().replace('\\', "/");
+        absolute_context.push(std::path::MAIN_SEPARATOR);
+        absolute_alias.context = Some(absolute_context);
         assert_eq!(
             config.project_remappings(),
             vec![global_before, relative, absolute_alias, absolute, missing, global_after]
