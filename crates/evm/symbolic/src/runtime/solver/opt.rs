@@ -16,7 +16,17 @@ pub(crate) fn normalize_constraints_for_solver(
     let context = ConstraintContext::new(&normalized);
     let normalized_len = normalized.len();
     normalize_constraint_batch(
-        normalized.into_iter().map(|constraint| context.normalize_bool(cx, constraint)),
+        normalized.iter().cloned().enumerate().map(|(index, constraint)| {
+            let rewritten = context.normalize_bool(cx, constraint.clone());
+            if rewritten == constraint {
+                return constraint;
+            }
+
+            // Contextual rewrites may remove this conjunct, so their proof cannot depend on
+            // bounds learned from the conjunct itself. Rebuild only after a rewrite succeeds;
+            // ordinary constraints retain the single shared context above.
+            ConstraintContext::excluding(&normalized, index).normalize_bool(cx, constraint)
+        }),
         normalized_len,
     )
 }
@@ -674,17 +684,30 @@ impl WordInterval {
 
 impl ConstraintContext {
     pub(super) fn new(constraints: &[SymBoolExpr]) -> Self {
+        Self::from_constraints(constraints.iter(), constraints.len())
+    }
+
+    fn excluding(constraints: &[SymBoolExpr], excluded: usize) -> Self {
+        let constraint_count = constraints.len() - 1;
+        let constraints = constraints[..excluded].iter().chain(&constraints[excluded + 1..]);
+        Self::from_constraints(constraints, constraint_count)
+    }
+
+    fn from_constraints<'a>(
+        constraints: impl Clone + Iterator<Item = &'a SymBoolExpr>,
+        constraint_count: usize,
+    ) -> Self {
         let mut context = Self::default();
-        for constraint in constraints {
+        for constraint in constraints.clone() {
             context.record_upper_bound_constraint(constraint);
             context.record_lower_bound_constraint(constraint);
         }
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
         // cycles cannot tighten a bound one integer at a time across the uint256 domain.
-        for _ in 0..constraints.len() {
+        for _ in 0..constraint_count {
             let mut changed = false;
-            for constraint in constraints {
+            for constraint in constraints.clone() {
                 changed |= context.propagate_order_bounds(constraint);
             }
             if !changed {
