@@ -18,9 +18,10 @@ env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
-  # Keep in sync with `docker-publish.yml`.
+  # Keep the base features in sync with `docker-publish.yml`.
+  # Platform-specific release features are added in the build step.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad
 
 jobs:
   prepare:
@@ -321,11 +322,12 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
 
-      - name: Apple M1 setup
+      - name: Apple Silicon setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
           printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-          printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "$(xcrun -sdk macosx --show-sdk-platform-version)" >> "$GITHUB_ENV"
+          # Apple Silicon and the Touch ID shim require macOS 11 or newer.
+          printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n' >> "$GITHUB_ENV"
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
@@ -344,8 +346,18 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
+          features="$RUST_FEATURES"
+
+          # The Touch ID Swift shim requires macOS 11. Keep the packaged Intel
+          # artifact on its existing deployment target and enable Touch ID only
+          # for the Apple Silicon release artifact.
+          if [[ "$TARGET" == "aarch64-apple-darwin" ]]; then
+            features="${features},touch-id"
+          fi
+
+          echo "Building $TARGET with features: $features"
           flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
-            --no-default-features --features "$RUST_FEATURES")
+            --no-default-features --features "$features")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
@@ -462,7 +474,7 @@ jobs:
 
       - name: Binaries and archive provenance attestation
         id: attestation
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: |
             ${{ env.anvil_bin_path }}
@@ -473,7 +485,7 @@ jobs:
             ${{ steps.artifacts.outputs.file_name }}
 
       - name: Archive SBOM attestation
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: ${{ steps.artifacts.outputs.file_name }}
           sbom-path: ${{ steps.artifacts.outputs.foundry_sbom }}
@@ -551,7 +563,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

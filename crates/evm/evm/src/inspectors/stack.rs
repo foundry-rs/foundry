@@ -13,11 +13,11 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
-    backend::{DatabaseError, DatabaseExt, JournaledState},
+    backend::{ContextAuxUpdate, DatabaseError, DatabaseExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
+        BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
         FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs, with_cloned_context,
     },
 };
@@ -371,6 +371,12 @@ struct EarlyExitTestGate {
     notified: Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PendingCreate2Redirect {
+    depth: usize,
+    charged_create_state_gas: bool,
+}
+
 /// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
@@ -410,8 +416,7 @@ pub struct InspectorStackInner {
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
-    /// Each entry records the journal depth at which the redirect occurred.
-    pub pending_create2_redirects: Vec<usize>,
+    pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
@@ -446,17 +451,22 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm =
-                FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
-            *evm.journal_inner_mut() = journal_inner;
+        with_cloned_context(ecx, |db, evm_env, context_state| {
+            let context_aux = context_state.auxiliary.clone();
+            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+                db,
+                evm_env,
+                context_aux,
+                &mut inspector,
+            );
+            evm.set_context_state(context_state);
             f(&mut *evm)?;
-            let sub_inner = evm.journal_inner_mut().clone();
+            let sub_state = evm.context_state();
             let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_inner))
+            Ok((sub_evm_env, sub_state))
         })
     }
 
@@ -465,11 +475,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnvFor<FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        context_aux: ContextAuxFor<FEN>,
+        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm =
-            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+            db,
+            evm_env,
+            context_aux,
+            &mut inspector,
+        );
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -480,11 +495,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<ContextAuxUpdate<ContextAuxFor<FEN>>> {
         let evm_env = ecx.evm_clone();
+        let outer_tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, inner, &mut inspector)
+        db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, &mut inspector)
     }
 
     fn transact_from_tx_on_db(
@@ -927,15 +943,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
+        let context_aux = ecx.aux_state();
 
         let res = self.with_inspector(|mut inspector| {
-            let (res, nested_env) = {
+            let (res, nested_env, nested_aux) = {
                 let (db, journal) = ecx.db_journal_inner_mut();
                 let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
                     db,
                     evm_env,
+                    context_aux,
                     &mut inspector,
                 );
+                evm.preserve_aux_state_on_transaction();
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();
@@ -964,7 +983,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
                 let res = evm.transact_raw(tx_env);
                 let nested_evm_env = evm.to_evm_env();
-                (res, nested_evm_env)
+                let nested_aux = evm.aux_state();
+                (res, nested_evm_env, nested_aux)
             };
 
             // Restore env, preserving cheatcode cfg/block changes from the nested EVM
@@ -973,6 +993,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
             ecx.set_evm(restored_evm_env);
             ecx.set_tx(cached_tx_env);
+            ecx.set_aux_state(nested_aux);
 
             res
         });
@@ -1162,32 +1183,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             OpcodeStepDispatch::General => {
-                if storage_hook_active {
-                    call_inspectors!(
-                        [
-                            // These are sorted in definition order.
-                            &mut self.printer,
-                            &mut self.revert_diag,
-                            &mut self.script_execution_inspector,
-                            &mut self.tracer,
-                        ],
-                        |inspector| (**inspector).step(interpreter, ecx),
-                    );
-                } else {
+                if !storage_hook_active {
                     call_inspectors!(
                         [
                             // These are sorted in definition order.
                             &mut self.edge_coverage,
                             &mut self.fuzzer,
                             &mut self.line_coverage,
-                            &mut self.printer,
-                            &mut self.revert_diag,
-                            &mut self.script_execution_inspector,
-                            &mut self.tracer,
                         ],
                         |inspector| (**inspector).step(interpreter, ecx),
                     );
                 }
+                call_inspectors!(
+                    [
+                        // These are sorted in definition order.
+                        &mut self.printer,
+                        &mut self.revert_diag,
+                        &mut self.script_execution_inspector,
+                        &mut self.tracer,
+                    ],
+                    |inspector| (**inspector).step(interpreter, ecx),
+                );
             }
         }
 
@@ -1362,6 +1378,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         gas: Gas::new(gas_limit),
                     },
                     address: None,
+                    charged_create_state_gas: inputs.charged_create_state_gas(),
                 });
                 return None;
             } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
@@ -1372,6 +1389,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         gas: Gas::new(gas_limit),
                     },
                     address: None,
+                    charged_create_state_gas: inputs.charged_create_state_gas(),
                 });
                 return None;
             }
@@ -1381,7 +1399,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     .ok()?;
 
             // Record the redirect depth *after* validation succeeds.
-            self.inner.pending_create2_redirects.push(ecx.journal().depth());
+            self.inner.pending_create2_redirects.push(PendingCreate2Redirect {
+                depth: ecx.journal().depth(),
+                charged_create_state_gas: inputs.charged_create_state_gas(),
+            });
 
             // Rewrite the frame input from Create to Call.
             *frame_input = FrameInput::Call(Box::new(call_inputs));
@@ -1397,10 +1418,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         frame_result: &mut FrameResult,
     ) {
         let depth = ecx.journal().depth();
-        if self.inner.pending_create2_redirects.last().copied() != Some(depth) {
+        let Some(redirect) = self
+            .inner
+            .pending_create2_redirects
+            .last()
+            .copied()
+            .filter(|redirect| redirect.depth == depth)
+        else {
             return;
-        }
-
+        };
         self.inner.pending_create2_redirects.pop();
 
         let FrameResult::Call(call) = frame_result else {
@@ -1421,7 +1447,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             _ => None,
         };
 
-        *frame_result = FrameResult::Create(CreateOutcome { result: call.result.clone(), address });
+        *frame_result = FrameResult::Create(CreateOutcome {
+            result: call.result.clone(),
+            address,
+            charged_create_state_gas: redirect.charged_create_state_gas,
+        });
     }
 
     fn call(
@@ -1562,7 +1592,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: true,
                         precompile_call_logs: vec![],
-                        charged_new_account_state_gas: false,
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
                     });
                 }
                 // Mark accounts and storage cold before STATICCALLs
@@ -1704,7 +1734,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             );
             let address =
                 address.or_else(|| if result.is_revert() { precomputed_address } else { None });
-            return Some(CreateOutcome { result, address });
+            return Some(CreateOutcome {
+                result,
+                address,
+                charged_create_state_gas: create.charged_create_state_gas(),
+            });
         }
 
         None
@@ -1760,7 +1794,7 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
 ) -> Option<CallOutcome> {
     if call.target_address != arbitrum::ARB_SYS_ADDRESS
         || call.bytecode_address != arbitrum::ARB_SYS_ADDRESS
-        || !arbitrum::is_arbitrum_chain(ecx.cfg().chain_id)
+        || !arbitrum::is_arbitrum_chain(ecx.cfg().chain_id())
     {
         return None;
     }

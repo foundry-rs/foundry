@@ -11,7 +11,7 @@ use alloy_consensus::{
 };
 use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
-    block::{BlockExecutionResult, BlockExecutor, StateDB, TxResult},
+    block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB, TxResult},
 };
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::B256;
@@ -19,6 +19,8 @@ use anvil_core::eth::transaction::{MaybeImpersonatedTransaction, TransactionInfo
 use eyre::{Context, Result};
 use foundry_evm::core::evm::IntoInstructionResult;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+#[cfg(feature = "monad")]
+use monad_revm::staking::constants::SYSTEM_ADDRESS as MONAD_SYSTEM_ADDRESS;
 use revm::{
     Database,
     context_interface::result::{ExecutionResult, Output},
@@ -40,6 +42,28 @@ pub(crate) struct PreparedForkTransactionReplay {
     pub(crate) parent_beacon_block_root: Option<B256>,
 }
 
+impl PreparedForkTransactionReplay {
+    /// Resolves the execution chain ID encoded by the source prefix.
+    ///
+    /// Unprotected legacy prefixes inherit the execution identity exposed by the endpoint.
+    pub(crate) fn execution_chain_id(&self, fallback: u64) -> Result<u64> {
+        let mut resolved = None;
+        for replay in &self.transactions {
+            let Some(chain_id) = replay.transaction.tx().chain_id() else { continue };
+            if let Some(expected) = resolved {
+                eyre::ensure!(
+                    chain_id == expected,
+                    "source transaction at index {} uses chain ID {chain_id}, expected {expected}",
+                    replay.source_index
+                );
+            } else {
+                resolved = Some(chain_id);
+            }
+        }
+        Ok(resolved.unwrap_or(fallback))
+    }
+}
+
 /// The complete result of executing a historical prefix against an overlay.
 pub(crate) struct ExecutedHistoricalReplay {
     pub(crate) block_result: BlockExecutionResult<FoundryReceiptEnvelope>,
@@ -51,6 +75,7 @@ pub(crate) struct ExecutedHistoricalReplay {
 /// Converts and validates every source-prefix transaction before database execution.
 pub(crate) fn prepare_fork_transaction_replay(
     replay: ForkTransactionReplay,
+    #[cfg_attr(not(feature = "monad"), allow(unused_variables))] trust_monad_protocol_sender: bool,
 ) -> Result<PreparedForkTransactionReplay> {
     let source_hash = replay.source_block.header().hash;
     let source_number = replay.source_block.header().number;
@@ -81,6 +106,21 @@ pub(crate) fn prepare_fork_transaction_replay(
                  ({source_number}) changed hash from {source_transaction_hash} to {}",
                 transaction.tx_hash()
             );
+            #[cfg(feature = "monad")]
+            let sender = if trust_monad_protocol_sender
+                && source_transaction.from() == MONAD_SYSTEM_ADDRESS
+            {
+                source_transaction.from()
+            } else {
+                transaction.recover_signer().wrap_err_with(|| {
+                    format!(
+                        "failed to recover sender for source transaction \
+                         {source_transaction_hash} at index {source_index} in block {source_hash} \
+                         ({source_number})"
+                    )
+                })?
+            };
+            #[cfg(not(feature = "monad"))]
             let sender = transaction.recover_signer().wrap_err_with(|| {
                 format!(
                     "failed to recover sender for source transaction {source_transaction_hash} at \
@@ -111,6 +151,39 @@ where
         >,
     E::HaltReason: Clone + IntoInstructionResult,
 {
+    execute_historical_replay_with(
+        executor,
+        transactions,
+        inspector_config,
+        |evm, tx_env, transaction_hash| {
+            evm.transact(tx_env).map_err(|err| BlockExecutionError::evm(err, transaction_hash))
+        },
+    )
+}
+
+/// Executes a prepared prefix using a caller-selected network transaction entry point.
+pub(crate) fn execute_historical_replay_with<E, F>(
+    executor: &mut AnvilBlockExecutor<E>,
+    transactions: &[HistoricalReplayTransaction],
+    inspector_config: &InspectorTxConfig,
+    mut transact: F,
+) -> Result<(Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>, Vec<TransactionInfo>)>
+where
+    E: Evm<
+            DB: StateDB,
+            Inspector = AnvilInspector,
+            Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
+        >,
+    E::HaltReason: Clone + IntoInstructionResult,
+    F: FnMut(
+        &mut E,
+        E::Tx,
+        B256,
+    ) -> Result<
+        revm::context_interface::result::ResultAndState<E::HaltReason>,
+        BlockExecutionError,
+    >,
+{
     let mut stored_transactions = Vec::with_capacity(transactions.len());
     let mut transaction_infos = Vec::with_capacity(transactions.len());
 
@@ -132,7 +205,10 @@ where
             .nonce;
 
         let result = executor
-            .execute_transaction_without_commit(replay.transaction.clone().into_encoded())
+            .execute_transaction_without_commit_with(
+                replay.transaction.clone().into_encoded(),
+                &mut transact,
+            )
             .map_err(|err| {
                 eyre::eyre!(
                     "failed to execute source transaction {transaction_hash} at index {}: {err}",
