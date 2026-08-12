@@ -260,7 +260,7 @@ impl RemappingsProvider<'_> {
         let mut authoritative_user_remappings = user_remappings.clone();
         for remapping in &mut authoritative_user_remappings {
             if let Some(context) = &mut remapping.context {
-                *context = format!("{}/", self.root.join(&*context).display());
+                *context = self.root.join(&*context).display().to_string();
             }
         }
         // Let's now use the wrapper to conditionally extend the remappings with the autodetected
@@ -559,10 +559,7 @@ fn contextual_overlays(
 ) -> Option<Vec<Remapping>> {
     let applicable = |mapping: &&Remapping| {
         mapping.context.as_deref().is_none_or(|context| {
-            refinement
-                .context
-                .as_deref()
-                .is_some_and(|refinement| Path::new(refinement).starts_with(context))
+            refinement.context.as_deref().is_some_and(|refinement| refinement.starts_with(context))
         })
     };
     if authoritative

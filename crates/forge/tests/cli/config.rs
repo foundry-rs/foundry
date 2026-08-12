@@ -1389,6 +1389,41 @@ forgetest!(explicit_context_precedes_nested_auto_remapping, |prj, cmd| {
     }
 });
 
+forgetest!(slashless_context_is_a_lexical_prefix, |prj, cmd| {
+    let abc = prj.root().join("lib/abc");
+    let shared = abc.join("lib/shared/src");
+    pretty_err(&abc, fs::create_dir_all(abc.join("src")));
+    pretty_err(&shared, fs::create_dir_all(&shared));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/override")));
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/override/Version.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(&shared, fs::write(shared.join("Version.sol"), "contract Shadowed {}\n"));
+    pretty_err(
+        &abc,
+        fs::write(
+            abc.join("src/Abc.sol"),
+            "import {Selected} from \"shared/Version.sol\"; contract Abc is Selected {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesAbc.sol",
+        "import {Abc} from \"abc/Abc.sol\"; contract UsesAbc is Abc {}\n",
+    );
+
+    let remapping = "lib/a:shared/=src/override/";
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str(remapping).unwrap().into()];
+    });
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| config.remappings.clear());
+    cmd.forge_fuse().args(["build", "--force", "--remappings", remapping]).assert_success();
+    cmd.forge_fuse().args(["lint", "--remappings", remapping]).assert_success();
+});
+
 forgetest!(nested_auto_remapping_preserves_declared_precedence, |prj, cmd| {
     let a = prj.root().join("lib/a");
     let pinned_a = a.join("src/pinned");
