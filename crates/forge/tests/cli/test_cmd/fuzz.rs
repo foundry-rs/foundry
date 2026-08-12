@@ -534,7 +534,11 @@ contract ForgeExplicitFuzzReplayTest {{
         .arg(&missing_explicit)
         .assert_failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-    assert!(stderr.contains(&missing_explicit.display().to_string()), "{stderr}");
+    let stderr = stderr.replace('\\', "/");
+    assert!(
+        stderr.contains(&missing_explicit.display().to_string().replace('\\', "/")),
+        "{stderr}"
+    );
 
     let malformed = prj.root().join("malformed-fuzz-failure.json");
     std::fs::write(&malformed, "not json").unwrap();
@@ -552,7 +556,8 @@ contract ForgeExplicitFuzzReplayTest {{
         .arg(&malformed)
         .assert_failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-    assert!(stderr.contains(&malformed.display().to_string()), "{stderr}");
+    let stderr = stderr.replace('\\', "/");
+    assert!(stderr.contains(&malformed.display().to_string().replace('\\', "/")), "{stderr}");
 
     let output = cmd
         .forge_fuse()
@@ -4303,6 +4308,59 @@ Encountered 2 failing tests in test/CounterTest.t.sol:CounterTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+});
+
+#[cfg(feature = "monad")]
+forgetest_init!(test_fuzz_monad_cheatcode_revert_is_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.fail_on_revert = false;
+        config.fuzz.runs = 1;
+    });
+    prj.add_test(
+        "MonadCheatcodeRevert.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+interface StaleMonadVm {
+    function removedCheatcode(uint256 value) external;
+}
+
+contract MonadCheatcodeRevertTest {
+    StaleMonadVm constant MONAD_VM =
+        StaleMonadVm(0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA);
+
+    function testFuzz_monadVmRevertMustFail(uint256 value) public {
+        MONAD_VM.removedCheatcode(value);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "monad", "--mc", "MonadCheatcodeRevertTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MonadCheatcodeRevert.t.sol:MonadCheatcodeRevertTest
+[FAIL: unknown monad cheatcode with selector 0x1c0b1af1; check that your MonadVm interface matches this forge version; counterexample: calldata=[..] args=[..]] testFuzz_monadVmRevertMustFail(uint256) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MonadCheatcodeRevert.t.sol:MonadCheatcodeRevertTest
+[FAIL: unknown monad cheatcode with selector 0x1c0b1af1; check that your MonadVm interface matches this forge version; counterexample: calldata=[..] args=[..]] testFuzz_monadVmRevertMustFail(uint256) (runs: 0, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)

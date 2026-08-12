@@ -1277,7 +1277,7 @@ contract Core is DependencyLibrary {}
         ),
     );
 
-    cmd.args(["build", "--no-lint", "--root", project.to_str().unwrap()]).assert_success();
+    cmd.current_dir(project).args(["build", "--no-lint"]).assert_success();
 });
 
 forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {

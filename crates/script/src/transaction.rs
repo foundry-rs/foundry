@@ -2,7 +2,7 @@ use super::ScriptResult;
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, hex};
+use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
@@ -55,6 +55,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
                 }
 
                 let (selector, data) = data.split_at(SELECTOR_LEN);
+                let selector = Selector::from_slice(selector);
 
                 let function = if let Some(info) = local_contracts.get(&to) {
                     // This CALL is made to a local contract.
@@ -63,7 +64,9 @@ impl<N: Network> ScriptTransactionBuilder<N> {
                 } else {
                     // This CALL is made to an external contract; try to decode it from the given
                     // decoder.
-                    decoder.functions.get(selector).and_then(|v| v.first())
+                    decoder
+                        .functions_for_selector(to, &selector)
+                        .and_then(|functions| functions.first())
                 };
 
                 if let Some(function) = function {
@@ -181,5 +184,73 @@ impl<N: Network> ScriptTransactionBuilder<N> {
 impl<N: Network> From<TransactionWithMetadata<N>> for ScriptTransactionBuilder<N> {
     fn from(transaction: TransactionWithMetadata<N>) -> Self {
         Self { transaction }
+    }
+}
+
+#[cfg(all(test, feature = "monad"))]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::{Bytes, address, keccak256};
+    use alloy_rpc_types::TransactionRequest;
+    use foundry_evm::{hardforks::MonadHardfork, traces::CallTraceDecoderBuilder};
+    use foundry_evm_networks::NetworkConfigs;
+
+    const STAKING_ADDRESS: Address = address!("0000000000000000000000000000000000001000");
+    const RESERVE_BALANCE_ADDRESS: Address = address!("0000000000000000000000000000000000001001");
+
+    fn monad_decoder(hardfork: MonadHardfork) -> CallTraceDecoder {
+        CallTraceDecoderBuilder::new()
+            .with_networks(NetworkConfigs::with_monad())
+            .with_chain_id(Some(143))
+            .with_monad_hardfork(Some(hardfork))
+            .build()
+    }
+
+    fn call_metadata(
+        address: Address,
+        signature: &str,
+        hardfork: MonadHardfork,
+    ) -> TransactionWithMetadata<Ethereum> {
+        let input = Bytes::copy_from_slice(&keccak256(signature)[..SELECTOR_LEN]);
+        let selector = Selector::from_slice(&input);
+        let decoder = monad_decoder(hardfork);
+
+        assert!(!decoder.functions.contains_key(&selector));
+        assert!(decoder.functions_for_selector(address, &selector).is_some());
+
+        let transaction = TransactionRequest::default()
+            .with_from(Address::repeat_byte(0x11))
+            .with_to(address)
+            .with_nonce(0)
+            .with_input(input);
+        let mut builder = ScriptTransactionBuilder::new(
+            TransactionMaybeSigned::new(transaction),
+            "http://localhost:8545".to_string(),
+        );
+        builder.set_call(&BTreeMap::new(), &decoder, Address::ZERO).unwrap();
+        builder.build()
+    }
+
+    #[test]
+    fn address_scoped_monad_calls_populate_metadata() {
+        let staking = call_metadata(STAKING_ADDRESS, "getEpoch()", MonadHardfork::MonadEight);
+        assert_eq!(staking.function.as_deref(), Some("getEpoch()"));
+        assert_eq!(
+            staking.function_abi.as_deref(),
+            Some("function getEpoch() returns (uint64 epoch, bool inEpochDelayPeriod)")
+        );
+        assert_eq!(staking.display_function.as_deref(), Some("getEpoch"));
+        assert_eq!(staking.arguments, Some(Vec::new()));
+
+        let reserve =
+            call_metadata(RESERVE_BALANCE_ADDRESS, "dippedIntoReserve()", MonadHardfork::MonadNine);
+        assert_eq!(reserve.function.as_deref(), Some("dippedIntoReserve()"));
+        assert_eq!(
+            reserve.function_abi.as_deref(),
+            Some("function dippedIntoReserve() returns (bool dipped)")
+        );
+        assert_eq!(reserve.display_function.as_deref(), Some("dippedIntoReserve"));
+        assert_eq!(reserve.arguments, Some(Vec::new()));
     }
 }

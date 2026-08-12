@@ -1,18 +1,23 @@
 use super::{
-    auth::confirm_auth_rpc_disclosure,
+    auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_before_network_resolution},
     call_overrides::CallOverrideOpts,
     run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc},
 };
 use crate::{
     Cast,
-    debug::handle_traces,
+    debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
+use alloy_consensus::BlockHeader;
+use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
-use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Bytes, TxKind, U256, hex, map::AddressHashMap};
+use alloy_network::{
+    BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder,
+    primitives::HeaderResponse,
+};
+use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -26,7 +31,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
-    utils::{LoadConfig, TraceResult, load_config_from_provider, parse_ether_value},
+    utils::{LoadConfig, TraceResult, parse_ether_value},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -36,24 +41,28 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config, TracingConfig,
+    Chain, Config, FoundryHardfork, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, context_for_child_transaction},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
+use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
+use revm::context::Block;
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -196,6 +205,15 @@ pub enum CallSubcommands {
     },
 }
 
+struct AuthDisclosurePreflight {
+    confirmed: bool,
+    sender: Option<SenderKind<'static>>,
+}
+
+fn infer_network_from_chain_id(networks: NetworkConfigs, chain_id: u64) -> Result<NetworkConfigs> {
+    networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)
+}
+
 impl CallArgs {
     fn resolve_tracing(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
         if self.debug_trace_call {
@@ -216,30 +234,76 @@ impl CallArgs {
             return self.run_curl().await;
         }
 
-        if self.tx.tempo.is_tempo() {
-            return self.run_with_network::<TempoEvmNetwork>().await;
-        }
-
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
-        if let Some(chain) = self.chain {
-            evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+        let (mut config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
+        if self.tx.tempo.is_tempo() {
+            evm_opts.networks = NetworkConfigs::with_tempo();
+        } else if let Some(chain) = self.chain {
+            evm_opts.networks = infer_network_from_chain_id(evm_opts.networks, chain.id())?;
         }
-        evm_opts.infer_network_from_fork().await;
-        if self.chain.is_none() {
-            self.chain = evm_opts.env.chain_id.map(Chain::from_id);
+        let Some(auth_preflight) = self.preflight_auth_disclosure().await? else {
+            return Ok(());
+        };
+        evm_opts.infer_network_from_fork().await?;
+        if self.chain.is_none()
+            && let Some(chain_id) = evm_opts.env.chain_id
+        {
+            let chain = Chain::from_id(chain_id);
+            self.chain = Some(chain);
+            config.chain = Some(chain);
         }
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_network::<TempoEvmNetwork>().await;
+            return self
+                .run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
+        }
+
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return self
+                .run_with_network_and_opts::<MonadEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_network::<OpEvmNetwork>().await;
+            return self
+                .run_with_network_and_opts::<OpEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
         }
 
-        self.run_with_network::<EthEvmNetwork>().await
+        self.run_with_network_and_opts::<EthEvmNetwork>(config, evm_opts, auth_preflight).await
+    }
+
+    /// Returns whether resolving this call can disclose an authorization before the transaction
+    /// builder exists. This mirrors the builder's disclosure check after applying `.raw()`.
+    const fn will_disclose_auth(&self) -> bool {
+        !self.tx.auth.is_empty() && (!self.trace || matches!(self.tx.access_list, Some(None)))
+    }
+
+    async fn preflight_auth_disclosure(&self) -> Result<Option<AuthDisclosurePreflight>> {
+        if !self.will_disclose_auth() {
+            return Ok(Some(AuthDisclosurePreflight { confirmed: false, sender: None }));
+        }
+
+        let sender = if self.browser.browser {
+            None
+        } else {
+            Some(SenderKind::from_wallet_opts(self.wallet.clone()).await?)
+        };
+        let browser_sender = SenderKind::from(self.wallet.from.unwrap_or_default());
+        let validation_sender = sender.as_ref().unwrap_or(&browser_sender);
+        if !confirm_auth_rpc_disclosure_before_network_resolution(
+            &self.tx.auth,
+            validation_sender,
+            self.force,
+        )? {
+            return Ok(None);
+        }
+
+        Ok(Some(AuthDisclosurePreflight { confirmed: true, sender }))
     }
 
     fn validate_trace_args(&self) -> Result<()> {
@@ -265,8 +329,33 @@ impl CallArgs {
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = load_config_from_provider(figment)?;
+        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
+        let Some(auth_preflight) = self.preflight_auth_disclosure().await? else {
+            return Ok(());
+        };
+        evm_opts.infer_network_from_fork().await?;
+        let network = evm_opts.networks.execution_network();
+        if !FEN::supports_network(network) {
+            eyre::bail!(
+                "the selected EVM network cannot execute `{network}`; use the matching network \
+                 implementation"
+            );
+        }
+        // Keep the public generic wrapper independent of the network-specific future layout.
+        Box::pin(self.run_with_network_and_opts::<FEN>(config, evm_opts, auth_preflight)).await
+    }
+
+    async fn run_with_network_and_opts<FEN: FoundryEvmNetwork>(
+        self,
+        mut config: Box<Config>,
+        evm_opts: EvmOpts,
+        auth_preflight: AuthDisclosurePreflight,
+    ) -> Result<()>
+    where
+        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
+    {
+        config.networks = evm_opts.networks;
         let state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
         config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
@@ -280,6 +369,7 @@ impl CallArgs {
             command,
             block,
             trace,
+            debug_trace_call,
             evm_version,
             debug,
             data,
@@ -295,7 +385,11 @@ impl CallArgs {
         }
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
-        let sender = if let Some(browser) = browser.run::<FEN::Network>().await? {
+        let endpoint_identity =
+            if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
+        let sender = if let Some(sender) = auth_preflight.sender {
+            sender
+        } else if let Some(browser) = browser.run::<FEN::Network>().await? {
             browser.address().into()
         } else {
             SenderKind::from_wallet_opts(wallet).await?
@@ -328,13 +422,33 @@ impl CallArgs {
             .raw();
         let will_disclose =
             (!trace && builder.has_auth()) || builder.will_disclose_auth_during_build();
-        if will_disclose && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+        if will_disclose
+            && !auth_preflight.confirmed
+            && !confirm_auth_rpc_disclosure(&builder, &sender, force)?
+        {
             return Ok(());
         }
         let (tx, func) = builder.build(sender).await?;
 
-        if self.debug_trace_call {
-            let block = self.block.unwrap_or(BlockId::latest());
+        if debug_trace_call {
+            let endpoint_identity = endpoint_identity
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
+            let requested_block = block.unwrap_or(BlockId::latest());
+            let fetched_block = provider.get_block(requested_block).await?;
+            let resolved_canonical_block =
+                if matches!(requested_block, BlockId::Number(_)) && !requested_block.is_pending() {
+                    fetched_block.as_ref().map(|block| {
+                        BlockNumHash::new(block.header().number(), block.header().hash())
+                    })
+                } else {
+                    None
+                };
+            let block = pin_remote_trace_block(
+                requested_block,
+                fetched_block.as_ref().map(|block| block.header().hash()),
+            )?;
+            let block_time_override = block_overrides.as_ref().and_then(|overrides| overrides.time);
             let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -414,8 +528,40 @@ impl CallArgs {
             } else {
                 Default::default()
             };
+            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            ensure_remote_trace_context_unchanged(endpoint_identity, &final_endpoint_identity)?;
 
-            let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            // The remote node executed this trace, so its reported family is authoritative for
+            // decoding even when the caller selected a compatible local EVM implementation.
+            let execution_network = endpoint_identity.network;
+            let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
+            let block_timestamp = if let Some(timestamp) = block_time_override {
+                Some(timestamp)
+            } else {
+                fetched_block.as_ref().map(|block| block.header().timestamp())
+            };
+            // A configured hardfork is an explicit trace-decoding override. Otherwise honor an
+            // Anvil endpoint's exact execution hardfork before consulting the source schedule.
+            let resolved_hardfork = select_remote_trace_hardfork(
+                config.hardfork,
+                endpoint_identity.hardfork,
+                execution_network,
+            )
+            .or_else(|| {
+                block_timestamp.and_then(|timestamp| {
+                    FoundryHardfork::from_chain_and_timestamp(chain.id(), timestamp)
+                })
+            });
+            if let Some(resolved_block) = resolved_canonical_block {
+                let canonical_block =
+                    provider.get_block_by_number(resolved_block.number.into()).await?;
+                ensure_remote_trace_block_is_canonical(
+                    resolved_block,
+                    canonical_block.as_ref().map(|block| {
+                        BlockNumHash::new(block.header().number(), block.header().hash())
+                    }),
+                )?;
+            }
             handle_traces(
                 result,
                 &config,
@@ -424,7 +570,8 @@ impl CallArgs {
                 &tracing,
                 with_local_artifacts,
                 false,
-                None,
+                resolved_hardfork,
+                endpoint_identity.network_profile,
             )
             .await?;
 
@@ -432,16 +579,16 @@ impl CallArgs {
         }
 
         if trace {
-            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
+            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = block {
                 // Override Config `fork_block_number` (if set) with CLI value.
                 config.fork_block_number = Some(block_number);
             }
 
             let create2_deployer = evm_opts.create2_deployer;
             let verbosity = tracing.verbosity;
-            let (mut evm_env, tx_env, fork, chain, networks) =
+            let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
-
+            let context_block_number = evm_env.block_env.number().saturating_to();
             // modify settings that usually set in eth_call
             evm_env.cfg_env.disable_block_gas_limit = true;
             evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
@@ -456,6 +603,19 @@ impl CallArgs {
                     evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
+            let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+                &config,
+                networks,
+                chain.id(),
+                endpoint_hardfork,
+                &mut evm_env,
+                evm_version,
+            );
+            TracingExecutor::<FEN>::extend_precompile_labels(
+                &mut config,
+                networks,
+                resolved_hardfork,
+            );
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
@@ -469,7 +629,7 @@ impl CallArgs {
             let mut executor = TracingExecutor::<FEN>::new(
                 (evm_env, tx_env),
                 fork,
-                evm_version,
+                None,
                 trace_requirements,
                 networks,
                 create2_deployer,
@@ -521,13 +681,26 @@ impl CallArgs {
                 env_tx.set_signed_authorization(auth);
             }
 
+            let mut context_tx = executor.tx_env().clone();
+            context_tx.set_caller(from);
+            context_tx.set_kind(tx_kind);
+            context_tx.set_data(input.clone());
+            context_tx.set_value(value);
+            let context_aux = context_for_child_transaction::<FEN, _>(
+                &provider,
+                context_block_number,
+                &context_tx,
+            )
+            .await?;
+
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result = executor.deploy(from, input, value, None);
+                    let deploy_result =
+                        executor.deploy_with_context(from, input, value, context_aux, None);
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw(from, to, input, value)?,
+                    executor.transact_raw_with_context(from, to, input, value, context_aux)?,
                     TraceKind::Execution,
                 ),
             };
@@ -541,7 +714,8 @@ impl CallArgs {
                 &tracing,
                 with_local_artifacts,
                 debug,
-                None,
+                resolved_hardfork,
+                networks,
             )
             .await?;
 
@@ -671,6 +845,52 @@ impl CallArgs {
     }
 }
 
+fn pin_remote_trace_block(requested: BlockId, fetched_hash: Option<B256>) -> Result<BlockId> {
+    if requested.is_pending() {
+        return Ok(requested);
+    }
+
+    let fetched_hash = fetched_hash.ok_or_else(|| {
+        eyre::eyre!("block {requested:?} was not found while preparing the remote trace")
+    })?;
+    if let BlockId::Hash(requested_hash) = requested {
+        if requested_hash.block_hash != fetched_hash {
+            eyre::bail!(
+                "the RPC endpoint returned block {fetched_hash} for requested block {}; retry the command",
+                requested_hash.block_hash
+            );
+        }
+        // Preserve `requireCanonical` exactly as supplied by the caller.
+        return Ok(requested);
+    }
+
+    Ok(BlockId::hash(fetched_hash))
+}
+
+fn ensure_remote_trace_block_is_canonical(
+    expected: BlockNumHash,
+    actual: Option<BlockNumHash>,
+) -> Result<()> {
+    let Some(actual) = actual else {
+        eyre::bail!(
+            "block {} at {} changed canonicality while collecting its remote trace: the canonical block lookup no longer reports that height; retry the command",
+            expected.hash,
+            expected.number,
+        );
+    };
+    if actual != expected {
+        eyre::bail!(
+            "block {} at {} changed canonicality while collecting its remote trace: the canonical block lookup reported block {} at {}; retry the command",
+            expected.hash,
+            expected.number,
+            actual.hash,
+            actual.number,
+        );
+    }
+
+    Ok(())
+}
+
 impl figment::Provider for CallArgs {
     fn metadata(&self) -> Metadata {
         Metadata::named("CallArgs")
@@ -693,7 +913,69 @@ impl figment::Provider for CallArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_eips::RpcBlockHash;
     use alloy_primitives::U64;
+
+    #[test]
+    fn pending_remote_trace_block_remains_unpinned() {
+        assert_eq!(pin_remote_trace_block(BlockId::pending(), None).unwrap(), BlockId::pending());
+    }
+
+    #[test]
+    fn non_pending_remote_trace_blocks_are_pinned() {
+        let hash = B256::repeat_byte(0x11);
+        for requested in [
+            BlockId::number(42),
+            BlockId::earliest(),
+            BlockId::latest(),
+            BlockId::safe(),
+            BlockId::finalized(),
+        ] {
+            assert_eq!(pin_remote_trace_block(requested, Some(hash)).unwrap(), BlockId::hash(hash));
+        }
+    }
+
+    #[test]
+    fn non_pending_remote_trace_block_must_exist() {
+        let err = pin_remote_trace_block(BlockId::number(42), None).unwrap_err();
+        assert!(err.to_string().contains("was not found while preparing the remote trace"));
+    }
+
+    #[test]
+    fn hash_remote_trace_block_preserves_canonical_requirement() {
+        let hash = B256::repeat_byte(0x22);
+        for require_canonical in [None, Some(false), Some(true)] {
+            let requested = BlockId::Hash(RpcBlockHash { block_hash: hash, require_canonical });
+            assert_eq!(pin_remote_trace_block(requested, Some(hash)).unwrap(), requested);
+        }
+    }
+
+    #[test]
+    fn hash_remote_trace_block_must_match_response() {
+        let err = pin_remote_trace_block(
+            BlockId::hash_canonical(B256::repeat_byte(0x33)),
+            Some(B256::repeat_byte(0x44)),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("returned block"));
+    }
+
+    #[test]
+    fn remote_trace_block_must_remain_canonical() {
+        let expected = BlockNumHash::new(42, B256::repeat_byte(0x55));
+
+        ensure_remote_trace_block_is_canonical(expected, Some(expected)).unwrap();
+
+        let err = ensure_remote_trace_block_is_canonical(expected, None).unwrap_err();
+        assert!(err.to_string().contains("no longer reports that height"));
+
+        let err = ensure_remote_trace_block_is_canonical(
+            expected,
+            Some(BlockNumHash::new(expected.number, B256::repeat_byte(0x66))),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("changed canonicality"));
+    }
 
     #[test]
     fn can_parse_call_data() {
@@ -712,6 +994,26 @@ mod tests {
         let config = Config::from_provider(Config::figment().merge(&args)).unwrap();
 
         assert_eq!(config.chain, Some(Chain::mainnet()));
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn chain_id_rejects_disabled_monad_network() {
+        let error = infer_network_from_chain_id(NetworkConfigs::default(), 143).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 143: network family `monad` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    fn explicit_ethereum_overrides_chain_id_inference() {
+        let ethereum = NetworkConfigs::with_ethereum();
+        let inferred = infer_network_from_chain_id(ethereum, 143).unwrap();
+
+        assert_eq!(inferred, ethereum);
     }
 
     #[test]
