@@ -2652,6 +2652,148 @@ PersistedSecondaryRevertTest invariants: 1/2 invariants broken
 "#]]);
 });
 
+// A nested callee can be recorded as the reverter for a terminal predicate failure. The
+// predicate selector, rather than the reverter address, identifies the cached secondary.
+forgetest_init!(secondary_persisted_replays_nested_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "PersistedSecondaryNestedRevertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract NestedReverter {
+    function fail() external pure {
+        revert("nested predicate revert");
+    }
+}
+
+contract NestedRevertTarget {
+    bool public broken;
+
+    function breakInvariant() external {
+        broken = true;
+    }
+}
+
+contract PersistedSecondaryNestedRevertTest is Test {
+    NestedReverter public reverter;
+    NestedRevertTarget public target;
+
+    function setUp() public {
+        reverter = new NestedReverter();
+        target = new NestedRevertTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_secondary() public view {
+        if (target.broken()) reverter.fail();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj.root().join(
+        "cache/invariant/failures/PersistedSecondaryNestedRevertTest/invariants/invariant_secondary",
+    );
+    assert!(persisted.is_file());
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: nested predicate revert] invariant_secondary
+...
+PersistedSecondaryNestedRevertTest invariants: 1/2 invariants broken
+...
+ PersistedSecondaryNestedRevertTest invariants (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});
+
+// Cached secondaries have already been validated against their persisted failure site. A generic
+// re-shrink must not replace that predicate failure with a handler assertion.
+forgetest_init!(secondary_persisted_skips_generic_reshrink, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
+        config.invariant.runs = 100;
+        config.invariant.depth = 10;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "PersistedSecondaryShrinkTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SiteChangingTarget {
+    bool public armed;
+    bool public broken;
+
+    function arm() external {
+        armed = true;
+    }
+
+    function trigger() external {
+        assert(armed);
+        broken = true;
+    }
+}
+
+contract PersistedSecondaryShrinkTest is Test {
+    SiteChangingTarget public target;
+
+    function setUp() public {
+        target = new SiteChangingTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_secondary() public view {
+        require(!target.broken(), "secondary predicate");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let failure_root = prj.root().join("cache/invariant/failures/PersistedSecondaryShrinkTest");
+    let persisted = failure_root.join("invariants/invariant_secondary");
+    let mut persisted_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    let calls = persisted_json["call_sequence"].as_array().unwrap();
+    let arm = calls.iter().find(|call| call["func_name"] == "arm").unwrap().clone();
+    let trigger = calls.iter().find(|call| call["func_name"] == "trigger").unwrap().clone();
+    persisted_json["call_sequence"] = serde_json::json!([arm, trigger]);
+    std::fs::write(&persisted, serde_json::to_vec_pretty(&persisted_json).unwrap()).unwrap();
+    let _ = std::fs::remove_file(persisted.with_file_name("invariant_anchor"));
+    let _ = std::fs::remove_dir_all(failure_root.join("handlers"));
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.invariant.shrink_run_limit = 100;
+    });
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--mt", "invariant_"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("[FAIL: secondary predicate] invariant_secondary"), "{stdout}");
+    assert!(stdout.contains("[Sequence] (original: 2, shrunk: 2)"), "{stdout}");
+    assert!(stdout.contains("calldata=arm()"), "{stdout}");
+    assert!(stdout.contains("calldata=trigger()"), "{stdout}");
+});
+
 // Verifies that a compatible persisted secondary remains in the report while the campaign
 // continues to discover another predicate failure.
 forgetest_init!(secondary_persisted_continues_campaign, |prj, cmd| {

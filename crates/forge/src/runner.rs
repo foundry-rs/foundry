@@ -3846,9 +3846,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     && !self.cr.mcr.tcfg.fuzz_failure_replay
                 {
                     let is_revert = match confirmed_failure_site {
-                        SymbolicInvariantFailureSite::Invariant { target, selector, .. }
-                            if target == replay_contract.address
-                                && selector == replay_invariant.selector() =>
+                        SymbolicInvariantFailureSite::Invariant { selector, .. }
+                            if selector == replay_invariant.selector() =>
                         {
                             false
                         }
@@ -4600,8 +4599,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     } else {
                         let position = next_position;
                         next_position += 1;
+                        let mut replay_config = invariant_config.clone();
+                        if replayed_storage.is_some() {
+                            // The persisted failure site was validated before entering the
+                            // campaign. The generic shrinker only preserves failure, not its site,
+                            // so shrinking here could misattribute a different failure to this
+                            // predicate.
+                            replay_config.shrink_run_limit = 0;
+                        }
                         match self.replay_invariant_error_sequence(
-                            invariant_config.clone(),
+                            replay_config,
                             calls,
                             Some(case_data.inner_sequence.clone()),
                             case_data.assertion_failure,
