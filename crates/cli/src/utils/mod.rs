@@ -206,6 +206,9 @@ pub fn common_setup() {
 /// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
 /// to not be able to configure the colors. It would also mess up the JSON output.
 pub fn load_dotenv() {
+    // `webbrowser` treats this variable as an executable command on Unix. Do not let an
+    // untrusted project select an executable, while preserving values supplied by the user.
+    let browser = std::env::var_os("BROWSER");
     let load = |p: &Path| {
         dotenvy::from_path(p.join(".env")).ok();
     };
@@ -220,6 +223,15 @@ pub fn load_dotenv() {
             load(&cwd);
         }
     };
+
+    // SAFETY: `load_dotenv` is called during single-threaded CLI startup.
+    unsafe {
+        if let Some(browser) = browser {
+            std::env::set_var("BROWSER", browser);
+        } else {
+            std::env::remove_var("BROWSER");
+        }
+    }
 }
 
 /// Sets the default [`yansi`] color output condition.
@@ -1308,19 +1320,39 @@ mod tests {
         let mut cwd_file = File::create(cwd_env).unwrap();
         let mut prj_file = File::create(nested.join(".env")).unwrap();
 
-        cwd_file.write_all(b"TESTCWDKEY=cwd_val").unwrap();
+        cwd_file.write_all(b"TESTCWDKEY=cwd_val\nBROWSER=./project-browser").unwrap();
         cwd_file.sync_all().unwrap();
 
-        prj_file.write_all(b"TESTPRJKEY=prj_val").unwrap();
+        prj_file.write_all(b"TESTPRJKEY=prj_val\nBROWSER=./nested-browser").unwrap();
         prj_file.sync_all().unwrap();
 
+        let browser = env::var_os("BROWSER");
+        unsafe { env::remove_var("BROWSER") };
         let cwd = env::current_dir().unwrap();
-        env::set_current_dir(nested).unwrap();
+        env::set_current_dir(&nested).unwrap();
         load_dotenv();
         env::set_current_dir(cwd).unwrap();
 
+        let loaded_browser = env::var_os("BROWSER");
+        unsafe { env::set_var("BROWSER", "trusted-browser") };
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(&nested).unwrap();
+        load_dotenv();
+        env::set_current_dir(cwd).unwrap();
+        let configured_browser = env::var_os("BROWSER");
+
+        unsafe {
+            if let Some(browser) = browser {
+                env::set_var("BROWSER", browser);
+            } else {
+                env::remove_var("BROWSER");
+            }
+        }
+
         assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
         assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
+        assert_eq!(loaded_browser, None);
+        assert_eq!(configured_browser.as_deref(), Some(OsStr::new("trusted-browser")));
     }
 
     #[test]
