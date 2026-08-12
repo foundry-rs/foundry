@@ -774,6 +774,8 @@ impl Config {
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
+    const DEFAULT_SRC: &'static str = "src";
+
     /// The name of the directory foundry reserves for itself under the user's home directory: `~`
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
@@ -952,9 +954,14 @@ impl Config {
     }
 
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
+        self.networks.validate().map_err(Error::from)?;
         let Some(hardfork) = self.hardfork else { return Ok(()) };
         self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
         Ok(())
+    }
+
+    fn uses_default_src(&self) -> bool {
+        self.src == Path::new(Self::DEFAULT_SRC)
     }
 
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
@@ -970,7 +977,8 @@ impl Config {
 
         let root = self.root.as_path();
         let profile = Self::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
+        let mut figment = Figment::default()
+            .merge(DappHardhatDirProvider { root, detect_src: self.uses_default_src() });
 
         // merge global foundry.toml file
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
@@ -1550,7 +1558,7 @@ impl Config {
             .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.iter())
-            .remappings(self.get_all_remappings())
+            .remappings(self.project_remappings())
             .allowed_path(&self.root)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
@@ -1604,6 +1612,42 @@ impl Config {
     /// Returns all configured remappings.
     pub fn get_all_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.remappings.iter().map(|m| m.clone().into())
+    }
+
+    /// Returns project remappings with absolute aliases for relative filesystem contexts.
+    fn project_remappings(&self) -> Vec<Remapping> {
+        let remappings = self.get_all_remappings().collect::<Vec<_>>();
+        let mut adjusted = Vec::with_capacity(remappings.len());
+
+        // External source unit names remain absolute in the compiler input, while configured
+        // contexts are root-relative. Preserve the configured order and add an equivalent absolute
+        // context immediately after each relative form so both the project resolver and compiler
+        // select the same mapping.
+        for remapping in &remappings {
+            adjusted.push(remapping.clone());
+
+            let Some(context) = remapping.context.as_deref() else { continue };
+            if Path::new(context).is_absolute() {
+                continue;
+            }
+            let Ok(context_path) = foundry_compilers::utils::normalize_solidity_import_path(
+                &self.root,
+                Path::new(context),
+            ) else {
+                continue;
+            };
+            let mut context_path = context_path.display().to_string();
+            if context.ends_with(['/', '\\']) && !context_path.ends_with(['/', '\\']) {
+                context_path.push(std::path::MAIN_SEPARATOR);
+            }
+
+            let mut absolute = remapping.clone();
+            absolute.context = Some(context_path);
+            if !remappings.contains(&absolute) && !adjusted.contains(&absolute) {
+                adjusted.push(absolute);
+            }
+        }
+        adjusted
     }
 
     /// Returns the configured rpc jwt secret
@@ -2058,14 +2102,16 @@ impl Config {
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
-        Self {
-            root: paths.root,
-            src: paths.sources.file_name().unwrap().into(),
-            out: artifacts.clone(),
-            libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
-            ..Self::default()
+        let mut config = Self::default();
+        if config.uses_default_src() {
+            config.src = paths.sources.file_name().unwrap().into();
         }
+        config.root = paths.root;
+        config.out = artifacts.clone();
+        config.libs =
+            paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect();
+        config.fs_permissions = FsPermissions::new([PathPermission::read(artifacts)]);
+        config
     }
 
     /// Returns the default config but with hardhat paths
@@ -2093,7 +2139,7 @@ impl Config {
             out: self.out,
             libs: self.libs,
             remappings: self.remappings,
-            network: self.networks.active_network_name().map(String::from),
+            network: self.networks.resolved_network().map(|network| network.name().to_string()),
         }
     }
 
@@ -2866,7 +2912,7 @@ impl Default for Config {
             isolate: true,
             root: root_default(),
             extends: None,
-            src: "src".into(),
+            src: Self::DEFAULT_SRC.into(),
             test: "test".into(),
             script: "script".into(),
             out: "out".into(),
@@ -3099,7 +3145,7 @@ pub struct BasicConfig {
         serialize_with = "remappings_serde::serialize"
     )]
     pub remappings: Vec<RelativeRemapping>,
-    /// The active non-Ethereum network (e.g. `"tempo"`).
+    /// The explicitly selected network (e.g. `"ethereum"`, `"monad"`, or `"tempo"`).
     #[serde(skip)]
     pub network: Option<String>,
 }
@@ -3229,6 +3275,8 @@ mod tests {
         ModelCheckerEngine, YulDetails,
         vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
+    #[cfg(feature = "monad")]
+    use foundry_evm_hardforks::MonadHardfork;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
@@ -3248,6 +3296,66 @@ mod tests {
     fn mark_serialized_invariant_provenance(config: &mut Config) {
         config.invariant.corpus_random_sequence_weight_configured = true;
         config.invariant.workers_configured = true;
+    }
+
+    #[test]
+    fn project_remappings_alias_relative_filesystem_contexts_in_place() {
+        let root = tempdir().unwrap();
+        let dependency = root.path().join("dependency");
+        let absolute_dependency = root.path().join("absolute-dependency");
+        fs::create_dir(&dependency).unwrap();
+        fs::create_dir(&absolute_dependency).unwrap();
+
+        let global_before = Remapping {
+            context: None,
+            name: "global-before/".into(),
+            path: "lib/global-before/".into(),
+        };
+        let relative = Remapping {
+            context: Some(format!("dependency{}", std::path::MAIN_SEPARATOR)),
+            name: "relative/".into(),
+            path: "lib/relative/".into(),
+        };
+        let absolute = Remapping {
+            context: Some(format!(
+                "{}{}",
+                absolute_dependency.display(),
+                std::path::MAIN_SEPARATOR
+            )),
+            name: "absolute/".into(),
+            path: "lib/absolute/".into(),
+        };
+        let missing = Remapping {
+            context: Some(format!("missing{}", std::path::MAIN_SEPARATOR)),
+            name: "missing/".into(),
+            path: "lib/missing/".into(),
+        };
+        let global_after = Remapping {
+            context: None,
+            name: "global-after/".into(),
+            path: "lib/global-after/".into(),
+        };
+        let mut config = Config::with_root(root.path());
+        config.remappings = [
+            global_before.clone(),
+            relative.clone(),
+            absolute.clone(),
+            missing.clone(),
+            global_after.clone(),
+        ]
+        .map(Into::into)
+        .into();
+
+        let mut absolute_alias = relative.clone();
+        absolute_alias.context = Some(format!(
+            "{}{}",
+            config.root.join("dependency").display(),
+            std::path::MAIN_SEPARATOR
+        ));
+        assert_eq!(
+            config.project_remappings(),
+            vec![global_before, relative, absolute_alias, absolute, missing, global_after]
+        );
     }
 
     #[test]
@@ -3398,6 +3506,29 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_custom_src_skips_directory_auto_detection() {
+        figment::Jail::expect_with(|jail| {
+            fs::create_dir(jail.directory().join("contracts")).unwrap();
+
+            let config = Config { root: jail.directory().into(), ..Default::default() };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("contracts"));
+
+            let config = Config {
+                root: jail.directory().into(),
+                src: "custom-src".into(),
+                ..Default::default()
+            };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("custom-src"));
+
             Ok(())
         });
     }
@@ -5625,6 +5756,131 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.hardfork, Some(FoundryHardfork::Tempo(TempoHardfork::T3)));
             assert!(config.networks.is_tempo());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn namespaced_hardfork_infers_monad_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "monad:MonadNine"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+            assert_eq!(config.evm_spec_id::<MonadHardfork>(), MonadHardfork::MonadNine);
+            assert_eq!(
+                config.hardfork.as_ref().and_then(FoundryHardfork::namespace),
+                Some("monad")
+            );
+            assert_eq!(
+                config.hardfork.as_ref().map(FoundryHardfork::name).as_deref(),
+                Some("MonadNine")
+            );
+            assert!(config.networks.is_monad());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn network_selectors_reject_profile_merged_hybrid() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+
+                [profile.ci]
+                celo = true
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains(
+                "network selectors `celo = true` and `monad = true` conflict; select only one \
+                 network"
+            ));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn network_selectors_reject_canonical_environment_conflict() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_NETWORK", "monad");
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains(
+                "network selectors `network = \"monad\"` and `tempo = true` conflict; select only \
+                 one network"
+            ));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn matching_canonical_and_legacy_network_selectors_remain_valid() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "monad"
+                monad = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.networks.is_monad());
+            assert_eq!(
+                config.networks.resolved_network(),
+                Some(foundry_evm_networks::NetworkVariant::Monad)
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn celo_network_accepts_ethereum_hardfork() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                celo = true
+                hardfork = "prague"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.networks.is_celo());
+            assert_eq!(
+                config.hardfork,
+                Some(FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::Prague))
+            );
 
             Ok(())
         });
@@ -8050,6 +8306,54 @@ mod tests {
                     .iter()
                     .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
                 "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn no_unknown_key_warning_for_legacy_monad_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
+                "did not expect UnknownKey warning for `monad`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn warns_for_monad_alias_without_monad_support() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
+                "expected UnknownKey warning for `monad`, got: {:?}",
                 cfg.warnings
             );
             Ok(())

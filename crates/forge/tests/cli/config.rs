@@ -1195,6 +1195,91 @@ outer/=lib/outer/src/
     cmd.forge_fuse().arg("lint").assert_success();
 });
 
+forgetest!(external_dependency_uses_contextual_remapping, |prj, cmd| {
+    let project = prj.root().join("utils");
+    let dependency = prj.root().join("node_modules/dependency");
+    let library = prj.root().join("node_modules/library/src");
+    pretty_err(&project, fs::create_dir_all(project.join("src")));
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("src/internal")));
+    pretty_err(&library, fs::create_dir_all(&library));
+    pretty_err(
+        &project,
+        fs::write(
+            project.join("foundry.toml"),
+            r#"
+[profile.default]
+src = "src"
+allow_paths = ["../"]
+auto_detect_remappings = false
+remappings = [
+    "dependency/=../node_modules/dependency/src/",
+    "../node_modules/dependency/:library/=../node_modules/library/src/",
+    "library/=../node_modules/library/",
+]
+"#,
+        ),
+    );
+    pretty_err(
+        &project,
+        fs::write(
+            project.join("src/Root.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {Dep} from "dependency/Dep.sol";
+import {RootLibrary} from "library/src/RootLibrary.sol";
+
+contract Root is Dep, RootLibrary {}
+"#,
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/Dep.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {Core} from "./internal/Core.sol";
+
+contract Dep is Core {}
+"#,
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/internal/Core.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {DependencyLibrary} from "library/DependencyLibrary.sol";
+
+contract Core is DependencyLibrary {}
+"#,
+        ),
+    );
+    pretty_err(
+        &library,
+        fs::write(
+            library.join("RootLibrary.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0;\ncontract RootLibrary {}\n",
+        ),
+    );
+    pretty_err(
+        &library,
+        fs::write(
+            library.join("DependencyLibrary.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0;\ncontract DependencyLibrary {}\n",
+        ),
+    );
+
+    cmd.args(["build", "--no-lint", "--root", project.to_str().unwrap()]).assert_success();
+});
+
 forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
     let dependency = prj.paths().libraries[0].join("dep");
     pretty_err(&dependency, fs::create_dir_all(dependency.join("src")));

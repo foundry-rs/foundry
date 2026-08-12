@@ -740,6 +740,38 @@ function act(uint256 v) external override;
     );
 });
 
+forgetest_init!(multiline_notice_populates_frontmatter_description, |prj, cmd| {
+    prj.add_source(
+        "Vault.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/// @notice Stores deposited assets for users
+///         and enforces withdrawal limits.
+contract Vault {}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Vault.mdx"), None),
+        str![[r#"
+---
+title: "Vault"
+description: "Stores deposited assets for users and enforces withdrawal limits."
+---
+
+# Vault
+
+Stores deposited assets for users
+and enforces withdrawal limits.
+
+
+"#]],
+    );
+});
+
 // An override inherits the base overload with the matching signature, continuing past a nearer
 // base that declares a different same-name overload.
 forgetest_init!(implicit_inheritance_matches_the_overload_signature, |prj, cmd| {
@@ -2201,6 +2233,47 @@ interface IMultiline {
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | result | `uint256` | The first line of return.<br/>Second line of return description. |
+...
+"#]],
+    );
+});
+
+forgetest_init!(inheritdoc_multiline_param_preserves_inherited_notice, |prj, cmd| {
+    prj.add_source(
+        "MultilineInheritdoc.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface Root {
+    /// @notice Runs the operation
+    /// @param value The input value
+    function run(uint256 value) external;
+}
+
+interface Mid is Root {
+    function run(uint256 value) external override;
+}
+
+contract Child is Mid {
+    /// @inheritdoc Mid
+    /// @param value Local first line.
+    ///        Local second line.
+    function run(uint256 value) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Child.mdx"), None),
+        str![[r#"
+...
+### run
+
+Runs the operation
+...
+| value | `uint256` | Local first line.<br/>Local second line. |
 ...
 "#]],
     );
