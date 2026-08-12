@@ -148,26 +148,10 @@ impl<T> Pool<T> {
     }
 
     /// Clears the pool and advances its reset generation.
-    #[cfg(test)]
     pub(crate) fn reset(&self) {
-        let generation = Arc::clone(&self.generation);
-        self.reset_with_generation(&generation);
-    }
-
-    pub(crate) fn reset_with_generation(&self, canonical_generation: &AtomicU64) {
         let mut pool = self.inner.write();
         pool.clear();
-        let generation = canonical_generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-        self.generation.store(generation, Ordering::Release);
-    }
-
-    pub(crate) fn synchronize_generation(&self, canonical_generation: &AtomicU64) {
-        let mut pool = self.inner.write();
-        let generation = canonical_generation.load(Ordering::Acquire);
-        if self.generation.load(Ordering::Acquire) != generation {
-            pool.clear();
-            self.generation.store(generation, Ordering::Release);
-        }
+        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Remove the given transactions from the pool
@@ -597,22 +581,5 @@ impl<T> AddedTransaction<T> {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reset_synchronizes_an_independent_pool_generation() {
-        let pool = Pool::<()>::default();
-        let canonical = AtomicU64::new(0);
-        let old_batch = pool.mining_batch(None);
-
-        pool.reset_with_generation(&canonical);
-
-        assert_ne!(old_batch.generation, canonical.load(Ordering::Acquire));
-        assert_eq!(pool.mining_batch(None).generation, canonical.load(Ordering::Acquire));
     }
 }

@@ -157,7 +157,7 @@ pub struct EthApi<N: Network> {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
-    /// Keeps reset publication and multi-field node metadata reads coherent.
+    /// Keeps reset publication and RPC execution mutually coherent.
     lifecycle: Arc<AsyncRwLock<()>>,
 }
 
@@ -197,11 +197,6 @@ impl<N: Network> EthApi<N> {
         filters: Filters<N>,
         transactions_order: TransactionOrder,
     ) -> Self {
-        let lifecycle = backend.attach_reset_runtime(
-            Arc::clone(&pool),
-            Arc::clone(&fee_history_cache),
-            Arc::new(AsyncRwLock::new(())),
-        );
         Self {
             pool,
             backend,
@@ -215,7 +210,7 @@ impl<N: Network> EthApi<N> {
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
-            lifecycle,
+            lifecycle: Arc::new(AsyncRwLock::new(())),
         }
     }
 
@@ -455,7 +450,6 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_nodeInfo`
     pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
         node_info!("anvil_nodeInfo");
-        let _lifecycle_guard = self.lifecycle.read().await;
 
         let evm_env = self.backend.evm_env().read();
         let fork_config = self.backend.get_fork();
@@ -497,7 +491,6 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_metadata`
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
-        let _lifecycle_guard = self.lifecycle.read().await;
         let fork_config = self.backend.get_fork();
 
         Ok(Metadata {
@@ -596,7 +589,6 @@ impl<N: Network> EthApi<N> {
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
-        let _lifecycle_guard = self.lifecycle.read().await;
         if let Some(fork) = self.backend.get_fork() {
             let urls = vec![url.clone()];
             let config = fork.config.read().clone();
@@ -736,12 +728,10 @@ impl<N: Network> EthApi<N> {
         node_info!("anvil_reset");
         let _lifecycle_guard = self.lifecycle.write().await;
         if let Some(forking) = forking {
-            self.backend
-                .reset_fork_with_runtime(forking, &self.pool, &self.fee_history_cache)
-                .await?;
+            self.backend.reset_fork(forking, &self.pool, &self.fee_history_cache).await?;
         } else {
             // Reset to a fresh in-memory state
-            self.backend.reset_to_in_mem_with_runtime(&self.pool, &self.fee_history_cache).await?;
+            self.backend.reset_to_in_mem(&self.pool, &self.fee_history_cache).await?;
         }
         // Only publish the new instance identity after the backend reset commits successfully.
         self.reset_instance_id();
@@ -1823,6 +1813,13 @@ impl EthApi<FoundryNetwork> {
     #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
+        // Reset takes the exclusive lifecycle lock itself. Every other RPC holds a shared lock for
+        // its complete execution so it observes either the state before or after reset publication.
+        let _lifecycle_guard = if matches!(request, EthRequest::Reset(_)) {
+            None
+        } else {
+            Some(self.lifecycle.read().await)
+        };
         let response = match request.clone() {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
@@ -2687,7 +2684,6 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
-        let _lifecycle_guard = self.lifecycle.read().await;
         let request = self.parse_transaction_request(request)?;
 
         let from = request.from().map(Ok).unwrap_or_else(|| {
@@ -2726,7 +2722,6 @@ impl EthApi<FoundryNetwork> {
         gas_limit: Option<U64>,
     ) -> Result<TxHash> {
         node_info!("eth_resend");
-        let _lifecycle_guard = self.lifecycle.read().await;
         let mut request = self.parse_transaction_request(request)?;
 
         let from = request.from().map(Ok).unwrap_or_else(|| {
@@ -2837,7 +2832,6 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
     pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
         node_info!("eth_sendRawTransaction");
-        let _lifecycle_guard = self.lifecycle.read().await;
         let mut data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
@@ -4109,7 +4103,6 @@ impl EthApi<FoundryNetwork> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
-        let _lifecycle_guard = self.lifecycle.read().await;
         let request = self.parse_transaction_request(request)?;
         // either use the impersonated account of the request's `from` field
         let from = request.from().ok_or(BlockchainError::NoSignerAvailable)?;

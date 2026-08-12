@@ -319,14 +319,7 @@ Chain ID
             );
         }
 
-        let active_hardfork = fork
-            .and_then(|fork| fork.config.read().hardfork)
-            .unwrap_or_else(|| self.get_hardfork());
-        let active_base_fee =
-            fork.and_then(ClientFork::base_fee).unwrap_or_else(|| self.get_base_fee() as u128);
-        let active_gas_price =
-            fork.map(ClientFork::gas_price).unwrap_or_else(|| self.get_gas_price());
-        if (SpecId::from(active_hardfork) as u8) < (SpecId::LONDON as u8) {
+        if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
             let _ = write!(
                 s,
                 r#"
@@ -335,7 +328,7 @@ Gas Price
 
 {}
 "#,
-                active_gas_price.green()
+                self.get_gas_price().green()
             );
         } else {
             let _ = write!(
@@ -346,7 +339,7 @@ Base Fee
 
 {}
 "#,
-                active_base_fee.green()
+                self.get_base_fee().green()
             );
         }
 
@@ -361,8 +354,6 @@ Gas Limit
             {
                 if self.disable_block_gas_limit {
                     "Disabled".to_string()
-                } else if let Some(fork) = fork {
-                    fork.gas_limit().to_string()
                 } else {
                     self.gas_limit.map(|l| l.to_string()).unwrap_or_else(|| {
                         if self.fork_choice.is_some() {
@@ -435,9 +426,9 @@ Genesis Number
               "block_hash": fork.block_hash(),
               "chain_id": fork.chain_id(),
               "wallet": wallet_description,
-              "base_fee": format!("{}", fork.base_fee().unwrap_or_else(|| self.get_base_fee() as u128)),
-              "gas_price": format!("{}", fork.gas_price()),
-              "gas_limit": Some(fork.gas_limit().to_string()),
+              "base_fee": format!("{}", self.get_base_fee()),
+              "gas_price": format!("{}", self.get_gas_price()),
+              "gas_limit": gas_limit,
             })
         } else {
             json!({
@@ -615,7 +606,19 @@ impl NodeConfig {
 
     /// Returns the [`BlobParams`] that should be used.
     pub fn get_blob_params(&self) -> BlobParams {
-        get_blob_params(self.get_chain_id(), self.get_genesis_timestamp())
+        match self.get_hardfork() {
+            FoundryHardfork::Ethereum(EthereumHardfork::Prague) => BlobParams::prague(),
+            FoundryHardfork::Ethereum(EthereumHardfork::Osaka) => BlobParams::osaka(),
+            FoundryHardfork::Ethereum(EthereumHardfork::Bpo1) => BlobParams::bpo1(),
+            FoundryHardfork::Ethereum(EthereumHardfork::Bpo2) => BlobParams::bpo2(),
+            FoundryHardfork::Ethereum(
+                EthereumHardfork::Bpo3
+                | EthereumHardfork::Bpo4
+                | EthereumHardfork::Bpo5
+                | EthereumHardfork::Amsterdam,
+            ) => BlobParams::bpo2(),
+            _ => BlobParams::cancun(),
+        }
     }
 
     /// Returns the hardfork to use
@@ -2072,30 +2075,5 @@ mod tests {
         let config = NodeConfig::test_tempo();
 
         assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_banner_uses_resolved_hardfork() {
-        let (source_api, source_handle) = crate::spawn(
-            NodeConfig::test()
-                .with_chain_id(Some(1u64))
-                .with_hardfork(Some(EthereumHardfork::Berlin.into()))
-                .with_genesis_timestamp(Some(1_618_481_223u64)),
-        )
-        .await;
-        source_api.evm_set_next_block_timestamp(1_618_481_224u64).unwrap();
-        source_api.mine_one().await.unwrap();
-
-        let (api, handle) = crate::spawn(
-            NodeConfig::test()
-                .with_eth_rpc_url(Some(source_handle.http_endpoint()))
-                .with_fork_block_number(Some(1u64)),
-        )
-        .await;
-        let fork = api.get_fork().unwrap();
-        let banner = handle.config().as_string(Some(&fork));
-
-        assert!(banner.contains("\nGas Price\n"));
-        assert!(!banner.contains("\nBase Fee\n"));
     }
 }

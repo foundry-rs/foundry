@@ -380,78 +380,9 @@ where
         header: &impl BlockHeader,
         blob_params: BlobParams,
     ) {
-        let (result, block_number) = self.create_cache_entry(hash, header, blob_params);
+        let (result, block_number) =
+            create_fee_history_cache_item(hash, header, &self.storage_info, blob_params);
         self.insert_cache_entry(result, block_number, None);
-    }
-
-    /// Create a new history entry for the block
-    fn create_cache_entry(
-        &self,
-        hash: B256,
-        header: &impl BlockHeader,
-        blob_params: BlobParams,
-    ) -> (FeeHistoryCacheItem, Option<u64>) {
-        let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas().unwrap_or_default();
-        let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
-        let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(blob_params);
-
-        let mut item = FeeHistoryCacheItem {
-            block_hash: hash,
-            base_fee: base_fee as u128,
-            gas_used_ratio: 0f64,
-            blob_gas_used_ratio: 0f64,
-            rewards: Vec::new(),
-            excess_blob_gas,
-            base_fee_per_blob_gas,
-            blob_gas_used,
-        };
-
-        let current_block = self.storage_info.block(hash);
-        let current_receipts = self.storage_info.receipts(hash);
-
-        if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number());
-
-            let gas_used = block.header.gas_used() as f64;
-            let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
-            item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
-            item.blob_gas_used_ratio = blob_gas_used
-                .map(|g| {
-                    let max = blob_params.max_blob_gas_per_block() as f64;
-                    if max == 0.0 { 0.0 } else { g / max }
-                })
-                .unwrap_or(0.0);
-
-            // extract useful tx info (gas_used, effective_reward)
-            let mut transactions: Vec<(_, _)> = receipts
-                .iter()
-                .enumerate()
-                .map(|(i, receipt)| {
-                    let cumulative = receipt.cumulative_gas_used();
-                    let prev_cumulative =
-                        if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
-                    let gas_used = cumulative - prev_cumulative;
-                    let effective_reward = block
-                        .body
-                        .transactions
-                        .get(i)
-                        .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
-                        .unwrap_or(0);
-
-                    (gas_used, effective_reward)
-                })
-                .collect();
-
-            // sort by effective reward asc
-            transactions.sort_by_key(|(_, reward)| *reward);
-
-            item.rewards = reward_percentiles(&transactions, gas_used);
-        } else {
-            item.rewards = vec![0; REWARD_PERCENTILES.len()];
-        }
-        (item, block_number)
     }
 
     fn insert_cache_entry(
@@ -612,8 +543,12 @@ where
             if block.generation != generation.load(Ordering::Acquire) {
                 continue;
             }
-            let (item, block_number) =
-                pin.create_cache_entry(block.hash, block.header.as_ref(), block.blob_params);
+            let (item, block_number) = create_fee_history_cache_item(
+                block.hash,
+                block.header.as_ref(),
+                &pin.storage_info,
+                block.blob_params,
+            );
             pin.insert_cache_entry(item, block_number, Some(block.generation));
         }
 
@@ -623,8 +558,12 @@ where
             let Poll::Ready(Some(notification)) = next else { break };
             if let Some(block) = notification.as_new_block() {
                 let blob_params = pin.blob_params.expect("set by compatibility constructor");
-                let (item, block_number) =
-                    pin.create_cache_entry(block.hash, block.header.as_ref(), blob_params);
+                let (item, block_number) = create_fee_history_cache_item(
+                    block.hash,
+                    block.header.as_ref(),
+                    &pin.storage_info,
+                    blob_params,
+                );
                 pin.insert_cache_entry(item, block_number, None);
             }
         }

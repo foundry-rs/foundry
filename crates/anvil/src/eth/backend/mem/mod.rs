@@ -138,7 +138,8 @@ use foundry_evm::{
     },
     utils::{
         apply_chain_specific_tx_replay_env_changes, block_env_from_header,
-        get_blob_base_fee_update_fraction, get_blob_params_by_spec_id,
+        get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -369,7 +370,7 @@ use std::{
     ops::Mul,
     path::PathBuf,
     sync::{
-        Arc, OnceLock,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -610,8 +611,6 @@ pub struct Backend<N: Network> {
     mining: Arc<tokio::sync::Mutex<()>>,
     /// Generation used to reject pool selections made before a reset.
     reset_generation: Arc<AtomicU64>,
-    /// Runtime-owned state that must participate in a live node reset.
-    reset_runtime: Arc<OnceLock<ResetRuntime<N::TxEnvelope>>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
 }
@@ -626,12 +625,6 @@ struct PreparedReset<N: Network> {
     storage: BlockchainStorage<N>,
     timestamp: u64,
     fee_history: Option<(u64, FeeHistoryCacheItem)>,
-}
-
-struct ResetRuntime<T> {
-    pool: Arc<Pool<T>>,
-    fee_history_cache: FeeHistoryCache,
-    lifecycle: Arc<AsyncRwLock<()>>,
 }
 
 impl<N: Network> Clone for Backend<N> {
@@ -662,7 +655,6 @@ impl<N: Network> Clone for Backend<N> {
             precompile_factory: self.precompile_factory.clone(),
             mining: self.mining.clone(),
             reset_generation: self.reset_generation.clone(),
-            reset_runtime: self.reset_runtime.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
         }
     }
@@ -1295,31 +1287,6 @@ impl<N: Network> Backend<N> {
         self.reset_generation.load(Ordering::Acquire)
     }
 
-    pub(crate) fn attach_reset_runtime(
-        &self,
-        pool: Arc<Pool<N::TxEnvelope>>,
-        fee_history_cache: FeeHistoryCache,
-        lifecycle: Arc<AsyncRwLock<()>>,
-    ) -> Arc<AsyncRwLock<()>> {
-        let runtime = ResetRuntime { pool, fee_history_cache, lifecycle: lifecycle.clone() };
-        if let Err(runtime) = self.reset_runtime.set(runtime) {
-            let attached = self.reset_runtime.get().expect("runtime was attached");
-            assert!(
-                Arc::ptr_eq(&attached.pool, &runtime.pool)
-                    && Arc::ptr_eq(&attached.fee_history_cache, &runtime.fee_history_cache),
-                "backend already attached to a different runtime",
-            );
-            attached.pool.synchronize_generation(&self.reset_generation);
-            return attached.lifecycle.clone();
-        }
-        self.reset_runtime
-            .get()
-            .expect("runtime was attached")
-            .pool
-            .synchronize_generation(&self.reset_generation);
-        lifecycle
-    }
-
     /// Notifies all `new_block_listeners` about the new block
     fn notify_on_new_block(&self, header: Header, hash: B256) {
         // cleanup closed notification streams first, if the channel is closed we can remove the
@@ -1400,9 +1367,10 @@ impl<N: Network> Backend<N> {
         let _mining_guard = self.mining.lock().await;
         let next_number = highest.checked_add(1)?;
         if let Some(block) = self.get_block(next_number) {
+            let blob_params = self.simulation_blob_params_at_timestamp(block.header.timestamp);
             Some((
                 block.header.base_fee_per_gas.unwrap_or_default() as u128,
-                block.header.blob_fee(self.blob_params()).unwrap_or_default(),
+                block.header.blob_fee(blob_params).unwrap_or_default(),
             ))
         } else if highest == self.best_number() {
             Some((self.fees().base_fee() as u128, self.fees().base_fee_per_blob_gas()))
@@ -3278,7 +3246,6 @@ impl<N: Network> Backend<N> {
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
             reset_generation: Arc::new(AtomicU64::new(0)),
-            reset_runtime: Arc::new(OnceLock::new()),
             disable_pool_balance_checks,
         };
 
@@ -3434,7 +3401,7 @@ impl<N: Network> Backend<N> {
         }
         self.time.reset(candidate.timestamp);
         self.cheats.clear_next_block_prevrandao();
-        pool.reset_with_generation(&self.reset_generation);
+        pool.reset();
 
         drop(snapshots);
         drop(fee_history);
@@ -3449,19 +3416,8 @@ impl<N: Network> Backend<N> {
         drop(retired_db);
     }
 
-    /// Resets the fork to a fresh state
-    pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
-        if let Some(runtime) = self.reset_runtime.get() {
-            let _lifecycle_guard = runtime.lifecycle.write().await;
-            return self
-                .reset_fork_with_runtime(forking, &runtime.pool, &runtime.fee_history_cache)
-                .await;
-        }
-        let pool = Pool::new(self.reset_generation());
-        self.reset_fork_with_runtime(forking, &pool, &Default::default()).await
-    }
-
-    pub(crate) async fn reset_fork_with_runtime(
+    /// Prepares and atomically publishes a fresh forked state.
+    pub(crate) async fn reset_fork(
         &self,
         forking: Forking,
         pool: &Pool<N::TxEnvelope>,
@@ -3538,19 +3494,8 @@ impl<N: Network> Backend<N> {
         Ok(())
     }
 
-    /// Resets the backend to a fresh in-memory state, clearing all existing data
-    pub async fn reset_to_in_mem(&self) -> Result<(), BlockchainError> {
-        if let Some(runtime) = self.reset_runtime.get() {
-            let _lifecycle_guard = runtime.lifecycle.write().await;
-            return self
-                .reset_to_in_mem_with_runtime(&runtime.pool, &runtime.fee_history_cache)
-                .await;
-        }
-        let pool = Pool::new(self.reset_generation());
-        self.reset_to_in_mem_with_runtime(&pool, &Default::default()).await
-    }
-
-    pub(crate) async fn reset_to_in_mem_with_runtime(
+    /// Prepares and atomically publishes a fresh in-memory state.
+    pub(crate) async fn reset_to_in_mem(
         &self,
         pool: &Pool<N::TxEnvelope>,
         fee_history_cache: &FeeHistoryCache,
@@ -3993,7 +3938,6 @@ where
         let current_base_fee = self.base_fee();
         let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
         let mut evm_env = self.evm_env.read().clone();
-        let parent_base_fee = evm_env.block_env.basefee;
         if evm_env.block_env.basefee == 0 {
             evm_env.cfg_env.disable_base_fee = true;
         }
@@ -4025,36 +3969,15 @@ where
         let hardfork =
             FoundryHardfork::from_chain_and_timestamp(evm_env.cfg_env.chain_id, timestamp)
                 .unwrap_or_else(|| self.hardfork());
-        let mut replay_blob_params = self.fees.blob_params();
         if !self.is_optimism() && !self.is_tempo() {
             replay_env.cfg_env.spec = SpecId::from(hardfork);
             // Cancun requires blob excess gas even for non-blob txs.
-            if replay_env.cfg_env.spec >= SpecId::CANCUN {
-                replay_blob_params =
-                    Self::simulation_blob_params_for_hardfork(hardfork, replay_env.cfg_env.spec);
-                let (parent_excess_blob_gas, parent_blob_gas_used) = self
-                    .fork
-                    .read()
-                    .as_ref()
-                    .map(|fork| {
-                        let config = fork.config.read();
-                        (
-                            config
-                                .blob_excess_gas_and_price
-                                .map(|value| value.excess_blob_gas)
-                                .unwrap_or_default(),
-                            config.blob_gas_used.unwrap_or_default() as u64,
-                        )
-                    })
-                    .unwrap_or_default();
-                let replay_excess_blob_gas = replay_blob_params.next_block_excess_blob_gas_osaka(
-                    parent_excess_blob_gas,
-                    parent_blob_gas_used,
-                    parent_base_fee,
-                );
+            if replay_env.cfg_env.spec >= SpecId::CANCUN
+                && replay_env.block_env.blob_excess_gas_and_price.is_none()
+            {
                 replay_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
-                    replay_excess_blob_gas,
-                    replay_blob_params.update_fraction as u64,
+                    0,
+                    get_blob_base_fee_update_fraction_by_spec_id(replay_env.cfg_env.spec),
                 ));
             }
         }
@@ -4140,16 +4063,14 @@ where
             header.gas_limit,
             header.base_fee_per_gas.unwrap_or_default(),
         );
-        let next_block_excess_blob_gas = replay_blob_params.next_block_excess_blob_gas_osaka(
+        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
-            header.base_fee_per_gas.unwrap_or_default(),
         );
         self.fees.set_base_fee(next_block_base_fee);
-        self.fees.set_blob_params(replay_blob_params);
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
-            replay_blob_params.update_fraction as u64,
+            get_blob_base_fee_update_fraction_by_spec_id(*self.evm_env.read().spec_id()),
         ));
         self.notify_on_new_block(header.into_inner(), block_hash);
 

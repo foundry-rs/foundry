@@ -1637,14 +1637,14 @@ async fn test_anvil_reset_non_fork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_backend_reset_uses_attached_runtime_pool() {
+async fn test_anvil_reset_clears_runtime_pool() {
     let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
     let from = api.accounts().unwrap()[0];
     let tx = TransactionRequest::default().with_from(from).with_to(Address::random());
     let _pending = handle.http_provider().send_transaction(tx.into()).await.unwrap();
     assert_eq!(api.txpool_status().await.unwrap().pending, 1);
 
-    api.backend.reset_to_in_mem().await.unwrap();
+    api.anvil_reset(None).await.unwrap();
 
     assert_eq!(api.txpool_status().await.unwrap().pending, 0);
 }
@@ -1850,31 +1850,6 @@ async fn test_anvil_reset_fork_refreshes_inferred_chain_id() {
     .await
     .unwrap();
     assert_eq!(api.chain_id(), 31337);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_fork_uses_remote_chain_for_hardfork_with_local_chain_id() {
-    let (source_api, source_handle) = spawn(
-        NodeConfig::test()
-            .with_chain_id(Some(1u64))
-            .with_hardfork(Some(EthereumHardfork::Berlin.into()))
-            .with_genesis_timestamp(Some(1_618_481_223u64)),
-    )
-    .await;
-    source_api.evm_set_next_block_timestamp(1_618_481_224u64).unwrap();
-    source_api.mine_one().await.unwrap();
-
-    let (api, _) = spawn(
-        NodeConfig::test()
-            .with_chain_id(Some(31337u64))
-            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
-            .with_fork_block_number(Some(1u64)),
-    )
-    .await;
-
-    assert_eq!(api.chain_id(), 31337);
-    assert_eq!(api.backend.hardfork(), EthereumHardfork::Berlin.into());
-    assert!(!api.backend.is_eip1559());
 }
 
 #[tokio::test(flavor = "multi_thread")]
