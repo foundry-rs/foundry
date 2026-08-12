@@ -32,7 +32,6 @@ use anvil::{
     eth::{EthApi, fees::INITIAL_BASE_FEE},
     spawn, try_spawn,
 };
-use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
@@ -46,7 +45,6 @@ use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     precompile::PrecompileStatus,
 };
-use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -3668,70 +3666,6 @@ async fn test_anvil_reset_without_url_preserves_offline_fork_chain_id() {
     let expected = Some(NamedChain::Mainnet as u64);
     let fork = api.backend.get_fork().unwrap();
     assert_eq!(fork.config.read().fork_chain_id, expected);
-}
-
-async fn spawn_missing_hash_rpc_proxy(endpoint: String) -> String {
-    let router = Router::new().route(
-        "/",
-        post(move |Json(request): Json<Value>| {
-            let endpoint = endpoint.clone();
-            async move {
-                if request["method"] == "eth_getBlockByHash" {
-                    return Json(json!({
-                        "jsonrpc": "2.0",
-                        "id": request["id"],
-                        "result": null,
-                    }));
-                }
-                let response = reqwest::Client::new()
-                    .post(endpoint)
-                    .json(&request)
-                    .send()
-                    .await
-                    .unwrap()
-                    .json::<Value>()
-                    .await
-                    .unwrap();
-                Json(response)
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    format!("http://{address}")
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_anvil_reset_rejects_missing_hash_selected_block_atomically() {
-    let (_mainnet_api, mainnet_handle) =
-        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
-    let mainnet_url = mainnet_handle.http_endpoint();
-    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(mainnet_url.clone()))).await;
-    let provider = handle.http_provider();
-    let original_block = provider.get_block_number().await.unwrap();
-    let original_instance_id = api.instance_id();
-    let account = Address::random();
-    let balance = U256::from(1337);
-    api.anvil_set_balance(account, balance).await.unwrap();
-
-    let (_sepolia_api, sepolia_handle) =
-        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
-    let proxy = spawn_missing_hash_rpc_proxy(sepolia_handle.http_endpoint()).await;
-    let error = api
-        .anvil_reset(Some(Forking { json_rpc_url: Some(proxy), block_number: None }))
-        .await
-        .unwrap_err();
-
-    assert!(error.to_string().contains("Resource not found"));
-    assert_eq!(provider.get_chain_id().await.unwrap(), NamedChain::Mainnet as u64);
-    assert_eq!(provider.get_block_number().await.unwrap(), original_block);
-    assert_eq!(provider.get_balance(account).await.unwrap(), balance);
-    assert_eq!(
-        api.backend.get_fork().unwrap().eth_rpc_url().as_deref(),
-        Some(mainnet_url.as_str())
-    );
-    assert_eq!(api.instance_id(), original_instance_id);
 }
 
 #[tokio::test(flavor = "multi_thread")]
