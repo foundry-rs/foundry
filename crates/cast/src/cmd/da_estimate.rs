@@ -29,13 +29,7 @@ impl DAEstimateArgs {
     pub async fn run(self) -> Result<()> {
         let Self { block, rpc, network } = self;
         let config = rpc.load_config()?;
-        let network = match network {
-            Some(n) => n,
-            None => {
-                let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
-                provider.get_chain_id().await?.into()
-            }
-        };
+        let network = resolve_da_network(&config, network).await?;
         match network {
             NetworkVariant::Optimism => da_estimate::<Optimism>(&config, block).await,
             NetworkVariant::Ethereum => da_estimate::<Ethereum>(&config, block).await,
@@ -44,6 +38,26 @@ impl DAEstimateArgs {
             NetworkVariant::Tempo => unsupported_da_estimation("Tempo"),
         }
     }
+}
+
+async fn resolve_da_network(
+    config: &Config,
+    network: Option<NetworkVariant>,
+) -> Result<NetworkVariant> {
+    if let Some(network) = network {
+        return Ok(network);
+    }
+
+    let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
+    infer_da_network_from_chain_id(provider.get_chain_id().await?)
+}
+
+fn infer_da_network_from_chain_id(chain_id: u64) -> Result<NetworkVariant> {
+    NetworkVariant::from_known_chain_id(chain_id)
+        .map(|network| network.unwrap_or(NetworkVariant::Ethereum))
+        .map_err(|error| {
+            eyre::eyre!("cannot infer execution network from chain ID {chain_id}: {error}")
+        })
 }
 
 fn unsupported_da_estimation(network: &str) -> Result<()> {
@@ -70,13 +84,50 @@ pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Resu
     Ok(())
 }
 
-#[cfg(all(test, feature = "monad"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn known_monad_chain_ids_infer_monad() {
+        for chain_id in [NamedChain::Monad as u64, NamedChain::MonadTestnet as u64] {
+            assert_eq!(infer_da_network_from_chain_id(chain_id).unwrap(), NetworkVariant::Monad);
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn known_monad_chain_ids_reject_disabled_monad() {
+        for chain_id in [NamedChain::Monad as u64, NamedChain::MonadTestnet as u64] {
+            let error = infer_da_network_from_chain_id(chain_id).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "cannot infer execution network from chain ID {chain_id}: network family \
+                     `monad` is not enabled in this build"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_chain_id_defaults_to_ethereum() {
+        assert_eq!(infer_da_network_from_chain_id(98_765_432).unwrap(), NetworkVariant::Ethereum);
+    }
+
+    #[tokio::test]
+    async fn explicit_network_precedes_rpc_inference() {
+        let config = Config::default();
+        for network in [NetworkVariant::Ethereum, NetworkVariant::Tempo] {
+            assert_eq!(resolve_da_network(&config, Some(network)).await.unwrap(), network);
+        }
+    }
 
     #[tokio::test]
     #[cfg(feature = "monad")]
-    async fn monad_da_estimate_is_unsupported() {
+    async fn explicit_monad_da_estimate_is_unsupported() {
         let args = DAEstimateArgs {
             block: BlockId::latest(),
             rpc: RpcOpts::default(),
