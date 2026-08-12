@@ -16,7 +16,17 @@ pub(crate) fn normalize_constraints_for_solver(
     let context = ConstraintContext::new(&normalized);
     let normalized_len = normalized.len();
     normalize_constraint_batch(
-        normalized.into_iter().map(|constraint| context.normalize_bool(cx, constraint)),
+        normalized.iter().cloned().enumerate().map(|(index, constraint)| {
+            let rewritten = context.normalize_bool(cx, constraint.clone());
+            if rewritten == constraint {
+                return constraint;
+            }
+
+            // Contextual rewrites may remove this conjunct, so their proof cannot depend on
+            // bounds learned from the conjunct itself. Rebuild only after a rewrite succeeds;
+            // ordinary constraints retain the single shared context above.
+            ConstraintContext::excluding(&normalized, index).normalize_bool(cx, constraint)
+        }),
         normalized_len,
     )
 }
@@ -168,10 +178,16 @@ const fn expr_ternop_key(op: SymTernOp) -> u8 {
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
-    let derived = constraints
-        .iter()
-        .filter_map(|constraint| bitwise_bool_word_fact(cx, constraint))
-        .collect::<Vec<_>>();
+    let mut derived = Vec::new();
+    for constraint in constraints {
+        let Some(fact) = bitwise_bool_word_fact(cx, constraint) else { continue };
+        if let SymBoolExprKind::And(values) = fact.kind() {
+            // A positive conjunction implies each member independently. Retain the aggregate for
+            // exact matches, but expose its members to the direct contradiction check as well.
+            derived.extend(values.iter().cloned());
+        }
+        derived.push(fact);
+    }
     let contains =
         |expected: &SymBoolExpr| constraints.contains(expected) || derived.contains(expected);
     constraints.iter().chain(&derived).any(|constraint| match constraint.kind() {
@@ -704,17 +720,30 @@ impl WordInterval {
 
 impl ConstraintContext {
     pub(super) fn new(constraints: &[SymBoolExpr]) -> Self {
+        Self::from_constraints(constraints.iter(), constraints.len())
+    }
+
+    fn excluding(constraints: &[SymBoolExpr], excluded: usize) -> Self {
+        let constraint_count = constraints.len() - 1;
+        let constraints = constraints[..excluded].iter().chain(&constraints[excluded + 1..]);
+        Self::from_constraints(constraints, constraint_count)
+    }
+
+    fn from_constraints<'a>(
+        constraints: impl Clone + Iterator<Item = &'a SymBoolExpr>,
+        constraint_count: usize,
+    ) -> Self {
         let mut context = Self::default();
-        for constraint in constraints {
+        for constraint in constraints.clone() {
             context.record_upper_bound_constraint(constraint);
             context.record_lower_bound_constraint(constraint);
         }
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
         // cycles cannot tighten a bound one integer at a time across the uint256 domain.
-        for _ in 0..constraints.len() {
+        for _ in 0..constraint_count {
             let mut changed = false;
-            for constraint in constraints {
+            for constraint in constraints.clone() {
                 changed |= context.propagate_order_bounds(constraint);
             }
             if !changed {
@@ -1784,6 +1813,38 @@ impl ConstraintContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_contradiction_uses_members_of_derived_positive_conjunction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let zero = SymExpr::zero(&mut cx);
+        let x_is_zero = SymBoolExpr::eq(&mut cx, x, zero.clone());
+        let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero.clone());
+        let x_word = SymExpr::bool_word(&mut cx, x_is_zero.clone());
+        let y_word = SymExpr::bool_word(&mut cx, y_is_zero);
+        let either_word = SymExpr::binop(&mut cx, SymBinOp::Or, x_word, y_word);
+        let neither_is_zero = SymBoolExpr::eq(&mut cx, either_word, zero);
+
+        assert!(constraints_are_directly_unsat(&mut cx, &[neither_is_zero, x_is_zero]));
+    }
+
+    #[test]
+    fn direct_contradiction_does_not_expand_derived_negated_conjunction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let zero = SymExpr::zero(&mut cx);
+        let x_is_zero = SymBoolExpr::eq(&mut cx, x, zero.clone());
+        let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero.clone());
+        let x_word = SymExpr::bool_word(&mut cx, x_is_zero.clone());
+        let y_word = SymExpr::bool_word(&mut cx, y_is_zero);
+        let both_word = SymExpr::binop(&mut cx, SymBinOp::And, x_word, y_word);
+        let not_both = SymBoolExpr::eq(&mut cx, both_word, zero);
+
+        assert!(!constraints_are_directly_unsat(&mut cx, &[not_both, x_is_zero]));
+    }
 
     #[test]
     fn polynomial_identity_handles_shared_dag() {

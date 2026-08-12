@@ -1033,24 +1033,36 @@ mod tests {
     #[test]
     fn checked_mul_guard_branch_model_stops_at_shared_support_budget() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let guard = checked_mul_guard_word(&mut cx, &x, &y);
+        let first_x = SymExpr::var(&mut cx, "first_x");
+        let first_y = SymExpr::var(&mut cx, "first_y");
+        let first_guard = checked_mul_guard_word(&mut cx, &first_x, &first_y);
         let zero = SymExpr::zero(&mut cx);
-        let mut constraints = vec![SymBoolExpr::eq(&mut cx, guard, zero).not(&mut cx)];
+        let first_guard_is_true = SymBoolExpr::eq(&mut cx, first_guard, zero.clone()).not(&mut cx);
 
-        let support = (0..MAX_CHECKED_MUL_SUPPORT_VISITS)
-            .map(|index| SymExpr::var(&mut cx, &format!("support_{index}")))
-            .collect::<Vec<_>>();
-        for pair in support.windows(2) {
-            constraints.push(SymBoolExpr::eq(&mut cx, pair[0].clone(), pair[1].clone()));
-        }
+        let second_x = SymExpr::var(&mut cx, "second_x");
+        let second_y = SymExpr::var(&mut cx, "second_y");
+        let second_guard = checked_mul_guard_word(&mut cx, &second_x, &second_y);
+        let second_guard_is_false = SymBoolExpr::eq(&mut cx, second_guard, zero);
+
         let one = SymExpr::one(&mut cx);
-        constraints.push(SymBoolExpr::eq(
-            &mut cx,
-            support.last().expect("support chain is non-empty").clone(),
-            one,
-        ));
+        let second_x_plus_one = SymExpr::binop(&mut cx, SymBinOp::Add, second_x.clone(), one);
+        let x_relation = SymBoolExpr::eq(&mut cx, first_x.clone(), second_x_plus_one);
+        let y_relation = SymBoolExpr::eq(&mut cx, first_y.clone(), second_y.clone());
+        let mut constraints =
+            vec![first_guard_is_true, second_guard_is_false, x_relation, y_relation];
+        for _ in 0..8 {
+            constraints.push(SymBoolExpr::constant(&mut cx, true));
+        }
+
+        let expected = [
+            (cx.intern("first_x"), U256::ZERO),
+            (cx.intern("first_y"), U256::from(2)),
+            (cx.intern("second_x"), U256::MAX),
+            (cx.intern("second_y"), U256::from(2)),
+        ]
+        .into_iter()
+        .collect::<SymbolicModel>();
+        assert!(fallback_model_satisfies_all_constraints(&constraints, &expected));
 
         assert!(checked_mul_guard_branch_model(&constraints).is_none());
     }
