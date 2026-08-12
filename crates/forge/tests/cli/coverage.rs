@@ -1948,6 +1948,58 @@ end_of_record
 "#]]);
 });
 
+// Test empty shared-memory calldata used by nested calls with isolation disabled.
+forgetest!(empty_shared_calldata, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    receive() external payable {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    address internal target;
+
+    function setUp() public {
+        target = address(new AContract());
+    }
+
+    function test_receive() public {
+        (bool success,) = target.call{gas: 100_000}("");
+        require(success);
+    }
+}
+    "#,
+    );
+
+    let expected = str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,1
+FN:5,AContract.receive
+FNDA:1,AContract.receive
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]), expected);
+});
+
 // Test that inherited empty constructors, receive functions, and fallbacks have distinct anchors.
 forgetest!(empty_special_functions_are_distinct, |prj, cmd| {
     prj.insert_ds_test();

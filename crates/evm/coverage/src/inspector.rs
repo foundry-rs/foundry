@@ -35,8 +35,13 @@ impl Default for LineCoverageCollector {
 impl<CTX> Inspector<CTX> for LineCoverageCollector {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         let call = interpreter.input.bytecode_address.is_some().then(|| {
-            let input = interpreter.input.input.as_bytes_memory(&interpreter.memory);
-            (CallData::new(&input), !interpreter.input.call_value.is_zero())
+            let calldata = if interpreter.input.input.is_empty() {
+                CallData::Empty
+            } else {
+                let input = interpreter.input.input.as_bytes_memory(&interpreter.memory);
+                CallData::new(&input)
+            };
+            (calldata, !interpreter.input.call_value.is_zero())
         });
         let map = self.get_or_insert_map(interpreter);
         if let Some((call, with_value)) = call {
