@@ -1,5 +1,5 @@
 use super::{
-    auth::confirm_auth_rpc_disclosure,
+    auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_before_network_resolution},
     call_overrides::CallOverrideOpts,
     run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc},
 };
@@ -205,6 +205,11 @@ pub enum CallSubcommands {
     },
 }
 
+struct AuthDisclosurePreflight {
+    confirmed: bool,
+    sender: Option<SenderKind<'static>>,
+}
+
 fn infer_network_from_chain_id(networks: NetworkConfigs, chain_id: u64) -> Result<NetworkConfigs> {
     networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)
 }
@@ -234,12 +239,12 @@ impl CallArgs {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         if self.tx.tempo.is_tempo() {
             evm_opts.networks = NetworkConfigs::with_tempo();
-            evm_opts.infer_network_from_fork().await?;
-            return self.run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts).await;
-        }
-        if let Some(chain) = self.chain {
+        } else if let Some(chain) = self.chain {
             evm_opts.networks = infer_network_from_chain_id(evm_opts.networks, chain.id())?;
         }
+        let Some(auth_preflight) = self.preflight_auth_disclosure().await? else {
+            return Ok(());
+        };
         evm_opts.infer_network_from_fork().await?;
         if self.chain.is_none()
             && let Some(chain_id) = evm_opts.env.chain_id
@@ -250,20 +255,55 @@ impl CallArgs {
         }
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts).await;
+            return self
+                .run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
         }
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_network_and_opts::<MonadEvmNetwork>(config, evm_opts).await;
+            return self
+                .run_with_network_and_opts::<MonadEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_network_and_opts::<OpEvmNetwork>(config, evm_opts).await;
+            return self
+                .run_with_network_and_opts::<OpEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
         }
 
-        self.run_with_network_and_opts::<EthEvmNetwork>(config, evm_opts).await
+        self.run_with_network_and_opts::<EthEvmNetwork>(config, evm_opts, auth_preflight).await
+    }
+
+    /// Returns whether resolving this call can disclose an authorization before the transaction
+    /// builder exists. This mirrors the builder's disclosure check after applying `.raw()`.
+    const fn will_disclose_auth(&self) -> bool {
+        !self.tx.auth.is_empty() && (!self.trace || matches!(self.tx.access_list, Some(None)))
+    }
+
+    async fn preflight_auth_disclosure(&self) -> Result<Option<AuthDisclosurePreflight>> {
+        if !self.will_disclose_auth() {
+            return Ok(Some(AuthDisclosurePreflight { confirmed: false, sender: None }));
+        }
+
+        let sender = if self.browser.browser {
+            None
+        } else {
+            Some(SenderKind::from_wallet_opts(self.wallet.clone()).await?)
+        };
+        let browser_sender = SenderKind::from(self.wallet.from.unwrap_or_default());
+        let validation_sender = sender.as_ref().unwrap_or(&browser_sender);
+        if !confirm_auth_rpc_disclosure_before_network_resolution(
+            &self.tx.auth,
+            validation_sender,
+            self.force,
+        )? {
+            return Ok(None);
+        }
+
+        Ok(Some(AuthDisclosurePreflight { confirmed: true, sender }))
     }
 
     fn validate_trace_args(&self) -> Result<()> {
@@ -291,6 +331,9 @@ impl CallArgs {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
+        let Some(auth_preflight) = self.preflight_auth_disclosure().await? else {
+            return Ok(());
+        };
         evm_opts.infer_network_from_fork().await?;
         let network = evm_opts.networks.execution_network();
         if !FEN::supports_network(network) {
@@ -300,13 +343,14 @@ impl CallArgs {
             );
         }
         // Keep the public generic wrapper independent of the network-specific future layout.
-        Box::pin(self.run_with_network_and_opts::<FEN>(config, evm_opts)).await
+        Box::pin(self.run_with_network_and_opts::<FEN>(config, evm_opts, auth_preflight)).await
     }
 
     async fn run_with_network_and_opts<FEN: FoundryEvmNetwork>(
         self,
         mut config: Box<Config>,
         evm_opts: EvmOpts,
+        auth_preflight: AuthDisclosurePreflight,
     ) -> Result<()>
     where
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
@@ -343,7 +387,9 @@ impl CallArgs {
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let endpoint_identity =
             if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
-        let sender = if let Some(browser) = browser.run::<FEN::Network>().await? {
+        let sender = if let Some(sender) = auth_preflight.sender {
+            sender
+        } else if let Some(browser) = browser.run::<FEN::Network>().await? {
             browser.address().into()
         } else {
             SenderKind::from_wallet_opts(wallet).await?
@@ -376,7 +422,10 @@ impl CallArgs {
             .raw();
         let will_disclose =
             (!trace && builder.has_auth()) || builder.will_disclose_auth_during_build();
-        if will_disclose && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+        if will_disclose
+            && !auth_preflight.confirmed
+            && !confirm_auth_rpc_disclosure(&builder, &sender, force)?
+        {
             return Ok(());
         }
         let (tx, func) = builder.build(sender).await?;
