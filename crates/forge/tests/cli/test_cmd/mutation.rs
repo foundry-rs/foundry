@@ -235,6 +235,73 @@ exclude_operators = [
     assert_eq!(summary["skipped"], 0);
 });
 
+forgetest_init!(mutation_testing_filters_invalid_fixed_bytes_unary_mutants, |prj, cmd| {
+    prj.add_source(
+        "TypedUnary.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract TypedUnary {
+    function complementWord(bytes32 word) public pure returns (bytes32) {
+        return ~word;
+    }
+
+    function complementNumber(uint256 number) public pure returns (uint256) {
+        return ~number;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "TypedUnary.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/TypedUnary.sol";
+
+contract TypedUnaryTest {
+    TypedUnary private target = new TypedUnary();
+
+    function testComplementWord() public view {
+        assert(target.complementWord(bytes32(uint256(3))) == ~bytes32(uint256(3)));
+    }
+
+    function testComplementNumber() public view {
+        assert(target.complementNumber(3) == ~uint256(3));
+    }
+}
+"#,
+    );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[mutation]
+exclude_operators = [
+    "assembly",
+    "assignment",
+    "binary-op",
+    "delete-expression",
+    "elim-delegate",
+    "require",
+]
+"#,
+    )
+    .unwrap();
+
+    let output = cmd
+        .args(["test", "--mutate", "src/TypedUnary.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success();
+    let summary = mutation_summary(&output.get_output().stdout_lossy());
+
+    assert_eq!(summary["total"], 4);
+    assert_eq!(summary["killed"], 4);
+    assert_eq!(summary["survived"], 0);
+    assert_eq!(summary["invalid"], 0);
+    assert_eq!(summary["skipped"], 0);
+});
+
 forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
     prj.add_source(
         "Comparisons.sol",
