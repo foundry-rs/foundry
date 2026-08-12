@@ -155,6 +155,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
             .wrap_err("failed to replay fork transaction prefix")?;
     }
 
+    backend.commit_startup_fork_cache();
     let backend = Arc::new(backend);
 
     if config.enable_auto_impersonate {
@@ -211,7 +212,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     }
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
-    let fee_history_service = FeeHistoryService::new_with_lifecycle(
+    let fee_history_service = FeeHistoryService::new(
         backend.reset_generation(),
         backend.fee_history_notifications(),
         Arc::clone(&fee_history_cache),

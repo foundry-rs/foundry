@@ -109,8 +109,9 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     ) -> Result<FoundryTxEnvelope, BlockchainError> {
         let mut signer =
             self.accounts.get(sender).ok_or(BlockchainError::NoSignerAvailable)?.clone();
-        // The transaction is filled from the backend's active chain ID. Do not retain the chain
-        // ID captured when the dev signer was created, because `anvil_reset` can switch chains.
+        // The transaction is authoritative for its chain ID. Developer wallets are created with
+        // the node's initial chain ID, which can later change through a reset or
+        // `anvil_setChainId`.
         signer.set_chain_id(None);
         let envelope = match tx {
             FoundryTypedTx::Legacy(mut t) => {
@@ -147,5 +148,29 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
             }
         };
         Ok(envelope)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::TxLegacy;
+
+    #[test]
+    fn dev_signer_uses_transaction_chain_id() {
+        let mut account = PrivateKeySigner::random();
+        account.set_chain_id(Some(1));
+        let sender = account.address();
+        let signer = DevSigner::new(vec![account]);
+        let tx = TxLegacy { chain_id: Some(56), ..Default::default() };
+
+        let FoundryTxEnvelope::Legacy(signed) =
+            signer.sign_transaction_from(&sender, FoundryTypedTx::Legacy(tx)).unwrap()
+        else {
+            panic!("expected legacy transaction")
+        };
+
+        assert_eq!(signed.tx().chain_id, Some(56));
+        assert_eq!(signed.recover_signer().unwrap(), sender);
     }
 }

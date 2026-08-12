@@ -5,7 +5,7 @@ use foundry_cli::utils::Git;
 use foundry_common::fs;
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_evm_networks::NetworkVariant;
 use std::path::{Path, PathBuf};
 use yansi::Paint;
 
@@ -239,8 +239,8 @@ impl InitArgs {
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root)?;
-            if tempo {
-                config.networks = NetworkConfigs::with_tempo();
+            if let Some(network) = network {
+                config.networks = network.into();
             }
             if !dest.exists() {
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
