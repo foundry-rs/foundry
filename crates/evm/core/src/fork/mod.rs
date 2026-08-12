@@ -1,4 +1,4 @@
-use super::opts::EvmOpts;
+use super::opts::{EvmOpts, ForkContext};
 
 pub mod database;
 
@@ -17,4 +17,6 @@ pub struct CreateFork {
     pub url: String,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
+    /// Context already resolved by the runner that requested this backend.
+    pub expected_context: Option<ForkContext>,
 }

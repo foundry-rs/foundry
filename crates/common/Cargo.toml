@@ -99,6 +99,7 @@ tempfile.workspace = true
 
 [features]
 default = ["optimism"]
+monad = ["foundry-config/monad"]
 optimism = [
     "dep:op-alloy-network",
     "dep:op-alloy-rpc-types",

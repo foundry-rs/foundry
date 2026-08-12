@@ -148,21 +148,18 @@ impl SelectorsSubcommands {
                     vec![(contract, artifact)]
                 };
 
-                let mut artifacts = artifacts.into_iter().peekable();
-                while let Some((contract, artifact)) = artifacts.next() {
+                let mut abis = Vec::with_capacity(artifacts.len());
+                for (contract, artifact) in artifacts {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
                         continue;
                     }
 
                     sh_status!("Uploading selectors for {contract}...")?;
-
-                    // upload abi to selector database
-                    import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
-
-                    if artifacts.peek().is_some() {
-                        sh_println!()?
-                    }
+                    abis.push(abi);
+                }
+                if !abis.is_empty() {
+                    import_selectors(SelectorImportData::Abi(abis)).await?.describe();
                 }
             }
             Self::Collision { mut first_contract, mut second_contract, build } => {

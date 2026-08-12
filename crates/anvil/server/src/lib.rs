@@ -88,7 +88,8 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// Invoked when the request was received
     async fn on_request(&self, request: Self::Request) -> ResponseResult;
 
-    /// Invoked for every incoming `RpcMethodCall`
+    /// Invoked for every incoming [`RpcMethodCall`]. Notifications are adapted to method calls
+    /// with an [`anvil_rpc::request::Id::Null`] identifier, and their responses are discarded.
     ///
     /// This will attempt to deserialize a `{ "method" : "<name>", "params": "<params>" }` message
     /// into the `Request` type of this handler. If a `Request` instance was deserialized

@@ -11,12 +11,13 @@ use foundry_compilers::{
     project::ProjectCompiler,
     solc::Solc,
 };
-use foundry_config::{Config, SolcReq};
+use foundry_config::{Config, FoundryHardfork, SolcReq};
 use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
     opts::EvmOpts,
 };
+use foundry_evm_networks::NetworkConfigs;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solar::{
@@ -279,6 +280,24 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     pub foundry_config: Config,
     /// EVM Options
     pub evm_opts: EvmOpts,
+    /// Network family to restore when leaving fork mode.
+    #[serde(default)]
+    pub local_networks: Option<NetworkConfigs>,
+    /// Chain ID to restore when leaving fork mode.
+    #[serde(default)]
+    pub local_chain_id: Option<u64>,
+    /// Whether the saved fork network was inferred from its endpoint.
+    #[serde(default)]
+    pub fork_network_is_inferred: bool,
+    /// Whether the saved chain ID was inferred from its endpoint.
+    #[serde(default)]
+    pub fork_chain_id_is_inferred: bool,
+    /// Exact network hardfork selected for the latest execution.
+    #[serde(skip)]
+    pub resolved_hardfork: Option<FoundryHardfork>,
+    /// Source chain used for trace decoding and external identifiers.
+    #[serde(skip)]
+    pub source_chain_id: Option<u64>,
     /// Disable the default `Vm` import.
     pub no_vm: bool,
     /// In-memory REVM db for the session's runner.
@@ -296,6 +315,17 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
+    /// Captures the local execution context for sessions saved before it was persisted explicitly.
+    pub fn initialize_local_context(&mut self) {
+        self.evm_opts.fork_network_is_inferred = self.fork_network_is_inferred;
+        self.evm_opts.fork_chain_id_is_inferred = self.fork_chain_id_is_inferred;
+        if self.local_networks.is_none() {
+            self.local_networks = Some(self.evm_opts.networks);
+            self.local_chain_id =
+                self.evm_opts.env.chain_id.or(self.foundry_config.chain.map(|chain| chain.id()));
+        }
+    }
+
     /// Detect the solc version to know if VM can be injected.
     pub fn detect_solc(&mut self) -> Result<()> {
         if self.foundry_config.solc.is_none() {
@@ -626,6 +656,58 @@ mod tests {
     use foundry_compilers::artifacts::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
     use foundry_evm::core::evm::EthEvmNetwork;
     use std::fs;
+
+    #[test]
+    fn initialize_local_context_migrates_legacy_session() {
+        let mut config = SessionSourceConfig::<EthEvmNetwork>::default();
+        config.evm_opts.networks = NetworkConfigs::with_tempo();
+        config.evm_opts.env.chain_id = Some(4217);
+
+        config.initialize_local_context();
+
+        assert_eq!(config.local_networks, Some(NetworkConfigs::with_tempo()));
+        assert_eq!(config.local_chain_id, Some(4217));
+
+        config.evm_opts.networks = NetworkConfigs::default();
+        config.evm_opts.env.chain_id = Some(1);
+        config.initialize_local_context();
+
+        assert_eq!(config.local_networks, Some(NetworkConfigs::with_tempo()));
+        assert_eq!(config.local_chain_id, Some(4217));
+    }
+
+    #[test]
+    fn serialized_session_restores_fork_inference_provenance() {
+        let config = SessionSourceConfig::<EthEvmNetwork> {
+            fork_network_is_inferred: true,
+            fork_chain_id_is_inferred: true,
+            ..Default::default()
+        };
+        let encoded = serde_json::to_string(&config).unwrap();
+        let mut decoded =
+            serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
+
+        assert!(!decoded.evm_opts.fork_network_is_inferred);
+        assert!(!decoded.evm_opts.fork_chain_id_is_inferred);
+        decoded.initialize_local_context();
+        assert!(decoded.evm_opts.fork_network_is_inferred);
+        assert!(decoded.evm_opts.fork_chain_id_is_inferred);
+    }
+
+    #[test]
+    fn legacy_session_without_rpc_transport_flags_deserializes() {
+        let config = SessionSourceConfig::<EthEvmNetwork>::default();
+        let mut legacy_session = serde_json::to_value(config).unwrap();
+        let evm_opts = legacy_session["evm_opts"].as_object_mut().expect("serialized EVM options");
+        assert!(evm_opts.remove("eth_rpc_accept_invalid_certs").is_some());
+        assert!(evm_opts.remove("eth_rpc_no_proxy").is_some());
+
+        let decoded =
+            serde_json::from_value::<SessionSourceConfig<EthEvmNetwork>>(legacy_session).unwrap();
+
+        assert!(!decoded.evm_opts.rpc_accept_invalid_certs);
+        assert!(!decoded.evm_opts.rpc_no_proxy);
+    }
 
     /// Regression test for <https://github.com/foundry-rs/foundry/issues/14711>.
     ///
