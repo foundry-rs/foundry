@@ -5063,10 +5063,13 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn set_rpc_url_installs_context_equivalent_identity_with_new_instance() {
-        let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+        let genesis_timestamp = 1_700_000_000u64;
+        let (_origin_api, origin_handle) =
+            spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
         let (api, _handle) =
             spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
-        let (target_api, target_handle) = spawn(NodeConfig::test()).await;
+        let (target_api, target_handle) =
+            spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
         let target_url = target_handle.http_endpoint();
         let fork = api.backend.get_fork().unwrap();
         let identity_before = fork.config.read().endpoint_identity;

@@ -3521,7 +3521,9 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_set_rpc_url_syncs_fork_config() {
     // Spawn an origin node and fork off it
-    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let genesis_timestamp = 1_700_000_000u64;
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
     let origin_url = origin_handle.http_endpoint();
 
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
@@ -3532,7 +3534,8 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
     let metadata_before = api.anvil_metadata().await.unwrap();
 
     // Spawn a second origin to use as the new URL
-    let (_origin2_api, origin2_handle) = spawn(NodeConfig::test()).await;
+    let (_origin2_api, origin2_handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
     let new_url = origin2_handle.http_endpoint();
 
     // Set RPC URL through the RPC dispatcher to cover its lifecycle-lock path.
@@ -3603,10 +3606,11 @@ async fn test_anvil_set_rpc_url_rejects_self_reference_without_mutation() {
     let error = api.anvil_set_rpc_url(handle.http_endpoint()).await.unwrap_err();
 
     assert!(error.to_string().contains("own RPC endpoint"), "{error}");
-    let config = fork.config.read();
-    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
-    assert_eq!(config.fork_urls, config_before.fork_urls);
-    drop(config);
+    {
+        let config = fork.config.read();
+        assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+        assert_eq!(config.fork_urls, config_before.fork_urls);
+    }
     api.anvil_reset(Some(Forking::default())).await.unwrap();
     assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
 }
@@ -3663,10 +3667,11 @@ async fn test_anvil_set_rpc_url_rejects_different_chain_atomically() {
 
     api.anvil_set_rpc_url(target_handle.http_endpoint()).await.unwrap_err();
 
-    let config = fork.config.read();
-    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
-    assert_eq!(config.fork_urls, config_before.fork_urls);
-    drop(config);
+    {
+        let config = fork.config.read();
+        assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+        assert_eq!(config.fork_urls, config_before.fork_urls);
+    }
     api.anvil_reset(Some(Forking::default())).await.unwrap();
     assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
 }
@@ -3690,10 +3695,11 @@ async fn test_anvil_set_rpc_url_rejects_mismatched_pinned_block_atomically() {
 
     api.anvil_set_rpc_url(target_handle.http_endpoint()).await.unwrap_err();
 
-    let config = fork.config.read();
-    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
-    assert_eq!(config.fork_urls, config_before.fork_urls);
-    drop(config);
+    {
+        let config = fork.config.read();
+        assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+        assert_eq!(config.fork_urls, config_before.fork_urls);
+    }
     api.anvil_reset(Some(Forking::default())).await.unwrap();
     assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
 }
@@ -3718,10 +3724,11 @@ async fn test_anvil_set_rpc_url_keeps_node_info_strict_without_mutation() {
     let error = api.anvil_set_rpc_url(target_url).await.unwrap_err();
 
     assert!(error.to_string().contains("failed to determine network family"), "{error}");
-    let config = fork.config.read();
-    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
-    assert_eq!(config.fork_urls, config_before.fork_urls);
-    drop(config);
+    {
+        let config = fork.config.read();
+        assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+        assert_eq!(config.fork_urls, config_before.fork_urls);
+    }
     api.anvil_reset(Some(Forking::default())).await.unwrap();
     assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
 }
