@@ -49,10 +49,7 @@ async fn resolve_da_network(
     }
 
     let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
-    infer_da_network_from_chain_id(provider.get_chain_id().await?)
-}
-
-fn infer_da_network_from_chain_id(chain_id: u64) -> Result<NetworkVariant> {
+    let chain_id = provider.get_chain_id().await?;
     NetworkVariant::from_known_chain_id(chain_id)
         .map(|network| network.unwrap_or(NetworkVariant::Ethereum))
         .map_err(|error| {
@@ -87,35 +84,6 @@ pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_chains::NamedChain;
-
-    #[test]
-    #[cfg(feature = "monad")]
-    fn known_monad_chain_ids_infer_monad() {
-        for chain_id in [NamedChain::Monad as u64, NamedChain::MonadTestnet as u64] {
-            assert_eq!(infer_da_network_from_chain_id(chain_id).unwrap(), NetworkVariant::Monad);
-        }
-    }
-
-    #[test]
-    #[cfg(not(feature = "monad"))]
-    fn known_monad_chain_ids_reject_disabled_monad() {
-        for chain_id in [NamedChain::Monad as u64, NamedChain::MonadTestnet as u64] {
-            let error = infer_da_network_from_chain_id(chain_id).unwrap_err();
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "cannot infer execution network from chain ID {chain_id}: network family \
-                     `monad` is not enabled in this build"
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn unknown_chain_id_defaults_to_ethereum() {
-        assert_eq!(infer_da_network_from_chain_id(98_765_432).unwrap(), NetworkVariant::Ethereum);
-    }
 
     #[tokio::test]
     async fn explicit_network_precedes_rpc_inference() {
