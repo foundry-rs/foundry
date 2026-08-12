@@ -774,6 +774,8 @@ impl Config {
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
+    const DEFAULT_SRC: &'static str = "src";
+
     /// The name of the directory foundry reserves for itself under the user's home directory: `~`
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
@@ -957,6 +959,10 @@ impl Config {
         Ok(())
     }
 
+    fn uses_default_src(&self) -> bool {
+        self.src == Path::new(Self::DEFAULT_SRC)
+    }
+
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
     ///
     /// This will merge various providers, such as env,toml,remappings into the figment if
@@ -970,7 +976,8 @@ impl Config {
 
         let root = self.root.as_path();
         let profile = Self::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
+        let mut figment = Figment::default()
+            .merge(DappHardhatDirProvider { root, detect_src: self.uses_default_src() });
 
         // merge global foundry.toml file
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
@@ -1550,7 +1557,7 @@ impl Config {
             .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.iter())
-            .remappings(self.get_all_remappings())
+            .remappings(self.project_remappings())
             .allowed_path(&self.root)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
@@ -1604,6 +1611,42 @@ impl Config {
     /// Returns all configured remappings.
     pub fn get_all_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.remappings.iter().map(|m| m.clone().into())
+    }
+
+    /// Returns project remappings with absolute aliases for relative filesystem contexts.
+    fn project_remappings(&self) -> Vec<Remapping> {
+        let remappings = self.get_all_remappings().collect::<Vec<_>>();
+        let mut adjusted = Vec::with_capacity(remappings.len());
+
+        // External source unit names remain absolute in the compiler input, while configured
+        // contexts are root-relative. Preserve the configured order and add an equivalent absolute
+        // context immediately after each relative form so both the project resolver and compiler
+        // select the same mapping.
+        for remapping in &remappings {
+            adjusted.push(remapping.clone());
+
+            let Some(context) = remapping.context.as_deref() else { continue };
+            if Path::new(context).is_absolute() {
+                continue;
+            }
+            let Ok(context_path) = foundry_compilers::utils::normalize_solidity_import_path(
+                &self.root,
+                Path::new(context),
+            ) else {
+                continue;
+            };
+            let mut context_path = context_path.display().to_string();
+            if context.ends_with(['/', '\\']) && !context_path.ends_with(['/', '\\']) {
+                context_path.push(std::path::MAIN_SEPARATOR);
+            }
+
+            let mut absolute = remapping.clone();
+            absolute.context = Some(context_path);
+            if !remappings.contains(&absolute) && !adjusted.contains(&absolute) {
+                adjusted.push(absolute);
+            }
+        }
+        adjusted
     }
 
     /// Returns the configured rpc jwt secret
@@ -2058,14 +2101,16 @@ impl Config {
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
-        Self {
-            root: paths.root,
-            src: paths.sources.file_name().unwrap().into(),
-            out: artifacts.clone(),
-            libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
-            ..Self::default()
+        let mut config = Self::default();
+        if config.uses_default_src() {
+            config.src = paths.sources.file_name().unwrap().into();
         }
+        config.root = paths.root;
+        config.out = artifacts.clone();
+        config.libs =
+            paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect();
+        config.fs_permissions = FsPermissions::new([PathPermission::read(artifacts)]);
+        config
     }
 
     /// Returns the default config but with hardhat paths
@@ -2866,7 +2911,7 @@ impl Default for Config {
             isolate: true,
             root: root_default(),
             extends: None,
-            src: "src".into(),
+            src: Self::DEFAULT_SRC.into(),
             test: "test".into(),
             script: "script".into(),
             out: "out".into(),
@@ -3251,6 +3296,66 @@ mod tests {
     }
 
     #[test]
+    fn project_remappings_alias_relative_filesystem_contexts_in_place() {
+        let root = tempdir().unwrap();
+        let dependency = root.path().join("dependency");
+        let absolute_dependency = root.path().join("absolute-dependency");
+        fs::create_dir(&dependency).unwrap();
+        fs::create_dir(&absolute_dependency).unwrap();
+
+        let global_before = Remapping {
+            context: None,
+            name: "global-before/".into(),
+            path: "lib/global-before/".into(),
+        };
+        let relative = Remapping {
+            context: Some(format!("dependency{}", std::path::MAIN_SEPARATOR)),
+            name: "relative/".into(),
+            path: "lib/relative/".into(),
+        };
+        let absolute = Remapping {
+            context: Some(format!(
+                "{}{}",
+                absolute_dependency.display(),
+                std::path::MAIN_SEPARATOR
+            )),
+            name: "absolute/".into(),
+            path: "lib/absolute/".into(),
+        };
+        let missing = Remapping {
+            context: Some(format!("missing{}", std::path::MAIN_SEPARATOR)),
+            name: "missing/".into(),
+            path: "lib/missing/".into(),
+        };
+        let global_after = Remapping {
+            context: None,
+            name: "global-after/".into(),
+            path: "lib/global-after/".into(),
+        };
+        let mut config = Config::with_root(root.path());
+        config.remappings = [
+            global_before.clone(),
+            relative.clone(),
+            absolute.clone(),
+            missing.clone(),
+            global_after.clone(),
+        ]
+        .map(Into::into)
+        .into();
+
+        let mut absolute_alias = relative.clone();
+        absolute_alias.context = Some(format!(
+            "{}{}",
+            config.root.join("dependency").display(),
+            std::path::MAIN_SEPARATOR
+        ));
+        assert_eq!(
+            config.project_remappings(),
+            vec![global_before, relative, absolute_alias, absolute, missing, global_after]
+        );
+    }
+
+    #[test]
     fn default_sender() {
         assert_eq!(Config::DEFAULT_SENDER, address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"));
     }
@@ -3398,6 +3503,29 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_custom_src_skips_directory_auto_detection() {
+        figment::Jail::expect_with(|jail| {
+            fs::create_dir(jail.directory().join("contracts")).unwrap();
+
+            let config = Config { root: jail.directory().into(), ..Default::default() };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("contracts"));
+
+            let config = Config {
+                root: jail.directory().into(),
+                src: "custom-src".into(),
+                ..Default::default()
+            };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("custom-src"));
+
             Ok(())
         });
     }

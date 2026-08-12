@@ -4,9 +4,9 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
-        FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode, FuzzMinimizeObservation,
-        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
-        is_generated_symbolic_regression_contract,
+        FuzzFailureReplayConfig, FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode,
+        FuzzMinimizeObservation, MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig,
+        TestFunctionMatcher, is_generated_symbolic_regression_contract,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
@@ -41,8 +41,8 @@ use foundry_common::{
     fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
-    ProjectCompileOutput,
-    artifacts::Libraries,
+    Artifact, ProjectCompileOutput,
+    artifacts::{BytecodeObject, Libraries},
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -66,7 +66,7 @@ use foundry_evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::ShowmapDomain,
-    fuzz::{BasicTxDetails, CounterExample},
+    fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
     hardforks::TempoHardfork,
     opts::EvmOpts,
     traces::{
@@ -93,7 +93,10 @@ mod filter;
 mod summary;
 use crate::{
     result::TestKind,
-    runner::{count_runnable_invariant_campaign_anchors, function_matches_network_pass},
+    runner::{
+        count_runnable_invariant_campaign_anchors, effective_test_function_kind,
+        function_matches_network_pass, inline_config_for,
+    },
     traces::render_trace_arena_inner,
 };
 use filter::RerunFailures;
@@ -338,6 +341,7 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) should_debug: bool,
     pub(crate) decode_internal: InternalTraceMode,
     pub(crate) multi_network: MultiNetworkConfig,
+    pub(crate) fuzz_input: Option<FuzzFailureReplayConfig>,
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
     pub(crate) selected_sources: BTreeSet<PathBuf>,
@@ -350,6 +354,7 @@ impl TestExecutionOptions {
             should_debug: false,
             decode_internal: InternalTraceMode::None,
             multi_network: MultiNetworkConfig::default(),
+            fuzz_input: None,
             replay_symbolic_artifact: None,
             inline_config,
             selected_sources: BTreeSet::new(),
@@ -764,8 +769,13 @@ pub struct TestArgs {
     pub fuzz_mutation_weight_cmp: Option<u32>,
 
     /// File to rerun fuzz failures from.
-    #[arg(long)]
-    pub fuzz_input_file: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with_all = ["fuzz_run", "list"]
+    )]
+    pub fuzz_input_file: Option<PathBuf>,
 
     /// Number of calls executed to try to break invariants in one run.
     #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH", value_name = "DEPTH")]
@@ -1369,11 +1379,6 @@ impl TestArgs {
                     "`--fuzz-run` only applies to fuzz tests; no matched fuzz tests were found."
                 )?;
             }
-            if self.fuzz_input_file.is_some() {
-                sh_warn!(
-                    "`--fuzz-input-file` only applies to fuzz tests; no matched fuzz tests were found."
-                )?;
-            }
         }
 
         if counts.invariant == 0 && counts.fuzz > 0 {
@@ -1550,6 +1555,45 @@ impl TestArgs {
         }
 
         Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
+    }
+
+    fn load_fuzz_input(
+        &self,
+        output: &ProjectCompileOutput,
+        config: &Config,
+        inline_config: &InlineConfig,
+        filter: &ProjectPathsAwareFilter,
+    ) -> Result<Option<FuzzFailureReplayConfig>> {
+        let Some(path) = &self.fuzz_input_file else {
+            return Ok(None);
+        };
+        let failure = fs::read_json_file::<BaseCounterExample>(path)?;
+        let Some(selector) = failure.calldata.get(..4) else {
+            bail!(
+                "fuzz input file {} contains calldata shorter than a 4-byte selector",
+                path.display()
+            );
+        };
+        let targets =
+            matching_fuzz_replay_targets(output, config, inline_config, filter, selector)?;
+        let [(contract, test)] = targets.as_slice() else {
+            if targets.is_empty() {
+                bail!(
+                    "fuzz input file {} does not match any selected stateless fuzz test",
+                    path.display()
+                );
+            }
+            bail!(
+                "fuzz input file {} matches {} selected stateless fuzz tests; replay requires exactly one target",
+                path.display(),
+                targets.len()
+            );
+        };
+        Ok(Some(FuzzFailureReplayConfig {
+            failure: Arc::new(failure),
+            contract: contract.clone(),
+            test: test.clone(),
+        }))
     }
 
     /// Returns a list of files that need to be compiled in order to run all the tests that match
@@ -1925,14 +1969,6 @@ impl TestArgs {
             bail!("`fuzz.run` must be greater than 0");
         }
 
-        self.warn_unsupported_engine_flags(
-            output,
-            &config,
-            &execution.inline_config,
-            filter,
-            &execution.multi_network,
-        )?;
-
         if self.list {
             return list_from_output(
                 output,
@@ -1943,6 +1979,17 @@ impl TestArgs {
                 execution.replay_symbolic_artifact.as_ref(),
             );
         }
+
+        execution.fuzz_input =
+            self.load_fuzz_input(output, &config, &execution.inline_config, filter)?;
+
+        self.warn_unsupported_engine_flags(
+            output,
+            &config,
+            &execution.inline_config,
+            filter,
+            &execution.multi_network,
+        )?;
 
         let mut filter = filter.clone();
 
@@ -2546,6 +2593,7 @@ impl TestArgs {
             .with_showmap(showmap)
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
+            .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
@@ -3435,9 +3483,6 @@ impl Provider for TestArgs {
         if let Some(weight) = self.fuzz_mutation_weight_cmp {
             fuzz_dict.insert("mutation_weight_cmp".to_string(), weight.into());
         }
-        if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
-            fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
-        }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         let mut invariant_dict = Dict::default();
@@ -3793,6 +3838,58 @@ fn matched_engine_counts(
             acc.invariant += counts.invariant;
             acc
         })
+}
+
+fn matching_fuzz_replay_targets(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    inline_config: &InlineConfig,
+    filter: &ProjectPathsAwareFilter,
+    selector: &[u8],
+) -> Result<Vec<(String, String)>> {
+    let matcher = TestFunctionMatcher::new(config, inline_config, None);
+    let mut targets = Vec::new();
+    for (id, artifact) in output.artifact_ids() {
+        let Some(abi) = artifact.abi.as_ref() else { continue };
+        let has_creation_code =
+            artifact.get_bytecode_object().is_some_and(|object| match object.as_ref() {
+                BytecodeObject::Bytecode(bytecode) => !bytecode.is_empty(),
+                BytecodeObject::Unlinked(_) => true,
+            });
+        let deployable = has_creation_code
+            && abi
+                .constructor
+                .as_ref()
+                .map(|constructor| constructor.inputs.is_empty())
+                .unwrap_or(true);
+        if !deployable {
+            continue;
+        }
+
+        let id = id.with_stripped_file_prefixes(&config.root);
+        if !matcher.matches_contract(filter, &id, abi) {
+            continue;
+        }
+        let contract = id.identifier();
+        let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
+        for func in abi.functions() {
+            let kind = matcher.test_function_kind(&contract, func, generated_symbolic_regression);
+            if !matches!(kind, TestFunctionKind::FuzzTest { .. })
+                || !filter.matches_test_function_kind_in_contract(&contract, func, kind)
+            {
+                continue;
+            }
+            let function_config = inline_config_for(config, inline_config, &contract, Some(func))?;
+            if matches!(
+                effective_test_function_kind(kind, &function_config, func),
+                TestFunctionKind::FuzzTest { .. }
+            ) && func.selector() == selector
+            {
+                targets.push((contract.clone(), func.signature()));
+            }
+        }
+    }
+    Ok(targets)
 }
 
 fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> Result<()> {
