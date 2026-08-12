@@ -71,6 +71,39 @@ jobs:
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - run: cargo build --workspace --no-default-features --locked
 
+  touch-id-link:
+    name: touch-id link (${{ matrix.target }})
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            run_tests: true
+          - target: aarch64-apple-darwin
+            run_tests: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+      - run: cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target "${{ matrix.target }}" --locked --no-run
+      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target "${{ matrix.target }}" --locked
+      - name: Run native Touch ID regressions
+        if: matrix.run_tests
+        run: |
+          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --locked cmd::wallet::tests
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --locked wallet_change_password
+
   monad-check:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
@@ -325,6 +358,7 @@ jobs:
       - docs
       - doctest
       - no-default-features
+      - touch-id-link
       - monad-check
       - monad-library-tests
       - monad-integration-tests
