@@ -954,6 +954,7 @@ impl Config {
     }
 
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
+        self.networks.validate().map_err(Error::from)?;
         let Some(hardfork) = self.hardfork else { return Ok(()) };
         self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
         Ok(())
@@ -2138,7 +2139,7 @@ impl Config {
             out: self.out,
             libs: self.libs,
             remappings: self.remappings,
-            network: self.networks.active_network_name().map(String::from),
+            network: self.networks.resolved_network().map(|network| network.name().to_string()),
         }
     }
 
@@ -3144,7 +3145,7 @@ pub struct BasicConfig {
         serialize_with = "remappings_serde::serialize"
     )]
     pub remappings: Vec<RelativeRemapping>,
-    /// The active non-Ethereum network (e.g. `"tempo"`).
+    /// The explicitly selected network (e.g. `"ethereum"`, `"monad"`, or `"tempo"`).
     #[serde(skip)]
     pub network: Option<String>,
 }
@@ -3274,6 +3275,8 @@ mod tests {
         ModelCheckerEngine, YulDetails,
         vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
+    #[cfg(feature = "monad")]
+    use foundry_evm_hardforks::MonadHardfork;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
@@ -5759,6 +5762,131 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
+    fn namespaced_hardfork_infers_monad_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "monad:MonadNine"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+            assert_eq!(config.evm_spec_id::<MonadHardfork>(), MonadHardfork::MonadNine);
+            assert_eq!(
+                config.hardfork.as_ref().and_then(FoundryHardfork::namespace),
+                Some("monad")
+            );
+            assert_eq!(
+                config.hardfork.as_ref().map(FoundryHardfork::name).as_deref(),
+                Some("MonadNine")
+            );
+            assert!(config.networks.is_monad());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn network_selectors_reject_profile_merged_hybrid() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+
+                [profile.ci]
+                celo = true
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains(
+                "network selectors `celo = true` and `monad = true` conflict; select only one \
+                 network"
+            ));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn network_selectors_reject_canonical_environment_conflict() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_NETWORK", "monad");
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains(
+                "network selectors `network = \"monad\"` and `tempo = true` conflict; select only \
+                 one network"
+            ));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn matching_canonical_and_legacy_network_selectors_remain_valid() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "monad"
+                monad = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.networks.is_monad());
+            assert_eq!(
+                config.networks.resolved_network(),
+                Some(foundry_evm_networks::NetworkVariant::Monad)
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn celo_network_accepts_ethereum_hardfork() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                celo = true
+                hardfork = "prague"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.networks.is_celo());
+            assert_eq!(
+                config.hardfork,
+                Some(FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::Prague))
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn hardfork_rejects_conflicting_network() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -8178,6 +8306,54 @@ mod tests {
                     .iter()
                     .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
                 "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn no_unknown_key_warning_for_legacy_monad_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
+                "did not expect UnknownKey warning for `monad`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn warns_for_monad_alias_without_monad_support() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
+                "expected UnknownKey warning for `monad`, got: {:?}",
                 cfg.warnings
             );
             Ok(())

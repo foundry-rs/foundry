@@ -400,6 +400,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-monad-evm"
+version = "0.5.0"
+source = "git+https://github.com/category-labs/alloy-monad-evm?rev=334bda1826996118d40872af35c27316a01889a2#334bda1826996118d40872af35c27316a01889a2"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "monad-revm",
+ "revm",
+]
+
+[[package]]
 name = "alloy-network"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,6 +1247,7 @@ dependencies = [
  "alloy-evm",
  "alloy-genesis",
  "alloy-hardforks",
+ "alloy-monad-evm",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",
@@ -1276,6 +1288,7 @@ dependencies = [
  "hyper",
  "imbl",
  "itertools 0.15.0",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",
@@ -2941,6 +2954,7 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "anvil",
+ "axum",
  "chrono",
  "clap",
  "clap_complete",
@@ -2972,6 +2986,7 @@ dependencies = [
  "rand 0.9.5",
  "rayon",
  "regex",
+ "reqwest 0.13.4",
  "revm",
  "rpassword",
  "semver 1.0.28",
@@ -3065,6 +3080,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
+ "anvil",
  "clap",
  "dirs",
  "eyre",
@@ -3074,6 +3090,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm",
+ "foundry-evm-networks",
  "foundry-test-utils",
  "itertools 0.15.0",
  "reqwest 0.13.4",
@@ -3085,6 +3102,7 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "time",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "walkdir",
@@ -5568,6 +5586,7 @@ dependencies = [
  "jsonpath_lib",
  "k256",
  "memchr",
+ "monad-revm",
  "p256 0.13.2",
  "parking_lot",
  "proptest",
@@ -5977,6 +5996,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-json-abi",
+ "alloy-monad-evm",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",
@@ -6000,6 +6020,7 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.15.0",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types",
@@ -6072,6 +6093,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-rpc-types",
  "foundry-compilers",
+ "monad-revm",
  "op-revm",
  "revm",
  "serde",
@@ -6089,6 +6111,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "foundry-evm-hardforks",
+ "monad-revm",
  "revm",
  "serde",
  "serde_json",
@@ -6140,10 +6163,12 @@ dependencies = [
  "foundry-config",
  "foundry-evm-core",
  "foundry-evm-hardforks",
+ "foundry-evm-networks",
  "foundry-linking",
  "futures",
  "itertools 0.15.0",
  "memchr",
+ "monad-revm",
  "rayon",
  "reqwest 0.13.4",
  "revm",
@@ -6238,6 +6263,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives",
  "alloy-provider",
+ "axum",
  "eyre",
  "fd-lock",
  "foundry-block-explorers",
@@ -7969,6 +7995,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "monad-revm"
+version = "0.6.0"
+source = "git+https://github.com/category-labs/monad-revm?rev=8ba4a51b221357105465cbe6d410906d3f12baeb#8ba4a51b221357105465cbe6d410906d3f12baeb"
+dependencies = [
+ "alloy-sol-types",
+ "auto_impl",
+ "revm",
+ "revm-interpreter",
+ "serde",
 ]
 
 [[package]]
