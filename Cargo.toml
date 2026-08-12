@@ -565,7 +565,7 @@ solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2
 
 ## monad
 alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", rev = "334bda1826996118d40872af35c27316a01889a2" }
-monad-revm = { git = "https://github.com/category-labs/monad-revm", rev = "8ba4a51b221357105465cbe6d410906d3f12baeb" }
+monad-revm = { git = "https://github.com/category-labs/monad-revm", rev = "bc471693e85f9aa800325e2783b465225005dc57" }
 
 ## foundry-core
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "d61ff900ecd69272ab810f4fc5ca478e10af7ecf" }
