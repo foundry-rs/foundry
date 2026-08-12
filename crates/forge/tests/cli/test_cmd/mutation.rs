@@ -1947,16 +1947,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 3         ┆ 5.6%       │
+│ Survived ┆ 3         ┆ 5.7%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 49        ┆ 90.7%      │
+│ Killed   ┆ 48        ┆ 90.6%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 1.9%       │
+│ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 1         ┆ 1.9%       │
+│ Skipped  ┆ 2         ┆ 3.8%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 94.2% (49/52 mutants killed); [ELAPSED]
+Mutation Score: 94.1% (48/51 mutants killed); [ELAPSED]
 ...
 "#]]);
 });
