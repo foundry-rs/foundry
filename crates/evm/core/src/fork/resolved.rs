@@ -95,6 +95,15 @@ impl ResolvedFork {
         self.block
     }
 
+    /// Returns this resolution advanced to another exact block on the same RPC source.
+    pub(crate) fn at_block(&self, block: BlockNumHash) -> Self {
+        let mut resolved = self.clone();
+        resolved.selector = Some(block.number);
+        resolved.block = block;
+        resolved.context.block_number = block.number;
+        resolved
+    }
+
     /// Returns an opaque identity for the complete authenticated RPC source.
     pub(crate) fn source_id(&self) -> B256 {
         let mut encoded = Vec::new();

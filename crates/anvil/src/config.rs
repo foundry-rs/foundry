@@ -2054,11 +2054,7 @@ latest block number: {latest_block}"
             .with_fork_identity(block_hash, source_id);
         let cache_path =
             self.block_cache_path_for_rpc(source_chain_id, fork_block_number, &eth_rpc_url);
-        let block_chain_db = if self.fork_chain_id.is_some() {
-            BlockchainDb::new_skip_check(meta, cache_path)
-        } else {
-            BlockchainDb::new(meta, cache_path)
-        };
+        let block_chain_db = BlockchainDb::new(meta, cache_path);
 
         // After bootstrap, rebuild the provider with round-robin if multiple URLs are
         // configured. This ensures bootstrap used only the primary endpoint for consistency,

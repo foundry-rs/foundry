@@ -167,7 +167,13 @@ impl<
     pub fn create_fork(
         &self,
         fork: CreateFork,
-    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, ForkContext)> {
+    ) -> eyre::Result<(
+        ForkId,
+        SharedBackend<N, BLOCK>,
+        EvmEnv<SPEC, BLOCK>,
+        ForkContext,
+        BlockNumHash,
+    )> {
         trace!("Creating new fork, url={}, block={:?}", fork.url, fork.evm_opts.fork_block_number);
         let (sender, rx) = oneshot_channel();
         let req = Request::CreateFork(Box::new(fork), sender);
@@ -183,7 +189,13 @@ impl<
         &self,
         fork: ForkId,
         block: u64,
-    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, ForkContext)> {
+    ) -> eyre::Result<(
+        ForkId,
+        SharedBackend<N, BLOCK>,
+        EvmEnv<SPEC, BLOCK>,
+        ForkContext,
+        BlockNumHash,
+    )> {
         trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollFork(fork, block, sender);
@@ -197,7 +209,13 @@ impl<
         &self,
         fork: ForkId,
         block: BlockNumHash,
-    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, ForkContext)> {
+    ) -> eyre::Result<(
+        ForkId,
+        SharedBackend<N, BLOCK>,
+        EvmEnv<SPEC, BLOCK>,
+        ForkContext,
+        BlockNumHash,
+    )> {
         trace!(?fork, ?block, "rolling fork to exact block");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollForkExact(fork, block, sender);
@@ -273,7 +291,7 @@ type CreateFuture<N, SPEC, BLOCK> = Pin<
     >,
 >;
 type CreateSender<N, SPEC, BLOCK> = OneshotSender<
-    eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, ForkContext)>,
+    eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, ForkContext, BlockNumHash)>,
 >;
 type GetEvmEnvSender<SPEC, BLOCK> = OneshotSender<Option<EvmEnv<SPEC, BLOCK>>>;
 
@@ -414,8 +432,14 @@ impl<
             .as_ref()
             .expect("created forks always retain their resolved identity")
             .context();
-        let _ =
-            sender.send(Ok((fork_id.clone(), fork.backend.clone(), fork.evm_env.clone(), context)));
+        let block = fork.opts.resolved.as_ref().unwrap().block();
+        let _ = sender.send(Ok((
+            fork_id.clone(),
+            fork.backend.clone(),
+            fork.evm_env.clone(),
+            context,
+            block,
+        )));
 
         // Notify all additional senders and track unique forkIds.
         for sender in additional_senders {
@@ -426,6 +450,7 @@ impl<
                 fork.backend.clone(),
                 fork.evm_env.clone(),
                 context,
+                block,
             )));
         }
     }
@@ -509,17 +534,12 @@ fn rolled_fork(mut fork: CreateFork, block: u64) -> CreateFork {
 fn rolled_fork_exact(mut fork: CreateFork, block: BlockNumHash) -> CreateFork {
     fork.evm_opts.fork_block_number = Some(block.number);
     fork.evm_opts.fork_block_number_is_inferred = false;
-    let mut context =
-        fork.resolved.as_ref().expect("an exact roll requires an existing resolved fork").context();
-    context.block_number = block.number;
-    fork.resolved = Some(ResolvedFork::new(
-        &fork.url,
-        fork.evm_opts.fork_headers.as_deref(),
-        fork.evm_opts.rpc_jwt.as_deref(),
-        Some(block.number),
-        block,
-        context,
-    ));
+    fork.resolved = Some(
+        fork.resolved
+            .as_ref()
+            .expect("an exact roll requires an existing resolved fork")
+            .at_block(block),
+    );
     fork
 }
 
@@ -866,18 +886,21 @@ mod tests {
     #[test]
     fn rolling_fork_to_exact_block_preserves_resolution() {
         let url = "http://localhost:8545";
+        let headers = vec!["Authorization: secret".to_string()];
         let resolved = ResolvedFork::new(
             url,
-            None,
+            Some(&headers),
             None,
             Some(1),
             BlockNumHash::new(1, B256::with_last_byte(1)),
             context(1),
         );
+        let mut evm_opts = EvmOpts::default();
+        evm_opts.rpc_headers = Some(headers.clone());
         let fork = CreateFork {
             enable_caching: false,
             url: url.to_string(),
-            evm_opts: EvmOpts::default(),
+            evm_opts,
             resolved: Some(resolved),
         };
         let block = BlockNumHash::new(2, B256::with_last_byte(2));
@@ -885,6 +908,9 @@ mod tests {
         let rolled = rolled_fork_exact(fork, block);
 
         assert_eq!(rolled.evm_opts.fork_block_number, Some(2));
-        assert_eq!(rolled.resolved.unwrap().block(), block);
+        assert_eq!(
+            rolled.resolved,
+            Some(ResolvedFork::new(url, Some(&headers), None, Some(2), block, context(2),))
+        );
     }
 }
