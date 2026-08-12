@@ -1,8 +1,9 @@
 use super::{hashcons::HashConsed, *};
 
-/// Bounds constant-ITE equality expansion to roughly 8k flattened condition handles in the
-/// linear worst case, while remaining above the compiler-generated selector trees seen in tests.
+/// Bounds both the number of distinct word nodes inspected by constant-ITE equality expansion and
+/// the size of the Boolean tree that a later non-memoized fold could observe.
 const MAX_CONSTANT_ITE_EQ_NODES: usize = 128;
+const MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES: usize = 8 * 1024;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymBoolExpr {
@@ -340,12 +341,81 @@ impl SymBoolExpr {
             let condition = Self::not_bool(cx, condition.clone());
             return Some(Self::or(cx, vec![condition, then_matches]));
         }
-        if let Some(expected) = expected.as_const() {
+        if let Some(expected_value) = expected.as_const() {
+            let mut cost_cache = HashMap::default();
+            let mut remaining = MAX_CONSTANT_ITE_EQ_NODES;
+            if Self::constant_ite_eq_unfolded_nodes(conditional, &mut cost_cache, &mut remaining)
+                .is_none()
+            {
+                let (left, right) =
+                    SymExpr::ordered_commutative_operands(conditional.clone(), expected.clone());
+                return Some(Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)));
+            }
+
             let mut cache = HashMap::default();
             let mut remaining = MAX_CONSTANT_ITE_EQ_NODES;
-            return Self::constant_ite_eq(cx, conditional, expected, &mut cache, &mut remaining);
+            return Self::constant_ite_eq(
+                cx,
+                conditional,
+                expected_value,
+                &mut cache,
+                &mut remaining,
+            );
         }
         None
+    }
+
+    /// Computes a conservative upper bound for the unfolded Boolean result without interning it.
+    ///
+    /// Cached child costs are deliberately added again at each use. This keeps construction of a
+    /// small shared word DAG from creating a Boolean DAG that becomes exponential when a later
+    /// consumer traverses occurrences instead of identities.
+    fn constant_ite_eq_unfolded_nodes(
+        expr: &SymExpr,
+        cache: &mut HashMap<SymExpr, Option<usize>>,
+        remaining: &mut usize,
+    ) -> Option<usize> {
+        if let Some(cached) = cache.get(expr) {
+            return *cached;
+        }
+        if *remaining == 0 {
+            cache.insert(expr.clone(), None);
+            return None;
+        }
+        *remaining -= 1;
+
+        let result = match expr.kind() {
+            SymExprKind::Const(_) => Some(1),
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                let then_nodes = Self::constant_ite_eq_unfolded_nodes(then_expr, cache, remaining)?;
+                let else_nodes = Self::constant_ite_eq_unfolded_nodes(else_expr, cache, remaining)?;
+
+                let mut pending = vec![condition];
+                let mut condition_nodes = 0usize;
+                while let Some(condition) = pending.pop() {
+                    condition_nodes = condition_nodes.checked_add(1)?;
+                    if condition_nodes > MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES {
+                        return None;
+                    }
+                    match condition.kind() {
+                        SymBoolExprKind::Not(value) => pending.push(value),
+                        SymBoolExprKind::And(values) => pending.extend(values.iter()),
+                        SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) => {}
+                    }
+                }
+
+                // Two selected branches and the `or` encoding add at most seven Boolean wrapper
+                // occurrences around both children and two occurrences of the condition.
+                then_nodes
+                    .checked_add(else_nodes)
+                    .and_then(|nodes| nodes.checked_add(2 * condition_nodes))
+                    .and_then(|nodes| nodes.checked_add(7))
+                    .filter(|nodes| *nodes <= MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES)
+            }
+            _ => None,
+        };
+        cache.insert(expr.clone(), result);
+        result
     }
 
     fn constant_ite_eq(
@@ -729,7 +799,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn constant_ite_equality_memoizes_shared_dag() {
+    fn constant_ite_equality_rejects_exponential_shared_dag() {
         let mut cx = SymCx::new();
         let x = SymExpr::var(&mut cx, "x");
         let y = SymExpr::var(&mut cx, "y");
@@ -751,7 +821,7 @@ mod tests {
             SymBoolExprKind::Cmp(SymCmpOp::Eq, shared.clone(), one.clone()),
         );
         let expanded = SymBoolExpr::eq(&mut cx, shared, one);
-        assert_ne!(expanded, raw);
+        assert_eq!(expanded, raw);
     }
 
     #[test]

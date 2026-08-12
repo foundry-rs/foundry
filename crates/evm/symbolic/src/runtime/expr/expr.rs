@@ -1475,7 +1475,10 @@ impl SymExpr {
 
             if word.unsigned_bits_cached(&mut bit_widths, &mut remaining) == Some(1) {
                 let zero = Self::zero(cx);
-                leaf_conditions.insert(SymBoolExpr::eq(cx, word, zero).not(cx));
+                let (word, zero) = Self::ordered_commutative_operands(word, zero);
+                let zero_check =
+                    SymBoolExpr::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, word, zero));
+                leaf_conditions.insert(zero_check.not(cx));
                 continue;
             }
             return None;
@@ -2407,6 +2410,28 @@ mod tests {
         }
 
         assert!(expression.bitwise_bool_word_condition(&mut cx).is_none());
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_keeps_one_bit_leaf_comparison_raw() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x, y);
+        let zero = SymExpr::zero(&mut cx);
+        let one = SymExpr::one(&mut cx);
+        let nested = SymExpr::from_kind(&mut cx, SymExprKind::Ite(second, zero.clone(), one));
+        let leaf = SymExpr::from_kind(&mut cx, SymExprKind::Ite(first, nested, zero.clone()));
+
+        let actual =
+            leaf.bitwise_bool_word_condition(&mut cx).expect("one-bit leaf should be recovered");
+        let (leaf, zero) = SymExpr::ordered_commutative_operands(leaf, zero);
+        let raw_zero_check =
+            SymBoolExpr::from_kind(&mut cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, leaf, zero));
+        let expected = raw_zero_check.not(&mut cx);
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
