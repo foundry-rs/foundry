@@ -277,8 +277,9 @@ pub(crate) async fn send_tip20_transaction(
     }
 
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+    // Box the larger branch-specific build futures to keep the parent async frame small.
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
-        let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
+        let (mut tx, _) = Box::pin(builder.with_browser_wallet().build(browser.address())).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
             attach_sponsor(
@@ -304,7 +305,7 @@ pub(crate) async fn send_tip20_transaction(
             .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
             .await?;
     } else if let Some(ak) = access_key {
-        let (mut tx, _, prepared) = builder.build_with_tempo_wallet(&ak).await?;
+        let (mut tx, _, prepared) = Box::pin(builder.build_with_tempo_wallet(&ak)).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
             attach_sponsor(
@@ -346,7 +347,7 @@ pub(crate) async fn send_tip20_transaction(
     } else if let Some(sponsor_url) = sponsor_url {
         let (signer, _) = resolve_send_signer(pre_resolved_signer, &send_tx.eth).await?;
 
-        let (mut tx, _) = builder.build(&signer).await?;
+        let (mut tx, _) = Box::pin(builder.build(&signer)).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
 

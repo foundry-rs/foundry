@@ -7,12 +7,15 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     opts::EvmOpts,
 };
+use foundry_evm_networks::NetworkConfigs;
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
@@ -50,29 +53,79 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     // Load configuration
     let (mut config, mut evm_opts) = args.load_config_and_evm_opts()?;
 
-    if let Some(chain) = config.chain {
-        evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
-    }
-    evm_opts.infer_network_from_fork().await;
+    evm_opts.networks =
+        infer_network_from_chain_id(evm_opts.networks, config.chain.map(|chain| chain.id()))?;
+    evm_opts.infer_network_from_fork().await?;
+    evm_opts.pin_fork_block().await?;
     config.networks = evm_opts.networks;
+    let local_networks = evm_opts.networks;
+    let local_chain_id = evm_opts.env.chain_id.or(config.chain.map(|chain| chain.id()));
 
     if evm_opts.networks.is_tempo() {
-        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
+        return Box::pin(run_command_with_network::<TempoEvmNetwork>(
+            args,
+            config,
+            evm_opts,
+            local_networks,
+            local_chain_id,
+        ))
+        .await;
+    }
+
+    #[cfg(feature = "monad")]
+    if evm_opts.networks.is_monad() {
+        return Box::pin(run_command_with_network::<MonadEvmNetwork>(
+            args,
+            config,
+            evm_opts,
+            local_networks,
+            local_chain_id,
+        ))
+        .await;
     }
 
     #[cfg(feature = "optimism")]
     if evm_opts.networks.is_optimism() {
-        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
+        return Box::pin(run_command_with_network::<OpEvmNetwork>(
+            args,
+            config,
+            evm_opts,
+            local_networks,
+            local_chain_id,
+        ))
+        .await;
     }
 
-    run_command_with_network::<EthEvmNetwork>(args, config, evm_opts).await
+    Box::pin(run_command_with_network::<EthEvmNetwork>(
+        args,
+        config,
+        evm_opts,
+        local_networks,
+        local_chain_id,
+    ))
+    .await
+}
+
+fn infer_network_from_chain_id(
+    networks: NetworkConfigs,
+    chain_id: Option<u64>,
+) -> Result<NetworkConfigs> {
+    if let Some(chain_id) = chain_id {
+        networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)
+    } else {
+        Ok(networks)
+    }
 }
 
 async fn run_command_with_network<FEN: FoundryEvmNetwork>(
     args: Chisel,
     config: Config,
     evm_opts: EvmOpts,
+    local_networks: NetworkConfigs,
+    local_chain_id: Option<u64>,
 ) -> Result<()> {
+    let fork_network_is_inferred = evm_opts.fork_network_is_inferred;
+    let fork_chain_id_is_inferred = evm_opts.fork_chain_id_is_inferred;
     // Create a new cli dispatcher
     let mut dispatcher = ChiselDispatcher::<FEN>::new(crate::source::SessionSourceConfig {
         // Enable traces if any level of verbosity was passed
@@ -80,6 +133,12 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         foundry_config: config,
         no_vm: args.no_vm,
         evm_opts,
+        local_networks: Some(local_networks),
+        local_chain_id,
+        fork_network_is_inferred,
+        fork_chain_id_is_inferred,
+        resolved_hardfork: None,
+        source_chain_id: None,
         backend: None,
         resolved_fork: None,
         calldata: None,
@@ -214,5 +273,25 @@ mod tests {
     #[test]
     fn verify_cli() {
         Chisel::command().debug_assert();
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn chain_id_rejects_disabled_monad_network() {
+        let error = infer_network_from_chain_id(NetworkConfigs::default(), Some(143)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 143: network family `monad` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    fn explicit_ethereum_overrides_chain_id_inference() {
+        let ethereum = NetworkConfigs::with_ethereum();
+        let inferred = infer_network_from_chain_id(ethereum, Some(143)).unwrap();
+
+        assert_eq!(inferred, ethereum);
     }
 }

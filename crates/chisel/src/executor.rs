@@ -14,6 +14,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     executors::ExecutorBuilder,
     inspectors::CheatsConfig,
+    opts::{ExecutionSpecContext, resolve_execution_spec},
     traces::TraceRequirements,
 };
 use solar::{
@@ -193,8 +194,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (evm_env, tx_env, backend) = match self.config.backend.clone() {
+        let (mut evm_env, tx_env, backend, resolved_fork) = match self.config.backend.clone() {
             Some(backend) => {
+                let resolved_fork = self.config.resolved_fork.clone();
                 let (evm_env, tx_env) = self
                     .config
                     .evm_opts
@@ -202,7 +204,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                         self.config.resolved_fork.as_ref(),
                     )
                     .await?;
-                (evm_env, tx_env, backend)
+                (evm_env, tx_env, backend, resolved_fork)
             }
             None => {
                 let (evm_env, tx_env, resolved_fork) = self
@@ -217,10 +219,22 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 );
                 let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
-                self.config.resolved_fork = resolved_fork;
-                (evm_env, tx_env, backend)
+                (evm_env, tx_env, backend, resolved_fork)
             }
         };
+        let fork_context = resolved_fork.as_ref().map(|fork| fork.context());
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        self.config.source_chain_id = fork_chain_id;
+        self.config.resolved_hardfork = resolve_execution_spec(
+            &self.config.foundry_config,
+            self.config.evm_opts.networks,
+            &mut evm_env,
+            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            None,
+            None,
+        );
+        self.config.resolved_fork = resolved_fork;
 
         let executor = ExecutorBuilder::default()
             .inspectors(|stack| {
@@ -228,6 +242,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     .logs(self.config.foundry_config.live_logs)
                     .chisel_state(final_pc)
                     .trace_requirements(TraceRequirements::none().with_calls(true))
+                    .networks(self.config.evm_opts.networks)
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config.foundry_config,
@@ -241,7 +256,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec_id(self.config.foundry_config.evm_spec_id::<SpecFor<FEN>>())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(evm_env, tx_env, backend);
 
@@ -528,12 +542,58 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::SessionSourceConfig;
     use foundry_compilers::{error::SolcError, solc::Solc};
-    use foundry_evm::core::evm::EthEvmNetwork;
+    use foundry_config::Config;
+    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
+    use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use solar::sema::Compiler;
     use std::sync::Mutex;
 
     type TestSessionSource = SessionSource<EthEvmNetwork>;
+
+    async fn assert_celo_transfer_precompile(config: SessionSourceConfig<EthEvmNetwork>) {
+        let mut source = SessionSource::<EthEvmNetwork>::new(config).unwrap();
+        let mut runner = source.build_runner(0).await.unwrap();
+        let from = Address::with_last_byte(1);
+        let to = Address::with_last_byte(2);
+        let amount = U256::from(4);
+        runner.executor.set_balance(from, U256::from(10)).unwrap();
+        runner.executor.set_balance(to, U256::from(1)).unwrap();
+
+        let mut input = vec![0u8; 96];
+        input[12..32].copy_from_slice(from.as_slice());
+        input[44..64].copy_from_slice(to.as_slice());
+        input[64..96].copy_from_slice(&amount.to_be_bytes::<32>());
+        let result = runner
+            .executor
+            .transact_raw(Address::ZERO, CELO_TRANSFER_ADDRESS, input.into(), U256::ZERO)
+            .unwrap();
+
+        assert!(!result.reverted);
+        assert_eq!(runner.executor.get_balance(from).unwrap(), U256::from(6));
+        assert_eq!(runner.executor.get_balance(to).unwrap(), U256::from(5));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn celo_network_reaches_fresh_and_restored_runners() {
+        let networks = NetworkConfigs::with_celo();
+        let mut evm_opts = EvmOpts { networks, ..Default::default() };
+        evm_opts.env.gas_limit = 30_000_000u64.into();
+        let config = SessionSourceConfig::<EthEvmNetwork> {
+            foundry_config: Config { networks, ..Default::default() },
+            evm_opts,
+            ..Default::default()
+        };
+
+        assert_celo_transfer_precompile(config.clone()).await;
+
+        let encoded = serde_json::to_string(&config).unwrap();
+        let mut restored =
+            serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
+        restored.initialize_local_context();
+        assert_celo_transfer_precompile(restored).await;
+    }
 
     #[test]
     fn test_expressions() {

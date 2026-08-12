@@ -400,6 +400,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-monad-evm"
+version = "0.5.0"
+source = "git+https://github.com/category-labs/alloy-monad-evm?rev=334bda1826996118d40872af35c27316a01889a2#334bda1826996118d40872af35c27316a01889a2"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "monad-revm",
+ "revm",
+]
+
+[[package]]
 name = "alloy-network"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1197,7 +1208,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1221,7 +1232,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1236,6 +1247,7 @@ dependencies = [
  "alloy-evm",
  "alloy-genesis",
  "alloy-hardforks",
+ "alloy-monad-evm",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",
@@ -1276,6 +1288,7 @@ dependencies = [
  "hyper",
  "imbl",
  "itertools 0.15.0",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",
@@ -2737,7 +2750,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.23.0",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -2941,6 +2954,7 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "anvil",
+ "axum",
  "chrono",
  "clap",
  "clap_complete",
@@ -2972,6 +2986,7 @@ dependencies = [
  "rand 0.9.5",
  "rayon",
  "regex",
+ "reqwest 0.13.4",
  "revm",
  "rpassword",
  "semver 1.0.28",
@@ -3065,6 +3080,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
+ "anvil",
  "clap",
  "dirs",
  "eyre",
@@ -3074,6 +3090,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm",
+ "foundry-evm-networks",
  "foundry-test-utils",
  "itertools 0.15.0",
  "reqwest 0.13.4",
@@ -3085,6 +3102,7 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "time",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "walkdir",
@@ -3225,7 +3243,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.19",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3384,7 +3402,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4609,7 +4627,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4916,7 +4934,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5517,7 +5535,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=94b10d5c0108da0a4e58eb05fefe24b717a5c8f0#94b10d5c0108da0a4e58eb05fefe24b717a5c8f0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=91bb764014928acfeab3057140e85e1ca9c7e21a#91bb764014928acfeab3057140e85e1ca9c7e21a"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5568,6 +5586,7 @@ dependencies = [
  "jsonpath_lib",
  "k256",
  "memchr",
+ "monad-revm",
  "p256 0.13.2",
  "parking_lot",
  "proptest",
@@ -5759,7 +5778,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=94b10d5c0108da0a4e58eb05fefe24b717a5c8f0#94b10d5c0108da0a4e58eb05fefe24b717a5c8f0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=91bb764014928acfeab3057140e85e1ca9c7e21a#91bb764014928acfeab3057140e85e1ca9c7e21a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5790,7 +5809,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=94b10d5c0108da0a4e58eb05fefe24b717a5c8f0#94b10d5c0108da0a4e58eb05fefe24b717a5c8f0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=91bb764014928acfeab3057140e85e1ca9c7e21a#91bb764014928acfeab3057140e85e1ca9c7e21a"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5799,7 +5818,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=94b10d5c0108da0a4e58eb05fefe24b717a5c8f0#94b10d5c0108da0a4e58eb05fefe24b717a5c8f0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=91bb764014928acfeab3057140e85e1ca9c7e21a#91bb764014928acfeab3057140e85e1ca9c7e21a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5819,7 +5838,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=94b10d5c0108da0a4e58eb05fefe24b717a5c8f0#94b10d5c0108da0a4e58eb05fefe24b717a5c8f0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=91bb764014928acfeab3057140e85e1ca9c7e21a#91bb764014928acfeab3057140e85e1ca9c7e21a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5832,7 +5851,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=94b10d5c0108da0a4e58eb05fefe24b717a5c8f0#94b10d5c0108da0a4e58eb05fefe24b717a5c8f0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=91bb764014928acfeab3057140e85e1ca9c7e21a#91bb764014928acfeab3057140e85e1ca9c7e21a"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -5977,6 +5996,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-json-abi",
+ "alloy-monad-evm",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",
@@ -6000,6 +6020,7 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.15.0",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types",
@@ -6072,6 +6093,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-rpc-types",
  "foundry-compilers",
+ "monad-revm",
  "op-revm",
  "revm",
  "serde",
@@ -6089,6 +6111,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "foundry-evm-hardforks",
+ "monad-revm",
  "revm",
  "serde",
  "serde_json",
@@ -6140,10 +6163,12 @@ dependencies = [
  "foundry-config",
  "foundry-evm-core",
  "foundry-evm-hardforks",
+ "foundry-evm-networks",
  "foundry-linking",
  "futures",
  "itertools 0.15.0",
  "memchr",
+ "monad-revm",
  "rayon",
  "reqwest 0.13.4",
  "revm",
@@ -6239,6 +6264,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives",
  "alloy-provider",
+ "axum",
  "eyre",
  "fd-lock",
  "foundry-block-explorers",
@@ -6271,7 +6297,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=94b10d5c0108da0a4e58eb05fefe24b717a5c8f0#94b10d5c0108da0a4e58eb05fefe24b717a5c8f0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=41861a3188696c93288d8451342ce5cfd4b0d651#41861a3188696c93288d8451342ce5cfd4b0d651"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -6299,6 +6325,7 @@ dependencies = [
  "rusb",
  "serde",
  "serde_json",
+ "tempfile",
  "tempo-alloy",
  "thiserror 2.0.19",
  "time",
@@ -6516,8 +6543,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -6971,7 +6998,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -7331,7 +7358,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7972,6 +7999,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "monad-revm"
+version = "0.6.0"
+source = "git+https://github.com/category-labs/monad-revm?rev=8ba4a51b221357105465cbe6d410906d3f12baeb#8ba4a51b221357105465cbe6d410906d3f12baeb"
+dependencies = [
+ "alloy-sol-types",
+ "auto_impl",
+ "revm",
+ "revm-interpreter",
+ "serde",
+]
+
+[[package]]
 name = "mpp"
 version = "0.11.0"
 source = "git+https://github.com/tempoxyz/mpp-rs?rev=d7bf697983d51bb369bc996ce35525c53d412b9c#d7bf697983d51bb369bc996ce35525c53d412b9c"
@@ -8152,7 +8191,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9427,7 +9466,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -9579,7 +9618,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10964,7 +11003,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -11023,7 +11062,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -11791,7 +11830,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11917,7 +11956,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -11963,7 +12002,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -12431,7 +12470,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12655,7 +12694,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -13824,7 +13863,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -13972,7 +14011,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

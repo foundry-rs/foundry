@@ -180,6 +180,31 @@ impl From<WalletSigner> for SenderKind<'_> {
     }
 }
 
+/// Validates that `sender` can resolve every EIP-7702 authorization.
+pub(crate) fn validate_authorizations(
+    authorizations: &[CliAuthorizationList],
+    sender: &SenderKind<'_>,
+) -> Result<()> {
+    let address_auth_count = authorizations
+        .iter()
+        .filter(|auth| matches!(auth, CliAuthorizationList::Address(_)))
+        .count();
+    if address_auth_count > 1 {
+        eyre::bail!(
+            "Multiple address-based authorizations provided. Only one address can be specified; \
+             use pre-signed authorizations (hex-encoded) for multiple authorizations."
+        );
+    }
+    if address_auth_count == 1 && sender.as_signer().is_none() {
+        eyre::bail!(
+            "No signer available to sign authorization. \
+             Provide a pre-signed authorization (hex-encoded) instead."
+        );
+    }
+
+    Ok(())
+}
+
 /// Prevents a misconfigured hwlib from sending a transaction that defies user-specified --from
 pub fn validate_from_address(
     specified_from: Option<Address>,
@@ -435,6 +460,26 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
     pub const fn with_browser_wallet(mut self) -> Self {
         self.browser = true;
         self
+    }
+
+    /// Returns whether this builder contains any EIP-7702 authorizations.
+    pub(crate) const fn has_auth(&self) -> bool {
+        !self.auth.is_empty()
+    }
+
+    /// Validates that the configured sender can resolve all EIP-7702 authorizations.
+    pub(crate) fn validate_auth(&self, sender: &SenderKind<'_>) -> Result<()> {
+        validate_authorizations(&self.auth, sender)
+    }
+
+    /// Returns whether building this request will disclose an EIP-7702 authorization to an RPC
+    /// endpoint.
+    pub(crate) fn will_disclose_auth_during_build(&self) -> bool {
+        self.has_auth()
+            // Generating an access list sends the authorization-bearing request to the RPC.
+            && (matches!(self.access_list, Some(None))
+                // Gas estimation also sends the authorization-bearing request to the RPC.
+                || (self.fill && self.tx.gas_limit().is_none()))
     }
 }
 
@@ -725,18 +770,8 @@ where
             return Ok(());
         }
 
+        self.validate_auth(sender)?;
         let auths = std::mem::take(&mut self.auth);
-
-        // Validate that at most one address-based auth is provided (multiple addresses are
-        // almost always unintended).
-        let address_auth_count =
-            auths.iter().filter(|a| matches!(a, CliAuthorizationList::Address(_))).count();
-        if address_auth_count > 1 {
-            eyre::bail!(
-                "Multiple address-based authorizations provided. Only one address can be specified; \
-                use pre-signed authorizations (hex-encoded) for multiple authorizations."
-            );
-        }
 
         let mut signed_auths = Vec::with_capacity(auths.len());
 
@@ -749,12 +784,8 @@ where
                         address,
                     };
 
-                    let Some(signer) = sender.as_signer() else {
-                        eyre::bail!(
-                            "No signer available to sign authorization. \
-                            Provide a pre-signed authorization (hex-encoded) instead."
-                        );
-                    };
+                    let signer =
+                        sender.as_signer().expect("address-based authorization requires a signer");
                     let signature = signer.sign_hash(&auth.signature_hash()).await?;
 
                     auth.into_signed(signature)
@@ -1039,5 +1070,100 @@ mod tests {
             .build(Address::repeat_byte(0x22))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn detects_auth_rpc_disclosure() {
+        let provider =
+            ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(Asserter::new());
+        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
+        let address = Address::repeat_byte(0x11);
+
+        let no_auth = CastTxBuilder::new(
+            &provider,
+            TransactionOpts::parse_from(["test", "--gas-limit", "21000"]),
+            &config,
+        )
+        .await
+        .unwrap()
+        .with_to(Some(address.into()))
+        .await
+        .unwrap()
+        .with_code_sig_and_args(None, None, Vec::new())
+        .await
+        .unwrap()
+        .raw();
+        assert!(!no_auth.has_auth());
+        assert!(!no_auth.will_disclose_auth_during_build());
+
+        let rpc_call = CastTxBuilder::new(
+            &provider,
+            TransactionOpts::parse_from([
+                "test",
+                "--auth",
+                &address.to_string(),
+                "--gas-limit",
+                "21000",
+            ]),
+            &config,
+        )
+        .await
+        .unwrap()
+        .with_to(Some(address.into()))
+        .await
+        .unwrap()
+        .with_code_sig_and_args(None, None, Vec::new())
+        .await
+        .unwrap()
+        .raw();
+        assert!(rpc_call.has_auth());
+        assert!(!rpc_call.will_disclose_auth_during_build());
+
+        let generated_access_list = CastTxBuilder::new(
+            &provider,
+            TransactionOpts::parse_from(["test", "--auth", &address.to_string(), "--access-list"]),
+            &config,
+        )
+        .await
+        .unwrap()
+        .with_to(Some(address.into()))
+        .await
+        .unwrap()
+        .with_code_sig_and_args(None, None, Vec::new())
+        .await
+        .unwrap()
+        .raw();
+        assert!(generated_access_list.will_disclose_auth_during_build());
+
+        let explicit_access_list = CastTxBuilder::new(
+            &provider,
+            TransactionOpts::parse_from([
+                "test",
+                "--auth",
+                &address.to_string(),
+                "--access-list",
+                "[]",
+            ]),
+            &config,
+        )
+        .await
+        .unwrap()
+        .with_to(Some(address.into()))
+        .await
+        .unwrap()
+        .with_code_sig_and_args(None, None, Vec::new())
+        .await
+        .unwrap()
+        .raw();
+        assert!(!explicit_access_list.will_disclose_auth_during_build());
+
+        let estimated_gas = CastTxBuilder::new(
+            &provider,
+            TransactionOpts::parse_from(["test", "--auth", &address.to_string()]),
+            &config,
+        )
+        .await
+        .unwrap();
+        assert!(estimated_gas.will_disclose_auth_during_build());
     }
 }
