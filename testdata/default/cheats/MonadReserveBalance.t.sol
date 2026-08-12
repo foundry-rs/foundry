@@ -144,9 +144,7 @@ contract MonadReserveBalanceTest is Test {
     }
 
     function loadAllocsAndRevert() external {
-        vm.loadAllocs(
-            string.concat(vm.projectRoot(), "/fixtures/Json/monad_reserve_balance_allocs.json")
-        );
+        vm.loadAllocs(string.concat(vm.projectRoot(), "/fixtures/Json/monad_reserve_balance_allocs.json"));
         require(!_dippedIntoReserve(), "loadAllocs did not clear violation");
         revert("reverted after loadAllocs");
     }
@@ -168,8 +166,7 @@ contract MonadReserveBalanceTest is Test {
         vm.deal(CLONE_SOURCE, 12 ether);
         _violateReserve(SPENDER);
 
-        (bool ok, bytes memory output) =
-            address(this).call(abi.encodeCall(this.cloneAccountAndHalt, ()));
+        (bool ok, bytes memory output) = address(this).call(abi.encodeCall(this.cloneAccountAndHalt, ()));
 
         assertTrue(!ok);
         assertEq(output.length, 0);
