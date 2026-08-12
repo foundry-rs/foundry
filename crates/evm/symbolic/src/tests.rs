@@ -3224,6 +3224,32 @@ fn solver_does_not_normalize_wrapping_mul_div_identity() {
 }
 
 #[test]
+fn solver_does_not_use_mul_div_identity_to_bound_itself() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let divisor_value = (U256::ONE << 254) + U256::ONE;
+    let divisor = SymExpr::constant(&mut cx, divisor_value);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), divisor.clone());
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, divisor);
+    let identity = SymBoolExpr::eq(&mut cx, quotient.clone(), x.clone());
+    let quotient_matches_y = SymBoolExpr::eq(&mut cx, quotient, y.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero);
+    let four = SymExpr::constant(&mut cx, U256::from(4));
+    let x_is_four = SymBoolExpr::eq(&mut cx, x, four);
+    let constraints = vec![identity.clone(), quotient_matches_y, y_is_zero, x_is_four];
+    let model =
+        symbolic_model(&mut cx, [("x".to_string(), U256::from(4)), ("y".to_string(), U256::ZERO)]);
+
+    assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert!(normalized.contains(&identity));
+    assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
 fn solver_does_not_normalize_zero_divisor_mul_div_identity() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
