@@ -14,19 +14,22 @@ pub(crate) fn normalize_constraints_for_solver(
     }
 
     let context = ConstraintContext::new(&normalized);
+    let mut contextual_candidates = Vec::with_capacity(normalized.len());
+    for constraint in &normalized {
+        contextual_candidates.push(context.normalize_bool(cx, constraint.clone()) != *constraint);
+    }
+    // A contextual rewrite must not use itself or another removable conjunct as proof. Removing
+    // facts cannot enable a new rewrite, so the full context identifies every candidate and one
+    // context built from the retained constraints is sufficient for the final pass.
+    let retained_count = contextual_candidates.iter().filter(|candidate| !**candidate).count();
+    let retained = normalized
+        .iter()
+        .zip(&contextual_candidates)
+        .filter_map(|(constraint, candidate)| (!candidate).then_some(constraint));
+    let context = ConstraintContext::from_constraints(retained, retained_count);
     let normalized_len = normalized.len();
     normalize_constraint_batch(
-        normalized.iter().cloned().enumerate().map(|(index, constraint)| {
-            let rewritten = context.normalize_bool(cx, constraint.clone());
-            if rewritten == constraint {
-                return constraint;
-            }
-
-            // Contextual rewrites may remove this conjunct, so their proof cannot depend on
-            // bounds learned from the conjunct itself. Rebuild only after a rewrite succeeds;
-            // ordinary constraints retain the single shared context above.
-            ConstraintContext::excluding(&normalized, index).normalize_bool(cx, constraint)
-        }),
+        normalized.into_iter().map(|constraint| context.normalize_bool(cx, constraint)),
         normalized_len,
     )
 }
@@ -685,12 +688,6 @@ impl WordInterval {
 impl ConstraintContext {
     pub(super) fn new(constraints: &[SymBoolExpr]) -> Self {
         Self::from_constraints(constraints.iter(), constraints.len())
-    }
-
-    fn excluding(constraints: &[SymBoolExpr], excluded: usize) -> Self {
-        let constraint_count = constraints.len() - 1;
-        let constraints = constraints[..excluded].iter().chain(&constraints[excluded + 1..]);
-        Self::from_constraints(constraints, constraint_count)
     }
 
     fn from_constraints<'a>(

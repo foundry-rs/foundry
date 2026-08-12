@@ -3155,6 +3155,46 @@ fn solver_does_not_use_mul_div_identity_to_bound_itself() {
 }
 
 #[test]
+fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let divisor_value = (U256::ONE << 254) + U256::ONE;
+    let divisor = SymExpr::constant(&mut cx, divisor_value);
+    let a_product = SymExpr::binop(&mut cx, SymBinOp::Mul, a.clone(), divisor.clone());
+    let a_quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, a_product, divisor.clone());
+    let a_identity = SymBoolExpr::eq(&mut cx, a_quotient.clone(), a.clone());
+    let b_product = SymExpr::binop(&mut cx, SymBinOp::Mul, b.clone(), divisor.clone());
+    let b_quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, b_product, divisor);
+    let b_identity = SymBoolExpr::eq(&mut cx, b_quotient.clone(), b.clone());
+    let a_matches_b = SymBoolExpr::eq(&mut cx, a.clone(), b.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let a_quotient_is_zero = SymBoolExpr::eq(&mut cx, a_quotient, zero.clone());
+    let b_quotient_is_zero = SymBoolExpr::eq(&mut cx, b_quotient, zero);
+    let four = SymExpr::constant(&mut cx, U256::from(4));
+    let a_is_four = SymBoolExpr::eq(&mut cx, a, four);
+    let constraints = vec![
+        a_identity.clone(),
+        b_identity.clone(),
+        a_matches_b,
+        a_quotient_is_zero,
+        b_quotient_is_zero,
+        a_is_four,
+    ];
+    let model = symbolic_model(
+        &mut cx,
+        [("a".to_string(), U256::from(4)), ("b".to_string(), U256::from(4))],
+    );
+
+    assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert!(normalized.contains(&a_identity));
+    assert!(normalized.contains(&b_identity));
+    assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
 fn solver_does_not_normalize_zero_divisor_mul_div_identity() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
