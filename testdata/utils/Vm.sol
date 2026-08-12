@@ -213,6 +213,10 @@ interface Vm {
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function difficulty(uint256 newDifficulty) external;
     function dumpState(string calldata pathToStateJson) external;
+    function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2) external pure returns (uint256 resultX, uint256 resultY);
+    function ecAddProjective(uint256 pointX1, uint256 pointY1, uint256 pointZ1, uint256 pointX2, uint256 pointY2, uint256 pointZ2) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+    function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);
+    function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
     function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
