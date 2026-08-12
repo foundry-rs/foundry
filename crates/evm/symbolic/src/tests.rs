@@ -3290,6 +3290,41 @@ fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
 }
 
 #[test]
+fn solver_excludes_hidden_mul_div_candidates_from_context() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let factor_58 = SymExpr::constant(&mut cx, U256::from(58));
+    let product_58 = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), factor_58.clone());
+    let quotient_58 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_58, factor_58);
+    let identity_58 = SymBoolExpr::eq(&mut cx, quotient_58.clone(), x.clone());
+    let boundary = U256::MAX / U256::from(58);
+    let boundary_expr = SymExpr::constant(&mut cx, boundary);
+    let quotient_58_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient_58, boundary_expr);
+
+    let factor_3 = SymExpr::constant(&mut cx, U256::from(3));
+    let product_3 = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), factor_3.clone());
+    let quotient_3 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_3, factor_3);
+    let identity_3 = SymBoolExpr::eq(&mut cx, quotient_3.clone(), x.clone());
+    let past_boundary = boundary + U256::ONE;
+    let past_boundary_expr = SymExpr::constant(&mut cx, past_boundary);
+    let quotient_3_is_past_boundary = SymBoolExpr::eq(&mut cx, quotient_3, past_boundary_expr);
+    let constraints = vec![
+        identity_58.clone(),
+        quotient_58_bounded,
+        identity_3.clone(),
+        quotient_3_is_past_boundary,
+    ];
+    let model = symbolic_model(&mut cx, [("x".to_string(), past_boundary)]);
+
+    assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert!(normalized.contains(&identity_58));
+    assert!(normalized.contains(&identity_3));
+    assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
 fn solver_does_not_normalize_zero_divisor_mul_div_identity() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
