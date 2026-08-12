@@ -114,6 +114,27 @@ async fn test_fork_rejects_node_info_failure_after_anvil_identification() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_keeps_node_info_probe_strict_after_identification_during_staging() {
+    let (_initial_api, initial_origin) = spawn(NodeConfig::test()).await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(initial_origin.http_endpoint()))).await;
+    let (_target_api, target_origin) = spawn(NodeConfig::test()).await;
+    let fork_url =
+        spawn_rpc_proxy_rejecting_method_after(target_origin.http_endpoint(), "anvil_nodeInfo", 1)
+            .await;
+
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: Some(fork_url), block_number: None }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_retries_when_anvil_node_info_becomes_available() {
     let (_api, origin) = spawn(NodeConfig::test()).await;
     let fork_url =
@@ -3567,6 +3588,30 @@ async fn test_anvil_reset_rejects_self_reference_without_mutation() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_rpc_url_rejects_self_reference_without_mutation() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_url = origin_handle.http_endpoint();
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_url.clone()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let fork = api.backend.get_fork().unwrap();
+    let config_before = fork.config.read().clone();
+
+    let error = api.anvil_set_rpc_url(handle.http_endpoint()).await.unwrap_err();
+
+    assert!(error.to_string().contains("own RPC endpoint"), "{error}");
+    let config = fork.config.read();
+    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+    assert_eq!(config.fork_urls, config_before.fork_urls);
+    drop(config);
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_set_rpc_url_rejects_zksync_source_atomically() {
     let (_origin_api, origin_handle) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
@@ -3596,6 +3641,87 @@ async fn test_anvil_set_rpc_url_rejects_zksync_source_atomically() {
         assert_eq!(config.execution_chain_id, config_before.execution_chain_id);
     }
 
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_rpc_url_rejects_different_chain_atomically() {
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let origin_url = origin_handle.http_endpoint();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_url.clone()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let fork = api.backend.get_fork().unwrap();
+    let config_before = fork.config.read().clone();
+    let (_target_api, target_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Sepolia as u64))).await;
+
+    api.anvil_set_rpc_url(target_handle.http_endpoint()).await.unwrap_err();
+
+    let config = fork.config.read();
+    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+    assert_eq!(config.fork_urls, config_before.fork_urls);
+    drop(config);
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_rpc_url_rejects_mismatched_pinned_block_atomically() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.mine_one().await.unwrap();
+    let origin_url = origin_handle.http_endpoint();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_url.clone()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let fork = api.backend.get_fork().unwrap();
+    let config_before = fork.config.read().clone();
+    let (target_api, target_handle) = spawn(NodeConfig::test()).await;
+    target_api.anvil_set_balance(Address::random(), U256::from(1)).await.unwrap();
+    target_api.mine_one().await.unwrap();
+
+    api.anvil_set_rpc_url(target_handle.http_endpoint()).await.unwrap_err();
+
+    let config = fork.config.read();
+    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+    assert_eq!(config.fork_urls, config_before.fork_urls);
+    drop(config);
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_rpc_url_keeps_node_info_strict_without_mutation() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_url = origin_handle.http_endpoint();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_url.clone()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let fork = api.backend.get_fork().unwrap();
+    let config_before = fork.config.read().clone();
+    let (_target_api, target_handle) = spawn(NodeConfig::test()).await;
+    let target_url =
+        spawn_rpc_proxy_rejecting_method_after(target_handle.http_endpoint(), "anvil_nodeInfo", 1)
+            .await;
+
+    let error = api.anvil_set_rpc_url(target_url).await.unwrap_err();
+
+    assert!(error.to_string().contains("failed to determine network family"), "{error}");
+    let config = fork.config.read();
+    assert!(Arc::ptr_eq(&config.provider, &config_before.provider));
+    assert_eq!(config.fork_urls, config_before.fork_urls);
+    drop(config);
     api.anvil_reset(Some(Forking::default())).await.unwrap();
     assert_eq!(api.backend.get_fork().unwrap().eth_rpc_url().as_deref(), Some(origin_url.as_str()));
 }
