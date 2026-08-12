@@ -1,5 +1,7 @@
 use super::{hashcons::HashConsed, *};
 
+const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
+
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
     let len = SymExpr::constant(cx, U256::from(len));
@@ -1322,13 +1324,36 @@ impl SymExpr {
         &self,
         cx: &mut SymCx,
     ) -> Option<SymBoolExpr> {
-        if let Some(condition) = self.bool_word_condition() {
-            return Some(condition);
+        let mut visited = HashSet::default();
+        let mut conditions = Vec::new();
+        let mut remaining_visits = MAX_BITWISE_BOOL_WORD_VISITS;
+        self.collect_bitwise_bool_word_conditions(
+            &mut visited,
+            &mut remaining_visits,
+            &mut conditions,
+        )?;
+        Some(SymBoolExpr::or(cx, conditions))
+    }
+
+    fn collect_bitwise_bool_word_conditions(
+        &self,
+        visited: &mut HashSet<Self>,
+        remaining_visits: &mut usize,
+        conditions: &mut Vec<SymBoolExpr>,
+    ) -> Option<()> {
+        if !visited.insert(self.clone()) {
+            return Some(());
         }
-        let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() else { return None };
-        let left = left.bitwise_bool_word_condition(cx)?;
-        let right = right.bitwise_bool_word_condition(cx)?;
-        Some(SymBoolExpr::or(cx, vec![left, right]))
+        *remaining_visits = remaining_visits.checked_sub(1)?;
+        if let Some(condition) = self.bool_word_condition() {
+            conditions.push(condition);
+        } else if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
+            left.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
+            right.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
+        } else {
+            return None;
+        }
+        Some(())
     }
 
     fn bool_word_condition_from_parts(
@@ -2042,6 +2067,42 @@ impl SymBinOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn indexed_bool_word(cx: &mut SymCx, source: &SymExpr, index: usize) -> SymExpr {
+        let value = SymExpr::constant(cx, U256::from(index));
+        let condition = SymBoolExpr::eq(cx, source.clone(), value);
+        SymExpr::bool_word(cx, condition)
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_visits_shared_or_dag_once() {
+        let mut cx = SymCx::new();
+        let source = SymExpr::var(&mut cx, "source");
+        let mut word = indexed_bool_word(&mut cx, &source, 0);
+        for index in 1..=26 {
+            let next_word = indexed_bool_word(&mut cx, &source, index);
+            let nested_word = SymExpr::binop(&mut cx, SymBinOp::Or, word.clone(), next_word);
+            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, nested_word);
+        }
+
+        assert!(word.bitwise_bool_word_condition(&mut cx).is_some());
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_stops_at_shared_visit_budget() {
+        let mut cx = SymCx::new();
+        let source = SymExpr::var(&mut cx, "source");
+        let mut word = indexed_bool_word(&mut cx, &source, 0);
+        for index in 1..=MAX_BITWISE_BOOL_WORD_VISITS {
+            let next_word = indexed_bool_word(&mut cx, &source, index);
+            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, next_word);
+        }
+
+        assert!(word.bitwise_bool_word_condition(&mut cx).is_none());
+        let one = SymExpr::one(&mut cx);
+        let mask = SymExpr::binop(&mut cx, SymBinOp::Sub, word, one);
+        assert!(matches!(mask.kind(), SymExprKind::BinOp(SymBinOp::Sub, _, _)));
+    }
 
     #[test]
     fn saturating_mul_rewrite_preserves_boundary_values() {
