@@ -70,9 +70,7 @@ contract MonadReserveBalanceTest is Test {
     function test_load_allocs_clears_violation() public {
         _violateReserve(SPENDER);
 
-        vm.loadAllocs(
-            string.concat(vm.projectRoot(), "/fixtures/Json/monad_reserve_balance_allocs.json")
-        );
+        vm.loadAllocs(string.concat(vm.projectRoot(), "/fixtures/Json/monad_reserve_balance_allocs.json"));
 
         assertEq(SPENDER.balance, 12 ether);
         assertTrue(!_dippedIntoReserve());
