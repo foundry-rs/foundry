@@ -97,6 +97,18 @@ fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> b
     config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
 }
 
+pub(crate) fn effective_test_function_kind(
+    kind: TestFunctionKind,
+    config: &Config,
+    func: &Function,
+) -> TestFunctionKind {
+    if should_symbolically_import_fuzz_corpus(config, func) {
+        TestFunctionKind::SymbolicTest
+    } else {
+        kind
+    }
+}
+
 fn should_symbolically_use_fuzz_frontiers(config: &Config, func: &Function) -> bool {
     config.symbolic.use_fuzz_frontiers && func.test_function_kind().is_fuzz_test()
 }
@@ -326,7 +338,7 @@ pub(crate) fn function_matches_network_pass(
     }
 }
 
-fn inline_config_for(
+pub(crate) fn inline_config_for(
     config: &Config,
     inline_config: &InlineConfig,
     contract_name: &str,
@@ -2113,11 +2125,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
         }
-        let kind = if should_symbolically_import_fuzz_corpus(&self.config, func) {
-            TestFunctionKind::SymbolicTest
-        } else {
-            kind
-        };
+        let kind = effective_test_function_kind(kind, &self.config, func);
 
         // In showmap replay mode and `forge fuzz`, only fuzz/invariant tests are runnable.
         if (self.cr.mcr.tcfg.showmap.is_some() || self.cr.mcr.tcfg.fuzz_only)
@@ -4838,6 +4846,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.cr.name,
             &func.name,
         );
+        let fuzz_input = self.cr.mcr.tcfg.fuzz_input.as_ref();
+        let is_explicit_target = fuzz_input
+            .is_some_and(|input| input.contract == self.cr.name && input.test == func.signature());
+        if is_explicit_target && fuzz_config.run.is_some() {
+            self.result.fuzz_setup_fail(eyre::eyre!(
+                "`--fuzz-input-file` cannot be combined with `fuzz.run`"
+            ));
+            return self.result;
+        }
 
         // Showmap replay mode: replay the persisted corpus and emit coverage
         // files instead of running the fuzz campaign.
@@ -4921,9 +4938,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        // Load persisted counterexample, if any.
-        let persisted_failure =
-            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
+        // Load the validated explicit input for its unique target, or fall back to this test's
+        // canonical cache.
+        let persisted_failure = if is_explicit_target {
+            fuzz_input.map(|input| input.failure.as_ref().clone())
+        } else {
+            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok()
+        };
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let Some(failure) = persisted_failure.as_ref() else {
                 let result = FuzzTestResult {

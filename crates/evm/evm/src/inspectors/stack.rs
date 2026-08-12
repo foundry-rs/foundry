@@ -1183,32 +1183,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             OpcodeStepDispatch::General => {
-                if storage_hook_active {
-                    call_inspectors!(
-                        [
-                            // These are sorted in definition order.
-                            &mut self.printer,
-                            &mut self.revert_diag,
-                            &mut self.script_execution_inspector,
-                            &mut self.tracer,
-                        ],
-                        |inspector| (**inspector).step(interpreter, ecx),
-                    );
-                } else {
+                if !storage_hook_active {
                     call_inspectors!(
                         [
                             // These are sorted in definition order.
                             &mut self.edge_coverage,
                             &mut self.fuzzer,
                             &mut self.line_coverage,
-                            &mut self.printer,
-                            &mut self.revert_diag,
-                            &mut self.script_execution_inspector,
-                            &mut self.tracer,
                         ],
                         |inspector| (**inspector).step(interpreter, ecx),
                     );
                 }
+                call_inspectors!(
+                    [
+                        // These are sorted in definition order.
+                        &mut self.printer,
+                        &mut self.revert_diag,
+                        &mut self.script_execution_inspector,
+                        &mut self.tracer,
+                    ],
+                    |inspector| (**inspector).step(interpreter, ecx),
+                );
             }
         }
 
