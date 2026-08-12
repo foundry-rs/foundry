@@ -2,8 +2,7 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
-    Vm::*,
-    inspector::{RecordDebugStepInfo, refresh_context_after_state_change},
+    Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_evm::FromRecoveredTx;
@@ -33,7 +32,7 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor, refresh_context_after_state_change},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
