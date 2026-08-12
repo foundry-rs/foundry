@@ -39,6 +39,8 @@ mod keychain;
 mod selectors;
 mod tempo;
 
+const PRESIGNED_EIP7702_AUTH: &str = "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576";
+
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
 cast [..]-[..] ([..] [..])
@@ -1873,6 +1875,109 @@ casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     assert!(output > 0);
 });
 
+casttest!(estimate_eip7702_auth_disclosure_declined, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "estimate",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(estimate_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "estimate",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(estimate_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    api.anvil_set_code(
+        address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+        "0x602a5f5260205ff3".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let args = [
+        "estimate",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    let output = cmd
+        .args(args)
+        .arg("--json")
+        .stdin("y\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]])
+        .get_output()
+        .stdout_lossy();
+    let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert!(output["data"].as_u64().unwrap() > 21_000);
+
+    let output = cmd
+        .cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stderr_eq(str![""])
+        .get_output()
+        .stdout_lossy();
+    assert!(output.trim().parse::<u64>().unwrap() > 21_000);
+
+    let output = cmd
+        .cast_fuse()
+        .args(args)
+        .args(["--quiet", "--force"])
+        .assert_success()
+        .stderr_eq(str![""])
+        .get_output()
+        .stdout_lossy();
+    assert!(output.trim().parse::<u64>().unwrap() > 21_000);
+});
+
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
 casttest!(rlp, |_prj, cmd| {
     cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]).assert_success().stdout_eq(str![[
@@ -2270,6 +2375,93 @@ access list:
 "#]]);
 });
 
+casttest!(access_list_eip7702_auth_disclosure_declined, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "access-list",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(access_list_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "access-list",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(access_list_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let args = [
+        "access-list",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    cmd.args(args)
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[GAS]
+access list:
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[GAS]
+access list:
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
 casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
@@ -2551,6 +2743,138 @@ casttest!(mktx, |_prj, cmd| {
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
 
 "#]]);
+});
+
+casttest!(mktx_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(mktx_ethsign_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        PRESIGNED_EIP7702_AUTH,
+        "--ethsign",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--chain",
+        "31337",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(mktx_eip7702_auth_no_disclosure, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(mktx_eip7702_auth_disclosure_forced, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(mktx_sponsor_hash_supports_address_auth, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--tempo.print-sponsor-hash",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
 });
 
 casttest!(mktx_signature, |_prj, cmd| {
@@ -3843,10 +4167,13 @@ casttest!(send_eip7702, async |_prj, cmd| {
         "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-limit",
+        "100000",
         "--rpc-url",
         &endpoint,
     ])
-    .assert_success();
+    .assert_success()
+    .stderr_eq(str![""]);
 
     cmd.cast_fuse()
         .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
@@ -3855,6 +4182,386 @@ casttest!(send_eip7702, async |_prj, cmd| {
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
 "#]]);
+});
+
+casttest!(send_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(send_eip7702_auth_disclosure_forced, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--async",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(send_sponsor_hash_supports_address_auth, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--tempo.print-sponsor-hash",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(batch_mktx_eip7702_auth_disclosure, async |_prj, cmd| {
+    let args = [
+        "batch-mktx",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+
+    cmd.args(args)
+        .args(["--chain", "31337", "--rpc-url", "http://127.0.0.1:1"])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--force", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+
+"#]]);
+});
+
+casttest!(batch_mktx_ethsign_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "batch-mktx",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        PRESIGNED_EIP7702_AUTH,
+        "--ethsign",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(batch_send_eip7702_auth_disclosure, async |_prj, cmd| {
+    let args = [
+        "batch-send",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+
+    cmd.args(args)
+        .args(["--chain", "31337", "--rpc-url", "http://127.0.0.1:1"])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--force", "--async", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_requires_signer, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let delegate_code = "0x602a5f5260205ff3".parse().unwrap();
+    api.anvil_set_code(address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"), delegate_code)
+        .await
+        .unwrap();
+    api.anvil_set_code(
+        address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        "0x602a5f5260205ff3".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let args = [
+        "call",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    cmd.args(args)
+        .arg("--json")
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![""]);
+
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--quiet", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![""]);
+
+    let signer: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+    let auth = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        nonce: 0,
+    };
+    let signature = signer.sign_hash(&auth.signature_hash()).await.unwrap();
+    let encoded_auth = hex::encode_prefixed(alloy_rlp::encode(auth.into_signed(signature)));
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            &signer.address().to_string(),
+            "--auth",
+            &encoded_auth,
+            "--from",
+            &signer.address().to_string(),
+            "--rpc-url",
+            &endpoint,
+        ])
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse().args(args).arg("--trace").assert_success().stderr_eq(str![""]);
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--trace", "--access-list", "[]"])
+        .assert_success()
+        .stderr_eq(str![""]);
+});
+
+casttest!(call_eip7702_auth_disclosure_routing, |_prj, cmd| {
+    let base_args = [
+        "call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ];
+
+    cmd.args(base_args)
+        .arg("--debug-trace-call")
+        .stdin("n\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(base_args)
+        .args(["--trace", "--access-list"])
+        .stdin("n\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(base_args)
+        .arg("--quiet")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: EIP-7702 authorization disclosure requires confirmation; pass `--force` to continue with `--quiet`
+
+"#]]);
+
+    cmd.cast_fuse().args(base_args).arg("--curl").assert_success().stderr_eq(str![""]);
 });
 
 casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {

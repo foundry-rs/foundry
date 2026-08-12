@@ -1,4 +1,5 @@
 use super::{
+    auth::confirm_auth_rpc_disclosure,
     call_overrides::CallOverrideOpts,
     run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc},
 };
@@ -139,6 +140,10 @@ pub struct CallArgs {
 
     #[command(flatten)]
     tx: TransactionOpts,
+
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    force: bool,
 
     #[command(flatten)]
     rpc: RpcOpts,
@@ -281,6 +286,7 @@ impl CallArgs {
             with_local_artifacts,
             wallet,
             browser,
+            force,
             ..
         } = self;
 
@@ -313,15 +319,19 @@ impl CallArgs {
             None
         };
 
-        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
+        let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
-            .raw()
-            .build(sender)
-            .await?;
+            .raw();
+        let will_disclose =
+            (!trace && builder.has_auth()) || builder.will_disclose_auth_during_build();
+        if will_disclose && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+            return Ok(());
+        }
+        let (tx, func) = builder.build(sender).await?;
 
         if self.debug_trace_call {
             let block = self.block.unwrap_or(BlockId::latest());
@@ -551,7 +561,11 @@ impl CallArgs {
             }
         }
 
-        sh_println!("{}", response)?;
+        // Bypass the shell verbosity layer so `--quiet` does not suppress the primary result.
+        let mut shell = shell::Shell::get();
+        let out = shell.out();
+        writeln!(out, "{response}")?;
+        out.flush()?;
 
         Ok(())
     }

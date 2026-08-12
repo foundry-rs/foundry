@@ -20,6 +20,7 @@ use crate::utils::http_provider;
 use alloy_consensus::{
     BlockHeader, Eip658Value, Receipt, Sealable, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
+    transaction::SignerRecoverable,
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
@@ -541,16 +542,13 @@ async fn test_tempo_fork_executes_request_extensions_locally() {
         "blockStateCalls": [{"calls": [request]}],
         "returnFullTransactions": true,
     });
-    let error = provider
+    provider
         .raw_request::<_, serde_json::Value>(
             "eth_simulateV1".into(),
             serde_json::json!([payload, "latest"]),
         )
         .await
-        .unwrap_err();
-    let error = error.as_error_resp().unwrap();
-    assert_eq!(error.code, -32603);
-    assert_eq!(error.message, "Required data unavailable");
+        .unwrap();
 }
 
 sol! {
@@ -2268,6 +2266,89 @@ async fn test_tempo_send_transaction_preserves_calls() {
         .unwrap();
     assert_eq!(transaction["type"], "0x76");
     assert_eq!(transaction["calls"], serde_json::to_value(calls).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_preserves_signed_identity() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let from = accounts[0];
+    let fee_payer = accounts[1];
+    let calls = vec![
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xde, 0xad]),
+        },
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xbe, 0xef]),
+        },
+    ];
+    let nonce_key = U256::from(7);
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let mut expected_tx = TempoTransaction {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        gas_limit: 1_000_000,
+        calls: calls.clone(),
+        access_list: Default::default(),
+        nonce_key,
+        nonce: 0,
+        fee_payer_signature: Some(Signature::new(U256::ZERO, U256::ZERO, false)),
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let fee_payer_signature =
+        dev_key(1).sign_hash(&expected_tx.fee_payer_signature_hash(from)).await.unwrap();
+    expected_tx.fee_payer_signature = Some(fee_payer_signature);
+    let sender_signature = dev_key(0).sign_hash(&expected_tx.signature_hash()).await.unwrap();
+    let expected_signature =
+        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(sender_signature));
+
+    let hash = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "chainId": expected_tx.chain_id,
+                "feeToken": expected_tx.fee_token,
+                "maxPriorityFeePerGas": expected_tx.max_priority_fee_per_gas,
+                "maxFeePerGas": expected_tx.max_fee_per_gas,
+                "gas": expected_tx.gas_limit,
+                "calls": expected_tx.calls,
+                "nonceKey": expected_tx.nonce_key,
+                "nonce": expected_tx.nonce,
+                "feePayerSignature": fee_payer_signature,
+            }),),
+        )
+        .await
+        .unwrap();
+
+    let transaction = provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionByHash".into(), (hash,))
+        .await
+        .unwrap();
+    let transaction = serde_json::from_value::<AASigned>(transaction).unwrap();
+    let recomputed_hash =
+        *AASigned::new_unhashed(transaction.tx().clone(), transaction.signature().clone()).hash();
+
+    assert_eq!(*transaction.hash(), hash);
+    assert_eq!(recomputed_hash, hash);
+    assert_eq!(transaction.tx().calls, calls);
+    assert_eq!(transaction.tx().nonce_key, nonce_key);
+    assert_eq!(transaction.tx().nonce, 0);
+    assert_eq!(transaction.signature(), &expected_signature);
+    assert_eq!(transaction.recover_signer().unwrap(), from);
+    assert_eq!(transaction.tx().fee_payer_signature, Some(fee_payer_signature));
+    assert_eq!(transaction.tx().recover_fee_payer(from).unwrap(), fee_payer);
 }
 
 #[tokio::test(flavor = "multi_thread")]

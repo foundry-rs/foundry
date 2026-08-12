@@ -542,7 +542,10 @@ fn merge_tracing_labels(legacy: &Dict, tracing: &mut Dict) {
 }
 
 /// A provider that sets the `src` and `output` path depending on their existence.
-pub(crate) struct DappHardhatDirProvider<'a>(pub(crate) &'a Path);
+pub(crate) struct DappHardhatDirProvider<'a> {
+    pub(crate) root: &'a Path,
+    pub(crate) detect_src: bool,
+}
 
 impl Provider for DappHardhatDirProvider<'_> {
     fn metadata(&self) -> Metadata {
@@ -551,18 +554,20 @@ impl Provider for DappHardhatDirProvider<'_> {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = Dict::new();
-        dict.insert(
-            "src".to_string(),
-            ProjectPathsConfig::find_source_dir(self.0)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string()
-                .into(),
-        );
+        if self.detect_src {
+            dict.insert(
+                "src".to_string(),
+                ProjectPathsConfig::find_source_dir(self.root)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+                    .into(),
+            );
+        }
         dict.insert(
             "out".to_string(),
-            ProjectPathsConfig::find_artifacts_dir(self.0)
+            ProjectPathsConfig::find_artifacts_dir(self.root)
                 .file_name()
                 .unwrap()
                 .to_string_lossy()
@@ -575,8 +580,8 @@ impl Provider for DappHardhatDirProvider<'_> {
         //   if only `node_modules` exists: include `node_modules`
         //   include `lib` otherwise
         let mut libs = vec![];
-        let node_modules = self.0.join("node_modules");
-        let lib = self.0.join("lib");
+        let node_modules = self.root.join("node_modules");
+        let lib = self.root.join("lib");
         if node_modules.exists() {
             if lib.exists() {
                 libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
