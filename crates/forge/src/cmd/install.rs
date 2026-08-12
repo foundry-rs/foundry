@@ -67,7 +67,13 @@ pub struct InstallArgs {
 impl_figment_convert_basic!(InstallArgs);
 
 impl InstallArgs {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
+        if self.root.is_none() {
+            self.root = std::env::current_dir()?
+                .ancestors()
+                .find(|root| root.join(Config::FILE_NAME).is_file())
+                .map(Path::to_path_buf);
+        }
         let mut config = self.load_config()?;
         self.opts.install(&mut config, self.dependencies).await
     }
