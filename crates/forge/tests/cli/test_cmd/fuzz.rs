@@ -534,7 +534,11 @@ contract ForgeExplicitFuzzReplayTest {{
         .arg(&missing_explicit)
         .assert_failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-    assert!(stderr.contains(&missing_explicit.display().to_string()), "{stderr}");
+    let stderr = stderr.replace('\\', "/");
+    assert!(
+        stderr.contains(&missing_explicit.display().to_string().replace('\\', "/")),
+        "{stderr}"
+    );
 
     let malformed = prj.root().join("malformed-fuzz-failure.json");
     std::fs::write(&malformed, "not json").unwrap();
@@ -552,7 +556,8 @@ contract ForgeExplicitFuzzReplayTest {{
         .arg(&malformed)
         .assert_failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-    assert!(stderr.contains(&malformed.display().to_string()), "{stderr}");
+    let stderr = stderr.replace('\\', "/");
+    assert!(stderr.contains(&malformed.display().to_string().replace('\\', "/")), "{stderr}");
 
     let output = cmd
         .forge_fuse()
