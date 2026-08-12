@@ -72,21 +72,14 @@ jobs:
       - run: cargo build --workspace --no-default-features --locked
 
   touch-id-link:
-    name: touch-id link (${{ matrix.target }})
-    runs-on: macos-latest
+    name: touch-id link (macOS)
+    if: github.event_name == 'push'
+    runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-apple-darwin
-            run_tests: true
-          - target: aarch64-apple-darwin
-            run_tests: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,119 +87,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
-      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
-      - run: cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target "${{ matrix.target }}" --locked --no-run
-      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target "${{ matrix.target }}" --locked
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-touch-id-macos
       - name: Run native Touch ID regressions
-        if: matrix.run_tests
         run: |
-          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --locked cmd::wallet::tests
-          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --locked wallet_change_password
+          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --locked cmd::wallet::tests
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --locked wallet_change_password
+      - name: Check Intel Touch ID linking
+        run: |
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --no-run
+          cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
+      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
 
-  monad-check:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+  monad:
+    name: Monad
+    uses: ./.github/workflows/monad.yml
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Check Monad release binaries
-        run: cargo check --locked --bins --no-default-features --features "aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad"
-
-  monad-library-tests:
-    name: Monad library (${{ matrix.package }})
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - foundry-evm-hardforks
-          - foundry-evm-networks
-          - foundry-config
-          - foundry-evm-core
-          - foundry-cheatcodes
-          - foundry-evm
-          - foundry-evm-traces
-          - forge-script
-          - forge-verify
-          - chisel
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Build Forge for verification tests
-        if: matrix.package == 'forge-verify'
-        run: cargo build --locked -p forge --features monad
-      - name: Test Monad library
-        run: cargo test --locked -p ${{ matrix.package }} --features monad --lib -- --skip flaky_
-
-  monad-integration-tests:
-    name: Monad integration (${{ matrix.suite }})
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [anvil, cast, forge, chisel]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-      - name: Setup Python
-        if: matrix.suite == 'forge'
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.14"
-      - name: Install Vyper
-        if: matrix.suite == 'forge'
-        # Also update vyper version in .devcontainer/Dockerfile.dev
-        run: pip --version && pip install vyper==0.4.3
-      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Test Monad Anvil integration
-        if: matrix.suite == 'anvil'
-        run: |
-          cargo test --locked -p anvil --features monad --lib -- --skip flaky_
-          cargo test --locked -p anvil --features monad --test it monad -- --test-threads=1
-      - name: Test Monad Cast integration
-        if: matrix.suite == 'cast'
-        run: |
-          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
-            --lib normalized_hardfork_network_is_applied_to_evm_opts
-          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
-            --lib remote_trace_
-          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
-            --test cli monad -- --test-threads=1
-      - name: Test Monad Forge integration
-        if: matrix.suite == 'forge'
-        run: cargo test --locked -p forge --features monad --test cli monad -- --test-threads=1
-      - name: Test Monad Chisel integration
-        if: matrix.suite == 'chisel'
-        run: cargo test --locked -p chisel --features monad --test it monad -- --test-threads=1
 
   typos:
     runs-on: depot-ubuntu-latest
@@ -359,9 +260,7 @@ jobs:
       - doctest
       - no-default-features
       - touch-id-link
-      - monad-check
-      - monad-library-tests
-      - monad-integration-tests
+      - monad
       - typos
       - github-scripts
       - clippy
@@ -375,4 +274,5 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
+          allowed-skips: touch-id-link
           jobs: ${{ toJSON(needs) }}
