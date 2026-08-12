@@ -13,19 +13,18 @@ pub(crate) fn normalize_constraints_for_solver(
         return normalized;
     }
 
-    let context = ConstraintContext::new(&normalized);
-    let mut contextual_candidates = Vec::with_capacity(normalized.len());
-    for constraint in &normalized {
-        contextual_candidates.push(context.normalize_bool(cx, constraint.clone()) != *constraint);
-    }
-    // A contextual rewrite must not use itself or another removable conjunct as proof. Removing
-    // facts cannot enable a new rewrite, so the full context identifies every candidate and one
-    // context built from the retained constraints is sufficient for the final pass.
-    let retained_count = contextual_candidates.iter().filter(|candidate| !**candidate).count();
+    // Context-dependent rewrites must not contribute facts to the context that proves them. Mark
+    // removable candidates by syntax rather than by whether the full context happens to prove a
+    // rewrite: contradictory bounds can make an interval unavailable until another candidate is
+    // removed. Rewrites to `false` remain in the context because they terminate the conjunction
+    // rather than dropping a fact.
+    let retained_count = normalized
+        .iter()
+        .filter(|constraint| !ConstraintContext::could_contextually_disappear(constraint))
+        .count();
     let retained = normalized
         .iter()
-        .zip(&contextual_candidates)
-        .filter_map(|(constraint, candidate)| (!candidate).then_some(constraint));
+        .filter(|constraint| !ConstraintContext::could_contextually_disappear(constraint));
     let context = ConstraintContext::from_constraints(retained, retained_count);
     let normalized_len = normalized.len();
     normalize_constraint_batch(
@@ -722,6 +721,24 @@ impl ConstraintContext {
         self.lower_bounds.get(expr).copied()
     }
 
+    /// Conservatively identifies every conjunct that path facts may rewrite to `true`.
+    fn could_contextually_disappear(expr: &SymBoolExpr) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                Self::mul_div_identity_operands(left, right).is_some()
+                    || Self::mul_div_identity_operands(right, left).is_some()
+                    || Self::masked_word_side_eq_self_shape(left, right).is_some()
+                    || Self::masked_word_side_eq_self_shape(right, left).is_some()
+            }
+            SymBoolExprKind::Not(value) => value
+                .zero_check_operand()
+                .is_some_and(|word| matches!(word.kind(), SymExprKind::BinOp(SymBinOp::Or, _, _))),
+            SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {
+                false
+            }
+        }
+    }
+
     fn normalize_bool(&self, cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
         match expr.kind() {
             SymBoolExprKind::Not(value) if self.unsigned_bool_always_true(value) => {
@@ -785,16 +802,21 @@ impl ConstraintContext {
     }
 
     fn masked_word_side_eq_self(&self, masked: &SymExpr, value: &SymExpr) -> bool {
-        let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else { return false };
+        Self::masked_word_side_eq_self_shape(masked, value)
+            .is_some_and(|bits| self.unsigned_bits(value) <= bits)
+    }
+
+    fn masked_word_side_eq_self_shape(masked: &SymExpr, value: &SymExpr) -> Option<usize> {
+        let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else { return None };
         let Some((source, mask)) = right
             .as_const()
             .map(|mask| (left, mask))
             .or_else(|| left.as_const().map(|mask| (right, mask)))
         else {
-            return false;
+            return None;
         };
-        let Some(bits) = mask_low_bits(mask) else { return false };
-        source == value && self.unsigned_bits(value) <= bits
+        let bits = mask_low_bits(mask)?;
+        (source == value).then_some(bits)
     }
 
     fn record_upper_bound_constraint(&mut self, constraint: &SymBoolExpr) {
@@ -978,21 +1000,30 @@ impl ConstraintContext {
     }
 
     fn mul_div_identity(&self, quotient: &SymExpr, expected: &SymExpr) -> bool {
-        let Some((numerator, denominator)) = quotient.udiv_operands() else { return false };
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
+        let Some((denominator, other)) = Self::mul_div_identity_operands(quotient, expected) else {
             return false;
+        };
+
+        self.interval(denominator).is_some_and(|interval| !interval.min.is_zero())
+            && self.mul_cannot_overflow_256(denominator, other)
+    }
+
+    fn mul_div_identity_operands<'a>(
+        quotient: &'a SymExpr,
+        expected: &SymExpr,
+    ) -> Option<(&'a SymExpr, &'a SymExpr)> {
+        let Some((numerator, denominator)) = quotient.udiv_operands() else { return None };
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
+            return None;
         };
         let other = if left == denominator {
             right
         } else if right == denominator {
             left
         } else {
-            return false;
+            return None;
         };
-
-        other == expected
-            && self.interval(denominator).is_some_and(|interval| !interval.min.is_zero())
-            && self.mul_cannot_overflow_256(denominator, other)
+        (other == expected).then_some((denominator, other))
     }
 
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
