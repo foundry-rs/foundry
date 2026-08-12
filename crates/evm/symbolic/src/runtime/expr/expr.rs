@@ -977,6 +977,9 @@ impl SymExpr {
         if then_expr.as_const().is_none() || else_expr.as_const().is_none() {
             return None;
         }
+        if !Self::duplicating_branchless_rewrite_fits(other, conditional) {
+            return None;
+        }
         let then_expr = Self::binop(cx, SymBinOp::Add, other.clone(), then_expr.clone());
         let else_expr = Self::binop(cx, SymBinOp::Add, other.clone(), else_expr.clone());
         Some(Self::ite(cx, condition.clone(), then_expr, else_expr))
@@ -1025,14 +1028,42 @@ impl SymExpr {
             return None;
         };
         if then_expr.as_const().is_some_and(|value| value.is_zero()) {
+            if !Self::duplicating_branchless_rewrite_fits(base, conditional) {
+                return None;
+            }
             let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), else_expr.clone());
             return Some(Self::ite(cx, condition.clone(), base.clone(), selected));
         }
         if else_expr.as_const().is_some_and(|value| value.is_zero()) {
+            if !Self::duplicating_branchless_rewrite_fits(base, conditional) {
+                return None;
+            }
             let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), then_expr.clone());
             return Some(Self::ite(cx, condition.clone(), selected, base.clone()));
         }
         None
+    }
+
+    /// Checks the occurrence cost of a rewrite that places one operand in both ITE arms.
+    ///
+    /// Hash-consing keeps the stored DAG compact, but solver normalization folds occurrences and
+    /// would revisit a shared operand twice after every rewrite. Count that unfolded result before
+    /// constructing it so a linear series of branchless operations cannot become exponential.
+    fn duplicating_branchless_rewrite_fits(operand: &Self, conditional: &Self) -> bool {
+        let mut counter = UnfoldedNodeCounter::new();
+        let Some(operand_nodes) = counter.expr_nodes(operand) else {
+            return false;
+        };
+        let Some(conditional_nodes) = counter.expr_nodes(conditional) else {
+            return false;
+        };
+
+        operand_nodes
+            .checked_mul(2)
+            .and_then(|duplicated| conditional_nodes.checked_add(duplicated))
+            // The rewritten ITE adds at most two operation wrappers around the original arms.
+            .and_then(|nodes| nodes.checked_add(2))
+            .is_some_and(|nodes| nodes <= MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES)
     }
 
     fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
@@ -2138,6 +2169,104 @@ impl SymExpr {
 // unique nodes so adversarial expression trees cannot turn construction into unbounded recursion.
 const MAX_BITWISE_BOOL_WORD_NODES: usize = 256;
 
+// Branchless expression rewrites are optional. Bound both the distinct DAG nodes inspected while
+// deciding whether to rewrite and the occurrences a later non-memoized solver fold could visit.
+const MAX_BRANCHLESS_REWRITE_NODES: usize = 256;
+const MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES: usize = 8 * 1024;
+
+struct UnfoldedNodeCounter {
+    expr_nodes: HashMap<SymExpr, usize>,
+    bool_nodes: HashMap<SymBoolExpr, usize>,
+    remaining_unique_nodes: usize,
+}
+
+impl UnfoldedNodeCounter {
+    fn new() -> Self {
+        Self {
+            expr_nodes: HashMap::default(),
+            bool_nodes: HashMap::default(),
+            remaining_unique_nodes: MAX_BRANCHLESS_REWRITE_NODES,
+        }
+    }
+
+    /// Counts unfolded occurrences while memoizing the cost of each distinct expression node.
+    /// Reusing a cached cost still adds every occurrence, which exposes exponential shared DAGs.
+    fn expr_nodes(&mut self, expr: &SymExpr) -> Option<usize> {
+        if let Some(nodes) = self.expr_nodes.get(expr) {
+            return Some(*nodes);
+        }
+        if self.remaining_unique_nodes == 0 {
+            return None;
+        }
+        self.remaining_unique_nodes -= 1;
+
+        let nodes = match expr.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => 1,
+            SymExprKind::Keccak { len, bytes, .. } => {
+                let mut nodes = 1usize.checked_add(self.expr_nodes(len)?)?;
+                for byte in bytes.iter() {
+                    nodes = nodes.checked_add(self.expr_nodes(byte)?)?;
+                }
+                nodes
+            }
+            SymExprKind::Hash { bytes, .. } => {
+                let mut nodes = 1usize;
+                for byte in bytes.iter() {
+                    nodes = nodes.checked_add(self.expr_nodes(byte)?)?;
+                }
+                nodes
+            }
+            SymExprKind::Not(value) => 1usize.checked_add(self.expr_nodes(value)?)?,
+            SymExprKind::BinOp(_, left, right) => {
+                1usize.checked_add(self.expr_nodes(left)?)?.checked_add(self.expr_nodes(right)?)?
+            }
+            SymExprKind::TernOp(_, left, right, modulus) => 1usize
+                .checked_add(self.expr_nodes(left)?)?
+                .checked_add(self.expr_nodes(right)?)?
+                .checked_add(self.expr_nodes(modulus)?)?,
+            SymExprKind::Ite(condition, then_expr, else_expr) => 1usize
+                .checked_add(self.bool_nodes(condition)?)?
+                .checked_add(self.expr_nodes(then_expr)?)?
+                .checked_add(self.expr_nodes(else_expr)?)?,
+        };
+        if nodes > MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES {
+            return None;
+        }
+        self.expr_nodes.insert(expr.clone(), nodes);
+        Some(nodes)
+    }
+
+    fn bool_nodes(&mut self, expr: &SymBoolExpr) -> Option<usize> {
+        if let Some(nodes) = self.bool_nodes.get(expr) {
+            return Some(*nodes);
+        }
+        if self.remaining_unique_nodes == 0 {
+            return None;
+        }
+        self.remaining_unique_nodes -= 1;
+
+        let nodes = match expr.kind() {
+            SymBoolExprKind::Const(_) => 1,
+            SymBoolExprKind::Not(value) => 1usize.checked_add(self.bool_nodes(value)?)?,
+            SymBoolExprKind::And(values) => {
+                let mut nodes = 1usize;
+                for value in values.iter() {
+                    nodes = nodes.checked_add(self.bool_nodes(value)?)?;
+                }
+                nodes
+            }
+            SymBoolExprKind::Cmp(_, left, right) => {
+                1usize.checked_add(self.expr_nodes(left)?)?.checked_add(self.expr_nodes(right)?)?
+            }
+        };
+        if nodes > MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES {
+            return None;
+        }
+        self.bool_nodes.insert(expr.clone(), nodes);
+        Some(nodes)
+    }
+}
+
 fn write_smt_wide_modular_arithmetic(
     cx: &SymCx,
     out: &mut String,
@@ -2395,6 +2524,38 @@ mod tests {
         };
         assert!(matches!(then_expr.kind(), SymExprKind::Ite(..)));
         assert!(matches!(else_expr.kind(), SymExprKind::Ite(..)));
+    }
+
+    #[test]
+    fn addition_keeps_exponentially_shared_ite_operand_raw() {
+        let mut cx = SymCx::new();
+        let mut value = SymExpr::var(&mut cx, "value");
+        for index in 0..32 {
+            let selector = SymExpr::var(&mut cx, &format!("add_selector_{index}"));
+            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+            let then_value = SymExpr::constant(&mut cx, U256::from(2 * index + 2));
+            let else_value = SymExpr::constant(&mut cx, U256::from(2 * index + 3));
+            let offset = SymExpr::ite(&mut cx, condition, then_value, else_value);
+            value = SymExpr::binop(&mut cx, SymBinOp::Add, value, offset);
+        }
+
+        assert!(matches!(value.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _)));
+    }
+
+    #[test]
+    fn xor_keeps_exponentially_shared_ite_operand_raw() {
+        let mut cx = SymCx::new();
+        let zero = SymExpr::zero(&mut cx);
+        let mut value = SymExpr::var(&mut cx, "value");
+        for index in 0..32 {
+            let selector = SymExpr::var(&mut cx, &format!("xor_selector_{index}"));
+            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+            let selected = SymExpr::var(&mut cx, &format!("xor_selected_{index}"));
+            let conditional = SymExpr::ite(&mut cx, condition, selected, zero.clone());
+            value = SymExpr::binop(&mut cx, SymBinOp::Xor, value, conditional);
+        }
+
+        assert!(matches!(value.kind(), SymExprKind::BinOp(SymBinOp::Xor, _, _)));
     }
 
     #[test]
