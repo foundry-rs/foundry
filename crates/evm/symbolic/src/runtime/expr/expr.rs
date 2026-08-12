@@ -984,19 +984,28 @@ impl SymExpr {
 
     fn xor_with_bool_select(cx: &mut SymCx, base: &Self, selector: &Self) -> Option<Self> {
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = selector.kind() else { return None };
-        let (delta, condition) = if let Some(condition) = left.bitwise_bool_word_condition(cx) {
-            (right, condition)
-        } else {
-            (left, right.bitwise_bool_word_condition(cx)?)
+        let (condition_word, selected) = match left.kind() {
+            SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right) if delta_left == base => {
+                (right, delta_right.clone())
+            }
+            SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right) if delta_right == base => {
+                (right, delta_left.clone())
+            }
+            _ => match right.kind() {
+                SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right)
+                    if delta_left == base =>
+                {
+                    (left, delta_right.clone())
+                }
+                SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right)
+                    if delta_right == base =>
+                {
+                    (left, delta_left.clone())
+                }
+                _ => return None,
+            },
         };
-        let SymExprKind::BinOp(SymBinOp::Xor, left, right) = delta.kind() else { return None };
-        let selected = if left == base {
-            right.clone()
-        } else if right == base {
-            left.clone()
-        } else {
-            return None;
-        };
+        let condition = condition_word.bitwise_bool_word_condition(cx)?;
         Some(Self::ite(cx, condition, selected, base.clone()))
     }
 
@@ -1458,7 +1467,6 @@ impl SymExpr {
                 leaf_conditions.insert(condition);
                 continue;
             }
-
             if let SymExprKind::BinOp(SymBinOp::Or, left, right) = word.kind() {
                 pending.push(right.clone());
                 pending.push(left.clone());
@@ -2414,6 +2422,22 @@ mod tests {
         }
 
         assert_eq!(expression.unsigned_bits(), 1);
+    }
+
+    #[test]
+    fn xor_select_rejects_delta_before_recovering_condition() {
+        let mut cx = SymCx::new();
+        let base = SymExpr::var(&mut cx, "base");
+        let unrelated_left = SymExpr::var(&mut cx, "unrelated_left");
+        let unrelated_right = SymExpr::var(&mut cx, "unrelated_right");
+        let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, unrelated_left, unrelated_right);
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+        let condition_word = SymExpr::bool_word(&mut cx, condition);
+        let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+
+        assert!(SymExpr::xor_with_bool_select(&mut cx, &base, &selector).is_none());
     }
 
     #[test]

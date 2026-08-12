@@ -2707,6 +2707,26 @@ fn expression_simplifies_xor_bool_select_idiom() {
 }
 
 #[test]
+fn expression_simplifies_xor_inverted_bool_select_idiom() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let condition_word = SymExpr::ite(&mut cx, condition.clone(), zero, one);
+    let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+    let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+    let inverted = condition.not(&mut cx);
+    let expected = SymExpr::ite(&mut cx, inverted, selected, base);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn expression_simplifies_xor_composite_bool_select_idiom() {
     let mut cx = SymCx::new();
     let base = SymExpr::var(&mut cx, "base");
@@ -2722,6 +2742,31 @@ fn expression_simplifies_xor_composite_bool_select_idiom() {
     let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
     let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
     let condition = SymBoolExpr::or(&mut cx, vec![first, second]);
+    let expected = SymExpr::ite(&mut cx, condition, selected, base);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn expression_simplifies_xor_composite_inverted_bool_select_idiom() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+    let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let first_word = SymExpr::ite(&mut cx, first.clone(), zero.clone(), one.clone());
+    let second_word = SymExpr::ite(&mut cx, second.clone(), zero, one);
+    let condition_word = SymExpr::binop(&mut cx, SymBinOp::Or, first_word, second_word);
+    let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+    let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+    let first = first.not(&mut cx);
+    let second = second.not(&mut cx);
+    let condition = SymBoolExpr::or(&mut cx, vec![second, first]);
     let expected = SymExpr::ite(&mut cx, condition, selected, base);
 
     assert_eq!(actual, expected);
@@ -3507,6 +3552,46 @@ fn solver_does_not_use_mul_div_identity_to_bound_itself() {
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
     assert!(normalized.contains(&identity));
+    assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
+fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let divisor_value = (U256::ONE << 254) + U256::ONE;
+    let divisor = SymExpr::constant(&mut cx, divisor_value);
+    let a_product = SymExpr::binop(&mut cx, SymBinOp::Mul, a.clone(), divisor.clone());
+    let a_quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, a_product, divisor.clone());
+    let a_identity = SymBoolExpr::eq(&mut cx, a_quotient.clone(), a.clone());
+    let b_product = SymExpr::binop(&mut cx, SymBinOp::Mul, b.clone(), divisor.clone());
+    let b_quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, b_product, divisor);
+    let b_identity = SymBoolExpr::eq(&mut cx, b_quotient.clone(), b.clone());
+    let a_matches_b = SymBoolExpr::eq(&mut cx, a.clone(), b.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let a_quotient_is_zero = SymBoolExpr::eq(&mut cx, a_quotient, zero.clone());
+    let b_quotient_is_zero = SymBoolExpr::eq(&mut cx, b_quotient, zero);
+    let four = SymExpr::constant(&mut cx, U256::from(4));
+    let a_is_four = SymBoolExpr::eq(&mut cx, a, four);
+    let constraints = vec![
+        a_identity.clone(),
+        b_identity.clone(),
+        a_matches_b,
+        a_quotient_is_zero,
+        b_quotient_is_zero,
+        a_is_four,
+    ];
+    let model = symbolic_model(
+        &mut cx,
+        [("a".to_string(), U256::from(4)), ("b".to_string(), U256::from(4))],
+    );
+
+    assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert!(normalized.contains(&a_identity));
+    assert!(normalized.contains(&b_identity));
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 }
 
