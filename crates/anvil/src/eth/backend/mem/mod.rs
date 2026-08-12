@@ -4642,13 +4642,7 @@ impl<N: Network> Backend<N> {
                     )
                 })?
         };
-        let target_rpc_url = target_rpc_urls.first().ok_or_else(|| {
-            RpcError::invalid_params(
-                "Forking not enabled and RPC URL not provided to start forking",
-            )
-        })?;
         let flush_old_cache = previous_fork.is_some();
-        self.ensure_reset_network(target_rpc_url).await?;
         if flush_old_cache {
             // Staging opens a separate BlockchainDb from disk. Persist the live remote cache first
             // so an unchanged source and block can reuse it without copying locally modified state.
@@ -4743,7 +4737,7 @@ impl<N: Network> Backend<N> {
                 && !self.networks.supports_fork_source(&target_networks)
             {
                 return Err(RpcError::invalid_params(format!(
-                    "cannot reset Anvil across execution profiles ({} -> {}); start a new \
+                    "cannot reset Anvil across network families ({} -> {}); start a new \
                      instance with matching network configuration",
                     self.execution_profile_name(),
                     target_networks.execution_profile_name()
@@ -4911,24 +4905,6 @@ impl<N: Network> Backend<N> {
         self.cheats.clear_next_block_prevrandao();
 
         trace!(target: "backend", "reset fork");
-        Ok(())
-    }
-
-    async fn ensure_reset_network(&self, fork_url: &str) -> Result<(), BlockchainError> {
-        let node_config = self.node_config.read().await.clone();
-        if node_config.has_explicit_network_selection() {
-            return Ok(());
-        }
-
-        let target_networks = node_config.detect_fork_network(fork_url).await?;
-        let current = self.networks.execution_profile_name();
-        let target = target_networks.execution_profile_name();
-        if !self.networks.supports_fork_source(&target_networks) {
-            return Err(RpcError::invalid_params(format!(
-                "cannot reset Anvil across network families ({current} -> {target}); start a new instance with matching network configuration"
-            ))
-            .into());
-        }
         Ok(())
     }
 
