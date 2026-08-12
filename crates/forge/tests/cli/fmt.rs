@@ -171,7 +171,7 @@ tab_width = 6
     );
 
     let output = cmd.args(["fmt", "--nearest", "--check", "."]).assert_failure();
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout).replace('\\', "/");
     assert!(stdout.contains("Diff in first/src/Test.sol"), "{stdout}");
     assert!(stdout.contains("|+  function test("), "{stdout}");
     assert!(stdout.contains("Diff in second/src/Test.sol"), "{stdout}");

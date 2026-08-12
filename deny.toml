@@ -16,6 +16,9 @@ ignore = [
     # declaration handling can allocate without a bound. No fixed quick-junit,
     # inferno, or soldeer release is available for either advisory yet.
     "RUSTSEC-2026-0195",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0247 bitmaps is unmaintained.
+    # No fixed imbl release is available yet: https://github.com/jneem/imbl/issues/170
+    "RUSTSEC-2026-0247",
 ]
 
 # This section is considered when running `cargo deny check bans`.
