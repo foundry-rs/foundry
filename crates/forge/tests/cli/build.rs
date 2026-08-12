@@ -69,6 +69,20 @@ exit 1
     assert!(invoked.exists(), "approved local compiler did not run");
 });
 
+forgetest!(project_dotenv_requires_approval, |prj, cmd| {
+    fs::write(prj.root().join(".env"), "FOUNDRY_SRC=dotenv-src").unwrap();
+
+    let output = cmd.args(["config", "--json"]).assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+    assert!(stderr.contains("refusing to load unapproved project dotenv"), "{stderr}");
+    assert!(stderr.contains("--allow-project-env"), "{stderr}");
+
+    let output =
+        cmd.forge_fuse().args(["config", "--json", "--allow-project-env"]).assert_success();
+    let config: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(config["src"], "dotenv-src");
+});
+
 #[cfg(unix)]
 forgetest!(local_compiler_path_escapes_control_characters, |prj, cmd| {
     let solc = prj.root().join("payload\n\u{1b}[2Jspoofed");

@@ -11,6 +11,7 @@ use serde::de::DeserializeOwned;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
@@ -191,47 +192,89 @@ pub fn now() -> Duration {
 }
 
 /// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
-pub fn common_setup() {
+pub fn common_setup() -> Result<()> {
     install_crypto_provider();
     crate::handler::install();
-    load_dotenv();
+    let allow_project_env =
+        std::env::args_os().take_while(|arg| arg != "--").any(|arg| arg == "--allow-project-env");
+    load_dotenv(allow_project_env)?;
     enable_paint();
+    Ok(())
 }
 
-/// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
+/// Loads dotenv files from the cwd and project root after approval, ignoring parse failures.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
 /// the logging behavior of Foundry.
 ///
 /// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
 /// to not be able to configure the colors. It would also mess up the JSON output.
-pub fn load_dotenv() {
-    // `webbrowser` treats this variable as an executable command on Unix. Do not let an
-    // untrusted project select an executable, while preserving values supplied by the user.
-    let browser = std::env::var_os("BROWSER");
-    let load = |p: &Path| {
-        dotenvy::from_path(p.join(".env")).ok();
-    };
-
+pub fn load_dotenv(allow_project_env: bool) -> Result<()> {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
-    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root(None)) {
-        load(&prj_root);
-        if cwd != prj_root {
-            // prj root and cwd can be identical
-            load(&cwd);
+    let mut paths = Vec::new();
+    if let (Ok(cwd), Ok(project_root)) = (std::env::current_dir(), find_project_root(None)) {
+        let project_env = project_root.join(".env");
+        if project_env.is_file() {
+            paths.push(project_env);
         }
-    };
-
-    // SAFETY: `load_dotenv` is called during single-threaded CLI startup.
-    unsafe {
-        if let Some(browser) = browser {
-            std::env::set_var("BROWSER", browser);
-        } else {
-            std::env::remove_var("BROWSER");
+        if cwd != project_root {
+            // prj root and cwd can be identical
+            let cwd_env = cwd.join(".env");
+            if cwd_env.is_file() {
+                paths.push(cwd_env);
+            }
         }
     }
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    if !allow_project_env {
+        ensure_dotenv_approved(&paths)?;
+    }
+
+    for path in paths {
+        dotenvy::from_path(path).ok();
+    }
+    Ok(())
+}
+
+fn ensure_dotenv_approved(paths: &[PathBuf]) -> Result<()> {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return Err(dotenv_not_approved(paths));
+    }
+
+    let mut stderr = io::stderr().lock();
+    writeln!(stderr, "Warning: this project contains dotenv files:")?;
+    for path in paths {
+        writeln!(stderr, "  {path:?}")?;
+    }
+    writeln!(
+        stderr,
+        "Dotenv files can configure executable and library loading through process environment \
+         variables. Loading an untrusted dotenv file may execute arbitrary code."
+    )?;
+    write!(stderr, "Do you trust these dotenv files and want to continue? [y/N] ")?;
+    stderr.flush()?;
+
+    let mut response = String::new();
+    io::stdin().read_line(&mut response)?;
+    if matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(dotenv_not_approved(paths))
+    }
+}
+
+fn dotenv_not_approved(paths: &[PathBuf]) -> eyre::Report {
+    let paths = paths.iter().map(|path| format!("{path:?}")).join(", ");
+    eyre::eyre!(
+        "refusing to load unapproved project dotenv files {paths}; pass `--allow-project-env` if \
+         you trust them"
+    )
 }
 
 /// Sets the default [`yansi`] color output condition.
@@ -1207,7 +1250,7 @@ impl<'a> IntoIterator for &'a Submodules {
 mod tests {
     use super::*;
     use foundry_common::fs;
-    use std::{env, fs::File, io::Write};
+    use std::{env, fs::File};
     use tempfile::tempdir;
 
     #[test]
@@ -1330,17 +1373,10 @@ mod tests {
         unsafe { env::remove_var("BROWSER") };
         let cwd = env::current_dir().unwrap();
         env::set_current_dir(&nested).unwrap();
-        load_dotenv();
+        load_dotenv(true).unwrap();
         env::set_current_dir(cwd).unwrap();
 
         let loaded_browser = env::var_os("BROWSER");
-        unsafe { env::set_var("BROWSER", "trusted-browser") };
-        let cwd = env::current_dir().unwrap();
-        env::set_current_dir(&nested).unwrap();
-        load_dotenv();
-        env::set_current_dir(cwd).unwrap();
-        let configured_browser = env::var_os("BROWSER");
-
         unsafe {
             if let Some(browser) = browser {
                 env::set_var("BROWSER", browser);
@@ -1351,8 +1387,7 @@ mod tests {
 
         assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
         assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
-        assert_eq!(loaded_browser, None);
-        assert_eq!(configured_browser.as_deref(), Some(OsStr::new("trusted-browser")));
+        assert_eq!(loaded_browser.as_deref(), Some(OsStr::new("./project-browser")));
     }
 
     #[test]

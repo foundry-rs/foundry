@@ -104,6 +104,10 @@ pub struct GlobalArgs {
     /// Allow use of local compiler executables without prompting.
     #[arg(global = true, long, help_heading = "Compiler options")]
     allow_local_compiler: bool,
+
+    /// Allow loading project dotenv files without prompting.
+    #[arg(global = true, long, help_heading = "Project options")]
+    allow_project_env: bool,
 }
 
 impl GlobalArgs {
