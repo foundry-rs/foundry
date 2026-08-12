@@ -33,7 +33,7 @@ impl DAEstimateArgs {
             Some(n) => n,
             None => {
                 let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
-                provider.get_chain_id().await?.into()
+                infer_network(provider.get_chain_id().await?)?
             }
         };
         match network {
@@ -44,6 +44,17 @@ impl DAEstimateArgs {
             NetworkVariant::Tempo => unsupported_da_estimation("Tempo"),
         }
     }
+}
+
+/// Infers the network family from an endpoint's chain ID.
+///
+/// A known chain that belongs to a family this build does not support is rejected instead of
+/// silently estimating with Ethereum semantics. Only genuinely unknown chain IDs fall back to
+/// Ethereum.
+fn infer_network(chain_id: u64) -> Result<NetworkVariant> {
+    NetworkVariant::from_known_chain_id(chain_id)
+        .map(|network| network.unwrap_or(NetworkVariant::Ethereum))
+        .map_err(|error| eyre::eyre!("cannot infer network from chain ID {chain_id}: {error}"))
 }
 
 fn unsupported_da_estimation(network: &str) -> Result<()> {
@@ -70,9 +81,44 @@ pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Resu
     Ok(())
 }
 
-#[cfg(all(test, feature = "monad"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
+
+    #[test]
+    fn infers_ethereum_for_unknown_chain() {
+        assert_eq!(infer_network(98_765_432).unwrap(), NetworkVariant::Ethereum);
+    }
+
+    #[test]
+    fn infers_ethereum_for_mainnet() {
+        assert_eq!(infer_network(NamedChain::Mainnet as u64).unwrap(), NetworkVariant::Ethereum);
+    }
+
+    #[test]
+    #[cfg(feature = "optimism")]
+    fn infers_optimism_for_op_mainnet() {
+        assert_eq!(infer_network(NamedChain::Optimism as u64).unwrap(), NetworkVariant::Optimism);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn infers_monad_for_monad_chains() {
+        for chain in [NamedChain::Monad, NamedChain::MonadTestnet] {
+            assert_eq!(infer_network(chain as u64).unwrap(), NetworkVariant::Monad);
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn rejects_monad_chains_when_feature_is_disabled() {
+        for chain in [NamedChain::Monad, NamedChain::MonadTestnet] {
+            let err = infer_network(chain as u64).unwrap_err().to_string();
+            assert!(err.contains(&format!("chain ID {}", chain as u64)), "{err}");
+            assert!(err.contains("network family `monad` is not enabled"), "{err}");
+        }
+    }
 
     #[tokio::test]
     #[cfg(feature = "monad")]
