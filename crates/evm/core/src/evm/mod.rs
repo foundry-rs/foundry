@@ -1,12 +1,9 @@
 use std::{fmt::Debug, ops::Deref};
 
-#[cfg(feature = "monad")]
-use crate::constants::MONAD_CHEATCODE_ADDRESS;
 use crate::{
     FoundryBlock, FoundryContextExt, FoundryContextState, FoundryEvmAuxState, FoundryInspectorExt,
     FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
-    constants::CHEATCODE_ADDRESS,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
@@ -19,7 +16,6 @@ use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
-use foundry_evm_networks::NetworkVariant;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use revm::{
     Database,
@@ -60,7 +56,7 @@ pub use tempo::*;
 mod replay;
 pub use replay::*;
 
-/// Foundry's supertrait associating [Network] with [FoundryEvmFactory]
+/// Foundry's compatibility trait associating a [`Network`] with a [`FoundryEvmFactory`].
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     type Network: Network<
             TxEnvelope: Decodable
@@ -76,29 +72,6 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
             ReceiptResponse: FoundryReceiptResponse,
         >;
     type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
-
-    /// Additional network-specific cheatcode contract addresses.
-    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
-
-    /// Maximum initcode size enforced when nested cheatcode execution simulates a raw deployment.
-    const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
-
-    /// Returns whether this concrete EVM network can execute `network`.
-    ///
-    /// Non-Monad implementations reject Monad execution because it requires a distinct EVM
-    /// factory. Other existing network compatibility behavior remains unchanged.
-    fn supports_network(network: NetworkVariant) -> bool {
-        !network.is_monad()
-    }
-
-    fn is_extra_cheatcode_address(address: Address) -> bool {
-        Self::EXTRA_CHEATCODE_ADDRESSES.contains(&address)
-    }
-
-    /// Returns whether `address` is a standard or network-specific cheatcode contract.
-    fn is_cheatcode_address(address: Address) -> bool {
-        address == CHEATCODE_ADDRESS || Self::is_extra_cheatcode_address(address)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -122,13 +95,6 @@ pub struct MonadEvmNetwork;
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = MonadEvmFactory;
-
-    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
-    const CONTRACT_INITCODE_SIZE_LIMIT: usize = monad_revm::MONAD_MAX_INITCODE_SIZE;
-
-    fn supports_network(network: NetworkVariant) -> bool {
-        network.is_monad()
-    }
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
@@ -162,14 +128,17 @@ pub trait FoundryEvmFactory:
     + Default
     + 'static
 {
+    /// Additional network-specific cheatcode contract addresses.
+    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
+
+    /// Maximum initcode size enforced during nested transaction execution.
+    const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
+
     /// Whether transaction execution needs metadata from surrounding blocks.
     const NEEDS_BLOCK_CONTEXT: bool = false;
 
     /// Whether canonical protocol system transactions must be included during fork replay.
     const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = false;
-
-    /// Whether this EVM family executes the EIP-4788 beacon-roots system call.
-    const USES_EIP4788_BEACON_ROOTS: bool = true;
 
     /// Network-specific state stored outside the standard REVM journal.
     type ContextAux: FoundryEvmAuxState;
@@ -431,42 +400,18 @@ impl IntoInstructionResult for TempoHaltReason {
     }
 }
 
-#[cfg(all(test, feature = "monad"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn monad_overrides_nested_initcode_size_limit() {
+    fn factories_define_nested_initcode_size_limit() {
+        assert_eq!(EthEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT, MAX_INITCODE_SIZE);
+        assert_eq!(TempoEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT, MAX_INITCODE_SIZE);
+        #[cfg(feature = "monad")]
         assert_eq!(
-            <EthEvmNetwork as FoundryEvmNetwork>::CONTRACT_INITCODE_SIZE_LIMIT,
-            MAX_INITCODE_SIZE
-        );
-        assert_eq!(
-            <TempoEvmNetwork as FoundryEvmNetwork>::CONTRACT_INITCODE_SIZE_LIMIT,
-            MAX_INITCODE_SIZE
-        );
-        assert_eq!(
-            <MonadEvmNetwork as FoundryEvmNetwork>::CONTRACT_INITCODE_SIZE_LIMIT,
+            MonadEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT,
             monad_revm::MONAD_MAX_INITCODE_SIZE
         );
-    }
-
-    #[test]
-    fn evm_factories_only_isolate_monad_forks() {
-        for network in [NetworkVariant::Ethereum, NetworkVariant::Tempo] {
-            assert!(EthEvmNetwork::supports_network(network));
-            assert!(TempoEvmNetwork::supports_network(network));
-            assert!(!MonadEvmNetwork::supports_network(network));
-        }
-        #[cfg(feature = "optimism")]
-        {
-            assert!(EthEvmNetwork::supports_network(NetworkVariant::Optimism));
-            assert!(TempoEvmNetwork::supports_network(NetworkVariant::Optimism));
-            assert!(!MonadEvmNetwork::supports_network(NetworkVariant::Optimism));
-        }
-
-        assert!(!EthEvmNetwork::supports_network(NetworkVariant::Monad));
-        assert!(!TempoEvmNetwork::supports_network(NetworkVariant::Monad));
-        assert!(MonadEvmNetwork::supports_network(NetworkVariant::Monad));
     }
 }

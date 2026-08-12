@@ -36,6 +36,7 @@ use revm::{
 use crate::{
     FoundryContextExt, FoundryContextState, FoundryInspectorExt, MonadContextAux,
     backend::{DatabaseExt, JournaledState},
+    constants::MONAD_CHEATCODE_ADDRESS,
     evm::{FoundryEvmFactory, NestedEvm, ProtocolSystemCall, finish_protocol_system_call},
 };
 
@@ -116,9 +117,11 @@ where
 }
 
 impl FoundryEvmFactory for MonadEvmFactory {
+    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
+    const CONTRACT_INITCODE_SIZE_LIMIT: usize = monad_revm::MONAD_MAX_INITCODE_SIZE;
+
     const NEEDS_BLOCK_CONTEXT: bool = true;
     const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = true;
-    const USES_EIP4788_BEACON_ROOTS: bool = false;
 
     type ContextAux = MonadContextAux;
     type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;

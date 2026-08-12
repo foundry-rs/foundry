@@ -33,7 +33,7 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -1340,9 +1340,9 @@ impl Cheatcode for executeTransactionCall {
         // Enable nonce checks for realistic simulation.
         ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
-        // Enforce the active network's initcode size limit.
+        // Enforce the active EVM's initcode size limit.
         ccx.ecx.cfg_env_mut().limit_contract_initcode_size =
-            Some(FEN::CONTRACT_INITCODE_SIZE_LIMIT);
+            Some(FEN::EvmFactory::CONTRACT_INITCODE_SIZE_LIMIT);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
         // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here

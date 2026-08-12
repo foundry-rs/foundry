@@ -298,13 +298,7 @@ impl VerifyBytecodeArgs {
         }
         let network_was_inferred = Self::configured_network(None, &config).is_none();
         let endpoint_identity = Self::endpoint_identity(&config).await?;
-        let network = Self::materialize_execution_network(&mut config, endpoint_identity.as_ref());
-        if !FEN::supports_network(network) {
-            eyre::bail!(
-                "the selected EVM network cannot execute `{network}`; use the matching network \
-                 implementation"
-            );
-        }
+        Self::materialize_execution_network(&mut config, endpoint_identity.as_ref());
         self.run_with_network_and_config::<FEN>(config, endpoint_identity, network_was_inferred)
             .await
     }
@@ -318,16 +312,6 @@ impl VerifyBytecodeArgs {
     where
         FEN: FoundryEvmNetwork,
     {
-        let network = Self::effective_network(
-            Self::configured_network(None, &config),
-            endpoint_identity.as_ref(),
-        );
-        if !FEN::supports_network(network) {
-            eyre::bail!(
-                "the selected EVM network cannot execute `{network}`; use the matching network \
-                 implementation"
-            );
-        }
         // Setup
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
 

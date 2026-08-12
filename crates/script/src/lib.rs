@@ -871,9 +871,10 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub tempo: TempoOpts,
 }
 
-async fn resolve_script_fork<FEN: FoundryEvmNetwork>(
+async fn resolve_script_fork(
     config: &mut Config,
     evm_opts: &mut EvmOpts,
+    active_networks: Option<NetworkConfigs>,
 ) -> Result<Option<ResolvedFork>> {
     if evm_opts.fork_url.is_none() {
         return Ok(None);
@@ -881,11 +882,14 @@ async fn resolve_script_fork<FEN: FoundryEvmNetwork>(
     if evm_opts.fork_endpoint.is_none() {
         evm_opts.infer_network_from_fork().await?;
     }
-    eyre::ensure!(
-        FEN::supports_network(evm_opts.networks.execution_network()),
-        "fork network `{}` is incompatible with the active EVM",
-        evm_opts.networks.execution_network()
-    );
+    if let Some(active_networks) = active_networks
+        && !active_networks.supports_fork_source(&evm_opts.networks)
+    {
+        eyre::bail!(
+            "fork network `{}` is incompatible with the active EVM",
+            evm_opts.networks.execution_network()
+        );
+    }
     config.networks = evm_opts.networks;
     if let Some(identity) = evm_opts.fork_endpoint.clone() {
         let network_is_inferred = evm_opts.fork_network_is_inferred;
@@ -904,7 +908,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     ) -> Result<Self> {
         // Linking happens before runner construction, so resolve the fork context now and reuse it
         // for all preflight reads and environment construction.
-        let resolved_fork = resolve_script_fork::<FEN>(&mut config, &mut evm_opts).await?;
+        let resolved_fork = resolve_script_fork(&mut config, &mut evm_opts, None).await?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if evm_opts.fork_url.is_some() {
@@ -972,11 +976,14 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         {
             return Ok(Some(fork.clone()));
         }
+        let active_networks =
+            self.resolved_fork.as_ref().map(|fork| fork.context().network_profile);
         if let Some(fork) = &self.resolved_fork {
             self.evm_opts.invalidate_fork_endpoint_if_source_changed(fork);
         }
 
-        let fork = resolve_script_fork::<FEN>(&mut self.config, &mut self.evm_opts).await?;
+        let fork =
+            resolve_script_fork(&mut self.config, &mut self.evm_opts, active_networks).await?;
         self.resolved_fork = fork.clone();
         Ok(fork)
     }

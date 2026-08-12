@@ -335,13 +335,6 @@ impl CallArgs {
             return Ok(());
         };
         evm_opts.infer_network_from_fork().await?;
-        let network = evm_opts.networks.execution_network();
-        if !FEN::supports_network(network) {
-            eyre::bail!(
-                "the selected EVM network cannot execute `{network}`; use the matching network \
-                 implementation"
-            );
-        }
         // Keep the public generic wrapper independent of the network-specific future layout.
         Box::pin(self.run_with_network_and_opts::<FEN>(config, evm_opts, auth_preflight)).await
     }
