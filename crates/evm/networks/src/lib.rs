@@ -895,14 +895,14 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn fork_sources_only_isolate_monad() {
-        let mut non_monad = vec![
+        let non_monad = [
             NetworkConfigs::default(),
             NetworkConfigs::with_ethereum(),
             NetworkConfigs::with_celo(),
             NetworkConfigs::with_tempo(),
+            #[cfg(feature = "optimism")]
+            NetworkConfigs::with_optimism(),
         ];
-        #[cfg(feature = "optimism")]
-        non_monad.push(NetworkConfigs::with_optimism());
 
         for execution in &non_monad {
             for source in &non_monad {

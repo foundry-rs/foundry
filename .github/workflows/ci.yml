@@ -235,6 +235,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features --locked
         env:
           RUSTFLAGS: -Dwarnings
+      - name: Lint Monad-only network support
+        run: cargo clippy -p foundry-evm-networks --no-default-features --features monad --tests --locked
+        env:
+          RUSTFLAGS: -Dwarnings
 
   rustfmt:
     runs-on: depot-ubuntu-latest
