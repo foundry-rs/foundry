@@ -12,8 +12,8 @@ use alloy_rpc_types::{
     TransactionRequest,
     simulate::{SimBlock, SimulatePayload},
     trace::{
-        opcode::BlockOpcodeGas,
-        parity::{TraceResults, TraceResultsWithTransactionHash, TraceType},
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
+        parity::{Delta, TraceResults, TraceResultsWithTransactionHash, TraceType},
     },
 };
 use alloy_serde::WithOtherFields;
@@ -47,6 +47,7 @@ impl PrecompileFactory for FailingHistoryPrecompile {
                 gas_used: 0,
                 gas_refunded: 0,
                 state_gas_used: 0,
+                state_gas_spilled: 0,
                 reservoir: input.reservoir,
             })
         });
@@ -70,6 +71,7 @@ impl PrecompileFactory for OrderedBlockStartPrecompiles {
                 gas_used: 0,
                 gas_refunded: 0,
                 state_gas_used: 0,
+                state_gas_spilled: 0,
                 reservoir: input.reservoir,
             })
         });
@@ -87,6 +89,7 @@ impl PrecompileFactory for OrderedBlockStartPrecompiles {
                 gas_used: 0,
                 gas_refunded: 0,
                 state_gas_used: 0,
+                state_gas_spilled: 0,
                 reservoir: input.reservoir,
             })
         });
@@ -169,6 +172,7 @@ impl PrecompileFactory for CountingPostBlockPrecompiles {
                         gas_used: 0,
                         gas_refunded: 0,
                         state_gas_used: 0,
+                        state_gas_spilled: 0,
                         reservoir: input.reservoir,
                     })
                 });
@@ -303,12 +307,12 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
     let provider = handle.http_provider();
     let probe = address!("0000000000000000000000000000000000001000");
 
-    // Forward the calldata to the history contract and store one at slot zero only when the
-    // returned parent hash is non-zero.
+    // Forward the calldata to the history contract and store the returned parent hash at slot zero
+    // only when it is non-zero.
     api.anvil_set_code(
         probe,
         bytes!(
-            "60205f5f3760205f60205f730000f90827f1c53a10cb7a02335b1753200029355afa505f5115602e5760015f55005b00"
+            "60205f5f3760205f60205f730000f90827f1c53a10cb7a02335b1753200029355afa505f518015602d575f55005b00"
         ),
     )
     .await
@@ -353,7 +357,7 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
         .get(&probe)
         .expect("probe should change")
         .storage;
-    assert!(storage.contains_key(&B256::ZERO));
+    assert_eq!(storage.get(&B256::ZERO), Some(&Delta::changed(B256::ZERO, parent.header.hash)));
 
     let opcode_gas: Option<BlockOpcodeGas> = provider
         .raw_request("trace_blockOpcodeGas".into(), (BlockId::number(block_number),))
@@ -398,6 +402,9 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
         .client()
         .request("trace_replayTransaction", (receipt.transaction_hash, vec![TraceType::Trace]))
         .await;
+    let transaction_opcode_replay: Result<Option<TransactionOpcodeGas>, _> = provider
+        .raw_request("trace_transactionOpcodeGas".into(), (receipt.transaction_hash,))
+        .await;
     let opcode_replay: Result<Option<BlockOpcodeGas>, _> =
         provider.raw_request("trace_blockOpcodeGas".into(), (BlockId::number(block_number),)).await;
     let empty_opcode_replay: Result<Option<BlockOpcodeGas>, _> = provider
@@ -407,6 +414,7 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
     for error in [
         block_replay.unwrap_err(),
         transaction_replay.unwrap_err(),
+        transaction_opcode_replay.unwrap_err(),
         opcode_replay.unwrap_err(),
         empty_opcode_replay.unwrap_err(),
     ] {

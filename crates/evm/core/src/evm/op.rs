@@ -11,13 +11,13 @@ use revm::{
     handler::{EthFrame, EvmTr, FrameResult, Handler, instructions::EthInstructions},
     inspector::InspectorHandler,
     interpreter::{
-        FrameInput, InstructionResult, SharedMemory, interpreter::EthInterpreter,
+        FrameInput, GasTracker, InstructionResult, SharedMemory, interpreter::EthInterpreter,
         interpreter_action::FrameInit,
     },
 };
 
 use crate::{
-    FoundryContextExt, FoundryInspectorExt,
+    FoundryContextExt, FoundryContextState, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm},
 };
@@ -49,15 +49,26 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
 >;
 
 impl FoundryEvmFactory for OpEvmFactory {
+    type ContextAux = ();
     type FoundryContext<'db> = OpEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         OpEvm<&'db mut dyn DatabaseExt<Self>, I, Self::Precompiles>;
 
+    fn create_evm_with_context<DB: alloy_evm::Database>(
+        &self,
+        db: DB,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        _context_aux: Self::ContextAux,
+    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
+        self.create_evm(db, evm_env)
+    }
+
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        _context_aux: Self::ContextAux,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
@@ -70,9 +81,13 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        context_aux: Self::ContextAux,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<dyn NestedEvm<Spec = OpSpecId, Block = BlockEnv, Tx = OpTx> + 'db> {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
+    ) -> Box<dyn NestedEvm<Spec = OpSpecId, Block = BlockEnv, Tx = OpTx, Aux = ()> + 'db> {
+        Box::new(
+            self.create_foundry_evm_with_inspector(db, evm_env, context_aux, inspector)
+                .into_inner(),
+        )
     }
 }
 
@@ -93,15 +108,26 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
     type Spec = OpSpecId;
     type Block = BlockEnv;
     type Tx = OpTx;
+    type Aux = ();
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx().journaled_state.inner
     }
 
+    fn context_state(&self) -> FoundryContextState<Self::Aux> {
+        self.ctx_ref().context_state()
+    }
+
+    fn aux_state(&self) -> Self::Aux {
+        self.ctx_ref().aux_state()
+    }
+
+    fn set_context_state(&mut self, state: FoundryContextState<Self::Aux>) {
+        self.ctx().set_context_state(state);
+    }
+
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = OpEvmHandler::<I>::new();
-        let reservoir = frame.reservoir();
-
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
         let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
@@ -109,7 +135,14 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
         let mut frame_result =
             handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_op_error)?;
 
-        handler.last_frame_result(self, reservoir, &mut frame_result).map_err(map_op_error)?;
+        let mut parent_gas = GasTracker::new(
+            frame_result.gas().limit(),
+            frame_result.gas().remaining(),
+            frame_result.gas().reservoir(),
+        );
+        handler
+            .last_frame_result(self, &mut frame_result, &mut parent_gas)
+            .map_err(map_op_error)?;
 
         Ok(frame_result)
     }

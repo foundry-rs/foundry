@@ -265,10 +265,16 @@ mod tests {
         request::{RequestParams, RpcCall, RpcNotification, Version},
         response::RpcResponse,
     };
-    use std::{pin::pin, task::Waker};
+    use std::{
+        pin::pin,
+        sync::atomic::{AtomicUsize, Ordering},
+        task::Waker,
+    };
 
-    #[derive(Clone)]
-    struct TestHandler;
+    #[derive(Clone, Default)]
+    struct TestHandler {
+        requests: Arc<AtomicUsize>,
+    }
 
     #[async_trait::async_trait]
     impl PubSubRpcHandler for TestHandler {
@@ -281,6 +287,7 @@ mod tests {
             _request: Self::Request,
             _cx: PubSubContext<Self>,
         ) -> ResponseResult {
+            self.requests.fetch_add(1, Ordering::Relaxed);
             ResponseResult::success(serde_json::Value::Null)
         }
     }
@@ -305,7 +312,7 @@ mod tests {
 
     #[test]
     fn process_request_keeps_empty_batch_invalid() {
-        let mut connection = PubSubConnection::new((), TestHandler);
+        let mut connection = PubSubConnection::new((), TestHandler::default());
         connection.process_request(Ok(Request::Batch(vec![])));
 
         let response = run_ready(connection.processing.pop().unwrap());
@@ -316,11 +323,13 @@ mod tests {
     }
 
     #[test]
-    fn process_request_skips_notification_only_batch_response() {
-        let mut connection = PubSubConnection::new((), TestHandler);
+    fn process_request_executes_notification_without_response() {
+        let handler = TestHandler::default();
+        let mut connection = PubSubConnection::new((), handler.clone());
         connection.process_request(Ok(Request::Batch(vec![notification()])));
 
         let response = run_ready(connection.processing.pop().unwrap());
         assert_eq!(response, None);
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
     }
 }

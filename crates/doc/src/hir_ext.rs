@@ -328,18 +328,20 @@ fn effective_natspec_doc(
     let mut local_dev = false;
     let mut local_param = false;
     let mut local_return = false;
-    for comment in raw.iter() {
-        for entry in comment.natspec.iter() {
-            match entry.kind {
-                NatSpecKind::Inheritdoc { contract } if inheritdoc.is_none() => {
-                    inheritdoc = Some(contract)
-                }
-                NatSpecKind::Notice => local_notice = true,
-                NatSpecKind::Dev => local_dev = true,
-                NatSpecKind::Param { .. } => local_param = true,
-                NatSpecKind::Return { .. } => local_return = true,
-                _ => {}
+    let raw_items =
+        raw.iter().flat_map(|comment| comment.natspec.iter().copied()).collect::<Vec<_>>();
+    for entry in &raw_items {
+        match entry.kind {
+            NatSpecKind::Inheritdoc { contract } if inheritdoc.is_none() => {
+                inheritdoc = Some(contract)
             }
+            NatSpecKind::Notice if continuation_parent(gcx, &raw_items, entry).is_none() => {
+                local_notice = true
+            }
+            NatSpecKind::Dev => local_dev = true,
+            NatSpecKind::Param { .. } => local_param = true,
+            NatSpecKind::Return { .. } => local_return = true,
+            _ => {}
         }
     }
     let Some(alias) = inheritdoc else { return Some(local) };
