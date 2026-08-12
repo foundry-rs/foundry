@@ -6296,7 +6296,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=d61ff900ecd69272ab810f4fc5ca478e10af7ecf#d61ff900ecd69272ab810f4fc5ca478e10af7ecf"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=41861a3188696c93288d8451342ce5cfd4b0d651#41861a3188696c93288d8451342ce5cfd4b0d651"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -6324,6 +6324,7 @@ dependencies = [
  "rusb",
  "serde",
  "serde_json",
+ "tempfile",
  "tempo-alloy",
  "thiserror 2.0.19",
  "time",

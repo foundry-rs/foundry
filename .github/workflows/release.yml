@@ -18,7 +18,8 @@ env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
-  # Keep in sync with `docker-publish.yml`.
+  # Keep the base features in sync with `docker-publish.yml`.
+  # Platform-specific release features are added in the build step.
   RUST_PROFILE: dist
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad
 
@@ -321,11 +322,12 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
 
-      - name: Apple M1 setup
+      - name: Apple Silicon setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
           printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-          printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "$(xcrun -sdk macosx --show-sdk-platform-version)" >> "$GITHUB_ENV"
+          # Apple Silicon and the Touch ID shim require macOS 11 or newer.
+          printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n' >> "$GITHUB_ENV"
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
@@ -344,8 +346,18 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
+          features="$RUST_FEATURES"
+
+          # The Touch ID Swift shim requires macOS 11. Keep the packaged Intel
+          # artifact on its existing deployment target and enable Touch ID only
+          # for the Apple Silicon release artifact.
+          if [[ "$TARGET" == "aarch64-apple-darwin" ]]; then
+            features="${features},touch-id"
+          fi
+
+          echo "Building $TARGET with features: $features"
           flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
-            --no-default-features --features "$RUST_FEATURES")
+            --no-default-features --features "$features")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
