@@ -1967,7 +1967,7 @@ async fn plain_anvil_rejects_monad_reset_hidden_by_fork_chain_id() {
         .unwrap_err()
         .to_string();
 
-    assert!(err.contains("cannot reset Anvil across execution profiles (ethereum -> monad)"));
+    assert!(err.contains("cannot reset Anvil across network families (ethereum -> monad)"));
     assert_eq!(provider.get_balance(marker).await.unwrap(), balance);
     assert_eq!(api.anvil_metadata().await.unwrap().instance_id, instance_id);
     assert_eq!(api.anvil_node_info().await.unwrap().network.as_deref(), Some("ethereum"));
