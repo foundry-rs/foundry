@@ -3262,7 +3262,7 @@ fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
     let b_product = SymExpr::binop(&mut cx, SymBinOp::Mul, b.clone(), divisor.clone());
     let b_quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, b_product, divisor);
     let b_identity = SymBoolExpr::eq(&mut cx, b_quotient.clone(), b.clone());
-    let a_matches_b = SymBoolExpr::eq(&mut cx, a.clone(), b.clone());
+    let a_matches_b = SymBoolExpr::eq(&mut cx, a.clone(), b);
     let zero = SymExpr::zero(&mut cx);
     let a_quotient_is_zero = SymBoolExpr::eq(&mut cx, a_quotient, zero.clone());
     let b_quotient_is_zero = SymBoolExpr::eq(&mut cx, b_quotient, zero);
