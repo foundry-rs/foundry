@@ -433,46 +433,21 @@ impl<N: Network> ClientFork<N> {
         self.provider().raw_request("trace_blockOpcodeGas".into(), (block_id,)).await
     }
 
-    /// Updates the fork configuration for a reset without modifying the current database.
-    pub(crate) async fn prepare_reset(
+    /// Resolves the fork block for a reset without modifying the current fork.
+    pub(crate) async fn resolve_reset_block(
         &self,
         urls: Vec<String>,
         block_number: BlockId,
-    ) -> Result<(), BlockchainError> {
-        let (provider, source_chain_id) = if urls.is_empty() {
-            (self.provider(), None)
+    ) -> Result<u64, BlockchainError> {
+        let provider = if urls.is_empty() {
+            self.provider()
         } else {
             let config = self.config.read().clone();
-            let (provider, source_chain_id) = config.validated_provider_for_urls(&urls).await?;
-            (provider, Some(source_chain_id))
+            config.validated_provider_for_urls(&urls).await?.0
         };
         let block =
             provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-        let block_hash = block.header().hash();
-        let timestamp = block.header().timestamp();
-        let base_fee = block.header().base_fee_per_gas();
-        let total_difficulty = block.header().difficulty();
-
-        let number = block.header().number();
-        let mut config = self.config.write();
-        if let Some(source_chain_id) = source_chain_id {
-            if config.override_chain_id.is_none() {
-                config.chain_id = source_chain_id;
-            }
-            config.provider = provider;
-            config.fork_urls = urls;
-        }
-        config.update_block(
-            number,
-            block_hash,
-            timestamp,
-            base_fee.map(|g| g as u128),
-            total_difficulty,
-        );
-
-        self.clear_cached_storage();
-
-        Ok(())
+        Ok(block.header().number())
     }
 
     /// Sends `eth_call`

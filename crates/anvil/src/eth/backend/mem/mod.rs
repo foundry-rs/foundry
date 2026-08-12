@@ -1,5 +1,5 @@
 //! In-memory blockchain backend.
-use self::state::trie_storage;
+use self::{fork_db::ForkedDatabase, state::trie_storage};
 
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
@@ -66,8 +66,9 @@ use alloy_evm::{
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
-    NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
+    AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
+    UnknownTypedTransaction,
 };
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
@@ -3333,15 +3334,11 @@ impl<N: Network> Backend<N> {
                 forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
             let target_rpc_url = forking.json_rpc_url.clone().or_else(|| fork.eth_rpc_url());
             let rpc_url_changed = target_rpc_url != fork.database_rpc_url();
-            fork.prepare_reset(reset_urls, block_number.into()).await?;
-            if rpc_url_changed {
-                // Clear state fetched from the previous RPC URL before persisting the cache.
-                fork.database.write().await.clear_into_state_snapshot();
-            }
+            let fork_block_number =
+                fork.resolve_reset_block(reset_urls, block_number.into()).await?;
             // Persist fetched remote state before rebuilding the fork database so the new
             // block-specific database can load it from disk.
             fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
-            let fork_block_number = fork.block_number();
             if rpc_url_changed {
                 let cache_dir = {
                     let config = self.node_config.read().await;
@@ -3364,13 +3361,21 @@ impl<N: Network> Backend<N> {
             let fork_url = target_rpc_url
                 .clone()
                 .ok_or_else(|| BlockchainError::InvalidUrl("fork URL is missing".to_string()))?;
-            let fork = self
-                .reset_block_number(fork_url, fork_block_number, forking.json_rpc_url.is_some())
+            let (forked_db, node_config, new_fork, evm_env, fork_block) = self
+                .prepare_reset_block_number(
+                    fork_url,
+                    fork_block_number,
+                    forking.json_rpc_url.is_some(),
+                )
                 .await?;
-            let fork_block = fork
-                .block_by_hash(fork.block_hash())
-                .await?
-                .ok_or(BlockchainError::BlockNotFound)?;
+            if rpc_url_changed {
+                fork.database.write().await.clear_into_state_snapshot();
+            }
+            *self.db.write().await = Box::new(forked_db);
+            *self.node_config.write().await = node_config;
+            *self.fork.write() = Some(new_fork.clone());
+            *self.evm_env.write() = evm_env;
+            fork.clear_cached_storage();
             // update all settings related to the forked block
             {
                 // reset the time to the timestamp of the forked block
@@ -3379,17 +3384,17 @@ impl<N: Network> Backend<N> {
                 self.cheats.clear_next_block_prevrandao();
 
                 // also reset the total difficulty
-                self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
+                self.blockchain.storage.write().total_difficulty = new_fork.total_difficulty();
             }
             // reset storage
             *self.blockchain.storage.write() = BlockchainStorage::forked(
-                fork.block_number(),
-                fork.block_hash(),
-                fork.total_difficulty(),
+                new_fork.block_number(),
+                new_fork.block_hash(),
+                new_fork.total_difficulty(),
             );
             self.states.write().clear();
             self.apply_genesis().await?;
-            fork.set_database_rpc_url(target_rpc_url);
+            new_fork.set_database_rpc_url(target_rpc_url);
 
             trace!(target: "backend", "reset fork");
 
@@ -3469,12 +3474,15 @@ impl<N: Network> Backend<N> {
         Ok(())
     }
 
-    async fn reset_block_number(
+    async fn prepare_reset_block_number(
         &self,
         fork_url: String,
         fork_block_number: u64,
         validated_url: bool,
-    ) -> Result<ClientFork, BlockchainError> {
+    ) -> Result<
+        (ForkedDatabase<AnyNetwork>, NodeConfig, ClientFork, EvmEnv, AnyRpcBlock),
+        BlockchainError,
+    > {
         let mut node_config = self.node_config.read().await.clone();
         // Recompute the next block's base fee from the newly resolved fork block.
         node_config.base_fee.take();
@@ -3492,13 +3500,11 @@ impl<N: Network> Backend<N> {
         let (forked_db, client_fork_config) =
             node_config.setup_fork_db_config(fork_url, &mut evm_env, &self.fees).await?;
 
-        *self.db.write().await = Box::new(forked_db);
         let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-        *self.node_config.write().await = node_config;
-        *self.fork.write() = Some(fork.clone());
-        *self.evm_env.write() = evm_env;
+        let fork_block =
+            fork.block_by_hash(fork.block_hash()).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-        Ok(fork)
+        Ok((forked_db, node_config, fork, evm_env, fork_block))
     }
 
     /// Reverts the state to the state snapshot identified by the given `id`.
