@@ -774,6 +774,8 @@ impl Config {
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
+    const DEFAULT_SRC: &'static str = "src";
+
     /// The name of the directory foundry reserves for itself under the user's home directory: `~`
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
@@ -957,6 +959,10 @@ impl Config {
         Ok(())
     }
 
+    fn uses_default_src(&self) -> bool {
+        self.src == Path::new(Self::DEFAULT_SRC)
+    }
+
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
     ///
     /// This will merge various providers, such as env,toml,remappings into the figment if
@@ -970,7 +976,8 @@ impl Config {
 
         let root = self.root.as_path();
         let profile = Self::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
+        let mut figment = Figment::default()
+            .merge(DappHardhatDirProvider { root, detect_src: self.uses_default_src() });
 
         // merge global foundry.toml file
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
@@ -2058,14 +2065,16 @@ impl Config {
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
-        Self {
-            root: paths.root,
-            src: paths.sources.file_name().unwrap().into(),
-            out: artifacts.clone(),
-            libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
-            ..Self::default()
+        let mut config = Self::default();
+        if config.uses_default_src() {
+            config.src = paths.sources.file_name().unwrap().into();
         }
+        config.root = paths.root;
+        config.out = artifacts.clone();
+        config.libs =
+            paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect();
+        config.fs_permissions = FsPermissions::new([PathPermission::read(artifacts)]);
+        config
     }
 
     /// Returns the default config but with hardhat paths
@@ -2866,7 +2875,7 @@ impl Default for Config {
             isolate: true,
             root: root_default(),
             extends: None,
-            src: "src".into(),
+            src: Self::DEFAULT_SRC.into(),
             test: "test".into(),
             script: "script".into(),
             out: "out".into(),
@@ -3398,6 +3407,29 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_custom_src_skips_directory_auto_detection() {
+        figment::Jail::expect_with(|jail| {
+            fs::create_dir(jail.directory().join("contracts")).unwrap();
+
+            let config = Config { root: jail.directory().into(), ..Default::default() };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("contracts"));
+
+            let config = Config {
+                root: jail.directory().into(),
+                src: "custom-src".into(),
+                ..Default::default()
+            };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("custom-src"));
+
             Ok(())
         });
     }
