@@ -75,6 +75,12 @@ tracy = ["dep:tracing-tracy"]
 tracy-allocator = ["tracy"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+monad = [
+    "foundry-common/monad",
+    "foundry-config/monad",
+    "foundry-evm-networks/monad",
+    "foundry-evm/monad",
+]
 optimism = [
     "foundry-evm-networks/optimism",
     "foundry-common/optimism",

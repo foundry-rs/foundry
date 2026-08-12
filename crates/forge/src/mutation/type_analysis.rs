@@ -145,10 +145,26 @@ impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
             self.collect_comparison(expr, left, op.kind, right);
         }
         if let ExprKind::Unary(_, operand) = &expr.kind
-            && is_unsigned(self.gcx, operand)
+            && let Some(kind) = unary_operand_kind(self.gcx, operand)
             && let Some(span) = self.local_span(expr.span)
         {
-            self.mutations.insert(MutationExclusion::unary(span, UnOpKind::Neg));
+            match kind {
+                UnaryOperandKind::SignedInteger => {}
+                UnaryOperandKind::UnsignedInteger => {
+                    self.mutations.insert(MutationExclusion::unary(span, UnOpKind::Neg));
+                }
+                UnaryOperandKind::FixedBytes => {
+                    for op in [
+                        UnOpKind::PreInc,
+                        UnOpKind::PreDec,
+                        UnOpKind::PostInc,
+                        UnOpKind::PostDec,
+                        UnOpKind::Neg,
+                    ] {
+                        self.mutations.insert(MutationExclusion::unary(span, op));
+                    }
+                }
+            }
         }
         if let ExprKind::Unary(_, operand) = &expr.kind
             && is_non_storage_push_call(self.gcx, operand)
@@ -334,10 +350,21 @@ fn comparison_operand_kind(
     }
 }
 
-fn is_unsigned(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
-    gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
-        matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::UInt(_)))
-    })
+#[derive(Clone, Copy)]
+enum UnaryOperandKind {
+    SignedInteger,
+    UnsignedInteger,
+    FixedBytes,
+}
+
+fn unary_operand_kind(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<UnaryOperandKind> {
+    let ty = gcx.type_of_expr(expr.peel_parens().id)?;
+    match ty.peel_refs().kind {
+        TyKind::Elementary(ElementaryType::Int(_)) => Some(UnaryOperandKind::SignedInteger),
+        TyKind::Elementary(ElementaryType::UInt(_)) => Some(UnaryOperandKind::UnsignedInteger),
+        TyKind::Elementary(ElementaryType::FixedBytes(_)) => Some(UnaryOperandKind::FixedBytes),
+        _ => None,
+    }
 }
 
 fn is_non_storage_push_call(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
@@ -662,6 +689,62 @@ contract Test {
 
         for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
             assert!(!mutations.contains(&unary_mutation(source, "-values.push()", op)));
+        }
+    }
+
+    #[test]
+    fn excludes_invalid_fixed_bytes_unary_mutations() {
+        let source = r#"
+contract Test {
+    function check(bytes32 word) external pure returns (bytes32) {
+        return ~word;
+    }
+
+    function checkNumber(uint256 number) external pure returns (uint256) {
+        return ~number;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [
+            UnOpKind::PreInc,
+            UnOpKind::PreDec,
+            UnOpKind::PostInc,
+            UnOpKind::PostDec,
+            UnOpKind::Neg,
+        ] {
+            assert!(mutations.contains(&unary_mutation(source, "~word", op)));
+        }
+        assert!(!mutations.contains(&unary_mutation(source, "~word", UnOpKind::BitNot)));
+
+        for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+            assert!(!mutations.contains(&unary_mutation(source, "~number", op)));
+        }
+        assert!(mutations.contains(&unary_mutation(source, "~number", UnOpKind::Neg)));
+    }
+
+    #[test]
+    fn excludes_invalid_fixed_bytes_storage_push_mutations() {
+        let source = r#"
+contract Test {
+    bytes32[] values;
+
+    function check() external returns (bytes32) {
+        return ~values.push();
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [
+            UnOpKind::PreInc,
+            UnOpKind::PreDec,
+            UnOpKind::PostInc,
+            UnOpKind::PostDec,
+            UnOpKind::Neg,
+        ] {
+            assert!(mutations.contains(&unary_mutation(source, "~values.push()", op)));
         }
     }
 
