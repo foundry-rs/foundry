@@ -122,13 +122,33 @@ pub(crate) trait SymbolicSolver {
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError>;
 
-    /// Returns branch satisfiability, allowing branch-only hard-arithmetic shortcuts.
+    /// Returns satisfiability with path-local storage symbols that concrete replay can set.
+    fn is_sat_with_replayable_storage(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        _replayable_storage: &SymbolicVars,
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat(cx, constraints)
+    }
+
+    #[cfg(test)]
     fn is_sat_branch(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
         self.is_sat(cx, constraints)
+    }
+
+    /// Returns branch satisfiability with path-local storage symbols concrete replay can set.
+    fn is_sat_branch_with_replayable_storage(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        replayable_storage: &SymbolicVars,
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat_with_replayable_storage(cx, constraints, replayable_storage)
     }
 
     /// Returns a concrete model for all symbolic variables constrained by the path.
@@ -140,6 +160,16 @@ pub(crate) trait SymbolicSolver {
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
     ) -> Result<SymbolicModel, SymbolicError>;
+
+    /// Returns a model with path-local storage symbols that concrete replay can set.
+    fn model_with_replayable_storage(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        _replayable_storage: &SymbolicVars,
+    ) -> Result<SymbolicModel, SymbolicError> {
+        self.model(cx, constraints)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,6 +222,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
+    replayable_storage: SymbolicVars,
     sat_cache: HashMap<Vec<SymBoolExpr>, bool>,
     model_cache: HashMap<Vec<SymBoolExpr>, SymbolicModel>,
     sat_queries: usize,
@@ -224,6 +255,7 @@ impl SmtLibSubprocessSolver {
             portfolio_diagnostics: PortfolioDiagnostics::default(),
             captured_diagnostics: None,
             heuristic_witnesses: 0,
+            replayable_storage: SymbolicVars::default(),
             sat_cache: HashMap::default(),
             model_cache: HashMap::default(),
             sat_queries: 0,
@@ -330,13 +362,49 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.is_sat_inner(cx, constraints, false)
     }
 
-    /// Returns whether a branch is feasible.
+    fn is_sat_with_replayable_storage(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        replayable_storage: &SymbolicVars,
+    ) -> Result<bool, SymbolicError> {
+        let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
+        let result = self.is_sat_inner(cx, constraints, false);
+        self.replayable_storage = previous;
+        result
+    }
+
+    #[cfg(test)]
     fn is_sat_branch(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
         self.is_sat_inner(cx, constraints, true)
+    }
+
+    fn is_sat_branch_with_replayable_storage(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        replayable_storage: &SymbolicVars,
+    ) -> Result<bool, SymbolicError> {
+        let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
+        let result = self.is_sat_inner(cx, constraints, true);
+        self.replayable_storage = previous;
+        result
+    }
+
+    fn model_with_replayable_storage(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        replayable_storage: &SymbolicVars,
+    ) -> Result<SymbolicModel, SymbolicError> {
+        let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
+        let result = <Self as SymbolicSolver>::model(self, cx, constraints);
+        self.replayable_storage = previous;
+        result
     }
 
     fn model(
@@ -398,10 +466,14 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if let Some(model) = checked_mul_guard_branch_model(&smt_constraints, constraints) {
+        if let Some(model) = checked_mul_guard_branch_model(
+            cx,
+            &smt_constraints,
+            constraints,
+            &self.replayable_storage,
+        ) {
             trace!("model: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key.clone(), true);
-            self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints)
@@ -533,7 +605,14 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(true);
         }
-        if checked_mul_guard_branch_model(&smt_constraints, constraints).is_some() {
+        if checked_mul_guard_branch_model(
+            cx,
+            &smt_constraints,
+            constraints,
+            &self.replayable_storage,
+        )
+        .is_some()
+        {
             trace!("is_sat: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key, true);
             return Ok(true);

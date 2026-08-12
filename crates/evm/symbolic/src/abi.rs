@@ -444,7 +444,9 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
     }
 
     pub(super) fn fresh_word(&mut self, name: &str) -> SymExpr {
-        SymExpr::var(self.cx, name)
+        let symbol = self.cx.intern(name);
+        self.cx.mark_replayable_input(symbol);
+        SymExpr::get_var(self.cx, symbol)
     }
 
     pub(super) fn fresh_byte(

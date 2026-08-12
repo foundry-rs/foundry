@@ -274,11 +274,11 @@ impl SymbolicExecutor {
                         let mut in_bounds_constraints = state.constraints.clone();
                         in_bounds_constraints.push(condition.clone());
                         let in_bounds_sat =
-                            self.solver.is_sat(&mut self.cx, &in_bounds_constraints)?;
+                            self.is_sat_with_state(&state, &in_bounds_constraints)?;
 
                         let mut out_of_bounds_constraints = state.constraints.clone();
                         out_of_bounds_constraints.push(condition.not(&mut self.cx));
-                        if self.solver.is_sat(&mut self.cx, &out_of_bounds_constraints)? {
+                        if self.is_sat_with_state(&state, &out_of_bounds_constraints)? {
                             let mut halted = state.clone();
                             halted.constraints = out_of_bounds_constraints;
                             *completed_paths += 1;

@@ -1738,6 +1738,10 @@ impl SymbolicWorld {
         self.arbitrary_storage_copies.insert(target, source);
     }
 
+    pub(crate) fn replay_storage_symbols(&self) -> SymbolicVars {
+        self.replay_storage_slots.keys().copied().collect()
+    }
+
     pub(crate) fn replay_storage_assignments(
         &self,
         model: &SymbolicModel,
