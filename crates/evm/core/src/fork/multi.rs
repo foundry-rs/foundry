@@ -895,8 +895,7 @@ mod tests {
             BlockNumHash::new(1, B256::with_last_byte(1)),
             context(1),
         );
-        let mut evm_opts = EvmOpts::default();
-        evm_opts.rpc_headers = Some(headers.clone());
+        let evm_opts = EvmOpts { rpc_headers: Some(headers.clone()), ..Default::default() };
         let fork = CreateFork {
             enable_caching: false,
             url: url.to_string(),

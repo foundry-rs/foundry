@@ -1170,8 +1170,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
         let fork = self.inner.get_fork_by_id(id)?;
         let (block, position) = match fork.position {
-            position @ ForkPosition::AfterBlock { block }
-            | position @ ForkPosition::BeforeTransaction { block, .. } => (block, position),
+            position @ (ForkPosition::AfterBlock { block }
+            | ForkPosition::BeforeTransaction { block, .. }) => (block, position),
         };
         let block = fork.backend().get_full_block(block.hash).wrap_err_with(|| {
             format!("failed to fetch fork block {} ({})", block.number, block.hash)
@@ -3346,11 +3346,16 @@ mod tests {
         evm_opts.fork_url = Some(endpoint.to_string());
         evm_opts.fork_block_number = Some(block_num);
 
-        let (evm_env, _, fork_block) = evm_opts.env::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let (evm_env, _, resolved) =
+            evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
 
-        let fork =
-            evm_opts.get_fork(&Config::default(), evm_env.cfg_env.chain_id, fork_block).unwrap();
+        let fork = evm_opts
+            .get_fork_resolved(&Config::default(), evm_env.cfg_env.chain_id, resolved.as_ref())
+            .unwrap();
 
+        let resolved = resolved.unwrap();
+        let fork_hash = resolved.hash();
+        let source_id = resolved.source_id();
         let backend = Backend::<EthEvmNetwork>::spawn(Some(fork)).unwrap();
 
         // some rng contract from etherscan
@@ -3363,13 +3368,8 @@ mod tests {
         }
         drop(backend);
 
-        let meta = BlockchainDbMeta {
-            chain: None,
-            block_env: evm_env.block_env,
-            hosts: Default::default(),
-            fork_hash: None,
-            source_id: None,
-        };
+        let meta = BlockchainDbMeta::new(evm_env.block_env, endpoint.to_string())
+            .with_fork_identity(fork_hash, source_id);
 
         let db = BlockchainDb::new(
             meta,
