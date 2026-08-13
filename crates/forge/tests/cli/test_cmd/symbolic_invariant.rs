@@ -268,6 +268,7 @@ contract SecondaryExternalStore {
 contract SecondaryStorageTarget {
     SecondaryExternalStore store;
     bool public hit;
+    bool public anchorHit;
 
     constructor(SecondaryExternalStore store_) {
         store = store_;
@@ -276,6 +277,10 @@ contract SecondaryStorageTarget {
     function useStore() external {
         require(store.value() == 42);
         hit = true;
+    }
+
+    function breakAnchor() external {
+        anchorHit = true;
     }
 }
 
@@ -290,7 +295,9 @@ contract SymbolicSecondaryStorage is Test {
         targetContract(address(target));
     }
 
-    function invariant_anchor() public pure {}
+    function invariant_anchor() public view {
+        require(!target.anchorHit(), "anchor hit");
+    }
 
     /// forge-config: default.symbolic.invariant_depth = 1
     function invariant_secondary() public view {
@@ -324,6 +331,9 @@ contract SymbolicSecondaryStorage is Test {
     let persisted = prj
         .root()
         .join("cache/invariant/failures/SymbolicSecondaryStorage/invariants/invariant_secondary");
+    let persisted_anchor = prj
+        .root()
+        .join("cache/invariant/failures/SymbolicSecondaryStorage/invariants/invariant_anchor");
     let original: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
     assert_eq!(original["storage"].as_array().expect("storage assignments").len(), 1);
@@ -333,20 +343,30 @@ contract SymbolicSecondaryStorage is Test {
         config.invariant.runs = 0;
     });
     for _ in 0..2 {
-        let stdout = cmd
+        let output = cmd
             .forge_fuse()
-            .args(["test", "--match-test", "invariant_"])
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--fuzz-runs",
+                "0",
+                "--match-test",
+                "invariant_",
+            ])
             .assert_failure()
             .get_output()
-            .stdout_lossy();
-        assert_relevant_lines(
-            &stdout,
-            str![[r#"
-[FAIL: hit] invariant_secondary
-	[Sequence] (original: 1, shrunk: 1)
-calldata=useStore() args=[]
-"#]],
-        );
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        let failures = result["invariant_failures"].as_array().expect("invariant failures");
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0]["name"], "invariant_anchor");
+        assert_eq!(failures[0]["reason"], "anchor hit");
+        assert_eq!(failures[1]["name"], "invariant_secondary");
+        assert_eq!(failures[1]["reason"], "hit");
+        assert_eq!(failures[1]["counterexample"]["Sequence"][1][0]["func_name"], "useStore");
 
         let replayed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
@@ -354,6 +374,8 @@ calldata=useStore() args=[]
 
         let replayed_artifact = read_artifact_ref(artifact_ref);
         assert_eq!(replayed_artifact["invariant_failure"], original_artifact["invariant_failure"]);
+
+        std::fs::remove_file(&persisted_anchor).unwrap();
     }
 });
 

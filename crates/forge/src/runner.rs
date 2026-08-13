@@ -4229,7 +4229,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                 failure.reason.clone().unwrap_or_else(|| {
                                                     "symbolic invariant counterexample".to_string()
                                                 });
-                                            let invariant_failures =
+                                            let mut invariant_failures =
                                                 vec![InvariantFailure::Predicate {
                                                     name: invariant_contract.anchor().name.clone(),
                                                     reason,
@@ -4242,27 +4242,76 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                     persisted_path: primary_failure_file,
                                                     is_anchor: true,
                                                 }];
-                                            let failed_predicate_reason =
-                                                Some(invariant_failures[0].reason().to_string());
+
+                                            for (invariant, _) in &invariant_contract.invariant_fns
+                                            {
+                                                if let Some((_, error, _, _)) =
+                                                    replayed_secondary_failures.iter().find(
+                                                        |(name, _, _, _)| name == &invariant.name,
+                                                    )
+                                                    && let InvariantFuzzError::BrokenInvariant(
+                                                        case_data,
+                                                    )
+                                                    | InvariantFuzzError::Revert(case_data) =
+                                                        error
+                                                    && let TestError::Fail(_, calls) =
+                                                        &case_data.test_error
+                                                {
+                                                    let call_sequence = calls
+                                                        .iter()
+                                                        .map(|tx| {
+                                                            BaseCounterExample::from_invariant_call(
+                                                                tx,
+                                                                identified_contracts,
+                                                                None,
+                                                                invariant_config.show_solidity,
+                                                            )
+                                                        })
+                                                        .collect();
+                                                    invariant_failures.push(
+                                                        InvariantFailure::Predicate {
+                                                            name: invariant.name.clone(),
+                                                            reason: error
+                                                                .revert_reason()
+                                                                .unwrap_or_default(),
+                                                            counterexample: Some(
+                                                                CounterExample::Sequence(
+                                                                    calls.len(),
+                                                                    call_sequence,
+                                                                ),
+                                                            ),
+                                                            artifact: None,
+                                                            minimization: None,
+                                                            persisted_path: invariant_failure_file(
+                                                                &failure_dir,
+                                                                invariant,
+                                                            ),
+                                                            is_anchor: false,
+                                                        },
+                                                    );
+                                                }
+                                            }
 
                                             let invariant_predicate_results = if is_campaign {
-                                                std::iter::once(InvariantPredicateResult {
-                                                    name: invariant_contract.anchor().name.clone(),
-                                                    status: TestStatus::Failure,
-                                                    reason: failed_predicate_reason,
-                                                })
-                                                .chain(skipped_predicate_results.clone())
-                                                .sorted_by_key(|predicate| {
-                                                    self.cr
-                                                        .contract
-                                                        .abi
-                                                        .functions()
-                                                        .position(|func| {
-                                                            func.name == predicate.name
-                                                        })
-                                                        .unwrap_or(usize::MAX)
-                                                })
-                                                .collect()
+                                                invariant_failures
+                                                    .iter()
+                                                    .map(|failure| InvariantPredicateResult {
+                                                        name: failure.name().to_string(),
+                                                        status: TestStatus::Failure,
+                                                        reason: Some(failure.reason().to_string()),
+                                                    })
+                                                    .chain(skipped_predicate_results.clone())
+                                                    .sorted_by_key(|predicate| {
+                                                        self.cr
+                                                            .contract
+                                                            .abi
+                                                            .functions()
+                                                            .position(|func| {
+                                                                func.name == predicate.name
+                                                            })
+                                                            .unwrap_or(usize::MAX)
+                                                    })
+                                                    .collect()
                                             } else {
                                                 Vec::new()
                                             };
