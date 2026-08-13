@@ -43,6 +43,72 @@ struct SourceVisitorCheckpoint {
     function_calls: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EmptySpecialFunctionKind {
+    Constructor,
+    Receive,
+    Fallback,
+}
+
+struct ResolvedEmptySpecialFunction {
+    contract_source_id: u32,
+    contract_name: Arc<str>,
+    function_source_id: u32,
+    function_contract_name: Arc<str>,
+    function_bytes: Range<u32>,
+    kind: EmptySpecialFunctionKind,
+}
+
+fn resolve_empty_special_functions(
+    gcx: Gcx<'_>,
+    data: &SourceFiles,
+) -> Vec<ResolvedEmptySpecialFunction> {
+    let hir_source_ids = data
+        .sources
+        .iter()
+        .map(|(&source_id, path)| {
+            let (hir_source_id, _) = gcx.get_hir_source(path).unwrap();
+            (hir_source_id, source_id)
+        })
+        .collect::<HashMap<_, _>>();
+    let mut resolved = Vec::new();
+    for contract_id in gcx.hir.contract_ids() {
+        let contract = gcx.hir.contract(contract_id);
+        let Some(&contract_source_id) = hir_source_ids.get(&contract.source) else { continue };
+        let constructors = contract.linearized_bases.iter().filter_map(|&base_id| {
+            gcx.hir
+                .contract(base_id)
+                .ctor
+                .map(|function_id| (function_id, EmptySpecialFunctionKind::Constructor))
+        });
+        let runtime_functions = [
+            (contract.receive, EmptySpecialFunctionKind::Receive),
+            (contract.fallback, EmptySpecialFunctionKind::Fallback),
+        ]
+        .into_iter()
+        .filter_map(|(function_id, kind)| function_id.map(|function_id| (function_id, kind)));
+        for (function_id, kind) in constructors.chain(runtime_functions) {
+            let function = gcx.hir.function(function_id);
+            if !function.body.is_some_and(|body| body.is_empty()) {
+                continue;
+            }
+            let Some(&function_source_id) = hir_source_ids.get(&function.source) else { continue };
+            let Some(function_contract_id) = function.contract else { continue };
+            let function_contract = gcx.hir.contract(function_contract_id);
+            let function_bytes = gcx.sess.source_map().span_to_source(function.span).unwrap().data;
+            resolved.push(ResolvedEmptySpecialFunction {
+                contract_source_id,
+                contract_name: contract.name.as_str().into(),
+                function_source_id,
+                function_contract_name: function_contract.name.as_str().into(),
+                function_bytes: function_bytes.start as u32..function_bytes.end as u32,
+                kind,
+            });
+        }
+    }
+    resolved
+}
+
 impl<'gcx> SourceVisitor<'gcx> {
     fn new(source_id: u32, gcx: Gcx<'gcx>) -> Self {
         Self {
@@ -209,9 +275,9 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
     fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
         match &item.kind {
             ItemKind::Function(func) => {
-                // TODO: We currently can only detect empty bodies in normal functions, not any of
-                // the other kinds: https://github.com/foundry-rs/foundry/issues/9458
-                if func.kind != ast::FunctionKind::Function && !has_statements(func.body.as_ref()) {
+                // Empty modifiers have no bytecode of their own to anchor. Empty constructors,
+                // receive functions, and fallbacks are handled separately.
+                if func.kind == ast::FunctionKind::Modifier && !has_statements(func.body.as_ref()) {
                     return ControlFlow::Continue(());
                 }
 
@@ -461,6 +527,10 @@ pub struct SourceAnalysis {
     all_items: Vec<CoverageItem>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
+    /// Empty receive and fallback items keyed by coverage item ID.
+    empty_special_functions: HashMap<u32, EmptySpecialFunctionKind>,
+    /// Empty receive and fallback item IDs resolved for each contract, including inheritance.
+    contract_empty_special_functions: HashMap<u32, HashMap<Arc<str>, Vec<u32>>>,
 }
 
 impl SourceAnalysis {
@@ -478,7 +548,10 @@ impl SourceAnalysis {
     /// also include the compiler build ID.
     #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
+        let mut resolved_empty_special_functions = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
+            resolved_empty_special_functions =
+                resolve_empty_special_functions(compiler.gcx(), data);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -536,7 +609,31 @@ impl SourceAnalysis {
             all_items.extend(items);
         }
 
-        Ok(Self { all_items, map })
+        let mut empty_special_functions = HashMap::default();
+        let mut contract_empty_special_functions =
+            HashMap::<u32, HashMap<Arc<str>, Vec<u32>>>::default();
+        for resolved in resolved_empty_special_functions {
+            let item_ids = all_items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| {
+                    item.loc.source_id == resolved.function_source_id as usize
+                        && item.loc.contract_name == resolved.function_contract_name
+                        && item.loc.bytes == resolved.function_bytes
+                })
+                .map(|(item_id, _)| item_id as u32)
+                .collect::<Vec<_>>();
+            empty_special_functions
+                .extend(item_ids.iter().map(|&item_id| (item_id, resolved.kind)));
+            contract_empty_special_functions
+                .entry(resolved.contract_source_id)
+                .or_default()
+                .entry(resolved.contract_name)
+                .or_default()
+                .extend(item_ids);
+        }
+
+        Ok(Self { all_items, map, empty_special_functions, contract_empty_special_functions })
     }
 
     /// Returns all the coverage items.
@@ -571,6 +668,26 @@ impl SourceAnalysis {
     #[inline]
     pub fn get(&self, item_id: u32) -> Option<&CoverageItem> {
         self.all_items.get(item_id as usize)
+    }
+
+    pub(crate) fn empty_special_function_kind(
+        &self,
+        item_id: u32,
+    ) -> Option<EmptySpecialFunctionKind> {
+        self.empty_special_functions.get(&item_id).copied()
+    }
+
+    pub(crate) fn empty_special_function_ids(
+        &self,
+        source_id: u32,
+        contract_name: &str,
+    ) -> impl Iterator<Item = u32> + '_ {
+        self.contract_empty_special_functions
+            .get(&source_id)
+            .and_then(|contracts| contracts.get(contract_name))
+            .into_iter()
+            .flatten()
+            .copied()
     }
 }
 
