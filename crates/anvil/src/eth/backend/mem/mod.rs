@@ -6447,7 +6447,8 @@ where
                     GethDebugBuiltInTracerType::FourByteTracer
                     | GethDebugBuiltInTracerType::MuxTracer
                     | GethDebugBuiltInTracerType::FlatCallTracer
-                    | GethDebugBuiltInTracerType::Erc7562Tracer => {
+                    | GethDebugBuiltInTracerType::Erc7562Tracer
+                    | GethDebugBuiltInTracerType::StateGasTracer => {
                         Err(RpcError::invalid_params("unsupported tracer type").into())
                     }
                 },
@@ -7376,7 +7377,8 @@ where
                     GethDebugBuiltInTracerType::NoopTracer
                     | GethDebugBuiltInTracerType::MuxTracer
                     | GethDebugBuiltInTracerType::Erc7562Tracer
-                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
+                    | GethDebugBuiltInTracerType::FlatCallTracer
+                    | GethDebugBuiltInTracerType::StateGasTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }
