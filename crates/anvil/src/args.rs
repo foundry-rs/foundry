@@ -18,7 +18,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the exception handler and other utilities.
 pub fn setup() -> Result<()> {
-    utils::common_setup()?;
+    utils::common_setup::<Anvil>()?;
 
     Ok(())
 }

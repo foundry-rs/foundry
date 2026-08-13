@@ -77,6 +77,15 @@ forgetest!(project_dotenv_requires_approval, |prj, cmd| {
     assert!(stderr.contains("refusing to load unapproved project dotenv"), "{stderr}");
     assert!(stderr.contains("--allow-project-env"), "{stderr}");
 
+    let output = cmd.forge_fuse().args([
+        "create",
+        "src/Contract.sol:Contract",
+        "--constructor-args",
+        "--allow-project-env",
+    ]);
+    let stderr = output.assert_failure().get_output().stderr_lossy();
+    assert!(stderr.contains("refusing to load unapproved project dotenv"), "{stderr}");
+
     let output =
         cmd.forge_fuse().args(["config", "--json", "--allow-project-env"]).assert_success();
     let config: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();

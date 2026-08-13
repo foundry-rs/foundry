@@ -192,11 +192,17 @@ pub fn now() -> Duration {
 }
 
 /// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
-pub fn common_setup() -> Result<()> {
+pub fn common_setup<C: clap::CommandFactory>() -> Result<()> {
     install_crypto_provider();
     crate::handler::install();
-    let allow_project_env =
-        std::env::args_os().take_while(|arg| arg != "--").any(|arg| arg == "--allow-project-env");
+    // Use the concrete command grammar so option-like positional values cannot grant approval.
+    // Ignore unrelated errors because dotenv may supply values before the strict CLI parse.
+    let allow_project_env = C::command()
+        .ignore_errors(true)
+        .try_get_matches()
+        .ok()
+        .and_then(|matches| matches.get_one::<bool>("allow_project_env").copied())
+        .unwrap_or(false);
     load_dotenv(allow_project_env)?;
     enable_paint();
     Ok(())
