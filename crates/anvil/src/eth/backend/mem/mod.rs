@@ -76,11 +76,10 @@ use alloy_evm::{
 use alloy_evm::{RecoveredTx, block::BlockExecutionError};
 #[cfg(feature = "monad")]
 use alloy_monad_evm::{MonadContext, MonadEvm, MonadEvmFactory};
-#[cfg(feature = "monad")]
-use alloy_network::BlockResponse;
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
-    NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
+    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
+    UnknownTypedTransaction,
 };
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
@@ -508,6 +507,15 @@ struct PreparedMonadExecution {
     context: Option<MonadContextAux>,
     kind: EnvelopeExecutionKind,
     hardfork: MonadHardfork,
+}
+
+/// Monad execution state staged while rewinding to a retained canonical block.
+#[cfg(feature = "monad")]
+struct MonadRollbackProfile {
+    hardfork: FoundryHardfork,
+    fees: FeeManager,
+    block_blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
+    publish_inferred_hardfork: bool,
 }
 
 #[cfg(feature = "monad")]
@@ -2168,6 +2176,30 @@ impl<N: Network> Backend<N> {
 
     pub fn get_block(&self, id: impl Into<BlockId>) -> Option<Block> {
         self.get_block_with_hash(id).map(|(block, _)| block)
+    }
+
+    /// Returns a rollback ancestor, including the remote base of a Monad transaction-hash fork.
+    pub async fn rollback_block(&self, number: u64) -> Result<Option<Block>, BlockchainError> {
+        if let Some(block) = self.get_block(number) {
+            return Ok(Some(block));
+        }
+
+        let Some(fork) = self.get_fork().filter(|fork| {
+            self.is_monad()
+                && fork.transaction_hash().is_some()
+                && fork.predates_fork_inclusive(number)
+        }) else {
+            return Ok(None);
+        };
+        let Some(block) = fork.block_by_number(number).await? else {
+            return Ok(None);
+        };
+        let header = Header::try_from(block.header().inner.clone())
+            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        Ok(Some(Block {
+            header: FoundryHeader::new(header, self.is_tempo()),
+            body: Default::default(),
+        }))
     }
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<Block> {
@@ -7100,12 +7132,99 @@ where
         }
     }
 
+    /// Stages the Monad protocol profile and next-block fee state for a retained block.
+    #[cfg(feature = "monad")]
+    async fn prepare_monad_rollback_profile(
+        &self,
+        common_block: &Block,
+    ) -> Option<MonadRollbackProfile> {
+        if !self.is_monad() {
+            return None;
+        }
+
+        let explicit_hardfork = self.node_config.read().await.hardfork;
+        let block_hash = common_block.header.hash_slow();
+        let stored_hardfork = self
+            .blockchain
+            .storage
+            .read()
+            .monad_block_replay_profiles
+            .get(&block_hash)
+            .map(|profile| profile.hardfork);
+        let fork = self.fork.read().clone();
+        let endpoint_hardfork = fork.as_ref().and_then(|fork| {
+            let config = fork.config.read();
+            if config.block_number != common_block.header.number()
+                || config.block_hash != block_hash
+            {
+                return None;
+            }
+            match config.endpoint_identity.hardfork {
+                Some(FoundryHardfork::Monad(hardfork)) => Some(hardfork),
+                _ => None,
+            }
+        });
+        let source_chain_id = self.protocol_chain_id();
+        let scheduled_hardfork = MonadHardfork::from_chain_and_timestamp(
+            source_chain_id,
+            common_block.header.timestamp(),
+        );
+        let hardfork = explicit_hardfork.unwrap_or_else(|| {
+            FoundryHardfork::Monad(
+                stored_hardfork
+                    .or(endpoint_hardfork)
+                    .or(scheduled_hardfork)
+                    .unwrap_or_else(|| self.monad_hardfork()),
+            )
+        });
+        let spec_id = SpecId::from(hardfork);
+        let timestamp = common_block.header.timestamp();
+        let blob_params = get_blob_params(source_chain_id, timestamp);
+        let block_base_fee = common_block.header.base_fee_per_gas.unwrap_or_default();
+
+        let fees = self.fees.detached();
+        fees.set_execution_rules(spec_id, self.networks.base_fee_params(timestamp), None);
+        fees.set_blob_params(blob_params);
+        // The fee manager stores values for the next block. Seed it with the retained block while
+        // deriving those values so the zero-base-fee sentinel and Osaka blob target are applied to
+        // the correct parent.
+        fees.set_base_fee(block_base_fee);
+        let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
+            common_block.header.gas_used,
+            common_block.header.gas_limit,
+            block_base_fee,
+        );
+        let next_block_excess_blob_gas = fees.get_next_block_blob_excess_gas(
+            common_block.header.excess_blob_gas.unwrap_or_default(),
+            common_block.header.blob_gas_used.unwrap_or_default(),
+        );
+        fees.set_base_fee(next_block_base_fee);
+        fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+            next_block_excess_blob_gas,
+            blob_params.update_fraction as u64,
+        ));
+
+        Some(MonadRollbackProfile {
+            hardfork,
+            fees,
+            block_blob_excess_gas_and_price: common_block.header.excess_blob_gas.map(|excess| {
+                BlobExcessGasAndPrice::new(excess, blob_params.update_fraction as u64)
+            }),
+            publish_inferred_hardfork: explicit_hardfork.is_none(),
+        })
+    }
+
     /// Rollback the chain to a common height.
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+        #[cfg(feature = "monad")]
+        let _mining_guard = if self.is_monad() { Some(self.mining.lock().await) } else { None };
         let hash = common_block.header.hash_slow();
+
+        #[cfg(feature = "monad")]
+        let monad_profile = self.prepare_monad_rollback_profile(&common_block).await;
 
         // Get the database at the common block
         let common_state = {
@@ -7153,6 +7272,12 @@ where
             env.block_env.gas_limit = common_block.header.gas_limit();
             env.block_env.difficulty = common_block.header.difficulty();
             env.block_env.prevrandao = common_block.header.mix_hash();
+            #[cfg(feature = "monad")]
+            if let Some(profile) = &monad_profile {
+                env.cfg_env.set_spec_and_mainnet_gas_params(profile.hardfork.into());
+                env.block_env.basefee = common_block.header.base_fee_per_gas.unwrap_or_default();
+                env.block_env.blob_excess_gas_and_price = profile.block_blob_excess_gas_and_price;
+            }
 
             self.time.reset(env.block_env.timestamp.saturating_to());
             // drop any pending next-block prevrandao override so it does not leak into a block
@@ -7190,6 +7315,17 @@ where
             // blocks).
             for (block_num, hash) in block_hashes {
                 db.insert_block_hash(U256::from(block_num), hash);
+            }
+        }
+
+        #[cfg(feature = "monad")]
+        if let Some(profile) = monad_profile {
+            self.fees.replace_from(&profile.fees);
+            if profile.publish_inferred_hardfork {
+                *self.hardfork.write() = profile.hardfork;
+                if let Some(fork) = self.fork.read().clone() {
+                    fork.config.write().hardfork = Some(profile.hardfork);
+                }
             }
         }
 

@@ -2,7 +2,11 @@ use alloy_consensus::{
     SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559, TxLegacy,
     transaction::TxEip7702,
 };
-use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_eips::{
+    calc_next_block_base_fee,
+    eip1559::BaseFeeParams,
+    eip2718::{Decodable2718, Encodable2718},
+};
 use alloy_network::{
     ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse, TxSignerSync,
 };
@@ -38,7 +42,10 @@ use anvil_core::{
     eth::transaction::PendingTransaction,
     types::{ReorgOptions, TransactionData},
 };
-use foundry_evm::hardfork::{FoundryHardfork, MonadHardfork};
+use foundry_evm::{
+    hardfork::{FoundryHardfork, MonadHardfork},
+    utils::get_blob_params,
+};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
@@ -55,6 +62,7 @@ use monad_revm::{
         },
     },
 };
+use revm::primitives::hardfork::SpecId;
 use std::sync::Arc;
 const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");
@@ -1222,6 +1230,108 @@ async fn monad_fork_transaction_hash_preserves_hardfork_on_chain_id_collision() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
+    let (_origin, endpoint, transaction_hash) = monad_rollback_boundary_origin().await;
+    let config = NodeConfig::test_monad()
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(endpoint))
+        .with_fork_transaction_hash(Some(transaction_hash))
+        .with_no_mining(true);
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+    assert_eq!(api.backend.spec_id(), SpecId::OSAKA);
+    assert_eq!(provider.call(reserve_balance_call()).await.unwrap(), Bytes::from(vec![0; 32]));
+
+    let replay_block_number = provider.get_block_number().await.unwrap();
+    let parent = provider
+        .get_block_by_number(BlockNumberOrTag::Number(replay_block_number - 1))
+        .await
+        .unwrap()
+        .unwrap();
+    api.anvil_rollback(Some(1)).await.unwrap();
+
+    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
+    assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
+    assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+    assert_eq!(
+        api.backend.blob_params(),
+        get_blob_params(MONAD_TESTNET_CHAIN_ID, parent.header.timestamp)
+    );
+    assert_eq!(
+        api.backend.evm_env().read().block_env.basefee,
+        parent.header.base_fee_per_gas.unwrap()
+    );
+    assert_eq!(
+        api.backend.base_fee(),
+        calc_next_block_base_fee(
+            parent.header.gas_used,
+            parent.header.gas_limit,
+            parent.header.base_fee_per_gas.unwrap(),
+            BaseFeeParams::ethereum(),
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_transaction_hash_reorg_restores_inferred_profile() {
+    let (_origin, endpoint, transaction_hash) = monad_rollback_boundary_origin().await;
+    let config = NodeConfig::test_monad()
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(endpoint))
+        .with_fork_transaction_hash(Some(transaction_hash))
+        .with_no_mining(true);
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+    api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
+
+    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
+    assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
+    assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(
+        api.backend.blob_params(),
+        get_blob_params(MONAD_TESTNET_CHAIN_ID, block.header.timestamp)
+    );
+    assert_eq!(
+        api.backend.base_fee(),
+        calc_next_block_base_fee(
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.base_fee_per_gas.unwrap(),
+            BaseFeeParams::ethereum(),
+        )
+    );
+    let state = api.serialized_state(false).await.unwrap();
+    assert_eq!(
+        state.monad_block_replay_profiles[&block.header.hash].hardfork,
+        MonadHardfork::MonadEight
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_transaction_hash_rollback_preserves_explicit_hardfork() {
+    let (_origin, endpoint, transaction_hash) = monad_rollback_boundary_origin().await;
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(endpoint))
+        .with_fork_transaction_hash(Some(transaction_hash))
+        .with_no_mining(true);
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    api.anvil_rollback(Some(1)).await.unwrap();
+
+    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+    assert_eq!(api.backend.spec_id(), SpecId::OSAKA);
+    assert_eq!(provider.call(reserve_balance_call()).await.unwrap(), Bytes::from(vec![0; 32]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_mining_tracks_eip7702_authorities() {
     let (api, handle) = spawn(monad_nine_config()).await;
     let provider = handle.http_provider();
@@ -2132,6 +2242,36 @@ async fn assert_monad_reset_to_memory(
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, local_hardfork.to_string());
     let local_result = provider.call(reserve_balance_call()).await.unwrap();
     assert_eq!(local_result.is_empty(), local_hardfork == MonadHardfork::MonadEight);
+}
+
+async fn monad_rollback_boundary_origin() -> (NodeHandle, String, B256) {
+    let activation = MonadHardfork::MonadNine.testnet_activation_timestamp().unwrap();
+    let config = monad_eight_config()
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_genesis_timestamp(Some(activation - 2));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+
+    api.evm_set_next_block_timestamp(activation - 1).unwrap();
+    api.mine_one().await.unwrap();
+    api.evm_set_next_block_timestamp(activation).unwrap();
+    let receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(accounts[0])
+                .with_to(accounts[1])
+                .with_value(U256::ONE)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let endpoint = handle.http_endpoint();
+    (handle, endpoint, receipt.transaction_hash)
 }
 
 async fn monad_boundary_origin() -> (NodeHandle, String) {
