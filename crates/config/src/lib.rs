@@ -3354,7 +3354,10 @@ mod tests {
         .into();
 
         let mut absolute_alias = relative.clone();
-        let mut absolute_context = config.root.join("dependency").display().to_string();
+        let absolute_context = config.root.join("dependency");
+        #[cfg(windows)]
+        let absolute_context = PathBuf::from_slash(absolute_context.to_string_lossy());
+        let mut absolute_context = absolute_context.display().to_string();
         absolute_context.push(std::path::MAIN_SEPARATOR);
         absolute_alias.context = Some(absolute_context);
         assert_eq!(
