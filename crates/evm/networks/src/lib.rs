@@ -1068,6 +1068,7 @@ mod tests {
     #[test]
     #[cfg(feature = "base")]
     fn fork_sources_isolate_base() {
+        #[cfg_attr(not(any(feature = "optimism", feature = "monad")), allow(unused_mut))]
         let mut non_base = vec![
             NetworkConfigs::default(),
             NetworkConfigs::with_ethereum(),
@@ -1595,6 +1596,29 @@ mod tests {
         assert_eq!(NetworkConfigs::default().active_network_name(), None);
     }
 
+    #[test]
+    #[cfg(not(feature = "base"))]
+    fn fallible_chain_id_inference_rejects_disabled_base() {
+        for chain_id in [NamedChain::Base as u64, NamedChain::BaseSepolia as u64] {
+            assert_eq!(
+                NetworkConfigs::default().try_with_chain_id(chain_id).unwrap_err(),
+                format!(
+                    "cannot infer execution network from chain ID {chain_id}: network family \
+                     `base` is not enabled in this build"
+                )
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "base"))]
+    fn node_info_rejects_disabled_base() {
+        assert_eq!(
+            NetworkVariant::from_node_info_name("base").unwrap_err(),
+            "network family `base` is not enabled in this build"
+        );
+    }
+
     // --- Serde round-trip ---
 
     #[test]
@@ -1803,6 +1827,7 @@ mod tests {
             assert_eq!(NetworkVariant::from(8453), NetworkVariant::Base);
             assert_eq!(NetworkVariant::from(84532), NetworkVariant::Base);
             assert!(NetworkConfigs::default().try_with_chain_id(8453).unwrap().is_base());
+            assert_eq!(NetworkVariant::from_node_info_name("base").unwrap(), NetworkVariant::Base);
         }
 
         #[test]

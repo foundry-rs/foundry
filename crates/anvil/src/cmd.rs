@@ -1093,6 +1093,42 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "base")]
+    fn base_fork_chain_id_precedes_execution_chain_id_for_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "8453",
+            "--chain-id",
+            "1",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    #[cfg(not(feature = "base"))]
+    fn chain_id_rejects_disabled_base_network() {
+        for chain_id in ["8453", "84532"] {
+            let args = NodeArgs::parse_from(["anvil", "--chain-id", chain_id]);
+            let error = args.into_node_config().unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "cannot infer execution network from chain ID {chain_id}: network family \
+                     `base` is not enabled in this build"
+                )
+            );
+        }
+    }
+
+    #[test]
     #[cfg(not(feature = "monad"))]
     fn chain_id_rejects_disabled_monad_network() {
         for chain_id in ["143", "10143"] {
@@ -1107,6 +1143,15 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn explicit_ethereum_allows_base_chain_id() {
+        let args = NodeArgs::parse_from(["anvil", "--network", "ethereum", "--chain-id", "8453"]);
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 8453);
     }
 
     #[test]
@@ -1137,6 +1182,34 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "base")]
+    fn genesis_chain_id_infers_base_network() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert!(config.networks.is_base());
+    }
+
+    #[test]
+    #[cfg(not(feature = "base"))]
+    fn genesis_chain_id_rejects_disabled_base_network() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let error = args.into_node_config().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 8453: network family `base` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
     #[cfg(not(feature = "monad"))]
     fn explicit_network_overrides_genesis_chain_id_inference() {
         let mut args = NodeArgs::parse_from(["anvil", "--network", "ethereum"]);
@@ -1160,6 +1233,30 @@ mod tests {
 
         let config = args.into_node_config().unwrap();
 
+        assert!(!config.networks.has_network_selection());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    fn explicit_network_overrides_base_genesis_chain_id_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--network", "ethereum"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 8453);
+    }
+
+    #[test]
+    fn explicit_chain_id_precedes_base_genesis_network_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--chain-id", "1"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
         assert!(!config.networks.has_network_selection());
         assert_eq!(config.get_chain_id(), 1);
     }

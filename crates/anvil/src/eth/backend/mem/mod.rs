@@ -143,7 +143,7 @@ use base_common_evm::{
 use base_common_precompiles::NonceManagerStorage;
 #[cfg(feature = "base")]
 use base_common_rpc_types::{
-    BaseTransactionRequest, EIP8130_PRE_COBALT_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
+    EIP8130_PRE_COBALT_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
     Transaction as BaseRpcTransaction,
 };
 #[cfg(feature = "base")]
@@ -274,12 +274,6 @@ struct CallTransactionInfo {
     /// OP-compatible deposit fields shared by Base and Optimism RPC requests.
     #[cfg(any(feature = "base", feature = "optimism"))]
     deposit: DepositTransactionParts,
-    /// Native Base EIP-8130 simulation transaction.
-    #[cfg(feature = "base")]
-    base_eip8130: Option<BaseTransaction<TxEnv>>,
-    /// Invalid Base EIP-8130 request reason.
-    #[cfg(feature = "base")]
-    base_eip8130_error: Option<String>,
 }
 
 /// Fully prepared fork replacement awaiting an atomic backend commit.
@@ -3375,33 +3369,10 @@ impl<N: Network> Backend<N> {
         base_evm_env: Option<&EvmEnv>,
     ) -> (EvmEnv, TxEnv, CallTransactionInfo) {
         let tx_type = request.minimal_tx_type() as u8;
+        #[cfg(any(feature = "base", feature = "optimism"))]
         let mut transaction_info = CallTransactionInfo::default();
-
-        #[cfg(feature = "base")]
-        if self.is_base() {
-            match serde_json::to_value(&request)
-                .and_then(serde_json::from_value::<BaseTransactionRequest>)
-            {
-                Ok(base_request) if base_request.as_eip8130().is_some() => {
-                    if let Some(tx) = base_request
-                        .to_eip8130_simulation_tx(self.chain_id().to(), block_env.gas_limit)
-                    {
-                        transaction_info.base_eip8130 = Some(tx);
-                    } else {
-                        transaction_info.base_eip8130_error = Some(
-                            "invalid EIP-8130 simulation request: missing or conflicting sender, \
-                             oversized authentication data, or invalid payer authenticator"
-                                .to_string(),
-                        );
-                    }
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    transaction_info.base_eip8130_error =
-                        Some(format!("invalid Base transaction request: {error}"));
-                }
-            }
-        }
+        #[cfg(not(any(feature = "base", feature = "optimism")))]
+        let transaction_info = CallTransactionInfo::default();
 
         let WithOtherFields::<TransactionRequest> {
             inner:
@@ -3546,36 +3517,25 @@ impl<N: Network> Backend<N> {
     ) -> Result<PreparedCall, BlockchainError> {
         let (evm_env, tx_env, transaction_info) =
             self.build_call_env_with_base(request, fee_details, block_env, base_evm_env);
-        #[cfg(feature = "base")]
-        let mut transaction_info = transaction_info;
 
         #[cfg(feature = "base")]
         if self.is_base() {
-            if let Some(error) = transaction_info.base_eip8130_error.take() {
-                return Err(BlockchainError::InvalidTransactionRequest(error));
-            }
-            let base_tx = transaction_info.base_eip8130.take().unwrap_or_else(|| {
+            let mut base_tx = BaseTransaction::new(tx_env);
+            if base_tx.base.tx_type == BASE_DEPOSIT_TRANSACTION_TYPE {
                 let deposit = &transaction_info.deposit;
-                BaseTransaction {
-                    base: tx_env,
-                    enveloped_tx: None,
-                    deposit: BaseDepositTransactionParts::new(
-                        deposit.source_hash,
-                        deposit.mint,
-                        deposit.is_system_transaction,
-                    ),
-                    eip8130: None,
-                }
-            });
-            let simulated_envelope = base_tx
-                .eip8130
-                .as_ref()
-                .map(|parts| FoundryTxEnvelope::Eip8130(parts.signed.clone()));
+                base_tx.deposit = BaseDepositTransactionParts::new(
+                    deposit.source_hash,
+                    deposit.mint,
+                    deposit.is_system_transaction,
+                );
+            } else {
+                base_tx.enveloped_tx = Some(Bytes::new());
+            }
             return Ok(PreparedCall {
                 evm_env,
                 tx_env: CallTxEnv::Base(Box::new(base_tx)),
                 simulated_tempo_tx: None,
-                simulated_envelope,
+                simulated_envelope: None,
             });
         }
 
@@ -3609,24 +3569,29 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<FoundryTransactionRequest, BlockchainError> {
         let transaction_type = request.transaction_type;
-        if !self.is_tempo() && transaction_type != Some(TEMPO_TX_TYPE_ID) {
-            #[cfg(feature = "base")]
-            if self.is_base() {
-                let base_request = serde_json::to_value(&request)
-                    .and_then(serde_json::from_value::<BaseTransactionRequest>)
-                    .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()))?;
-                if base_request.as_eip8130().is_some() {
-                    return Ok(FoundryTransactionRequest::Base(base_request));
-                }
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            let parsed = FoundryTransactionRequest::try_from(request.clone()).map_err(
+                |err: serde_json::Error| {
+                    BlockchainError::InvalidTransactionRequest(err.to_string())
+                },
+            )?;
+            if parsed.is_base() {
+                return Ok(parsed);
             }
-            #[cfg(any(feature = "base", feature = "optimism"))]
             if transaction_type == Some(DEPOSIT_TX_TYPE_ID)
                 || get_deposit_tx_parts(&request.other).is_ok()
             {
                 return Ok(FoundryTransactionRequest::Op(request));
             }
+            return Ok(FoundryTransactionRequest::Ethereum(request.into_inner()));
+        }
+        if !self.is_tempo() && transaction_type != Some(TEMPO_TX_TYPE_ID) {
             #[cfg(feature = "optimism")]
-            if transaction_type == Some(POST_EXEC_TX_TYPE_ID) {
+            if transaction_type == Some(DEPOSIT_TX_TYPE_ID)
+                || transaction_type == Some(POST_EXEC_TX_TYPE_ID)
+                || get_deposit_tx_parts(&request.other).is_ok()
+            {
                 return Ok(FoundryTransactionRequest::Op(request));
             }
             return Ok(FoundryTransactionRequest::Ethereum(request.into_inner()));
@@ -3775,19 +3740,42 @@ impl<N: Network> Backend<N> {
                     simulated_envelope: None,
                 })
             }
+            #[cfg(feature = "base")]
+            FoundryTransactionRequest::Base(request) => {
+                self.ensure_base_eip8130_active_at(block_env.timestamp.saturating_to())?;
+                let gas_limit = block_env.gas_limit;
+                let (evm_env, _, _) = self.build_call_env_with_base(
+                    WithOtherFields::new(request.as_ref().clone()),
+                    fee_details,
+                    block_env,
+                    base_evm_env,
+                );
+                let tx = request
+                    .to_eip8130_simulation_tx(self.chain_id().to(), gas_limit)
+                    .ok_or_else(|| {
+                        BlockchainError::InvalidTransactionRequest(
+                            "invalid EIP-8130 simulation request: missing or conflicting sender, \
+                             oversized authentication data, or invalid payer authenticator"
+                                .to_string(),
+                        )
+                    })?;
+                let simulated_envelope = tx
+                    .eip8130
+                    .as_ref()
+                    .map(|parts| FoundryTxEnvelope::Eip8130(parts.signed.clone()));
+                Ok(PreparedCall {
+                    evm_env,
+                    tx_env: CallTxEnv::Base(Box::new(tx)),
+                    simulated_tempo_tx: None,
+                    simulated_envelope,
+                })
+            }
             FoundryTransactionRequest::Ethereum(request) => self.prepare_base_call_env_with_base(
                 WithOtherFields::new(request),
                 fee_details,
                 block_env,
                 base_evm_env,
             ),
-            #[cfg(feature = "base")]
-            FoundryTransactionRequest::Base(request) => {
-                let request: WithOtherFields<TransactionRequest> = serde_json::to_value(request)
-                    .and_then(serde_json::from_value)
-                    .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()))?;
-                self.prepare_base_call_env_with_base(request, fee_details, block_env, base_evm_env)
-            }
             #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTransactionRequest::Op(request) => {
                 self.prepare_base_call_env_with_base(request, fee_details, block_env, base_evm_env)
@@ -9495,7 +9483,10 @@ where
     ) -> Result<(), BlockchainError> {
         let address = *tx.sender();
         let account = self.get_account(address).await?;
+        #[cfg(feature = "base")]
         let mut evm_env = self.next_evm_env();
+        #[cfg(not(feature = "base"))]
+        let evm_env = self.next_evm_env();
         #[cfg(feature = "base")]
         if tx.transaction.as_ref().is_eip8130() {
             evm_env.block_env.timestamp = U256::from(self.eip8130_pool_timestamp());

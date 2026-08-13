@@ -355,20 +355,25 @@ impl Erc20Subcommand {
             resolved_tempo || self.should_use_tempo_network(&tempo_access_key, has_session).await?;
 
         if is_tempo {
-            return self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await;
+            return Box::pin(self.run_generic::<TempoNetwork>(
+                signer,
+                tempo_access_key,
+                has_session,
+            ))
+            .await;
         }
 
         let config = self.rpc_opts().load_config()?;
         let network = resolve_network(&config).await?;
         if network.is_tempo() {
-            return self.run_generic::<TempoNetwork>(signer, None, has_session).await;
+            return Box::pin(self.run_generic::<TempoNetwork>(signer, None, has_session)).await;
         }
         #[cfg(feature = "base")]
         if network.is_base() {
-            return self.run_generic::<BaseNetwork>(signer, None, has_session).await;
+            return Box::pin(self.run_generic::<BaseNetwork>(signer, None, has_session)).await;
         }
 
-        self.run_generic::<Ethereum>(signer, None, has_session).await
+        Box::pin(self.run_generic::<Ethereum>(signer, None, has_session)).await
     }
 
     #[allow(clippy::large_stack_frames)]

@@ -20,7 +20,7 @@ use revm::{
 };
 
 impl<N: Network> Backend<N> {
-    /// Base path of [`Backend::transact_with_inspector_ref`].
+    /// Base path of [`Backend::transact_call_with_inspector_ref`].
     pub(super) fn transact_base_with_inspector_ref<'db, I, DB>(
         &self,
         db: &'db DB,

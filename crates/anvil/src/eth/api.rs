@@ -1769,11 +1769,7 @@ impl EthApi<FoundryNetwork> {
         .or_zero_fees();
 
         #[cfg(feature = "base")]
-        if self.backend.is_base()
-            && serde_json::to_value(&request)
-                .and_then(serde_json::from_value::<base_common_rpc_types::BaseTransactionRequest>)
-                .is_ok_and(|request| request.as_eip8130().is_some())
-        {
+        if self.backend.is_base() && request.is_base() {
             self.backend.ensure_base_eip8130_active_at(block_env.timestamp.saturating_to())?;
             let gas_limit = block_env.gas_limit;
             let result = self
@@ -4920,6 +4916,8 @@ impl EthApi<FoundryNetwork> {
         &self,
         pending: &PendingTransaction<FoundryTxEnvelope>,
     ) -> Result<Option<(Vec<TxMarker>, Vec<TxMarker>)>> {
+        #[cfg(not(feature = "base"))]
+        let _ = pending;
         #[cfg(feature = "base")]
         if let FoundryTxEnvelope::Eip8130(signed) = pending.transaction.as_ref() {
             let tx = signed.tx();

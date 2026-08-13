@@ -24,7 +24,9 @@ use base_common_consensus::{
     Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Predeploys, TxEip8130,
 };
 use base_common_precompiles::NonceManagerStorage;
-use foundry_evm::hardforks::BaseUpgrade;
+use foundry_config::Config;
+use foundry_evm::{hardforks::BaseUpgrade, opts::EvmOpts};
+use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use op_alloy_consensus::TxDeposit;
 
@@ -285,10 +287,22 @@ async fn base_azul_excludes_beryl_precompiles() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn base_anvil_node_info_infers_native_network() {
+    let (_api, handle) = spawn(NodeConfig::test_base()).await;
+    let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+    evm_opts.fork_url = Some(handle.http_endpoint());
+    assert_eq!(evm_opts.networks, NetworkConfigs::default());
+
+    evm_opts.infer_network_from_fork().await.unwrap();
+
+    assert!(evm_opts.networks.is_base());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn base_fork_call_and_trace_use_native_evm() {
     let source_config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
     let (source_api, source_handle) = spawn(source_config).await;
-    source_api.mine_one().await;
+    source_api.mine_one().await.unwrap();
     let target_config = NodeConfig::test_base()
         .with_hardfork(Some(BaseUpgrade::Beryl.into()))
         .with_eth_rpc_url(Some(source_handle.http_endpoint()));
@@ -720,7 +734,7 @@ async fn base_eip8130_txpool_keeps_independent_nonce_channels() {
     assert!(pending.contains_key("1:0"));
     assert!(pending.contains_key("2:0"));
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert!(first.get_receipt().await.unwrap().status());
     assert!(second.get_receipt().await.unwrap().status());
 
@@ -756,7 +770,7 @@ async fn base_eip8130_txpool_orders_channel_heads_by_fee() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let high = high.get_receipt().await.unwrap();
     let low = low.get_receipt().await.unwrap();
     assert_eq!(high.transaction_index, Some(0));
@@ -789,7 +803,7 @@ async fn base_eip8130_txpool_promotes_filled_channel_gap() {
     assert_eq!(status.pending, 2);
     assert_eq!(status.queued, 0);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert!(sequence_zero.get_receipt().await.unwrap().status());
     assert!(sequence_one.get_receipt().await.unwrap().status());
     let nonce = provider
@@ -826,7 +840,7 @@ async fn base_eip8130_txpool_replaces_with_higher_fee_in_lane() {
     assert_ne!(original_hash, replacement_hash);
     assert_eq!(provider.txpool_status().await.unwrap().pending, 1);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert!(provider.get_transaction_receipt(original_hash).await.unwrap().is_none());
     assert!(replacement.get_receipt().await.unwrap().status());
 }
@@ -916,7 +930,7 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
     let independent_hash = *independent.tx_hash();
     assert_eq!(provider.txpool_status().await.unwrap().pending, 2);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     assert!(provider.get_transaction_receipt(original_hash).await.unwrap().is_none());
     assert!(provider.get_transaction_receipt(replacement_hash).await.unwrap().is_some());
     assert!(provider.get_transaction_receipt(independent_hash).await.unwrap().is_some());
@@ -986,7 +1000,7 @@ async fn base_eip8130_txpool_drops_expired_nonce_free_transaction() {
     let hash = *pending.tx_hash();
 
     api.evm_increase_time(U256::from(2)).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     assert!(provider.get_transaction_receipt(hash).await.unwrap().is_none());
     let status = provider.txpool_status().await.unwrap();
@@ -1365,7 +1379,7 @@ async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
         .await
         .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let first = serde_json::to_value(first.get_receipt().await.unwrap()).unwrap();
     let second = serde_json::to_value(second.get_receipt().await.unwrap()).unwrap();
 

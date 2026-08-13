@@ -335,6 +335,10 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
         );
 
         #[cfg(feature = "base")]
+        if tx.transaction_type != Some(TEMPO_TX_TYPE_ID)
+            && !TEMPO_REQUEST_FIELDS.iter().any(|field| {
+                !matches!(*field, "nonceKey" | "calls") && tx.other.get(*field).is_some()
+            })
         {
             let base =
                 serde_json::from_value::<BaseTransactionRequest>(serde_json::to_value(&tx)?)?;

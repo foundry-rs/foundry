@@ -22,10 +22,10 @@ use serde::{Deserialize, Serialize};
 pub use alloy_hardforks::EthereumHardfork;
 #[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
-#[cfg(feature = "monad")]
-pub use monad_revm::MonadHardfork;
 #[cfg(feature = "base")]
 pub use base_common_genesis::BaseUpgrade;
+#[cfg(feature = "monad")]
+pub use monad_revm::MonadHardfork;
 pub use tempo_hardfork::TempoHardfork;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]

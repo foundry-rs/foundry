@@ -318,6 +318,12 @@ impl ScriptArgs {
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
+        let network = evm_opts.networks.execution_network();
+        eyre::ensure!(
+            FEN::supports_network(network),
+            "the selected EVM network cannot execute `{network}`; use the matching network \
+             implementation"
+        );
         let mut tempo = args.tempo.clone();
 
         let session_sender = if args.resume {

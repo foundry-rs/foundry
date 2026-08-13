@@ -205,6 +205,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::evm::{EthEvmNetwork, TempoEvmNetwork};
 
     fn has_precompile(upgrade: BaseUpgrade, address: Address) -> bool {
         let evm = BaseEvmFactory::default().create_evm(
@@ -227,6 +228,9 @@ mod tests {
 
         assert_foundry_factory::<BaseEvmFactory>();
         assert_foundry_network::<BaseEvmNetwork>();
+        assert!(BaseEvmNetwork::supports_network(NetworkVariant::Base));
+        assert!(!EthEvmNetwork::supports_network(NetworkVariant::Base));
+        assert!(!TempoEvmNetwork::supports_network(NetworkVariant::Base));
     }
 
     #[test]

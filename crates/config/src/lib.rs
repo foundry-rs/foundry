@@ -3275,10 +3275,10 @@ mod tests {
         ModelCheckerEngine, YulDetails,
         vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
-    #[cfg(feature = "monad")]
-    use foundry_evm_hardforks::MonadHardfork;
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;
+    #[cfg(feature = "monad")]
+    use foundry_evm_hardforks::MonadHardfork;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
