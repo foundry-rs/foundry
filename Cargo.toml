@@ -378,7 +378,7 @@ alloy-transport = { version = "2.4.0", default-features = false }
 alloy-transport-http = { version = "2.4.0", default-features = false }
 alloy-transport-ipc = { version = "2.4.0", default-features = false }
 alloy-transport-ws = { version = "2.4.0", default-features = false }
-alloy-hardforks = { version = "0.4.7", default-features = false }
+alloy-hardforks = { version = "0.4.8", default-features = false }
 alloy-op-hardforks = { version = "0.5.0", default-features = false }
 
 ## alloy-core
