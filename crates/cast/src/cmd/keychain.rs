@@ -4480,6 +4480,12 @@ mod tests {
         assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T3), Some(true));
         assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
 
+        let tempo_t11 = AnvilNodeInfo {
+            network: Some("tempo".to_string()),
+            hard_fork: Some("T11".to_string()),
+        };
+        assert_eq!(active_from_anvil_node_info(&tempo_t11, TempoHardfork::T11), Some(true));
+
         let ethereum_t3 = AnvilNodeInfo {
             network: Some("ethereum".to_string()),
             hard_fork: Some("T3".to_string()),

@@ -116,6 +116,28 @@ pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionR
 pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
 pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
+/// Rebases precomputed network context after the active database or fork position changes.
+pub fn rebase_context_after_state_transition<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    current: &ContextAuxFor<FEN>,
+    mut replacement: ContextAuxFor<FEN>,
+) {
+    {
+        let (_, inner) = ecx.db_journal_inner_mut();
+        FEN::EvmFactory::default().rebase_context_aux(current, &mut replacement, &inner.state);
+    }
+    ecx.set_aux_state(replacement);
+}
+
+/// Rebases network caches after state changes that retain the active chain cursor.
+pub fn refresh_context_after_state_change<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+) {
+    let current = ecx.aux_state();
+    let replacement = current.clone();
+    rebase_context_after_state_transition::<FEN>(ecx, &current, replacement);
+}
+
 pub trait FoundryEvmFactory:
     EvmFactory<
         Spec: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
