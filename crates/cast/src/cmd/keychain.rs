@@ -3783,11 +3783,6 @@ struct AnvilNodeInfo {
     network: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct TempoForkSchedule {
-    active: String,
-}
-
 pub(crate) async fn is_tempo_hardfork_active<P>(
     provider: &P,
     hardfork: TempoHardfork,
@@ -3795,9 +3790,8 @@ pub(crate) async fn is_tempo_hardfork_active<P>(
 where
     P: Provider<TempoNetwork>,
 {
-    match provider.raw_request::<_, TempoForkSchedule>("tempo_forkSchedule".into(), ()).await {
-        Ok(schedule) => active_tempo_hardfork(&schedule.active, hardfork)
-            .ok_or_else(|| eyre::eyre!("unknown Tempo hardfork: {}", schedule.active)),
+    match provider.is_hardfork_active(hardfork).await {
+        Ok(active) => Ok(active),
         Err(err) if is_rpc_method_not_found(&err) => {
             match anvil_tempo_hardfork_active(provider, hardfork).await {
                 Ok(Some(active)) => Ok(active),
@@ -3845,29 +3839,9 @@ fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) ->
     (info.network.as_deref() == Some("tempo")).then(|| {
         info.hard_fork
             .as_deref()
-            .and_then(|active_hardfork| active_tempo_hardfork(active_hardfork, hardfork))
-            .unwrap_or(false)
+            .and_then(|active_hardfork| active_hardfork.parse::<TempoHardfork>().ok())
+            .is_some_and(|active_hardfork| active_hardfork >= hardfork)
     })
-}
-
-fn active_tempo_hardfork(active: &str, hardfork: TempoHardfork) -> Option<bool> {
-    if let Ok(active) = active.parse::<TempoHardfork>() {
-        return Some(active >= hardfork);
-    }
-
-    let active_number = active.strip_prefix('T')?.parse::<u64>().ok()?;
-    let hardfork_name = hardfork.to_string();
-    if hardfork_name == "Genesis" {
-        return Some(true);
-    }
-    let hardfork_number = hardfork_name
-        .strip_prefix('T')?
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect::<String>()
-        .parse::<u64>()
-        .ok()?;
-    Some(active_number >= hardfork_number)
 }
 
 fn is_rpc_method_not_found(err: &TransportError) -> bool {
@@ -4510,8 +4484,7 @@ mod tests {
             network: Some("tempo".to_string()),
             hard_fork: Some("T11".to_string()),
         };
-        assert_eq!(active_from_anvil_node_info(&tempo_t11, TempoHardfork::T3), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t11, TempoHardfork::T10), Some(true));
+        assert_eq!(active_from_anvil_node_info(&tempo_t11, TempoHardfork::T11), Some(true));
 
         let ethereum_t3 = AnvilNodeInfo {
             network: Some("ethereum".to_string()),
