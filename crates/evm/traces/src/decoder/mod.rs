@@ -88,7 +88,7 @@ impl CallTraceDecoderBuilder {
     /// Add known errors to the decoder.
     #[inline]
     pub fn with_abi(mut self, abi: &JsonAbi) -> Self {
-        self.decoder.collect_abi(abi, None);
+        self.decoder.collect_abi(abi, None, true);
         self
     }
 
@@ -97,7 +97,7 @@ impl CallTraceDecoderBuilder {
     pub fn with_known_contracts(mut self, contracts: &ContractsByArtifact) -> Self {
         trace!(target: "evm::traces", len=contracts.len(), "collecting known contract ABIs");
         for contract in contracts.values() {
-            self.decoder.collect_abi(&contract.abi, None);
+            self.decoder.collect_abi(&contract.abi, None, true);
         }
         self
     }
@@ -529,7 +529,18 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, arena: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        self.collect_identified_addresses(self.identify_addresses(arena, identifier));
+        self.collect_identified_addresses(self.identify_addresses(arena, identifier), true);
+    }
+
+    /// Identifies unknown addresses without re-registering their ABIs globally.
+    ///
+    /// The identified ABIs must already be registered in this decoder.
+    pub fn identify_scoped(
+        &mut self,
+        arena: &CallTraceArena,
+        identifier: &mut impl TraceIdentifier,
+    ) {
+        self.collect_identified_addresses(self.identify_addresses(arena, identifier), false);
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -716,7 +727,11 @@ impl CallTraceDecoder {
         self.disable_labels = disable;
     }
 
-    fn collect_identified_addresses(&mut self, mut addrs: Vec<IdentifiedAddress<'_>>) {
+    fn collect_identified_addresses(
+        &mut self,
+        mut addrs: Vec<IdentifiedAddress<'_>>,
+        global: bool,
+    ) {
         addrs.sort_by_key(|identity| identity.address);
         addrs.dedup_by_key(|identity| identity.address);
         if addrs.is_empty() {
@@ -744,7 +759,7 @@ impl CallTraceDecoder {
             }
 
             if let Some(abi) = abi {
-                self.collect_abi(&abi, Some(address));
+                self.collect_abi(&abi, Some(address), global);
             }
 
             if let Some(offset) = constructor_args_offset {
@@ -753,7 +768,7 @@ impl CallTraceDecoder {
         }
     }
 
-    fn collect_abi(&mut self, abi: &JsonAbi, address: Option<Address>) {
+    fn collect_abi(&mut self, abi: &JsonAbi, address: Option<Address>, global: bool) {
         let len = abi.len();
         if len == 0 {
             return;
@@ -763,18 +778,22 @@ impl CallTraceDecoder {
             if let Some(address) = address {
                 self.push_address_function(address, function.clone());
             }
-            self.push_function(function.clone());
+            if global {
+                self.push_function(function.clone());
+            }
         }
         if let Some(address) = address
             && let Some(constructor) = abi.constructor()
         {
             self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
-        for event in abi.events() {
-            self.push_event(event.clone());
-        }
-        for error in abi.errors() {
-            self.push_error(error.clone());
+        if global {
+            for event in abi.events() {
+                self.push_event(event.clone());
+            }
+            for error in abi.errors() {
+                self.push_error(error.clone());
+            }
         }
         if let Some(address) = address {
             if abi.receive.is_some() {
@@ -1599,6 +1618,7 @@ mod tests {
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
         staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
     };
+    use std::borrow::Cow;
 
     #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
@@ -1776,7 +1796,7 @@ mod tests {
         let address = Address::from([0x12; 20]);
         let mut decoder = CallTraceDecoder::new().clone();
         let abi = JsonAbi::parse(["event log_string(string)"]).unwrap();
-        decoder.collect_abi(&abi, Some(address));
+        decoder.collect_abi(&abi, Some(address), true);
 
         let event = Event::parse("event log_string(string val)").unwrap();
         let log = LogData::new_unchecked(
@@ -3010,6 +3030,43 @@ mod tests {
             self.queried.extend(nodes.iter().map(|n| n.trace.address));
             Vec::new()
         }
+    }
+
+    struct AbiIdentifier {
+        abi: JsonAbi,
+    }
+
+    impl TraceIdentifier for AbiIdentifier {
+        fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+            nodes
+                .iter()
+                .map(|node| IdentifiedAddress {
+                    address: node.trace.address,
+                    label: Some("Scoped".to_string()),
+                    contract: Some("Scoped".to_string()),
+                    abi: Some(Cow::Borrowed(&self.abi)),
+                    constructor_args_offset: None,
+                    artifact_id: None,
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn scoped_identification_reuses_global_abi() {
+        let abi = JsonAbi::parse(["function scoped(uint256)"]).unwrap();
+        let function = abi.functions().next().unwrap().clone();
+        let selector = function.selector();
+        let mut decoder = CallTraceDecoderBuilder::new().with_abi(&abi).build();
+        let global_functions = decoder.functions.get(&selector).unwrap().len();
+
+        let address = Address::repeat_byte(0x42);
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut()[0].trace.address = address;
+        decoder.identify_scoped(&arena, &mut AbiIdentifier { abi });
+
+        assert_eq!(decoder.functions.get(&selector).unwrap().len(), global_functions);
+        assert_eq!(decoder.functions_by_address[&address][&selector], [function]);
     }
 
     #[test]

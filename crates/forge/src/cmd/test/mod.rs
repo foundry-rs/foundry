@@ -3174,12 +3174,12 @@ impl TestArgs {
                         // setUp and constructor.
                         for (kind, arena) in &result.traces {
                             if !matches!(kind, TraceKind::Execution) {
-                                decoder.identify(arena, &mut identifier);
+                                decoder.identify_scoped(arena, &mut identifier);
                             }
                         }
 
                         for arena in trace {
-                            decoder.identify(arena, &mut identifier);
+                            decoder.identify_scoped(arena, &mut identifier);
                             gas_report.analyze([arena], &decoder).await;
                         }
                     }
