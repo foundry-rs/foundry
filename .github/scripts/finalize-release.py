@@ -77,6 +77,39 @@ def exact_release(all_releases, tag):
     return matches[0]
 
 
+def tag_exists(commands, repo, tag):
+    result = commands.run(["gh", "api", f"repos/{repo}/git/ref/tags/{tag}"], check=False)
+    if result.returncode == 0:
+        return True
+    detail = result.stderr or result.stdout
+    if "HTTP 404" in detail:
+        return False
+    raise ReleaseError(f"could not determine whether Git tag {tag} exists: {detail.strip()}")
+
+
+def tag_commit(commands, repo, tag):
+    raw = commands.output(["gh", "api", f"repos/{repo}/git/ref/tags/{tag}", "--jq", ".object"])
+    try:
+        target = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ReleaseError(f"could not parse Git tag {tag}: {raw}") from error
+    seen = set()
+    while target.get("type") == "tag":
+        sha = target.get("sha")
+        if sha in seen:
+            raise ReleaseError(f"Git tag {tag} contains a tag-object cycle")
+        seen.add(sha)
+        raw = commands.output(["gh", "api", f"repos/{repo}/git/tags/{sha}", "--jq", ".object"])
+        try:
+            target = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ReleaseError(f"could not parse Git tag object {sha}: {raw}") from error
+    sha = target.get("sha")
+    if target.get("type") != "commit" or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ReleaseError(f"Git tag {tag} does not resolve to a full commit SHA")
+    return sha
+
+
 def stable_aliases(candidate, all_releases):
     version = tuple(int(value) for value in STABLE.fullmatch(candidate).groups())
     versions = [version]
@@ -131,6 +164,13 @@ def publish(commands, tag, prerelease, latest):
         "gh", "release", "edit", tag, "--draft=false",
         f"--prerelease={'true' if prerelease else 'false'}",
         f"--latest={'true' if latest else 'false'}",
+    ])
+
+
+def publish_staged(commands, release_tag, tag, commit):
+    commands.run([
+        "gh", "release", "edit", release_tag, "--tag", tag, "--target", commit, "--draft=false",
+        "--prerelease=true", "--latest=false",
     ])
 
 
@@ -201,15 +241,36 @@ def nightly_eligible(commands, image, candidate_sha):
     raise ReleaseError(f"could not compare nightly history {current}..{candidate_sha}: {(result.stderr or result.stdout).strip()}")
 
 
-def finalize_nightly(commands, repo, image, tag, expected=None):
+def finalize_nightly(commands, repo, image, tag, release_tag, expected=None):
     _, sha = parse_tag(tag, "nightly")
     digest = verify_exact(commands, image, tag, expected)
-    state = exact_release(releases(commands, repo), tag)
-    commit = commands.output(["git", "rev-parse", f"{tag}^{{commit}}"])
-    if commit != sha or not state.get("prerelease"):
+    all_releases = releases(commands, repo)
+    final = [release for release in all_releases if release.get("tag_name") == tag]
+    staging = [release for release in all_releases if release.get("tag_name") == release_tag]
+    if len(final) > 1 or len(staging) > 1:
+        raise ReleaseError("found duplicate final or staging nightly releases")
+    if final and staging:
+        raise ReleaseError(f"both final release {tag} and staging release {release_tag} exist")
+    if final:
+        state = final[0]
+        if state.get("draft"):
+            raise ReleaseError(f"final nightly release {tag} unexpectedly exists as a draft")
+    elif staging:
+        state = staging[0]
+        if not state.get("draft"):
+            raise ReleaseError(f"staging nightly release {release_tag} is already published")
+        if state.get("target_commitish") != sha:
+            raise ReleaseError(f"staging nightly release {release_tag} targets an unexpected commit")
+    else:
+        raise ReleaseError(f"expected final release {tag} or staging release {release_tag}")
+    if not state.get("prerelease"):
         raise ReleaseError(f"release {tag} has unexpected state/classification")
-    if state.get("draft"):
-        publish(commands, tag, True, False)
+    if staging:
+        if tag_exists(commands, repo, tag):
+            raise ReleaseError(f"final nightly tag {tag} already exists without its published release")
+        publish_staged(commands, release_tag, tag, sha)
+    if tag_commit(commands, repo, tag) != sha:
+        raise ReleaseError(f"release tag {tag} does not resolve to its encoded commit")
     if nightly_eligible(commands, image, sha):
         promote(commands, image, digest, "nightly")
     else:
@@ -220,6 +281,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("stable", "nightly"))
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--release-tag")
     parser.add_argument("--digest")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--image")
@@ -231,7 +293,9 @@ def main():
         if args.mode == "stable":
             finalize_stable(Commands(), args.repo, image, args.tag)
         else:
-            finalize_nightly(Commands(), args.repo, image, args.tag, args.digest)
+            if not args.release_tag:
+                parser.error("--release-tag is required for nightly releases")
+            finalize_nightly(Commands(), args.repo, image, args.tag, args.release_tag, args.digest)
     except ReleaseError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

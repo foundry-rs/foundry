@@ -54,8 +54,11 @@ def completed(args, code=0, stdout="", stderr=""):
     return subprocess.CompletedProcess(args, code, stdout, stderr)
 
 
-def release(tag, draft=False, prerelease=False):
-    return {"tag_name": tag, "draft": draft, "prerelease": prerelease}
+def release(tag, draft=False, prerelease=False, target_commitish=None):
+    value = {"tag_name": tag, "draft": draft, "prerelease": prerelease}
+    if target_commitish is not None:
+        value["target_commitish"] = target_commitish
+    return value
 
 
 def release_pages(*values):
@@ -67,6 +70,14 @@ def digest_command(reference):
         "docker", "buildx", "imagetools", "inspect", reference,
         "--format", "{{json .Manifest.Digest}}",
     )
+
+
+def tag_command(tag):
+    return ("gh", "api", f"repos/r/git/ref/tags/{tag}", "--jq", ".object")
+
+
+def tag_exists_command(tag):
+    return ("gh", "api", f"repos/r/git/ref/tags/{tag}")
 
 
 class ParsingTests(unittest.TestCase):
@@ -209,35 +220,99 @@ class NightlyTests(unittest.TestCase):
     def test_draft_is_published_before_current_alias_is_promoted(self):
         candidate = "b" * 40
         tag = f"nightly-{candidate}"
-        publish = ("gh", "release", "edit", tag, "--draft=false", "--prerelease=true", "--latest=false")
+        release_tag = f"staging-release-{candidate}"
+        publish = (
+            "gh", "release", "edit", release_tag, "--tag", tag, "--target", candidate, "--draft=false",
+            "--prerelease=true", "--latest=false",
+        )
         promote = ("docker", "buildx", "imagetools", "create", "--tag", "image:nightly", f"image@{DIGEST}")
         commands = FakeCommands({
             digest_command(f"image:{tag}"): f'"{DIGEST}"',
-            RELEASES_COMMAND: release_pages(release(tag, draft=True, prerelease=True)),
-            ("git", "rev-parse", f"{tag}^{{commit}}"): candidate,
+            RELEASES_COMMAND: release_pages(
+                release(release_tag, draft=True, prerelease=True, target_commitish=candidate),
+            ),
+            tag_exists_command(tag): completed(tag_exists_command(tag), code=1, stderr="gh: Not Found (HTTP 404)"),
             publish: 0,
+            tag_command(tag): json.dumps({"type": "commit", "sha": candidate}),
             self.inspect_command(): completed(self.inspect_command(), stdout=self.image_data(candidate, candidate)),
             promote: 0,
             digest_command("image:nightly"): f'"{DIGEST}"',
         })
-        MODULE.finalize_nightly(commands, "r", "image", tag, DIGEST)
+        MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
         self.assertLess(commands.calls.index(publish), commands.calls.index(promote))
 
     def test_published_nightly_retry_still_promotes_alias(self):
         candidate = "b" * 40
         tag = f"nightly-{candidate}"
+        release_tag = f"staging-release-{candidate}"
         promote = ("docker", "buildx", "imagetools", "create", "--tag", "image:nightly", f"image@{DIGEST}")
         commands = FakeCommands({
             digest_command(f"image:{tag}"): f'"{DIGEST}"',
             RELEASES_COMMAND: release_pages(release(tag, prerelease=True)),
-            ("git", "rev-parse", f"{tag}^{{commit}}"): candidate,
+            tag_command(tag): json.dumps({"type": "commit", "sha": candidate}),
             self.inspect_command(): completed(self.inspect_command(), stdout=self.image_data(candidate, candidate)),
             promote: 0,
             digest_command("image:nightly"): f'"{DIGEST}"',
         })
-        MODULE.finalize_nightly(commands, "r", "image", tag, DIGEST)
+        MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
         self.assertFalse(any(call[:3] == ("gh", "release", "edit") for call in commands.calls))
         self.assertIn(promote, commands.calls)
+
+    def test_conflicting_final_and_staging_releases_fail(self):
+        candidate = "b" * 40
+        tag = f"nightly-{candidate}"
+        release_tag = f"staging-release-{candidate}"
+        commands = FakeCommands({
+            digest_command(f"image:{tag}"): f'"{DIGEST}"',
+            RELEASES_COMMAND: release_pages(
+                release(tag, prerelease=True),
+                release(release_tag, draft=True, prerelease=True, target_commitish=candidate),
+            ),
+        })
+        with self.assertRaisesRegex(MODULE.ReleaseError, "both final release"):
+            MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
+
+    def test_invalid_staging_release_states_fail(self):
+        candidate = "b" * 40
+        tag = f"nightly-{candidate}"
+        release_tag = f"staging-release-{candidate}"
+        cases = (
+            (release(release_tag, prerelease=True, target_commitish=candidate), "already published"),
+            (release(release_tag, draft=True, prerelease=True, target_commitish="a" * 40), "unexpected commit"),
+        )
+        for state, message in cases:
+            with self.subTest(message=message):
+                commands = FakeCommands({
+                    digest_command(f"image:{tag}"): f'"{DIGEST}"',
+                    RELEASES_COMMAND: release_pages(state),
+                })
+                with self.assertRaisesRegex(MODULE.ReleaseError, message):
+                    MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
+
+    def test_legacy_final_draft_fails(self):
+        candidate = "b" * 40
+        tag = f"nightly-{candidate}"
+        release_tag = f"staging-release-{candidate}"
+        commands = FakeCommands({
+            digest_command(f"image:{tag}"): f'"{DIGEST}"',
+            RELEASES_COMMAND: release_pages(release(tag, draft=True, prerelease=True)),
+        })
+        with self.assertRaisesRegex(MODULE.ReleaseError, "unexpectedly exists as a draft"):
+            MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
+
+    def test_existing_final_tag_blocks_staging_publication(self):
+        candidate = "b" * 40
+        tag = f"nightly-{candidate}"
+        release_tag = f"staging-release-{candidate}"
+        commands = FakeCommands({
+            digest_command(f"image:{tag}"): f'"{DIGEST}"',
+            RELEASES_COMMAND: release_pages(
+                release(release_tag, draft=True, prerelease=True, target_commitish=candidate),
+            ),
+            tag_exists_command(tag): completed(tag_exists_command(tag)),
+        })
+        with self.assertRaisesRegex(MODULE.ReleaseError, "already exists"):
+            MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
 
 
 if __name__ == "__main__":
