@@ -1,5 +1,9 @@
 use super::{hashcons::HashConsed, *};
 
+// Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
+// unique nodes so adversarial expression trees cannot make construction unbounded.
+const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
+
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
     let len = SymExpr::constant(cx, U256::from(len));
@@ -1484,7 +1488,7 @@ impl SymExpr {
         let mut seen_words = HashSet::<Self>::default();
         let mut leaf_conditions = IndexSet::<SymBoolExpr>::default();
         let mut bit_widths = HashMap::default();
-        let mut remaining = MAX_BITWISE_BOOL_WORD_NODES;
+        let mut remaining = MAX_BITWISE_BOOL_WORD_VISITS;
         while let Some(word) = pending.pop() {
             if !seen_words.insert(word.clone()) {
                 continue;
@@ -2165,10 +2169,6 @@ impl SymExpr {
     }
 }
 
-// Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
-// unique nodes so adversarial expression trees cannot turn construction into unbounded recursion.
-const MAX_BITWISE_BOOL_WORD_NODES: usize = 256;
-
 // Branchless expression rewrites are optional. Bound both the distinct DAG nodes inspected while
 // deciding whether to rewrite and the occurrences a later non-memoized solver fold could visit.
 const MAX_BRANCHLESS_REWRITE_NODES: usize = 256;
@@ -2406,6 +2406,42 @@ impl SymBinOp {
 mod tests {
     use super::*;
 
+    fn indexed_bool_word(cx: &mut SymCx, source: &SymExpr, index: usize) -> SymExpr {
+        let value = SymExpr::constant(cx, U256::from(index));
+        let condition = SymBoolExpr::eq(cx, source.clone(), value);
+        SymExpr::bool_word(cx, condition)
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_visits_shared_or_dag_once() {
+        let mut cx = SymCx::new();
+        let source = SymExpr::var(&mut cx, "source");
+        let mut word = indexed_bool_word(&mut cx, &source, 0);
+        for index in 1..=26 {
+            let next_word = indexed_bool_word(&mut cx, &source, index);
+            let nested_word = SymExpr::binop(&mut cx, SymBinOp::Or, word.clone(), next_word);
+            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, nested_word);
+        }
+
+        assert!(word.bitwise_bool_word_condition(&mut cx).is_some());
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_stops_at_shared_visit_budget() {
+        let mut cx = SymCx::new();
+        let source = SymExpr::var(&mut cx, "source");
+        let mut word = indexed_bool_word(&mut cx, &source, 0);
+        for index in 1..=MAX_BITWISE_BOOL_WORD_VISITS {
+            let next_word = indexed_bool_word(&mut cx, &source, index);
+            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, next_word);
+        }
+
+        assert!(word.bitwise_bool_word_condition(&mut cx).is_none());
+        let one = SymExpr::one(&mut cx);
+        let mask = SymExpr::binop(&mut cx, SymBinOp::Sub, word, one);
+        assert!(matches!(mask.kind(), SymExprKind::BinOp(SymBinOp::Sub, _, _)));
+    }
+
     #[test]
     fn bitwise_bool_word_condition_deduplicates_shared_or_dag() {
         let mut cx = SymCx::new();
@@ -2464,7 +2500,7 @@ mod tests {
         let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
         let bool_word = SymExpr::bool_word(&mut cx, condition);
         let mut condition_word = bool_word.clone();
-        for _ in 0..MAX_BITWISE_BOOL_WORD_NODES {
+        for _ in 0..MAX_BITWISE_BOOL_WORD_VISITS {
             condition_word = SymExpr::from_kind(
                 &mut cx,
                 SymExprKind::BinOp(SymBinOp::Or, condition_word, bool_word.clone()),
@@ -2563,7 +2599,7 @@ mod tests {
         let mut cx = SymCx::new();
         let one = SymExpr::one(&mut cx);
         let mut expression = one.clone();
-        for _ in 0..MAX_BITWISE_BOOL_WORD_NODES {
+        for _ in 0..MAX_BITWISE_BOOL_WORD_VISITS {
             expression = SymExpr::from_kind(
                 &mut cx,
                 SymExprKind::BinOp(SymBinOp::UDiv, expression, one.clone()),

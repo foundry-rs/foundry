@@ -38,6 +38,12 @@ fn symbolic_model<S: AsRef<str>>(
     values.into_iter().map(|(name, value)| (cx.intern(name.as_ref()), value)).collect()
 }
 
+fn replayable_input(cx: &mut SymCx, name: &str) -> SymExpr {
+    let symbol = cx.intern(name);
+    cx.mark_replayable_input(symbol);
+    SymExpr::get_var(cx, symbol)
+}
+
 fn model_value(cx: &SymCx, model: &SymbolicModel, name: &str) -> Option<U256> {
     model.get(&cx.symbol(name)).copied()
 }
@@ -3420,8 +3426,8 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
 #[test]
 fn checked_mul_guard_branches_use_constructive_models() {
     let mut cx = SymCx::new();
-    let x = SymExpr::var(&mut cx, "x");
-    let y = SymExpr::var(&mut cx, "y");
+    let x = replayable_input(&mut cx, "x");
+    let y = replayable_input(&mut cx, "y");
     let guard = checked_mul_guard_word(&mut cx, &x, &y);
     let zero = SymExpr::zero(&mut cx);
     let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
