@@ -829,12 +829,16 @@ contract SymbolicCreateRevertData {
         bytes memory initcode = hex"61123460005260206000fd";
         address created;
         uint256 size;
+        uint256 payload;
         assembly {
             created := create(0, add(initcode, 0x20), mload(initcode))
             size := returndatasize()
+            returndatacopy(0x80, 0, size)
+            payload := mload(0x80)
         }
         assert(created == address(0));
         assert(size == 32);
+        assert(payload == 0x1234);
     }
 }
 "#,

@@ -1499,12 +1499,60 @@ contract SymbolicCallcodeValue is Test {
         assertEq(caller.balance, 1 - amount);
         assertEq(address(this).balance, amount);
     }
+
+    function checkPrankedCallcodeOverflow() public {
+        address caller = address(0xBEEF);
+        vm.deal(address(this), type(uint256).max);
+        vm.deal(caller, 1);
+        vm.prank(caller);
+
+        bool ok;
+        address callTarget = address(target);
+        assembly {
+            ok := callcode(gas(), callTarget, 1, 0, 0, 0, 0)
+        }
+
+        assert(!ok);
+        assertEq(caller.balance, 1);
+        assertEq(address(this).balance, type(uint256).max);
+    }
+
+    function checkMockedPrankedCallcodeValue() public {
+        address caller = address(0xBEEF);
+        bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
+        vm.mockCall(address(target), 1, input, abi.encode(uint256(99)));
+        vm.deal(address(this), 0);
+        vm.deal(caller, 1);
+        vm.prank(caller);
+
+        uint256 echoed;
+        bool ok;
+        address callTarget = address(target);
+        assembly {
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0x80, 0x20)
+            echoed := mload(0x80)
+        }
+
+        assert(ok);
+        assertEq(echoed, 99);
+        assertEq(caller.balance, 0);
+        assertEq(address(this).balance, 1);
+
+        vm.deal(caller, 0);
+        vm.prank(caller);
+        assembly {
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0, 0)
+        }
+        assert(!ok);
+        assertEq(caller.balance, 0);
+        assertEq(address(this).balance, 1);
+    }
 }
 "#,
     );
 
     let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "check.*CallcodeValue"])
+        .args(["test", "--symbolic", "--match-test", "check.*Callcode"])
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -1519,6 +1567,18 @@ contract SymbolicCallcodeValue is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkPrankedCallcodeValue(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkPrankedCallcodeOverflow()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockedPrankedCallcodeValue()
 "#]],
     );
     assert!(!stdout.contains("symbolic CALLCODE value"), "{stdout}");
