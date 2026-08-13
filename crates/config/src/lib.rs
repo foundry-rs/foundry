@@ -39,6 +39,8 @@ use foundry_compilers::{
     multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcLanguage, SolcSettings},
 };
+#[cfg(windows)]
+use path_slash::PathBufExt as _;
 use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -1636,6 +1638,11 @@ impl Config {
             ) else {
                 continue;
             };
+            // `normalize_solidity_import_path` returns a slash path on Windows. Convert it back to
+            // a native path before it enters `ProjectBuilder`, which performs the one canonical
+            // slash conversion for compiler source-unit names.
+            #[cfg(windows)]
+            let context_path = PathBuf::from_slash(context_path.to_string_lossy());
             let mut context_path = context_path.display().to_string();
             if context.ends_with(['/', '\\']) && !context_path.ends_with(['/', '\\']) {
                 context_path.push(std::path::MAIN_SEPARATOR);
@@ -3347,8 +3354,7 @@ mod tests {
         .into();
 
         let mut absolute_alias = relative.clone();
-        let mut absolute_context =
-            config.root.join("dependency").display().to_string().replace('\\', "/");
+        let mut absolute_context = config.root.join("dependency").display().to_string();
         absolute_context.push(std::path::MAIN_SEPARATOR);
         absolute_alias.context = Some(absolute_context);
         assert_eq!(
