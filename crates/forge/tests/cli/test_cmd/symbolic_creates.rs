@@ -813,6 +813,47 @@ contract SymbolicCreateValue is Test {
     );
 });
 
+forgetest_init!(symbolic_create_preserves_revert_data, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_preserves_revert_data because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateRevertData.t.sol",
+        r#"
+contract SymbolicCreateRevertData {
+    function checkCreateRevertData() public {
+        bytes memory initcode = hex"61123460005260206000fd";
+        address created;
+        uint256 size;
+        assembly {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+            size := returndatasize()
+        }
+        assert(created == address(0));
+        assert(size == 32);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkCreateRevertData"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateRevertData()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_create_accepts_symbolic_value, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
