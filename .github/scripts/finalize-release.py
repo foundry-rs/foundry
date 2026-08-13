@@ -77,16 +77,6 @@ def exact_release(all_releases, tag):
     return matches[0]
 
 
-def tag_exists(commands, repo, tag):
-    result = commands.run(["gh", "api", f"repos/{repo}/git/ref/tags/{tag}"], check=False)
-    if result.returncode == 0:
-        return True
-    detail = result.stderr or result.stdout
-    if "HTTP 404" in detail:
-        return False
-    raise ReleaseError(f"could not determine whether Git tag {tag} exists: {detail.strip()}")
-
-
 def tag_commit(commands, repo, tag):
     raw = commands.output(["gh", "api", f"repos/{repo}/git/ref/tags/{tag}", "--jq", ".object"])
     try:
@@ -108,6 +98,21 @@ def tag_commit(commands, repo, tag):
     if target.get("type") != "commit" or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ReleaseError(f"Git tag {tag} does not resolve to a full commit SHA")
     return sha
+
+
+def create_or_verify_tag(commands, repo, tag, commit):
+    args = [
+        "gh", "api", "--method", "POST", f"repos/{repo}/git/refs",
+        "-f", f"ref=refs/tags/{tag}", "-f", f"sha={commit}",
+    ]
+    result = commands.run(args, check=False)
+    try:
+        actual = tag_commit(commands, repo, tag)
+    except ReleaseError as error:
+        detail = (result.stderr or result.stdout).strip()
+        raise ReleaseError(f"could not create or verify Git tag {tag}: {detail}") from error
+    if actual != commit:
+        raise ReleaseError(f"Git tag {tag} resolves to {actual}, expected {commit}")
 
 
 def stable_aliases(candidate, all_releases):
@@ -243,6 +248,8 @@ def nightly_eligible(commands, image, candidate_sha):
 
 def finalize_nightly(commands, repo, image, tag, release_tag, expected=None):
     _, sha = parse_tag(tag, "nightly")
+    if release_tag != f"staging-release-{sha}":
+        raise ReleaseError(f"staging release tag does not match nightly commit: {release_tag}")
     digest = verify_exact(commands, image, tag, expected)
     all_releases = releases(commands, repo)
     final = [release for release in all_releases if release.get("tag_name") == tag]
@@ -265,16 +272,16 @@ def finalize_nightly(commands, repo, image, tag, release_tag, expected=None):
         raise ReleaseError(f"expected final release {tag} or staging release {release_tag}")
     if not state.get("prerelease"):
         raise ReleaseError(f"release {tag} has unexpected state/classification")
-    if staging:
-        if tag_exists(commands, repo, tag):
-            raise ReleaseError(f"final nightly tag {tag} already exists without its published release")
-        publish_staged(commands, release_tag, tag, sha)
-    if tag_commit(commands, repo, tag) != sha:
+    if final and tag_commit(commands, repo, tag) != sha:
         raise ReleaseError(f"release tag {tag} does not resolve to its encoded commit")
-    if nightly_eligible(commands, image, sha):
-        promote(commands, image, digest, "nightly")
-    else:
-        print(f"Not moving nightly: {tag} is not a descendant of the current nightly image.")
+    if not nightly_eligible(commands, image, sha):
+        print(f"Not publishing nightly: {tag} is not a descendant of the current nightly image.")
+        return
+    if staging:
+        create_or_verify_tag(commands, repo, tag, sha)
+    promote(commands, image, digest, "nightly")
+    if staging:
+        publish_staged(commands, release_tag, tag, sha)
 
 
 def main():

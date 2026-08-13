@@ -76,8 +76,11 @@ def tag_command(tag):
     return ("gh", "api", f"repos/r/git/ref/tags/{tag}", "--jq", ".object")
 
 
-def tag_exists_command(tag):
-    return ("gh", "api", f"repos/r/git/ref/tags/{tag}")
+def create_tag_command(tag, commit):
+    return (
+        "gh", "api", "--method", "POST", "repos/r/git/refs",
+        "-f", f"ref=refs/tags/{tag}", "-f", f"sha={commit}",
+    )
 
 
 class ParsingTests(unittest.TestCase):
@@ -217,7 +220,7 @@ class NightlyTests(unittest.TestCase):
                 inspect: completed(inspect, stdout=self.image_data("a" * 40, "b" * 40)),
             }), "image", candidate)
 
-    def test_draft_is_published_before_current_alias_is_promoted(self):
+    def test_current_alias_is_promoted_before_draft_is_published(self):
         candidate = "b" * 40
         tag = f"nightly-{candidate}"
         release_tag = f"staging-release-{candidate}"
@@ -231,15 +234,42 @@ class NightlyTests(unittest.TestCase):
             RELEASES_COMMAND: release_pages(
                 release(release_tag, draft=True, prerelease=True, target_commitish=candidate),
             ),
-            tag_exists_command(tag): completed(tag_exists_command(tag), code=1, stderr="gh: Not Found (HTTP 404)"),
-            publish: 0,
-            tag_command(tag): json.dumps({"type": "commit", "sha": candidate}),
             self.inspect_command(): completed(self.inspect_command(), stdout=self.image_data(candidate, candidate)),
+            create_tag_command(tag, candidate): 0,
+            tag_command(tag): json.dumps({"type": "commit", "sha": candidate}),
+            publish: 0,
             promote: 0,
             digest_command("image:nightly"): f'"{DIGEST}"',
         })
         MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
-        self.assertLess(commands.calls.index(publish), commands.calls.index(promote))
+        self.assertLess(commands.calls.index(self.inspect_command()), commands.calls.index(publish))
+        self.assertLess(commands.calls.index(promote), commands.calls.index(publish))
+
+    def test_existing_exact_final_tag_allows_publication_retry(self):
+        candidate = "b" * 40
+        tag = f"nightly-{candidate}"
+        release_tag = f"staging-release-{candidate}"
+        publish = (
+            "gh", "release", "edit", release_tag, "--tag", tag, "--target", candidate, "--draft=false",
+            "--prerelease=true", "--latest=false",
+        )
+        promote = ("docker", "buildx", "imagetools", "create", "--tag", "image:nightly", f"image@{DIGEST}")
+        create = create_tag_command(tag, candidate)
+        commands = FakeCommands({
+            digest_command(f"image:{tag}"): f'"{DIGEST}"',
+            RELEASES_COMMAND: release_pages(
+                release(release_tag, draft=True, prerelease=True, target_commitish=candidate),
+            ),
+            self.inspect_command(): completed(self.inspect_command(), stdout=self.image_data(candidate, candidate)),
+            create: completed(create, code=1, stderr="gh: Reference already exists (HTTP 422)"),
+            tag_command(tag): json.dumps({"type": "commit", "sha": candidate}),
+            publish: 0,
+            promote: 0,
+            digest_command("image:nightly"): f'"{DIGEST}"',
+        })
+        MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
+        self.assertLess(commands.calls.index(promote), commands.calls.index(publish))
+        self.assertIn(publish, commands.calls)
 
     def test_published_nightly_retry_still_promotes_alias(self):
         candidate = "b" * 40
@@ -289,6 +319,24 @@ class NightlyTests(unittest.TestCase):
                 with self.assertRaisesRegex(MODULE.ReleaseError, message):
                     MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
 
+    def test_stale_nightly_is_not_published(self):
+        candidate = "b" * 40
+        current = "c" * 40
+        tag = f"nightly-{candidate}"
+        release_tag = f"staging-release-{candidate}"
+        ancestry = ("git", "merge-base", "--is-ancestor", current, candidate)
+        commands = FakeCommands({
+            digest_command(f"image:{tag}"): f'"{DIGEST}"',
+            RELEASES_COMMAND: release_pages(
+                release(release_tag, draft=True, prerelease=True, target_commitish=candidate),
+            ),
+            self.inspect_command(): completed(self.inspect_command(), stdout=self.image_data(current, current)),
+            ancestry: 1,
+        })
+        MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
+        self.assertFalse(any(call[:3] == ("gh", "release", "edit") for call in commands.calls))
+        self.assertFalse(any(call[:4] == ("gh", "api", "--method", "POST") for call in commands.calls))
+
     def test_legacy_final_draft_fails(self):
         candidate = "b" * 40
         tag = f"nightly-{candidate}"
@@ -300,19 +348,29 @@ class NightlyTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.ReleaseError, "unexpectedly exists as a draft"):
             MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
 
-    def test_existing_final_tag_blocks_staging_publication(self):
+    def test_existing_wrong_final_tag_blocks_staging_publication(self):
         candidate = "b" * 40
         tag = f"nightly-{candidate}"
         release_tag = f"staging-release-{candidate}"
+        create = create_tag_command(tag, candidate)
         commands = FakeCommands({
             digest_command(f"image:{tag}"): f'"{DIGEST}"',
             RELEASES_COMMAND: release_pages(
                 release(release_tag, draft=True, prerelease=True, target_commitish=candidate),
             ),
-            tag_exists_command(tag): completed(tag_exists_command(tag)),
+            self.inspect_command(): completed(self.inspect_command(), stdout=self.image_data(candidate, candidate)),
+            create: completed(create, code=1, stderr="gh: Reference already exists (HTTP 422)"),
+            tag_command(tag): json.dumps({"type": "commit", "sha": "a" * 40}),
         })
-        with self.assertRaisesRegex(MODULE.ReleaseError, "already exists"):
+        with self.assertRaisesRegex(MODULE.ReleaseError, "resolves to .* expected"):
             MODULE.finalize_nightly(commands, "r", "image", tag, release_tag, DIGEST)
+
+    def test_unrelated_staging_tag_fails_before_external_checks(self):
+        candidate = "b" * 40
+        with self.assertRaisesRegex(MODULE.ReleaseError, "does not match nightly commit"):
+            MODULE.finalize_nightly(
+                FakeCommands(), "r", "image", f"nightly-{candidate}", "staging-release-unrelated", DIGEST,
+            )
 
 
 if __name__ == "__main__":

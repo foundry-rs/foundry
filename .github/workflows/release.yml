@@ -142,6 +142,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
           RELEASE_TAG_NAME: ${{ steps.release_info.outputs.release_tag_name }}
+          EXPECTED_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -162,9 +163,12 @@ jobs:
           fi
           if (( final_count == 0 )); then
             tag_error="$(mktemp)"
-            if gh api "repos/$GH_REPO/git/ref/tags/$TAG_NAME" > /dev/null 2>"$tag_error"; then
-              echo "::error::Final nightly tag $TAG_NAME exists without its published release."
-              exit 1
+            if final_ref="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG_NAME" 2>"$tag_error")"; then
+              if [[ "$(jq -r '.object.type' <<< "$final_ref")" != "commit" || "$(jq -r '.object.sha' <<< "$final_ref")" != "$EXPECTED_SHA" ]]; then
+                echo "::error::Final nightly tag $TAG_NAME does not point to $EXPECTED_SHA."
+                exit 1
+              fi
+              echo "Final nightly tag $TAG_NAME already points to $EXPECTED_SHA; allowing publication retry."
             elif ! grep -q 'HTTP 404' "$tag_error"; then
               cat "$tag_error" >&2
               echo "::error::Could not determine whether final nightly tag $TAG_NAME exists."
@@ -189,6 +193,10 @@ jobs:
             fi
             if [[ "$(jq -r '.[0].prerelease' <<< "$staging")" != "true" ]]; then
               echo "::error::Staging nightly release $RELEASE_TAG_NAME is not a prerelease."
+              exit 1
+            fi
+            if [[ "$(jq -r '.[0].target_commitish' <<< "$staging")" != "$EXPECTED_SHA" ]]; then
+              echo "::error::Staging nightly release $RELEASE_TAG_NAME does not target $EXPECTED_SHA."
               exit 1
             fi
             echo "Draft nightly release $RELEASE_TAG_NAME already exists; continuing so assets can be uploaded."
@@ -227,11 +235,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if release_state="$(gh release view "$TAG_NAME" --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | @tsv' 2>/dev/null)"; then
-            read -r is_draft is_prerelease <<< "$release_state"
+          if release_state="$(gh release view "$TAG_NAME" --json isDraft,isPrerelease,targetCommitish --jq '[.isDraft, .isPrerelease, .targetCommitish] | @tsv' 2>/dev/null)"; then
+            read -r is_draft is_prerelease target_commitish <<< "$release_state"
             if [[ "$is_draft" == "true" ]]; then
               if [[ "$is_prerelease" != "$EXPECTED_PRERELEASE" ]]; then
                 echo "::error::Draft release $TAG_NAME has prerelease=$is_prerelease; expected $EXPECTED_PRERELEASE."
+                exit 1
+              fi
+              if [[ "$TAG_NAME" != "$FINAL_TAG_NAME" && "$target_commitish" != "$GITHUB_SHA" ]]; then
+                echo "::error::Draft release $TAG_NAME targets $target_commitish; expected $GITHUB_SHA."
                 exit 1
               fi
               echo "Draft release $TAG_NAME already exists; reusing it."
