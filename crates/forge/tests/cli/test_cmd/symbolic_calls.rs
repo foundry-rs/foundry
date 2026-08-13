@@ -760,7 +760,9 @@ forgetest_init!(symbolic_external_call_with_empty_unknown_target_is_modeled, |pr
     prj.add_test(
         "SymbolicUnboundedTarget.t.sol",
         r#"
-contract SymbolicUnboundedTarget {
+import "forge-std/Test.sol";
+
+contract SymbolicUnboundedTarget is Test {
     /// forge-config: default.symbolic.symbolic_call_targets = true
     function checkUnbounded(address target) public {
         if (uint160(target) <= 9 || target == address(this)) {
@@ -771,6 +773,17 @@ contract SymbolicUnboundedTarget {
             ok := call(gas(), target, 0, 0, 0, 0, 0)
         }
         require(ok);
+    }
+
+    /// forge-config: default.symbolic.symbolic_call_targets = true
+    function checkUnboundedInsufficientValue(address target) public {
+        vm.assume(uint160(target) > 9 && target != address(this));
+        vm.deal(address(this), 0);
+        bool ok;
+        assembly {
+            ok := call(gas(), target, 1, 0, 0, 0, 0)
+        }
+        assert(!ok);
     }
 }
 "#,
@@ -786,6 +799,12 @@ contract SymbolicUnboundedTarget {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkUnbounded(address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkUnboundedInsufficientValue(address)
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL target outside known contracts"), "{stdout}");
@@ -1135,6 +1154,65 @@ contract SymbolicStaticCall {
     );
 });
 
+forgetest_init!(symbolic_static_call_splits_symbolic_value, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_static_call_splits_symbolic_value because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicStaticCallValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract StaticValueSink {
+    receive() external payable {}
+}
+
+contract StaticValueHelper {
+    function callWithValue(address target, uint256 amount) external returns (bool ok) {
+        assembly {
+            ok := call(gas(), target, amount, 0, 0, 0, 0)
+        }
+    }
+}
+
+contract SymbolicStaticCallValue is Test {
+    StaticValueSink sink;
+    StaticValueHelper helper;
+
+    function setUp() public {
+        sink = new StaticValueSink();
+        helper = new StaticValueHelper();
+    }
+
+    function checkStaticCallValue(uint256 amount) public {
+        vm.assume(amount <= 1);
+        (bool ok,) = address(helper).staticcall(
+            abi.encodeCall(StaticValueHelper.callWithValue, (address(sink), amount))
+        );
+        assertEq(ok, amount == 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkStaticCallValue"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStaticCallValue(uint256)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_delegatecall_writes_caller_storage, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -1382,8 +1460,30 @@ contract SymbolicCallcodeValue is Test {
     }
 
     function checkSymbolicCallcodeValue(uint256 amount) public {
-        vm.assume(amount <= 7);
+        vm.assume(amount <= 8);
         vm.deal(address(this), 7);
+
+        bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
+        uint256 echoed;
+        bool ok;
+        address callTarget = address(target);
+        assembly {
+            ok := callcode(gas(), callTarget, amount, add(input, 0x20), mload(input), 0x80, 0x20)
+            echoed := mload(0x80)
+        }
+
+        assertEq(ok, amount <= 7);
+        if (ok) {
+            assertEq(echoed, amount);
+        }
+    }
+
+    function checkPrankedCallcodeValue(uint256 amount) public {
+        vm.assume(amount <= 1);
+        address caller = address(0xBEEF);
+        vm.deal(address(this), 0);
+        vm.deal(caller, 1);
+        vm.prank(caller);
 
         bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
         uint256 echoed;
@@ -1396,13 +1496,63 @@ contract SymbolicCallcodeValue is Test {
 
         assert(ok);
         assertEq(echoed, amount);
+        assertEq(caller.balance, 1 - amount);
+        assertEq(address(this).balance, amount);
+    }
+
+    function checkPrankedCallcodeOverflow() public {
+        address caller = address(0xBEEF);
+        vm.deal(address(this), type(uint256).max);
+        vm.deal(caller, 1);
+        vm.prank(caller);
+
+        bool ok;
+        address callTarget = address(target);
+        assembly {
+            ok := callcode(gas(), callTarget, 1, 0, 0, 0, 0)
+        }
+
+        assert(!ok);
+        assertEq(caller.balance, 1);
+        assertEq(address(this).balance, type(uint256).max);
+    }
+
+    function checkMockedPrankedCallcodeValue() public {
+        address caller = address(0xBEEF);
+        bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
+        vm.mockCall(address(target), 1, input, abi.encode(uint256(99)));
+        vm.deal(address(this), 0);
+        vm.deal(caller, 1);
+        vm.prank(caller);
+
+        uint256 echoed;
+        bool ok;
+        address callTarget = address(target);
+        assembly {
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0x80, 0x20)
+            echoed := mload(0x80)
+        }
+
+        assert(ok);
+        assertEq(echoed, 99);
+        assertEq(caller.balance, 0);
+        assertEq(address(this).balance, 1);
+
+        vm.deal(caller, 0);
+        vm.prank(caller);
+        assembly {
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0, 0)
+        }
+        assert(!ok);
+        assertEq(caller.balance, 0);
+        assertEq(address(this).balance, 1);
     }
 }
 "#,
     );
 
     let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicCallcodeValue"])
+        .args(["test", "--symbolic", "--match-test", "check.*Callcode"])
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -1411,6 +1561,24 @@ contract SymbolicCallcodeValue is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkSymbolicCallcodeValue(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkPrankedCallcodeValue(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkPrankedCallcodeOverflow()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockedPrankedCallcodeValue()
 "#]],
     );
     assert!(!stdout.contains("symbolic CALLCODE value"), "{stdout}");
