@@ -28,7 +28,7 @@ use foundry_evm_core::{
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
     },
-    evm::FoundryEvmNetwork,
+    evm::{FoundryEvmFactory, FoundryEvmNetwork},
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
@@ -1743,7 +1743,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // injecting random calls during setup which would break the invariant assertion.
         executor.inspector_mut().set_fuzzer(
             Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
-                .with_extra_cheatcode_addresses(FEN::EXTRA_CHEATCODE_ADDRESSES)
+                .with_extra_cheatcode_addresses(FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES)
                 .with_call_recording(config.corpus.is_coverage_guided()),
         );
 
