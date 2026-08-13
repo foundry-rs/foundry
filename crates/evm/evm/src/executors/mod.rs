@@ -42,6 +42,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
+use foundry_evm_networks::arbitrum;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
@@ -1546,6 +1547,17 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     has_state_snapshot_failure: bool,
     fork_block_number: Option<u64>,
 ) -> eyre::Result<RawCallResult<FEN>> {
+    // The backend carries the canonical fork pin, but a call may advance the execution block
+    // without publishing its copy-on-write backend (notably invariant `rollFork` calls). Use the
+    // post-call EVM block on regular chains so a later failing invariant observes that advancement.
+    // Arbitrum is the exception: its EVM block can be the lower L1 block while the fork pin is L2.
+    let fork_block_number = fork_block_number.map(|block| {
+        if arbitrum::is_arbitrum_chain(evm_env.cfg_env.chain_id) {
+            block
+        } else {
+            evm_env.block_env.number().saturating_to::<u64>()
+        }
+    });
     let execution_cancelled = inspector.execution_cancelled();
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {

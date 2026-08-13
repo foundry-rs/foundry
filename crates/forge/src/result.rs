@@ -2495,6 +2495,7 @@ impl TestResult {
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
+        fork_block_number: Option<u64>,
         invariant_failures: Vec<InvariantFailure>,
         invariant_predicate_results: Vec<InvariantPredicateResult>,
         invariant_failure_dir: Option<std::path::PathBuf>,
@@ -2524,6 +2525,7 @@ impl TestResult {
         } else {
             TestStatus::Failure
         };
+        self.fork_block_number = fork_block_number;
         self.invariant_failures = invariant_failures;
         self.invariant_predicate_results = invariant_predicate_results;
         self.invariant_failure_dir = invariant_failure_dir;
