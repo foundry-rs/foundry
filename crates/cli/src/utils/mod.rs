@@ -46,6 +46,14 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
 
+/// Applies an optional percentage multiplier to a gas estimate.
+pub const fn apply_gas_estimate_multiplier(estimate: u64, multiplier: Option<u64>) -> u64 {
+    match multiplier {
+        Some(multiplier) => estimate * multiplier / 100,
+        None => estimate,
+    }
+}
+
 /// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
 pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#).unwrap());
@@ -1197,6 +1205,12 @@ mod tests {
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn applies_gas_estimate_multiplier() {
+        assert_eq!(apply_gas_estimate_multiplier(21_000, None), 21_000);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150)), 31_500);
+    }
 
     #[test]
     fn parse_submodule_status() {
