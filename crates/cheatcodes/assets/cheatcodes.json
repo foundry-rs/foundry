@@ -4447,7 +4447,7 @@
     {
       "func": {
         "id": "ecMulAffine",
-        "description": "Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.\nThe point at infinity is represented as `(0, 0)`.",
+        "description": "Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is represented as `(0, 0)`.",
         "declaration": "function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);",
         "visibility": "external",
         "mutability": "pure",
@@ -4467,7 +4467,7 @@
     {
       "func": {
         "id": "ecMulProjective",
-        "description": "Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
+        "description": "Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
         "declaration": "function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
         "visibility": "external",
         "mutability": "pure",

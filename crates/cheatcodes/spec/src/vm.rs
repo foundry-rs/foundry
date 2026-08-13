@@ -3014,6 +3014,7 @@ interface Vm {
         returns (uint256 resultX, uint256 resultY, uint256 resultZ);
 
     /// Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.
+    /// The scalar is reduced modulo the secp256k1 group order.
     /// The point at infinity is represented as `(0, 0)`.
     #[cheatcode(group = Crypto)]
     function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar)
@@ -3022,6 +3023,7 @@ interface Vm {
         returns (uint256 resultX, uint256 resultY);
 
     /// Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.
+    /// The scalar is reduced modulo the secp256k1 group order.
     /// The point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as
     /// `(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.
     #[cheatcode(group = Crypto)]

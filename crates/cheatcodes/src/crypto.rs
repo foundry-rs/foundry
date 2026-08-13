@@ -17,9 +17,9 @@ use k256::{
     AffinePoint, EncodedPoint, FieldBytes, FieldElement, ProjectivePoint, Scalar,
     ecdsa::{SigningKey, hazmat},
     elliptic_curve::{
-        PrimeField,
-        bigint::ArrayEncoding,
+        bigint::{ArrayEncoding, U256 as K256U256},
         group::Group,
+        ops::Reduce,
         sec1::{FromEncodedPoint, ToEncodedPoint},
     },
 };
@@ -262,7 +262,7 @@ impl Cheatcode for ecMulAffineCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { pointX, pointY, scalar } = self;
         let point = parse_affine_point(pointX, pointY, "point")?;
-        let scalar = parse_ec_scalar(scalar)?;
+        let scalar = reduce_ec_scalar(scalar);
         encode_affine_point(ProjectivePoint::from(point) * scalar)
     }
 }
@@ -271,7 +271,7 @@ impl Cheatcode for ecMulProjectiveCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { pointX, pointY, pointZ, scalar } = self;
         let point = parse_projective_point(pointX, pointY, pointZ, "point")?;
-        let scalar = parse_ec_scalar(scalar)?;
+        let scalar = reduce_ec_scalar(scalar);
         encode_projective_point(point * scalar)
     }
 }
@@ -545,10 +545,8 @@ fn parse_field_element(value: &U256, name: &str) -> Result<FieldElement> {
         .ok_or_else(|| fmt_err!("invalid secp256k1 {name}"))
 }
 
-fn parse_ec_scalar(scalar: &U256) -> Result<Scalar> {
-    Scalar::from_repr(scalar.to_be_bytes().into())
-        .into_option()
-        .ok_or_else(|| fmt_err!("invalid secp256k1 scalar"))
+fn reduce_ec_scalar(scalar: &U256) -> Scalar {
+    <Scalar as Reduce<K256U256>>::reduce_bytes(&scalar.to_be_bytes().into())
 }
 
 fn encode_affine_point(point: ProjectivePoint) -> Result {
