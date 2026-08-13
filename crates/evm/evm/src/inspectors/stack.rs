@@ -18,7 +18,8 @@ use foundry_evm_core::{
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs, with_cloned_context,
+        FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs,
+        refresh_context_after_state_change, with_cloned_context,
     },
 };
 use foundry_evm_coverage::HitMaps;
@@ -413,6 +414,8 @@ pub struct InspectorStackInner {
     /// Accounts that should retain the per-transaction creation marker in the current context.
     pub locally_created_accounts: AddressHashSet,
     pub top_frame_journal: AddressMap<Account>,
+    /// Whether the top-level frame failed before inspector result rewriting.
+    top_level_frame_failed_before_rewrite: bool,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
@@ -811,6 +814,43 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
+    fn finish_create2_redirect(&mut self, depth: usize, frame_result: &mut FrameResult) {
+        let Some(redirect) = self
+            .inner
+            .pending_create2_redirects
+            .last()
+            .copied()
+            .filter(|redirect| redirect.depth == depth)
+        else {
+            return;
+        };
+        self.inner.pending_create2_redirects.pop();
+
+        let FrameResult::Call(call) = frame_result else {
+            debug_assert!(false, "pending CREATE2 redirect ended with non-call result");
+            return;
+        };
+
+        let address = match call.instruction_result() {
+            return_ok!() => Address::try_from(call.output().as_ref())
+                .map_err(|_| {
+                    call.result = InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 factory output".into(),
+                        gas: Gas::new(call.result.gas.limit()),
+                    };
+                })
+                .ok(),
+            _ => None,
+        };
+
+        *frame_result = FrameResult::Create(CreateOutcome {
+            result: call.result.clone(),
+            address,
+            charged_create_state_gas: redirect.charged_create_state_gas,
+        });
+    }
+
     /// Adjusts the EVM data for the inner EVM context.
     /// Should be called on the top-level call of inner context (depth == 0 &&
     /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
@@ -1010,11 +1050,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut gas = Gas::new(gas_limit);
 
         let Ok(res) = res else {
+            refresh_context_after_state_change::<FEN>(ecx);
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
             return (result, None);
         };
+
+        let rolled_back = !res.result.is_success();
 
         for (addr, mut acc) in res.state {
             let Some(acc_mut) = ecx.journal_mut().evm_state_mut().get_mut(&addr) else {
@@ -1060,6 +1103,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 (InstructionResult::Revert, None, output)
             }
         };
+        if rolled_back {
+            refresh_context_after_state_change::<FEN>(ecx);
+        }
         (InterpreterResult { result, output, gas }, address)
     }
 
@@ -1091,6 +1137,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Invoked at the beginning of a new top-level (0 depth) frame.
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.locally_created_accounts.clear();
+        self.top_level_frame_failed_before_rewrite = false;
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
         }
@@ -1103,30 +1150,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     }
 
     /// Invoked at the end of root frame.
-    fn top_level_frame_end(
-        &mut self,
-        ecx: &mut FoundryContextFor<'_, FEN>,
-        result: InstructionResult,
-    ) {
+    fn top_level_frame_end(&mut self, ecx: &mut FoundryContextFor<'_, FEN>, failed: bool) {
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
         }
-        if !result.is_revert() {
+        if !failed {
             return;
         }
-        // Encountered a revert, since cheatcodes may have altered the evm state in such a way
-        // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
-        // before revm reverts the state itself
+        // The frame was rolled back. Since cheatcodes may have altered the EVM state in a way
+        // that violates some constraints, e.g. `deal`, restore those changes explicitly.
         if let Some(cheats) = self.cheatcodes.as_mut() {
             cheats.on_revert(ecx);
         }
 
-        // If we're in isolation mode, we need to rollback to state before the root frame was
-        // created We can't rely on revm's journal because it doesn't account for changes
-        // made by isolated calls
+        // In isolation mode, restore the state from before the root frame. We cannot rely on
+        // revm's journal because it does not account for changes made by isolated calls.
         if self.enable_isolation {
             *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
+
+        refresh_context_after_state_change::<FEN>(ecx);
     }
 
     // We take extra care in optimizing `step` and `step_end`, as they're are likely the most
@@ -1418,40 +1461,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         frame_result: &mut FrameResult,
     ) {
         let depth = ecx.journal().depth();
-        let Some(redirect) = self
-            .inner
-            .pending_create2_redirects
-            .last()
-            .copied()
-            .filter(|redirect| redirect.depth == depth)
-        else {
-            return;
-        };
-        self.inner.pending_create2_redirects.pop();
+        self.finish_create2_redirect(depth, frame_result);
 
-        let FrameResult::Call(call) = frame_result else {
-            debug_assert!(false, "pending CREATE2 redirect ended with non-call result");
-            return;
-        };
-
-        let address = match call.instruction_result() {
-            return_ok!() => Address::try_from(call.output().as_ref())
-                .map_err(|_| {
-                    call.result = InterpreterResult {
-                        result: InstructionResult::Revert,
-                        output: "invalid CREATE2 factory output".into(),
-                        gas: Gas::new(call.result.gas.limit()),
-                    };
-                })
-                .ok(),
-            _ => None,
-        };
-
-        *frame_result = FrameResult::Create(CreateOutcome {
-            result: call.result.clone(),
-            address,
-            charged_create_state_gas: redirect.charged_create_state_gas,
-        });
+        let result = frame_result.instruction_result();
+        if !self.in_inner_context && depth == 0 {
+            let failed = std::mem::take(&mut self.inner.top_level_frame_failed_before_rewrite)
+                || !result.is_ok();
+            self.top_level_frame_end(ecx, failed);
+        }
     }
 
     fn call(
@@ -1636,14 +1653,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             return;
         }
 
+        if ecx.journal().depth() == 0 {
+            self.inner.top_level_frame_failed_before_rewrite |= !outcome.result.result.is_ok();
+        }
+
         self.do_call_end(ecx, inputs, outcome);
 
         if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
-        }
-
-        if ecx.journal().depth() == 0 {
-            self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
 
@@ -1768,14 +1785,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             return;
         }
 
+        if ecx.journal().depth() == 0 {
+            self.inner.top_level_frame_failed_before_rewrite |= !outcome.result.result.is_ok();
+        }
+
         self.do_create_end(ecx, call, outcome);
 
         if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
-        }
-
-        if ecx.journal().depth() == 0 {
-            self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
 

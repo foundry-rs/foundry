@@ -143,28 +143,6 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     fn set_in_inner_context(&mut self, _enabled: bool, _original_origin: Option<Address>) {}
 }
 
-/// Rebases precomputed network context after the active database or fork position changes.
-pub(crate) fn rebase_context_after_state_transition<FEN: FoundryEvmNetwork>(
-    ecx: &mut FoundryContextFor<'_, FEN>,
-    current: &ContextAuxFor<FEN>,
-    mut replacement: ContextAuxFor<FEN>,
-) {
-    {
-        let (_, inner) = ecx.db_journal_inner_mut();
-        FEN::EvmFactory::default().rebase_context_aux(current, &mut replacement, &inner.state);
-    }
-    ecx.set_aux_state(replacement);
-}
-
-/// Rebases network caches after state changes that retain the active chain cursor.
-pub(crate) fn refresh_context_after_state_change<FEN: FoundryEvmNetwork>(
-    ecx: &mut FoundryContextFor<'_, FEN>,
-) {
-    let current = ecx.aux_state();
-    let replacement = current.clone();
-    rebase_context_after_state_transition::<FEN>(ecx, &current, replacement);
-}
-
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
 pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     executor: &mut dyn CheatcodesExecutor<FEN>,

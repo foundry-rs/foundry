@@ -1,6 +1,6 @@
 use crate::{
     Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*,
-    inspector::rebase_context_after_state_transition, json::json_value_to_token,
+    json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
@@ -13,7 +13,10 @@ use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{
     FoundryContextExt,
     backend::{ContextAuxUpdate, JournaledState, LocalForkId},
-    evm::{BlockEnvFor, ContextAuxFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    evm::{
+        BlockEnvFor, ContextAuxFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor,
+        rebase_context_after_state_transition,
+    },
     fork::CreateFork,
 };
 use revm::context::ContextTr;
