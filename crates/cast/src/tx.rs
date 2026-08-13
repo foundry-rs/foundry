@@ -856,7 +856,7 @@ where
         multiplier: Option<u64>,
     ) -> Result<u64> {
         match provider.estimate_gas(request).await {
-            Ok(estimated) => Ok(apply_gas_estimate_multiplier(estimated, multiplier)),
+            Ok(estimated) => apply_gas_estimate_multiplier(estimated, multiplier),
             Err(err) => {
                 if let TransportError::ErrorResp(payload) = &err {
                     // If execution reverted with code 3 during provider gas estimation then try

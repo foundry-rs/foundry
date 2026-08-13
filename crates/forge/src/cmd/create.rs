@@ -559,7 +559,7 @@ impl CreateArgs {
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
                 estimated,
                 self.gas_estimate_multiplier,
-            ));
+            )?);
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid

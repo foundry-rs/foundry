@@ -47,11 +47,10 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
 ];
 
 /// Applies an optional percentage multiplier to a gas estimate.
-pub const fn apply_gas_estimate_multiplier(estimate: u64, multiplier: Option<u64>) -> u64 {
-    match multiplier {
-        Some(multiplier) => estimate * multiplier / 100,
-        None => estimate,
-    }
+pub fn apply_gas_estimate_multiplier(estimate: u64, multiplier: Option<u64>) -> Result<u64> {
+    let Some(multiplier) = multiplier else { return Ok(estimate) };
+    let adjusted = u128::from(estimate) * u128::from(multiplier) / 100;
+    adjusted.try_into().map_err(|_| eyre::eyre!("multiplied gas estimate exceeds u64"))
 }
 
 /// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
@@ -1208,8 +1207,13 @@ mod tests {
 
     #[test]
     fn applies_gas_estimate_multiplier() {
-        assert_eq!(apply_gas_estimate_multiplier(21_000, None), 21_000);
-        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150)), 31_500);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, None).unwrap(), 21_000);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150)).unwrap(), 31_500);
+        assert_eq!(
+            apply_gas_estimate_multiplier(21_000, Some(1_000_000_000_000_000)).unwrap(),
+            210_000_000_000_000_000
+        );
+        assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101)).is_err());
     }
 
     #[test]
