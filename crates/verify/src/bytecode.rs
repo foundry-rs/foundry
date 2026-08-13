@@ -49,7 +49,7 @@ use foundry_evm::{
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
-use foundry_evm_networks::NetworkVariant;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use revm::{context::Block as _, state::AccountInfo};
 use std::path::PathBuf;
 
@@ -287,8 +287,9 @@ impl VerifyBytecodeArgs {
         }
     }
 
-    /// Run the `verify-bytecode` command with the selected EVM network implementation.
-    pub async fn run_with_network<FEN>(self) -> Result<()>
+    /// Run the `verify-bytecode` command with `FEN`, whose instantiated EVM uses
+    /// `execution_networks`.
+    pub async fn run_with_network<FEN>(self, execution_networks: NetworkConfigs) -> Result<()>
     where
         FEN: FoundryEvmNetwork,
     {
@@ -299,6 +300,17 @@ impl VerifyBytecodeArgs {
         let network_was_inferred = Self::configured_network(None, &config).is_none();
         let endpoint_identity = Self::endpoint_identity(&config).await?;
         Self::materialize_execution_network(&mut config, endpoint_identity.as_ref());
+        let source_networks = endpoint_identity
+            .as_ref()
+            .map(|identity| identity.network_profile)
+            .unwrap_or(config.networks);
+        if !execution_networks.supports_fork_source(&source_networks) {
+            eyre::bail!(
+                "the selected EVM network cannot execute `{}`; use the matching network \
+                 implementation",
+                source_networks.execution_network()
+            );
+        }
         self.run_with_network_and_config::<FEN>(config, endpoint_identity, network_was_inferred)
             .await
     }
