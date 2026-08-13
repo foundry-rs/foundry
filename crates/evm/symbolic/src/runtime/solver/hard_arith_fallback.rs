@@ -123,11 +123,18 @@ const MAX_CHECKED_MUL_SUPPORT_VISITS: usize = 256;
 /// perform the generic bounded candidate search, and a model is returned only when it satisfies
 /// every original constraint.
 pub(super) fn checked_mul_guard_branch_model(
+    cx: &SymCx,
     constraints: &[SymBoolExpr],
     original_constraints: &[SymBoolExpr],
+    replayable_storage: &SymbolicVars,
 ) -> Option<SymbolicModel> {
-    if original_constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
-        || original_constraints.iter().any(SymBoolExpr::contains_gasleft)
+    let mut eval_vars = SymbolicVars::default();
+    for constraint in original_constraints {
+        constraint.collect_eval_vars(&mut eval_vars);
+    }
+    if eval_vars
+        .iter()
+        .any(|var| !cx.is_replayable_input(*var) && !replayable_storage.contains(var))
     {
         return None;
     }
@@ -1014,6 +1021,12 @@ fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<
 mod tests {
     use super::*;
 
+    fn replayable_input(cx: &mut SymCx, name: &str) -> SymExpr {
+        let symbol = cx.intern(name);
+        cx.mark_replayable_input(symbol);
+        SymExpr::get_var(cx, symbol)
+    }
+
     fn checked_mul_guard_word(
         cx: &mut SymCx,
         zero_operand: &SymExpr,
@@ -1033,8 +1046,8 @@ mod tests {
     #[test]
     fn checked_mul_guard_branch_model_preserves_exact_operand_constraints() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
+        let x = replayable_input(&mut cx, "x");
+        let y = replayable_input(&mut cx, "y");
         let guard = checked_mul_guard_word(&mut cx, &x, &y);
         let zero = SymExpr::zero(&mut cx);
         let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
@@ -1043,8 +1056,13 @@ mod tests {
         let seven = SymExpr::constant(&mut cx, U256::from(7));
         let y_is_seven = SymBoolExpr::eq(&mut cx, y.clone(), seven);
         let true_constraints = [guard_is_true, y_is_seven];
-        let true_model = checked_mul_guard_branch_model(&true_constraints, &true_constraints)
-            .expect("true guard branch model");
+        let true_model = checked_mul_guard_branch_model(
+            &cx,
+            &true_constraints,
+            &true_constraints,
+            &SymbolicVars::default(),
+        )
+        .expect("true guard branch model");
         assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
         assert_eq!(y.eval_model(&true_model).unwrap(), U256::from(7));
         assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
@@ -1052,8 +1070,13 @@ mod tests {
         let three = SymExpr::constant(&mut cx, U256::from(3));
         let y_is_three = SymBoolExpr::eq(&mut cx, y.clone(), three);
         let false_constraints = [guard_is_false, y_is_three];
-        let false_model = checked_mul_guard_branch_model(&false_constraints, &false_constraints)
-            .expect("false guard branch model");
+        let false_model = checked_mul_guard_branch_model(
+            &cx,
+            &false_constraints,
+            &false_constraints,
+            &SymbolicVars::default(),
+        )
+        .expect("false guard branch model");
         assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
         assert_eq!(y.eval_model(&false_model).unwrap(), U256::from(3));
         assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
@@ -1062,8 +1085,8 @@ mod tests {
     #[test]
     fn checked_mul_guard_branch_model_completes_original_model_symbols() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
+        let x = replayable_input(&mut cx, "x");
+        let y = replayable_input(&mut cx, "y");
         let guard = checked_mul_guard_word(&mut cx, &x, &y);
         let zero = SymExpr::zero(&mut cx);
         let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero).not(&mut cx);
@@ -1073,9 +1096,11 @@ mod tests {
         let slot_is_not_one = SymBoolExpr::eq(&mut cx, slot, one).not(&mut cx);
         let normalized = [guard_is_true.clone()];
         let original = [guard_is_true, slot_is_not_one];
+        let replayable_storage = [slot_symbol].into_iter().collect();
 
-        let model = checked_mul_guard_branch_model(&normalized, &original)
-            .expect("completed guard branch model");
+        let model =
+            checked_mul_guard_branch_model(&cx, &normalized, &original, &replayable_storage)
+                .expect("completed guard branch model");
 
         assert_eq!(model.get(&slot_symbol), Some(&U256::ZERO));
         assert!(fallback_model_satisfies_all_constraints(&original, &model));
@@ -1084,8 +1109,8 @@ mod tests {
     #[test]
     fn checked_mul_guard_branch_model_rejects_symbolic_hash_assignments() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
+        let x = replayable_input(&mut cx, "x");
+        let y = replayable_input(&mut cx, "y");
         let guard = checked_mul_guard_word(&mut cx, &x, &y);
         let zero = SymExpr::zero(&mut cx);
         let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
@@ -1095,14 +1120,22 @@ mod tests {
         let hash_is_zero = SymBoolExpr::eq(&mut cx, hash, zero);
         let constraints = [guard_is_true, y_is_zero, hash_is_zero];
 
-        assert!(checked_mul_guard_branch_model(&constraints, &constraints).is_none());
+        assert!(
+            checked_mul_guard_branch_model(
+                &cx,
+                &constraints,
+                &constraints,
+                &SymbolicVars::default(),
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn checked_mul_guard_branch_model_rejects_gasleft_assignments() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
+        let x = replayable_input(&mut cx, "x");
+        let y = replayable_input(&mut cx, "y");
         let guard = checked_mul_guard_word(&mut cx, &x, &y);
         let zero = SymExpr::zero(&mut cx);
         let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
@@ -1110,14 +1143,48 @@ mod tests {
         let gas_is_zero = SymBoolExpr::eq(&mut cx, gas_left, zero);
         let constraints = [guard_is_true, gas_is_zero];
 
-        assert!(checked_mul_guard_branch_model(&constraints, &constraints).is_none());
+        assert!(
+            checked_mul_guard_branch_model(
+                &cx,
+                &constraints,
+                &constraints,
+                &SymbolicVars::default(),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn checked_mul_guard_branch_model_rejects_opaque_var_assignments() {
+        for name in ["create_address_opaque", "vmRandomUint_0", "svm_0"] {
+            let mut cx = SymCx::new();
+            let x = replayable_input(&mut cx, "x");
+            let y = replayable_input(&mut cx, "y");
+            let guard = checked_mul_guard_word(&mut cx, &x, &y);
+            let zero = SymExpr::zero(&mut cx);
+            let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
+            let opaque = SymExpr::var(&mut cx, name);
+            let opaque_is_zero = SymBoolExpr::eq(&mut cx, opaque, zero);
+            let constraints = [guard_is_true, opaque_is_zero];
+
+            assert!(
+                checked_mul_guard_branch_model(
+                    &cx,
+                    &constraints,
+                    &constraints,
+                    &SymbolicVars::default(),
+                )
+                .is_none(),
+                "accepted opaque model symbol {name}"
+            );
+        }
     }
 
     #[test]
     fn checked_mul_guard_branch_model_propagates_relational_operand_constraints() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
+        let x = replayable_input(&mut cx, "x");
+        let y = replayable_input(&mut cx, "y");
         let guard = checked_mul_guard_word(&mut cx, &x, &y);
         let zero = SymExpr::zero(&mut cx);
         let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
@@ -1127,16 +1194,26 @@ mod tests {
         let x_plus_seven = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), seven);
         let y_is_x_plus_seven = SymBoolExpr::eq(&mut cx, y.clone(), x_plus_seven);
         let true_constraints = [guard_is_true, y_is_x_plus_seven];
-        let true_model = checked_mul_guard_branch_model(&true_constraints, &true_constraints)
-            .expect("true relational model");
+        let true_model = checked_mul_guard_branch_model(
+            &cx,
+            &true_constraints,
+            &true_constraints,
+            &SymbolicVars::default(),
+        )
+        .expect("true relational model");
         assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
         assert_eq!(y.eval_model(&true_model).unwrap(), U256::from(7));
         assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
 
         let operands_are_equal = SymBoolExpr::eq(&mut cx, x.clone(), y.clone());
         let false_constraints = [guard_is_false, operands_are_equal];
-        let false_model = checked_mul_guard_branch_model(&false_constraints, &false_constraints)
-            .expect("false relational model");
+        let false_model = checked_mul_guard_branch_model(
+            &cx,
+            &false_constraints,
+            &false_constraints,
+            &SymbolicVars::default(),
+        )
+        .expect("false relational model");
         assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
         assert_eq!(y.eval_model(&false_model).unwrap(), U256::MAX);
         assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
@@ -1145,14 +1222,14 @@ mod tests {
     #[test]
     fn checked_mul_guard_branch_model_stops_at_shared_support_budget() {
         let mut cx = SymCx::new();
-        let first_x = SymExpr::var(&mut cx, "first_x");
-        let first_y = SymExpr::var(&mut cx, "first_y");
+        let first_x = replayable_input(&mut cx, "first_x");
+        let first_y = replayable_input(&mut cx, "first_y");
         let first_guard = checked_mul_guard_word(&mut cx, &first_x, &first_y);
         let zero = SymExpr::zero(&mut cx);
         let first_guard_is_true = SymBoolExpr::eq(&mut cx, first_guard, zero.clone()).not(&mut cx);
 
-        let second_x = SymExpr::var(&mut cx, "second_x");
-        let second_y = SymExpr::var(&mut cx, "second_y");
+        let second_x = replayable_input(&mut cx, "second_x");
+        let second_y = replayable_input(&mut cx, "second_y");
         let second_guard = checked_mul_guard_word(&mut cx, &second_x, &second_y);
         let second_guard_is_false = SymBoolExpr::eq(&mut cx, second_guard, zero);
 
@@ -1176,19 +1253,27 @@ mod tests {
         .collect::<SymbolicModel>();
         assert!(fallback_model_satisfies_all_constraints(&constraints, &expected));
 
-        assert!(checked_mul_guard_branch_model(&constraints, &constraints).is_none());
+        assert!(
+            checked_mul_guard_branch_model(
+                &cx,
+                &constraints,
+                &constraints,
+                &SymbolicVars::default(),
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn checked_mul_guard_branch_model_stops_at_shared_expression_budget() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
+        let x = replayable_input(&mut cx, "x");
+        let y = replayable_input(&mut cx, "y");
         let guard = checked_mul_guard_word(&mut cx, &x, &y);
         let zero = SymExpr::zero(&mut cx);
         let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
 
-        let source = SymExpr::var(&mut cx, "source");
+        let source = replayable_input(&mut cx, "source");
         let mut shared = source;
         for _ in 0..9 {
             shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
@@ -1198,7 +1283,10 @@ mod tests {
         let normalized = normalize_constraints_for_solver(&mut cx, &original);
 
         assert!(normalized.contains(&support));
-        assert!(checked_mul_guard_branch_model(&normalized, &original).is_none());
+        assert!(
+            checked_mul_guard_branch_model(&cx, &normalized, &original, &SymbolicVars::default(),)
+                .is_none()
+        );
     }
 
     #[test]

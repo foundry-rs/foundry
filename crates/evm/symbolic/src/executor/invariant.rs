@@ -90,7 +90,7 @@ impl SymbolicExecutor {
             None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(fail);
-                if self.solver.is_sat(&mut self.cx, &constraints)? {
+                if self.is_sat_with_state(state, &constraints)? {
                     state.constraints = constraints;
                     Ok(true)
                 } else {
@@ -231,7 +231,12 @@ impl SymbolicExecutor {
         steps: &[SequenceStepTemplate],
         state: &PathState,
     ) -> Result<(Vec<SymbolicInvariantStep>, Vec<SymbolicStorageAssignment>), SymbolicError> {
-        let model = self.solver.model(&mut self.cx, &state.constraints)?;
+        let replayable_storage = state.world.replay_storage_symbols();
+        let model = self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )?;
         let sequence = steps
             .iter()
             .map(|step| {
