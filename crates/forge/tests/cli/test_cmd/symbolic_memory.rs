@@ -50,6 +50,72 @@ contract SymbolicMload {
     assert!(!stdout.contains("symbolic MLOAD offset"), "{stdout}");
 });
 
+forgetest_init!(symbolic_fixed_memory_access_rejects_oversized_offset, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fixed_memory_access_rejects_oversized_offset because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOversizedMemoryOffset.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicOversizedMemoryOffset is Test {
+    function load(uint256 offset) external pure {
+        assembly {
+            pop(mload(offset))
+        }
+    }
+
+    function store(uint256 offset) external pure {
+        assembly {
+            mstore(offset, 1)
+        }
+    }
+
+    function store8(uint256 offset) external pure {
+        assembly {
+            mstore8(offset, 1)
+        }
+    }
+
+    function checkOversizedFixedMemoryAccesses() public {
+        uint256 offset = type(uint256).max;
+        (bool loadOk,) = address(this).call(abi.encodeCall(this.load, (offset)));
+        (bool storeOk,) = address(this).call(abi.encodeCall(this.store, (offset)));
+        (bool store8Ok,) = address(this).call(abi.encodeCall(this.store8, (offset)));
+        assertFalse(loadOk);
+        assertFalse(storeOk);
+        assertFalse(store8Ok);
+    }
+
+    function checkConstrainedOversizedMemoryAccess(uint256 offset) public {
+        vm.assume(offset == type(uint256).max);
+        (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
+        assertFalse(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "check.*Oversized"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkOversizedFixedMemoryAccesses()
+[PASS] checkConstrainedOversizedMemoryAccess(uint256)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_mstore_accepts_constrained_symbolic_offset, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

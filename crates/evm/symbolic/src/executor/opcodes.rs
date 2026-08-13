@@ -290,6 +290,56 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
+    fn guard_fixed_memory_access(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        offset: &SymExpr,
+        size: usize,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let max_offset = usize::MAX - size;
+        if let Some(offset) = state.constrained_usize_checked(&mut self.cx, offset) {
+            if offset.is_ok_and(|offset| offset <= max_offset) {
+                return Ok(None);
+            }
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            return Ok(Some(StepOutcome::Revert));
+        }
+        if state.upper_bound_usize(&mut self.cx, offset).is_some_and(|offset| offset <= max_offset)
+        {
+            return Ok(None);
+        }
+
+        let max_offset = SymExpr::constant(&mut self.cx, U256::from(max_offset));
+        let representable =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), max_offset);
+        let (valid_constraints, valid_sat) =
+            self.constraints_with_condition(state, representable.clone())?;
+        let invalid = representable.not(&mut self.cx);
+        let (invalid_constraints, invalid_sat) = self.constraints_with_condition(state, invalid)?;
+        match (valid_sat, invalid_sat) {
+            (true, true) => {
+                let mut valid = state.clone();
+                valid.pc = valid.pc.saturating_sub(1);
+                valid.constraints = valid_constraints;
+                worklist.push_back(valid);
+                state.constraints = invalid_constraints;
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                Ok(Some(StepOutcome::Revert))
+            }
+            (true, false) => {
+                state.constraints = valid_constraints;
+                Ok(None)
+            }
+            (false, true) => {
+                state.constraints = invalid_constraints;
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                Ok(Some(StepOutcome::Revert))
+            }
+            (false, false) => Ok(Some(StepOutcome::AssumeRejected)),
+        }
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub(super) fn step<FEN: FoundryEvmNetwork>(
         &mut self,
@@ -725,16 +775,34 @@ impl SymbolicExecutor {
                 state.stack.pop()?;
             }
             opcode::MLOAD => {
+                let offset = state.stack.peek(0)?.clone();
+                if let Some(outcome) =
+                    self.guard_fixed_memory_access(state, worklist, &offset, 32)?
+                {
+                    return Ok(outcome);
+                }
                 let offset = state.stack.pop()?;
                 let value = state.memory.load_word_offset(&mut self.cx, offset)?;
                 state.stack.push(value)?;
             }
             opcode::MSTORE => {
+                let offset = state.stack.peek(0)?.clone();
+                if let Some(outcome) =
+                    self.guard_fixed_memory_access(state, worklist, &offset, 32)?
+                {
+                    return Ok(outcome);
+                }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
                 state.memory.store_word_offset(&mut self.cx, offset, value);
             }
             opcode::MSTORE8 => {
+                let offset = state.stack.peek(0)?.clone();
+                if let Some(outcome) =
+                    self.guard_fixed_memory_access(state, worklist, &offset, 1)?
+                {
+                    return Ok(outcome);
+                }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
                 state.memory.store_byte_offset(&mut self.cx, offset, value);
