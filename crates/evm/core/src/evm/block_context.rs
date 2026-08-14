@@ -97,11 +97,6 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
         self.grandparent = std::mem::take(&mut self.parent);
         self.parent = std::mem::take(&mut self.current);
     }
-
-    /// Builds context for a synthetic transaction in a child of the current block.
-    pub fn child(&self, tx: &TxEnvFor<FEN>) -> ChainContextFor<FEN> {
-        self.clone().into_child().next_transaction(tx)
-    }
 }
 
 /// Builds context for a synthetic transaction executed on top of `block_number`.
@@ -127,7 +122,7 @@ where
     let current = transaction_envs::<FEN>(&block)?;
     let parent = parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default();
 
-    Ok(BlockContext::<FEN>::new(Vec::new(), parent, current).child(tx))
+    Ok(BlockContext::<FEN>::new(Vec::new(), parent, current).into_child().next_transaction(tx))
 }
 
 async fn fetch_parent<FEN, P>(

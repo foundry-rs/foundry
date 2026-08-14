@@ -471,7 +471,7 @@ where
 {
     block_context.map_or_else(
         || FEN::EvmFactory::default().chain_context_for_transaction(tx_env),
-        |context| context.child(tx_env),
+        |context| context.clone().into_child().next_transaction(tx_env),
     )
 }
 

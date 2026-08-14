@@ -14,8 +14,8 @@ use foundry_evm_core::{
     FoundryContextExt,
     backend::{ContextUpdate, JournaledState, LocalForkId},
     evm::{
-        BlockEnvFor, ChainContextFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor,
-        apply_context_transition,
+        BlockEnvFor, ChainContextFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
+        SpecFor, TxEnvFor,
     },
     fork::CreateFork,
 };
@@ -445,10 +445,10 @@ fn fork_env_op<FEN: FoundryEvmNetwork, T: SolValue>(
     match context_update {
         ContextUpdate::Unchanged => {}
         ContextUpdate::Replace(chain_context) => {
-            apply_context_transition::<FEN>(ecx, Some(&chain_context));
+            FEN::EvmFactory::default().apply_context_transition(ecx, Some(&chain_context));
         }
         ContextUpdate::Rebase => {
-            apply_context_transition::<FEN>(ecx, None);
+            FEN::EvmFactory::default().apply_context_transition(ecx, None);
         }
     }
     Ok(result.abi_encode())
@@ -506,10 +506,10 @@ fn transact<FEN: FoundryEvmNetwork>(
     let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
     match context_update {
         ContextUpdate::Replace(chain_context) => {
-            apply_context_transition::<FEN>(ccx.ecx, Some(&chain_context));
+            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(&chain_context));
         }
         ContextUpdate::Rebase => {
-            apply_context_transition::<FEN>(ccx.ecx, None);
+            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
         }
         ContextUpdate::Unchanged => {}
     }

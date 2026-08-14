@@ -511,18 +511,13 @@ struct PreparedMonadExecution {
 }
 
 #[cfg(feature = "monad")]
-fn exact_monad_context(context: MonadReplayContext) -> MonadExecutionContext<'static> {
-    MonadExecutionContext::Exact(Box::new(context))
-}
-
-#[cfg(feature = "monad")]
 fn exact_monad_context_at(
     context: &MonadReplayContext,
     current_tx_index: usize,
 ) -> MonadExecutionContext<'static> {
     let mut context = context.clone();
     context.current_tx_index = current_tx_index;
-    exact_monad_context(context)
+    MonadExecutionContext::Exact(Box::new(context))
 }
 
 #[cfg(feature = "monad")]
@@ -1329,19 +1324,9 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
-    /// Returns true if Celo network mode is active.
-    pub const fn is_celo(&self) -> bool {
-        self.networks.is_celo()
-    }
-
     /// Returns true if Monad network mode is active
     pub const fn is_monad(&self) -> bool {
         self.networks.is_monad()
-    }
-
-    /// Returns the active execution network family name.
-    pub const fn execution_family_name(&self) -> &'static str {
-        self.networks.execution_family_name()
     }
 
     /// Returns the active execution profile name.
