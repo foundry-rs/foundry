@@ -1265,6 +1265,71 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/7574>
+forgetest_async!(failed_fork_test_reports_block_number, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_mine(Some(U256::from(7)), None).await.unwrap();
+    let endpoint = handle.http_endpoint();
+
+    prj.add_test(
+        "ForkBlock.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function createSelectFork(string calldata url, uint256 blockNumber)
+        external
+        returns (uint256 forkId);
+}}
+
+contract ForkBlockTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkFailure() public {{
+        vm.createSelectFork("{endpoint}", 7);
+        require(false, "fork failure");
+    }}
+
+    function testForkSuccess() public {{
+        vm.createSelectFork("{endpoint}", 7);
+    }}
+
+    function testLocalFailure() public pure {{
+        require(false, "local failure");
+    }}
+
+    function testLocalSuccess() public pure {{}}
+}}
+"#
+        ),
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/ForkBlock.t.sol:ForkBlockTest
+[FAIL: fork failure] testForkFailure() (block: 7) ([GAS])
+[PASS] testForkSuccess() ([GAS])
+[FAIL: local failure] testLocalFailure() ([GAS])
+[PASS] testLocalSuccess() ([GAS])
+Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/ForkBlock.t.sol:ForkBlockTest
+[FAIL: fork failure] testForkFailure() (block: 7) ([GAS])
+[FAIL: local failure] testLocalFailure() ([GAS])
+
+Encountered a total of 2 failing tests, 2 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+});
+
 // Validates BPO1 blob gas price calculation during fork transaction replay.
 // Block 24127158 has a blob tx at index 0, target tx at index 1.
 // Forking at the target tx replays the blob tx with correct BPO1 blob base fee calculation.
@@ -6208,16 +6273,16 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
-[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
-[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+[FAIL: EvmError: Revert] test_roll_fork() (block: [..]) ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() (block: [..]) ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/Counter.t.sol:CounterTest
-[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
-[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+[FAIL: EvmError: Revert] test_roll_fork() (block: [..]) ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() (block: [..]) ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
