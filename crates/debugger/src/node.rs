@@ -247,6 +247,9 @@ fn labeled_precompile_call_notice(
 }
 
 fn known_precompile_call_notice(trace: &CallTrace) -> Option<String> {
+    if trace.address == precompiles::P256_VERIFY && trace.maybe_precompile != Some(true) {
+        return None;
+    }
     let name = known_precompile_name(trace.address)?;
     let mut notice = format!("precompile: {name} @ {}", trace.address);
     append_raw_precompile_io(&mut notice, trace);
@@ -524,6 +527,34 @@ mod tests {
         assert_eq!(
             notice,
             "precompile: sha256 @ 0x0000000000000000000000000000000000000002 input=0x68656c6c6f output=0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    #[test]
+    fn flatten_does_not_guess_unconfirmed_p256_precompile_calls() {
+        for maybe_precompile in [None, Some(false)] {
+            let arena = arena_with_child_after_staticcall(CallTrace {
+                address: precompiles::P256_VERIFY,
+                maybe_precompile,
+                ..Default::default()
+            });
+
+            let mut flattened = Vec::new();
+            flatten_call_trace(arena, &mut flattened);
+
+            assert_no_precompile_notice(&flattened[0].steps[0]);
+        }
+
+        let arena = arena_with_child_after_staticcall(CallTrace {
+            address: precompiles::P256_VERIFY,
+            maybe_precompile: Some(true),
+            ..Default::default()
+        });
+        let mut flattened = Vec::new();
+        flatten_call_trace(arena, &mut flattened);
+        assert_eq!(
+            assert_precompile_notice(&flattened[0].steps[0]),
+            "precompile: p256Verify @ 0x0000000000000000000000000000000000000100"
         );
     }
 
