@@ -494,6 +494,15 @@ contract SymbolicLogEmitter {
     }
 }
 
+contract SymbolicRevertingLogConstructor {
+    event ConstructorLog();
+
+    constructor() {
+        emit ConstructorLog();
+        revert();
+    }
+}
+
 contract SymbolicRecordedLogs is Test {
     event Local(uint256 indexed topic, bytes data);
 
@@ -512,7 +521,7 @@ contract SymbolicRecordedLogs is Test {
         try emitter.fail(topic + 2, data) {} catch {}
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 2);
+        assertEq(logs.length, 3);
 
         assertEq(logs[0].topics.length, 2);
         assertEq(logs[0].topics[0], keccak256("Local(uint256,bytes)"));
@@ -526,6 +535,11 @@ contract SymbolicRecordedLogs is Test {
         assertEq(logs[1].topics[0], keccak256("Helper(uint256,bytes)"));
         assertEq(logs[1].topics[1], bytes32(topic + 1));
         assertEq(logs[1].emitter, address(emitter));
+
+        assertEq(logs[2].topics.length, 2);
+        assertEq(logs[2].topics[0], keccak256("Helper(uint256,bytes)"));
+        assertEq(logs[2].topics[1], bytes32(topic + 2));
+        assertEq(logs[2].emitter, address(emitter));
 
         Vm.Log[] memory drained = vm.getRecordedLogs();
         assertEq(drained.length, 0);
@@ -541,6 +555,15 @@ contract SymbolicRecordedLogs is Test {
 
         Vm.Log[] memory drained = vm.getRecordedLogs();
         assertEq(drained.length, 0);
+    }
+
+    function checkRecordedRevertedCreate() public {
+        vm.recordLogs();
+        try new SymbolicRevertingLogConstructor() {} catch {}
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
     }
 }
 "#,
@@ -562,6 +585,12 @@ contract SymbolicRecordedLogs is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkRecordedLogsJson(uint256,bytes)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordedRevertedCreate()
 "#]],
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
@@ -3559,6 +3588,15 @@ forgetest_init!(symbolic_vm_record_accesses_tracks_symbolic_slots, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
+contract SymbolicRevertingStorageTarget {
+    function storeThenRevert(bytes32 slot, bytes32 stored) external {
+        assembly {
+            sstore(slot, stored)
+        }
+        revert();
+    }
+}
+
 contract SymbolicRecordAccesses is Test {
     function checkRecordAccesses(bytes32 slot, bytes32 stored) public {
         vm.record();
@@ -3624,9 +3662,37 @@ contract SymbolicRecordAccesses is Test {
 
         vm.stopRecord();
     }
+
+    function testRecordRevertedChildAccesses() public {
+        recordRevertedChildAccesses();
+    }
+
+    function checkRecordAccessesRevertedChild() public {
+        recordRevertedChildAccesses();
+    }
+
+    function recordRevertedChildAccesses() internal {
+        SymbolicRevertingStorageTarget target = new SymbolicRevertingStorageTarget();
+        bytes32 slot = bytes32(uint256(7));
+
+        vm.record();
+        (bool ok,) = address(target).call(
+            abi.encodeCall(target.storeThenRevert, (slot, bytes32(uint256(1))))
+        );
+        assertFalse(ok);
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        assertEq(reads.length, 1);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(writes[0], slot);
+    }
 }
 "#,
     );
+
+    cmd.args(["test", "--match-test", "testRecordRevertedChildAccesses"]).assert_success();
+    cmd.forge_fuse();
 
     let stdout = cmd
         .args(["test", "--symbolic", "--match-test", "checkRecordAccesses"])
@@ -3638,6 +3704,12 @@ contract SymbolicRecordAccesses is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkRecordAccesses(bytes32,bytes32)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordAccessesRevertedChild()
 "#]],
     );
     assert_relevant_lines(
@@ -4150,7 +4222,10 @@ contract OkDeployCodeCtor {
 }
 
 contract RevertingDeployCodeCtor {
+    event ConstructorLog();
+
     constructor() {
+        emit ConstructorLog();
         require(false, "ctor");
     }
 }
@@ -4176,8 +4251,13 @@ contract SymbolicDeployCodeCheatcode is Test {
     string constant TARGET = "test/SymbolicDeployCodeCheatcode.t.sol";
 
     function checkDeployCodeExpectedRevert() public {
+        vm.recordLogs();
         vm.expectRevert();
         vm.deployCode(string.concat(TARGET, ":RevertingDeployCodeCtor"));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
     }
 
     function checkDeployCodeBranchingConstructor() public {

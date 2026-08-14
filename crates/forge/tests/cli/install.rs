@@ -860,7 +860,7 @@ async fn uni_v4_core_sync_foundry_lock() {
     let submod_solmate =
         submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/solmate")).unwrap();
 
-    cmd.arg("install").assert_success();
+    cmd.args(["install", "--allow-project-env"]).assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
@@ -877,7 +877,7 @@ async fn uni_v4_core_sync_foundry_lock() {
     git.commit("Foundry lock").unwrap();
 
     // Try update. Nothing should get updated everything is pinned tag/rev.
-    cmd.forge_fuse().arg("update").assert_success();
+    cmd.forge_fuse().args(["update", "--allow-project-env"]).assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std, DepIdentifier::Rev { .. }));

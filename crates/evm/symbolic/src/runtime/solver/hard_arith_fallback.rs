@@ -140,11 +140,50 @@ pub(super) fn checked_mul_guard_branch_model(
     }
 
     let mut remaining_support_visits = MAX_CHECKED_MUL_SUPPORT_VISITS;
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::<&SymBoolExpr>::default();
+    let mut pending = Vec::new();
     for constraint in constraints {
-        let Some((zero_operand, expected, guard_is_true)) = checked_mul_guard_branch(constraint)
-        else {
+        if !seen.insert(constraint) {
             continue;
-        };
+        }
+        if remaining_support_visits == 0 {
+            return None;
+        }
+        remaining_support_visits -= 1;
+        if let Some(candidate) = checked_mul_guard_branch(constraint) {
+            candidates.push(candidate);
+        }
+        match constraint.kind() {
+            SymBoolExprKind::Not(inner) => pending.push(inner),
+            SymBoolExprKind::And(values) => pending.extend(values.iter()),
+            SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) => {}
+        }
+    }
+
+    let mut nested = Vec::new();
+    while let Some(constraint) = pending.pop() {
+        if !seen.insert(constraint) {
+            continue;
+        }
+        if remaining_support_visits == 0 {
+            return None;
+        }
+        remaining_support_visits -= 1;
+        nested.push(constraint);
+        match constraint.kind() {
+            SymBoolExprKind::Not(inner) => pending.push(inner),
+            SymBoolExprKind::And(values) => pending.extend(values.iter()),
+            SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) => {}
+        }
+    }
+    for constraint in nested.into_iter().rev() {
+        if let Some(candidate) = checked_mul_guard_branch(constraint) {
+            candidates.push(candidate);
+        }
+    }
+
+    for (zero_operand, expected, guard_is_true) in candidates {
         let assignments = if guard_is_true {
             [(U256::ZERO, U256::ZERO), (U256::ONE, U256::ONE)]
         } else {
@@ -191,6 +230,19 @@ pub(super) fn checked_mul_guard_branch_model(
                     }
                 }
                 if valid {
+                    if eval_vars.iter().all(|var| model.contains_name(*var)) {
+                        let valid = original_constraints.iter().all(|constraint| {
+                            charge_support_constraint(constraint, &mut remaining_support_visits)
+                                && constraint.eval_model(&model).unwrap_or(false)
+                        });
+                        if valid {
+                            return Some(model);
+                        }
+                        if remaining_support_visits == 0 {
+                            return None;
+                        }
+                        continue;
+                    }
                     if complete_fallback_support_model(
                         constraints,
                         &mut model,
@@ -219,17 +271,30 @@ pub(super) fn checked_mul_guard_branch_model(
 }
 
 fn checked_mul_guard_branch(constraint: &SymBoolExpr) -> Option<(SymExpr, SymExpr, bool)> {
-    let (comparison, guard_is_true) = match constraint.kind() {
-        SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => ((left, right), false),
-        SymBoolExprKind::Not(inner) => {
-            let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = inner.kind() else {
-                return None;
-            };
-            ((left, right), true)
+    match constraint.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+            checked_mul_guard_word_comparison(left, right)
+                .map(|(zero_operand, expected)| (zero_operand, expected, false))
         }
-        _ => return None,
-    };
-    let (left, right) = comparison;
+        SymBoolExprKind::Not(inner) => match inner.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                checked_mul_guard_word_comparison(left, right)
+                    .map(|(zero_operand, expected)| (zero_operand, expected, true))
+            }
+            SymBoolExprKind::And(values) => checked_mul_guard_conjunction(values)
+                .map(|(zero_operand, expected)| (zero_operand, expected, true)),
+            _ => None,
+        },
+        SymBoolExprKind::And(values) => checked_mul_guard_conjunction(values)
+            .map(|(zero_operand, expected)| (zero_operand, expected, false)),
+        _ => None,
+    }
+}
+
+fn checked_mul_guard_word_comparison(
+    left: &SymExpr,
+    right: &SymExpr,
+) -> Option<(SymExpr, SymExpr)> {
     let guard_word = if right.as_const().is_some_and(|value| value.is_zero()) {
         left
     } else if left.as_const().is_some_and(|value| value.is_zero()) {
@@ -254,7 +319,27 @@ fn checked_mul_guard_branch(constraint: &SymBoolExpr) -> Option<(SymExpr, SymExp
             continue;
         };
         if zero_condition == quotient_zero_condition {
-            return Some((zero_operand, expected, guard_is_true));
+            return Some((zero_operand, expected));
+        }
+    }
+    None
+}
+
+fn checked_mul_guard_conjunction(values: &[SymBoolExpr]) -> Option<(SymExpr, SymExpr)> {
+    for value in values {
+        let SymBoolExprKind::Not(quotient_matches) = value.kind() else {
+            continue;
+        };
+        let Some((zero_operand, expected, zero_condition)) =
+            checked_mul_guard_operands(quotient_matches)
+        else {
+            continue;
+        };
+        let contains_negated_zero_condition = values.iter().any(
+            |value| matches!(value.kind(), SymBoolExprKind::Not(inner) if inner == &zero_condition),
+        );
+        if contains_negated_zero_condition {
+            return Some((zero_operand, expected));
         }
     }
     None
@@ -1080,6 +1165,63 @@ mod tests {
         assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
         assert_eq!(y.eval_model(&false_model).unwrap(), U256::from(3));
         assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
+    }
+
+    #[test]
+    fn checked_mul_guard_branch_model_matches_nested_boolean_guard() {
+        let mut cx = SymCx::new();
+        let x = replayable_input(&mut cx, "x");
+        let y = replayable_input(&mut cx, "y");
+        let zero = SymExpr::zero(&mut cx);
+        let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero.clone());
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), x.clone());
+        let guarded_quotient = SymExpr::ite(&mut cx, x_is_zero.clone(), zero, quotient);
+        let quotient_matches = SymBoolExpr::eq(&mut cx, guarded_quotient, y.clone());
+        let quotient_mismatches = quotient_matches.not(&mut cx);
+        let x_is_nonzero = x_is_zero.not(&mut cx);
+        let guard_is_false = SymBoolExpr::and(&mut cx, vec![quotient_mismatches, x_is_nonzero]);
+        let max = SymExpr::constant(&mut cx, U256::MAX);
+        let product_is_not_max = SymBoolExpr::eq(&mut cx, product, max).not(&mut cx);
+
+        let guard_is_true = guard_is_false.clone().not(&mut cx);
+        let nested_false_branch =
+            SymBoolExpr::and(&mut cx, vec![guard_is_true, product_is_not_max.clone()]).not(&mut cx);
+        let false_constraints = [nested_false_branch.clone()];
+        let false_model = checked_mul_guard_branch_model(
+            &cx,
+            &false_constraints,
+            &false_constraints,
+            &SymbolicVars::default(),
+        )
+        .expect("nested false guard branch model");
+        assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
+        assert_eq!(y.eval_model(&false_model).unwrap(), U256::from(2));
+        assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
+
+        let guard_word = checked_mul_guard_word(&mut cx, &x, &y);
+        let zero = SymExpr::zero(&mut cx);
+        let word_guard_is_false = SymBoolExpr::eq(&mut cx, guard_word, zero);
+        let normalized = [nested_false_branch, word_guard_is_false.clone()];
+        let original = [word_guard_is_false, normalized[0].clone()];
+        let combined_model =
+            checked_mul_guard_branch_model(&cx, &normalized, &original, &SymbolicVars::default())
+                .expect("combined word and nested guard model");
+        assert!(fallback_model_satisfies_all_constraints(&original, &combined_model));
+
+        let guarded_nonmax_product =
+            SymBoolExpr::and(&mut cx, vec![guard_is_false, product_is_not_max]).not(&mut cx);
+        let true_constraints = [guarded_nonmax_product];
+        let true_model = checked_mul_guard_branch_model(
+            &cx,
+            &true_constraints,
+            &true_constraints,
+            &SymbolicVars::default(),
+        )
+        .expect("nested true guard branch model");
+        assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
+        assert_eq!(y.eval_model(&true_model).unwrap(), U256::ZERO);
+        assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
     }
 
     #[test]

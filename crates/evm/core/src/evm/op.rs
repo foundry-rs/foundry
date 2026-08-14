@@ -17,7 +17,7 @@ use revm::{
 };
 
 use crate::{
-    FoundryContextExt, FoundryContextState, FoundryInspectorExt,
+    FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm},
 };
@@ -49,7 +49,8 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
 >;
 
 impl FoundryEvmFactory for OpEvmFactory {
-    type ContextAux = ();
+    type ChainContext = ();
+    type TransactionState = ();
     type FoundryContext<'db> = OpEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
@@ -59,7 +60,7 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _context_aux: Self::ContextAux,
+        _chain_context: Self::ChainContext,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         self.create_evm(db, evm_env)
     }
@@ -68,7 +69,7 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _context_aux: Self::ContextAux,
+        _chain_context: Self::ChainContext,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
@@ -81,11 +82,19 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
+        chain_context: Self::ChainContext,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<dyn NestedEvm<Spec = OpSpecId, Block = BlockEnv, Tx = OpTx, Aux = ()> + 'db> {
+    ) -> Box<
+        dyn NestedEvm<
+                Spec = OpSpecId,
+                Block = BlockEnv,
+                Tx = OpTx,
+                ChainContext = (),
+                TransactionState = (),
+            > + 'db,
+    > {
         Box::new(
-            self.create_foundry_evm_with_inspector(db, evm_env, context_aux, inspector)
+            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
                 .into_inner(),
         )
     }
@@ -108,22 +117,10 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
     type Spec = OpSpecId;
     type Block = BlockEnv;
     type Tx = OpTx;
-    type Aux = ();
-
+    type ChainContext = ();
+    type TransactionState = ();
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx().journaled_state.inner
-    }
-
-    fn context_state(&self) -> FoundryContextState<Self::Aux> {
-        self.ctx_ref().context_state()
-    }
-
-    fn aux_state(&self) -> Self::Aux {
-        self.ctx_ref().aux_state()
-    }
-
-    fn set_context_state(&mut self, state: FoundryContextState<Self::Aux>) {
-        self.ctx().set_context_state(state);
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

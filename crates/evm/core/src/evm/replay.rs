@@ -195,7 +195,7 @@ mod monad_tests {
     use alloy_monad_evm::MonadEvmFactory;
     use alloy_sol_types::{SolCall, SolEvent};
     use monad_revm::{
-        MonadContext, MonadHardfork,
+        MonadContext, MonadHardfork, MonadJournalTr,
         staking::{
             STAKING_ADDRESS,
             constants::{MON, SYSTEM_ADDRESS},
@@ -356,16 +356,18 @@ mod monad_tests {
             EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
         let mut evm =
             factory.create_evm_with_inspector(db, evm_env, ProtocolPrestateInspector::default());
-        let context_before = evm.context_state();
+        let journal_before = evm.ctx().journal_inner().clone();
+        let chain_before = evm.ctx().chain.clone();
+        let tracker_before = evm.ctx().journaled_state.reserve_balance().clone();
 
         let error = execute_replay_transaction(&factory, &mut evm, tx).unwrap_err();
 
         assert!(error.to_string().contains("reverted or halted"));
         assert!(evm.inspector().call_count > 0);
         assert_eq!(evm.inspector().staking_balance, Some(initial_staking_balance + reward));
-        let context_after = evm.context_state();
-        assert_eq!(context_after.journaled_state.state, context_before.journaled_state.state);
-        assert_eq!(context_after.auxiliary, context_before.auxiliary);
+        assert_eq!(evm.ctx().journal_inner().state, journal_before.state);
+        assert_eq!(evm.ctx().chain, chain_before);
+        assert_eq!(evm.ctx().journaled_state.reserve_balance(), &tracker_before);
         assert_eq!(evm.db_mut().basic(SYSTEM_ADDRESS).unwrap().unwrap().nonce, 11);
         assert_eq!(
             evm.db_mut().basic(STAKING_ADDRESS).unwrap().unwrap().balance,
