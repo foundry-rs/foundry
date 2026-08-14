@@ -21,6 +21,7 @@ use foundry_evm_core::{
         FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs,
         refresh_context_after_state_change, with_cloned_context,
     },
+    precompiles::P256_VERIFY,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -378,6 +379,12 @@ struct PendingCreate2Redirect {
     charged_create_state_gas: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PendingCallTrace {
+    trace_idx: usize,
+    executed_address: Option<Address>,
+}
+
 /// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
@@ -416,10 +423,14 @@ pub struct InspectorStackInner {
     pub top_frame_journal: AddressMap<Account>,
     /// Whether the top-level frame failed before inspector result rewriting.
     top_level_frame_failed_before_rewrite: bool,
+    /// Whether the root call of the active isolated transaction executed as a precompile.
+    isolated_call_was_precompile: Option<bool>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
+    /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
+    pending_call_traces: Vec<PendingCallTrace>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
@@ -928,9 +939,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         input: Bytes,
         gas_limit: u64,
         value: U256,
-    ) -> (InterpreterResult, Option<Address>) {
+    ) -> (InterpreterResult, Option<Address>, bool) {
         let cached_evm_env = ecx.evm_clone();
         let cached_tx_env = ecx.tx_clone();
+        self.isolated_call_was_precompile = None;
 
         ecx.block_mut().set_basefee(0);
 
@@ -1048,13 +1060,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let mut gas = Gas::new(gas_limit);
+        let was_precompile_called = self.isolated_call_was_precompile.take().unwrap_or(false);
 
         let Ok(res) = res else {
             refresh_context_after_state_change::<FEN>(ecx);
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
-            return (result, None);
+            return (result, None, was_precompile_called);
         };
 
         let rolled_back = !res.result.is_success();
@@ -1106,7 +1119,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if rolled_back {
             refresh_context_after_state_change::<FEN>(ecx);
         }
-        (InterpreterResult { result, output, gas }, address)
+        (InterpreterResult { result, output, gas }, address, was_precompile_called)
     }
 
     /// Moves out of references, constructs a new [`InspectorStackRefMut`] and runs the given
@@ -1517,6 +1530,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 let output = tracer.call(ecx, call);
                 (output, tracer.traces().nodes().len() - 1)
             };
+            self.pending_call_traces.push(PendingCallTrace { trace_idx, executed_address: None });
             if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
                 revert_diag.set_trace_node(trace_idx);
             }
@@ -1539,6 +1553,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // Storage hook callbacks are instrumentation frames, not user calls. Let revm execute the
         // callback after tracing it, but do not apply mocks, pranks, broadcasts, or isolation.
         if storage_hook_callback {
+            if let Some(pending) = self.pending_call_traces.last_mut() {
+                pending.executed_address = Some(call.bytecode_address);
+            }
             return None;
         }
 
@@ -1591,12 +1608,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             return Some(outcome);
         }
 
+        if let Some(pending) = self.pending_call_traces.last_mut() {
+            pending.executed_address = Some(call.bytecode_address);
+        }
+
         if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
             match call.scheme {
                 // Isolate CALLs
                 CallScheme::Call => {
                     let input = call.input.bytes(ecx);
-                    let (result, _) = self.transact_inner(
+                    let (result, _, was_precompile_called) = self.transact_inner(
                         ecx,
                         TxKind::Call(call.target_address),
                         call.caller,
@@ -1607,7 +1628,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     return Some(CallOutcome {
                         result,
                         memory_offset: call.return_memory_offset.clone(),
-                        was_precompile_called: true,
+                        was_precompile_called,
                         precompile_call_logs: vec![],
                         charged_new_account_state_gas: call.charged_new_account_state_gas,
                     });
@@ -1650,11 +1671,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journal().depth() == 1 {
+            self.isolated_call_was_precompile = Some(outcome.was_precompile_called);
             return;
         }
 
         if ecx.journal().depth() == 0 {
             self.inner.top_level_frame_failed_before_rewrite |= !outcome.result.result.is_ok();
+        }
+
+        if let Some(pending) = self.pending_call_traces.pop()
+            && let Some(tracer) = self.tracer.as_deref_mut()
+        {
+            let trace = &mut tracer.traces_mut().nodes_mut()[pending.trace_idx].trace;
+            if trace.address == P256_VERIFY {
+                trace.maybe_precompile = Some(
+                    pending.executed_address == Some(P256_VERIFY) && outcome.was_precompile_called,
+                );
+            }
         }
 
         self.do_call_end(ecx, inputs, outcome);
@@ -1741,7 +1774,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 .get(&create.caller())
                 .map(|acc| create.caller().create(acc.info.nonce));
 
-            let (result, address) = self.transact_inner(
+            let (result, address, _) = self.transact_inner(
                 ecx,
                 TxKind::Create,
                 create.caller(),

@@ -158,6 +158,21 @@ pub(crate) fn is_known_precompile(
     false
 }
 
+pub(crate) fn is_known_precompile_call(
+    trace: &CallTrace,
+    networks: Option<NetworkConfigs>,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
+) -> bool {
+    // Unlike the long-established low addresses, P256 is hardfork-dependent. Traces without an
+    // execution classification, such as RPC callTracer frames, cannot safely infer it by address.
+    if trace.address == P256_VERIFY && trace.maybe_precompile != Some(true) {
+        return false;
+    }
+    is_known_precompile(trace.address, networks, chain_id, tempo_hardfork, monad_hardfork)
+}
+
 /// Tries to decode a precompile call. Returns `Some` if successful.
 pub(super) fn decode(
     trace: &CallTrace,
@@ -166,13 +181,7 @@ pub(super) fn decode(
     tempo_hardfork: Option<TempoHardfork>,
     monad_hardfork: Option<MonadHardfork>,
 ) -> Option<DecodedCallTrace> {
-    // The tracer determined the call did not execute as a precompile, e.g. code etched at the
-    // address of a precompile that is not active on the current hardfork.
-    if trace.maybe_precompile == Some(false) {
-        return None;
-    }
-
-    if !is_known_precompile(trace.address, networks, chain_id, tempo_hardfork, monad_hardfork) {
+    if !is_known_precompile_call(trace, networks, chain_id, tempo_hardfork, monad_hardfork) {
         return None;
     }
 
@@ -644,10 +653,22 @@ mod tests {
     }
 
     #[test]
-    fn skips_calls_not_executed_as_precompile() {
+    fn decodes_only_confirmed_p256_precompile_calls() {
+        for maybe_precompile in [None, Some(false)] {
+            let trace = CallTrace { address: P256_VERIFY, maybe_precompile, ..Default::default() };
+            assert!(decode(&trace, None, None, None, None).is_none());
+        }
+
         let trace =
-            CallTrace { address: P256_VERIFY, maybe_precompile: Some(false), ..Default::default() };
-        assert!(decode(&trace, None, None, None, None).is_none());
+            CallTrace { address: P256_VERIFY, maybe_precompile: Some(true), ..Default::default() };
+        assert!(decode(&trace, None, None, None, None).is_some());
+    }
+
+    #[test]
+    fn decodes_established_precompile_despite_negative_execution_classification() {
+        let trace =
+            CallTrace { address: SHA_256, maybe_precompile: Some(false), ..Default::default() };
+        assert!(decode(&trace, None, None, None, None).is_some());
     }
 
     #[test]
