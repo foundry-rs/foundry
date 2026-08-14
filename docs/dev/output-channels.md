@@ -107,7 +107,7 @@ Each row's status is one of:
 | `cast wallet sign`     | Signature                                            | JSON                                                           | migrated |
 | `cast wallet sign-auth`| Signed authorization RLP                             | JSON                                                           | migrated |
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | migrated |
-| `cast create2`         | `address\tsalt` (tab-separated)                      | n/a                                                            | migrated |
+| `cast create2`         | `address\tsalt` (tab-separated); when mining, omitted when stdout is a tty, where the stderr prose already shows the values | n/a                                                            | migrated |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast interface`       | Solidity interface source                            | JSON ABI array                                                 | migrated |
 | `cast artifact`        | JSON artifact                                        | n/a                                                            | migrated |
