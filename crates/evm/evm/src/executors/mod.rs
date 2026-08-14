@@ -42,6 +42,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
+use foundry_evm_networks::arbitrum;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
@@ -67,6 +68,8 @@ use std::{
 
 mod builder;
 pub use builder::ExecutorBuilder;
+
+mod campaign;
 
 pub mod fuzz;
 pub use fuzz::FuzzedExecutor;
@@ -101,8 +104,11 @@ pub fn should_ignore_revert<FEN: FoundryEvmNetwork>(
     reverter: Option<Address>,
 ) -> bool {
     !fail_on_revert
-        && reverter
-            .is_some_and(|reverter| reverter != target && !FEN::is_cheatcode_address(reverter))
+        && reverter.is_some_and(|reverter| {
+            reverter != target
+                && reverter != CHEATCODE_ADDRESS
+                && !FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.contains(&reverter)
+        })
 }
 
 sol! {
@@ -175,7 +181,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             },
         );
 
-        for &address in FEN::EXTRA_CHEATCODE_ADDRESSES {
+        for &address in FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES {
             backend.insert_account_info(
                 address,
                 revm::state::AccountInfo {
@@ -769,6 +775,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             backend.inspect_with_context(&mut evm_env, &mut tx_env, context_aux, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -776,6 +783,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             result,
             &backend,
             has_state_snapshot_failure,
+            fork_block_number,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -815,6 +823,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             backend.inspect_with_context(&mut evm_env, &mut tx_env, context_aux, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -822,6 +831,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             result,
             &*backend,
             has_state_snapshot_failure,
+            fork_block_number,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -857,6 +867,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             &mut stack,
         )?;
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -864,6 +875,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             result,
             &backend,
             has_state_snapshot_failure,
+            fork_block_number,
         )?;
         let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
@@ -1279,6 +1291,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     /// The raw output of the execution
     pub out: Option<Output>,
+    /// The active fork's block number after execution, if any.
+    pub fork_block_number: Option<u64>,
     /// The chisel state
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
@@ -1311,6 +1325,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             tx_env: TxEnvFor::<FEN>::default(),
             cheatcodes: Default::default(),
             out: None,
+            fork_block_number: None,
             chisel_state: None,
             reverter: None,
         }
@@ -1533,7 +1548,19 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
+    fork_block_number: Option<u64>,
 ) -> eyre::Result<RawCallResult<FEN>> {
+    // The backend carries the canonical fork pin, but a call may advance the execution block
+    // without publishing its copy-on-write backend (notably invariant `rollFork` calls). Use the
+    // post-call EVM block on regular chains so a later failing invariant observes that advancement.
+    // Arbitrum is the exception: its EVM block can be the lower L1 block while the fork pin is L2.
+    let fork_block_number = fork_block_number.map(|block| {
+        if arbitrum::is_arbitrum_chain(evm_env.cfg_env.chain_id) {
+            block
+        } else {
+            evm_env.block_env.number().saturating_to::<u64>()
+        }
+    });
     let execution_cancelled = inspector.execution_cancelled();
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {
@@ -1610,6 +1637,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         tx_env,
         cheatcodes,
         out,
+        fork_block_number,
         chisel_state,
         reverter,
     })

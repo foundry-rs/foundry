@@ -11,6 +11,7 @@ use serde::de::DeserializeOwned;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
@@ -45,6 +46,13 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
+
+/// Applies an optional percentage multiplier to a gas estimate.
+pub fn apply_gas_estimate_multiplier(estimate: u64, multiplier: Option<u64>) -> Result<u64> {
+    let Some(multiplier) = multiplier else { return Ok(estimate) };
+    let adjusted = u128::from(estimate) * u128::from(multiplier) / 100;
+    adjusted.try_into().map_err(|_| eyre::eyre!("multiplied gas estimate exceeds u64"))
+}
 
 /// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
 pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> =
@@ -191,35 +199,95 @@ pub fn now() -> Duration {
 }
 
 /// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
-pub fn common_setup() {
+pub fn common_setup<C: clap::CommandFactory>() -> Result<()> {
     install_crypto_provider();
     crate::handler::install();
-    load_dotenv();
+    // Use the concrete command grammar so option-like positional values cannot grant approval.
+    // Ignore unrelated errors because dotenv may supply values before the strict CLI parse.
+    let allow_project_env = C::command()
+        .ignore_errors(true)
+        .try_get_matches()
+        .ok()
+        .and_then(|matches| matches.get_one::<bool>("allow_project_env").copied())
+        .unwrap_or(false);
+    load_dotenv(allow_project_env)?;
     enable_paint();
+    Ok(())
 }
 
-/// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
+/// Loads dotenv files from the cwd and project root after approval, ignoring parse failures.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
 /// the logging behavior of Foundry.
 ///
 /// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
 /// to not be able to configure the colors. It would also mess up the JSON output.
-pub fn load_dotenv() {
-    let load = |p: &Path| {
-        dotenvy::from_path(p.join(".env")).ok();
-    };
-
+pub fn load_dotenv(allow_project_env: bool) -> Result<()> {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
-    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root(None)) {
-        load(&prj_root);
-        if cwd != prj_root {
-            // prj root and cwd can be identical
-            load(&cwd);
+    let mut paths = Vec::new();
+    if let (Ok(cwd), Ok(project_root)) = (std::env::current_dir(), find_project_root(None)) {
+        let project_env = project_root.join(".env");
+        if project_env.is_file() {
+            paths.push(project_env);
         }
-    };
+        if cwd != project_root {
+            // prj root and cwd can be identical
+            let cwd_env = cwd.join(".env");
+            if cwd_env.is_file() {
+                paths.push(cwd_env);
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    if !allow_project_env {
+        ensure_dotenv_approved(&paths)?;
+    }
+
+    for path in paths {
+        dotenvy::from_path(path).ok();
+    }
+    Ok(())
+}
+
+fn ensure_dotenv_approved(paths: &[PathBuf]) -> Result<()> {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return Err(dotenv_not_approved(paths));
+    }
+
+    let mut stderr = io::stderr().lock();
+    writeln!(stderr, "Warning: this project contains dotenv files:")?;
+    for path in paths {
+        writeln!(stderr, "  {path:?}")?;
+    }
+    writeln!(
+        stderr,
+        "Dotenv files can configure executable and library loading through process environment \
+         variables. Loading an untrusted dotenv file may execute arbitrary code."
+    )?;
+    write!(stderr, "Do you trust these dotenv files and want to continue? [y/N] ")?;
+    stderr.flush()?;
+
+    let mut response = String::new();
+    io::stdin().read_line(&mut response)?;
+    if matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(dotenv_not_approved(paths))
+    }
+}
+
+fn dotenv_not_approved(paths: &[PathBuf]) -> eyre::Report {
+    let paths = paths.iter().map(|path| format!("{path:?}")).join(", ");
+    eyre::eyre!(
+        "refusing to load unapproved project dotenv files {paths}; pass `--allow-project-env` if \
+         you trust them"
+    )
 }
 
 /// Sets the default [`yansi`] color output condition.
@@ -1195,8 +1263,19 @@ impl<'a> IntoIterator for &'a Submodules {
 mod tests {
     use super::*;
     use foundry_common::fs;
-    use std::{env, fs::File, io::Write};
+    use std::{env, fs::File};
     use tempfile::tempdir;
+
+    #[test]
+    fn applies_gas_estimate_multiplier() {
+        assert_eq!(apply_gas_estimate_multiplier(21_000, None).unwrap(), 21_000);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150)).unwrap(), 31_500);
+        assert_eq!(
+            apply_gas_estimate_multiplier(21_000, Some(1_000_000_000_000_000)).unwrap(),
+            210_000_000_000_000_000
+        );
+        assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101)).is_err());
+    }
 
     #[test]
     fn parse_submodule_status() {
@@ -1308,19 +1387,31 @@ mod tests {
         let mut cwd_file = File::create(cwd_env).unwrap();
         let mut prj_file = File::create(nested.join(".env")).unwrap();
 
-        cwd_file.write_all(b"TESTCWDKEY=cwd_val").unwrap();
+        cwd_file.write_all(b"TESTCWDKEY=cwd_val\nBROWSER=./project-browser").unwrap();
         cwd_file.sync_all().unwrap();
 
-        prj_file.write_all(b"TESTPRJKEY=prj_val").unwrap();
+        prj_file.write_all(b"TESTPRJKEY=prj_val\nBROWSER=./nested-browser").unwrap();
         prj_file.sync_all().unwrap();
 
+        let browser = env::var_os("BROWSER");
+        unsafe { env::remove_var("BROWSER") };
         let cwd = env::current_dir().unwrap();
-        env::set_current_dir(nested).unwrap();
-        load_dotenv();
+        env::set_current_dir(&nested).unwrap();
+        load_dotenv(true).unwrap();
         env::set_current_dir(cwd).unwrap();
+
+        let loaded_browser = env::var_os("BROWSER");
+        unsafe {
+            if let Some(browser) = browser {
+                env::set_var("BROWSER", browser);
+            } else {
+                env::remove_var("BROWSER");
+            }
+        }
 
         assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
         assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
+        assert_eq!(loaded_browser.as_deref(), Some(OsStr::new("./project-browser")));
     }
 
     #[test]

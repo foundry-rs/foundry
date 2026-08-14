@@ -609,11 +609,23 @@ impl<N: Network> EthApi<N> {
         let _reset = self.reset_lock.lock().await;
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
             let mut validation_config = self.backend.node_config.read().await.clone();
+            let (expected_identity, block_number, block_hash) = {
+                let config = fork.config.read();
+                (config.endpoint_identity, config.block_number, config.block_hash)
+            };
             // A new URL replaces an offline discovery hint. Resolve the actual source identity so
             // unsupported networks cannot be hidden behind the previous endpoint's hint.
             validation_config.fork_chain_id = None;
-            let provider = validation_config.stable_fork_provider(&url).await?;
-            Some((fork, provider))
+            let (provider, endpoint_identity) = validation_config
+                .replacement_fork_provider(
+                    &url,
+                    expected_identity,
+                    block_number,
+                    block_hash,
+                    self.instance_id(),
+                )
+                .await?;
+            Some((fork, provider, endpoint_identity))
         } else {
             None
         };
@@ -621,12 +633,13 @@ impl<N: Network> EthApi<N> {
         let _lifecycle = self.lifecycle_lock.write().await;
         let _mining = self.backend.lock_mining().await;
         let mut node_config = self.backend.node_config.write().await;
-        if let Some((fork, provider)) = staged_fork {
+        if let Some((fork, provider, endpoint_identity)) = staged_fork {
             let mut config = fork.config.write();
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().unwrap_or("none"), url);
             config.provider = provider;
             config.fork_urls = vec![url.clone()];
             config.fork_chain_id = None;
+            config.endpoint_identity = endpoint_identity;
         }
         // Keep node_config in sync so a subsequent URL-less fork reset uses the updated endpoint.
         node_config.fork_urls = vec![url];
@@ -5047,6 +5060,29 @@ fn merge_pre_fork_fee_history(
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_rpc_url_installs_context_equivalent_identity_with_new_instance() {
+        let genesis_timestamp = 1_700_000_000u64;
+        let (_origin_api, origin_handle) =
+            spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
+        let (api, _handle) =
+            spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+        let (target_api, target_handle) =
+            spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
+        let target_url = target_handle.http_endpoint();
+        let fork = api.backend.get_fork().unwrap();
+        let identity_before = fork.config.read().endpoint_identity;
+
+        api.anvil_set_rpc_url(target_url.clone()).await.unwrap();
+
+        let fork = api.backend.get_fork().unwrap();
+        let config = fork.config.read();
+        assert!(config.endpoint_identity.context_eq(identity_before));
+        assert_ne!(config.endpoint_identity.instance_id, identity_before.instance_id);
+        assert_eq!(config.endpoint_identity.instance_id, Some(target_api.instance_id()));
+        assert_eq!(config.eth_rpc_url(), Some(target_url.as_str()));
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn memory_reset_stages_live_fees_after_active_mining() {

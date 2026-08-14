@@ -2,8 +2,7 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
-    Vm::*,
-    inspector::{RecordDebugStepInfo, refresh_context_after_state_change},
+    Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_evm::FromRecoveredTx;
@@ -33,7 +32,10 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{
+        FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor,
+        refresh_context_after_state_change,
+    },
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -355,9 +357,9 @@ impl Cheatcode for loadAllocsCall {
 
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
-        db.load_allocs(&allocs, inner)
-            .map(|()| Vec::default())
-            .map_err(|e| fmt_err!("failed to load allocs: {e}"))
+        db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
+        Ok(Default::default())
     }
 }
 
@@ -371,6 +373,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -773,6 +776,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        refresh_context_after_state_change::<FEN>(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -1340,9 +1344,9 @@ impl Cheatcode for executeTransactionCall {
         // Enable nonce checks for realistic simulation.
         ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
-        // Enforce the active network's initcode size limit.
+        // Enforce the active EVM's initcode size limit.
         ccx.ecx.cfg_env_mut().limit_contract_initcode_size =
-            Some(FEN::CONTRACT_INITCODE_SIZE_LIMIT);
+            Some(FEN::EvmFactory::CONTRACT_INITCODE_SIZE_LIMIT);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
         // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here

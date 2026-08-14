@@ -33,7 +33,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
-    utils::common_setup();
+    utils::common_setup::<Chisel>()?;
     utils::subscriber();
 
     Ok(())

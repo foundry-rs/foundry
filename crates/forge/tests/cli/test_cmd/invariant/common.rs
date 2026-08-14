@@ -1181,7 +1181,7 @@ Compiler run successful!
 Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
 	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
+ invariant_fork_handler_block() (block: 19812634) ([RUNS])
 
 [STATS]
 
@@ -1190,7 +1190,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
 [FAIL: wrong supply]
 	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
+ invariant_fork_handler_state() (block: 19812633) ([RUNS])
 
 [STATS]
 
@@ -1202,12 +1202,12 @@ Failing tests:
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
 	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
+ invariant_fork_handler_block() (block: 19812634) ([RUNS])
 
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStateTest
 [FAIL: wrong supply]
 	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
+ invariant_fork_handler_state() (block: 19812633) ([RUNS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 

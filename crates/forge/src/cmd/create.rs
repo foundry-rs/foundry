@@ -14,8 +14,9 @@ use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
-        LoadConfig, ResolvedLane, find_contract_artifacts, maybe_print_resolved_lane,
-        parse_constructor_args, read_constructor_args_file, resolve_lane,
+        LoadConfig, ResolvedLane, apply_gas_estimate_multiplier, find_contract_artifacts,
+        maybe_print_resolved_lane, parse_constructor_args, read_constructor_args_file,
+        resolve_lane,
     },
 };
 use foundry_common::{
@@ -109,6 +110,10 @@ pub struct CreateArgs {
     /// Timeout to use for broadcasting transactions.
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
+
+    /// Relative percentage to multiply the gas estimate by.
+    #[arg(long, value_name = "PERCENT", help_heading = "Transaction options")]
+    gas_estimate_multiplier: Option<u64>,
 
     #[command(flatten)]
     build: BuildOpts,
@@ -551,7 +556,10 @@ impl CreateArgs {
                 deployer.tx.clone()
             };
             let estimated = provider.estimate_gas(request).await?;
-            deployer.tx.set_gas_limit(estimated);
+            deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
+                estimated,
+                self.gas_estimate_multiplier,
+            )?);
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid
@@ -910,10 +918,13 @@ mod tests {
             "30",
             "--license-type",
             "13",
+            "--gas-estimate-multiplier",
+            "125",
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
         assert_eq!(args.license_type.as_deref(), Some("13"));
+        assert_eq!(args.gas_estimate_multiplier, Some(125));
     }
 
     #[test]

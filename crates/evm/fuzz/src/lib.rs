@@ -388,6 +388,9 @@ pub struct FuzzTestResult {
 
     /// Number of failed replays from persisted corpus.
     pub failed_corpus_replays: usize,
+
+    /// The active fork's block number for the failing case, if any.
+    pub fork_block_number: Option<u64>,
 }
 
 impl FuzzTestResult {
