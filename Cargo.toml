@@ -476,6 +476,9 @@ ratatui = { version = "0.30", default-features = false }
 rayon = "1"
 regex = { version = "1", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# PTY-based CLI tests.
+# https://github.com/rust-cli/rexpect/pull/106
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 ron = "0.12"
 rustls = "0.23"
 semver = "1"
