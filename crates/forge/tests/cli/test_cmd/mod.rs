@@ -120,11 +120,11 @@ fn collect_debug_dump_storage_changes<'a>(
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
 /// These are run separately by the `flaky_testdata` test below.
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
-const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test|Issue14212Test";
+const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4232Test|Issue4640Test|Issue14212Test";
 
-// Issue14212Test depends on Base transaction lookups that are not reliably served by the public
-// Base RPC endpoint used in CI.
-const FLAKY_TESTDATA_RUN_CONTRACTS: &str = "Issue4640Test";
+// Issue4232Test depends on the public Moonbeam RPC, while Issue14212Test depends on Base
+// transaction lookups that are not reliably served by the public Base RPC endpoint used in CI.
+const FLAKY_TESTDATA_RUN_CONTRACTS: &str = "Issue4232Test|Issue4640Test";
 
 // Run `forge test` on `/testdata`.
 forgetest!(testdata, |_prj, cmd| {
