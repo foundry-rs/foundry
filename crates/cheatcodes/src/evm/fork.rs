@@ -12,8 +12,11 @@ use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{
     FoundryContextExt,
-    backend::{JournaledState, LocalForkId},
-    evm::FoundryEvmNetwork,
+    backend::{ContextAuxUpdate, JournaledState, LocalForkId},
+    evm::{
+        BlockEnvFor, ContextAuxFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor,
+        rebase_context_after_state_transition,
+    },
     fork::CreateFork,
 };
 use revm::context::ContextTr;
@@ -75,8 +78,9 @@ impl Cheatcode for rollFork_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blockNumber } = self;
         persist_caller(ccx);
-        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
-            db.roll_fork(None, (*blockNumber).to(), evm_env, inner)
+        let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
+            db.roll_fork(None, (*blockNumber).to(), evm_env, tx_env, inner)
+                .map(|context| ((), context))
         })?;
         record_fork_roll(ccx, None);
         Ok(result)
@@ -87,8 +91,9 @@ impl Cheatcode for rollFork_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { txHash } = self;
         persist_caller(ccx);
-        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
-            db.roll_fork_to_transaction(None, *txHash, evm_env, inner)
+        let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
+            db.roll_fork_to_transaction(None, *txHash, evm_env, tx_env, inner)
+                .map(|context| ((), context))
         })?;
         record_fork_roll(ccx, None);
         Ok(result)
@@ -99,8 +104,9 @@ impl Cheatcode for rollFork_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { forkId, blockNumber } = self;
         persist_caller(ccx);
-        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
-            db.roll_fork(Some(*forkId), (*blockNumber).to(), evm_env, inner)
+        let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
+            db.roll_fork(Some(*forkId), (*blockNumber).to(), evm_env, tx_env, inner)
+                .map(|context| ((), context))
         })?;
         record_fork_roll(ccx, Some(*forkId));
         Ok(result)
@@ -111,8 +117,9 @@ impl Cheatcode for rollFork_3Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { forkId, txHash } = self;
         persist_caller(ccx);
-        let result = fork_env_op(ccx.ecx, |db, evm_env, _, inner| {
-            db.roll_fork_to_transaction(Some(*forkId), *txHash, evm_env, inner)
+        let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
+            db.roll_fork_to_transaction(Some(*forkId), *txHash, evm_env, tx_env, inner)
+                .map(|context| ((), context))
         })?;
         record_fork_roll(ccx, Some(*forkId));
         Ok(result)
@@ -127,8 +134,8 @@ impl Cheatcode for selectForkCall {
         let source_fork_id = ccx.ecx.db().active_fork_id();
         let initial = ccx.state.created_account_bindings(None);
         let propagated = persistent_created_accounts(ccx);
-        let result = fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
-            db.select_fork(*forkId, evm_env, tx_env, inner)
+        let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
+            db.select_fork(*forkId, evm_env, tx_env, inner).map(|context| ((), context))
         })?;
         record_fork_switch(ccx, source_fork_id, initial, propagated);
         Ok(result)
@@ -341,7 +348,7 @@ fn create_select_fork<FEN: FoundryEvmNetwork>(
     let source_fork_id = ccx.ecx.db().active_fork_id();
     let initial = ccx.state.created_account_bindings(None);
     let propagated = persistent_created_accounts(ccx);
-    let result = fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
+    let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
         db.create_select_fork(fork, evm_env, tx_env, inner)
     })?;
     record_fork_switch(ccx, source_fork_id, initial, propagated);
@@ -371,7 +378,7 @@ fn create_select_fork_at_transaction<FEN: FoundryEvmNetwork>(
     let source_fork_id = ccx.ecx.db().active_fork_id();
     let initial = ccx.state.created_account_bindings(None);
     let propagated = persistent_created_accounts(ccx);
-    let result = fork_env_op(ccx.ecx, |db, evm_env, tx_env, inner| {
+    let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
         db.create_select_fork_at_transaction(fork, evm_env, tx_env, inner, *transaction)
     })?;
     record_fork_switch(ccx, source_fork_id, initial, propagated);
@@ -401,6 +408,7 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
     let url = rpc_endpoint.url()?;
     let mut evm_opts = ccx.state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
+    evm_opts.fork_block_number_is_inferred = false;
     evm_opts.fork_retries = rpc_endpoint.config.retries;
     evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
     if let Some(Ok(auth)) = rpc_endpoint.auth {
@@ -411,6 +419,7 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
             && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         evm_opts,
+        expected_context: None,
     };
     Ok(fork)
 }
@@ -418,21 +427,32 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
 /// Clones the EVM and tx environments, runs a fork operation that may modify them, then writes
 /// them back. This is the common pattern for all fork-switching cheatcodes (rollFork, selectFork,
 /// createSelectFork).
-fn fork_env_op<CTX: FoundryContextExt, T: SolValue>(
-    ecx: &mut CTX,
+fn fork_env_op<FEN: FoundryEvmNetwork, T: SolValue>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
     f: impl FnOnce(
-        &mut CTX::Db,
-        &mut EvmEnv<CTX::Spec, CTX::Block>,
-        &mut CTX::Tx,
+        &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
+        &mut EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
+        &mut TxEnvFor<FEN>,
         &mut JournaledState,
-    ) -> eyre::Result<T>,
+    ) -> eyre::Result<(T, ContextAuxUpdate<ContextAuxFor<FEN>>)>,
 ) -> Result {
     let mut evm_env = ecx.evm_clone();
     let mut tx_env = ecx.tx_clone();
+    let current_aux = ecx.aux_state();
     let (db, inner) = ecx.db_journal_inner_mut();
-    let result = f(db, &mut evm_env, &mut tx_env, inner)?;
+    let (result, context_update) = f(db, &mut evm_env, &mut tx_env, inner)?;
     ecx.set_evm(evm_env);
     ecx.set_tx(tx_env);
+    match context_update {
+        ContextAuxUpdate::Unchanged => {}
+        ContextAuxUpdate::Replace(auxiliary) => {
+            rebase_context_after_state_transition::<FEN>(ecx, &current_aux, auxiliary);
+        }
+        ContextAuxUpdate::Rebase => {
+            let replacement = current_aux.clone();
+            rebase_context_after_state_transition::<FEN>(ecx, &current_aux, replacement);
+        }
+    }
     Ok(result.abi_encode())
 }
 
@@ -485,7 +505,18 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
+    let current_aux = ccx.ecx.aux_state();
+    let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
+    match context_update {
+        ContextAuxUpdate::Replace(auxiliary) => {
+            rebase_context_after_state_transition::<FEN>(ccx.ecx, &current_aux, auxiliary);
+        }
+        ContextAuxUpdate::Rebase => {
+            let replacement = current_aux.clone();
+            rebase_context_after_state_transition::<FEN>(ccx.ecx, &current_aux, replacement);
+        }
+        ContextAuxUpdate::Unchanged => {}
+    }
     Ok(Default::default())
 }
 

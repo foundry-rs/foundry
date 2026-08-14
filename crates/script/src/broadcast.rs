@@ -16,8 +16,7 @@ use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
-    AnyNetwork, EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse,
-    TransactionBuilder,
+    EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
 };
 use alloy_primitives::{
     Address, TxHash, TxKind, U256, keccak256,
@@ -83,8 +82,7 @@ pub(super) async fn next_nonce_resolved(
     evm_opts: &EvmOpts,
     fork: &ResolvedFork,
 ) -> eyre::Result<u64> {
-    let provider = evm_opts.provider_for_resolved_fork::<AnyNetwork>(fork)?;
-    Ok(provider.get_transaction_count(caller).block_id(fork.exact_block_id()).await?)
+    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
 }
 
 fn reject_access_key_create<N: Network>(

@@ -8,7 +8,7 @@ use foundry_primitives::FoundryNetwork;
 use futures::StreamExt;
 use rpc_handlers::{HttpEthRpcHandler, PubSubEthRpcHandler};
 use std::{io, net::SocketAddr, pin::pin};
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, task::JoinSet};
 
 mod beacon;
 mod rpc_handlers;
@@ -69,9 +69,20 @@ pub fn try_spawn_ipc(api: EthApi<FoundryNetwork>, path: String) -> io::Result<Ip
 
     let task = tokio::task::spawn(async move {
         let mut incoming = pin!(incoming);
-        while let Some(stream) = incoming.next().await {
-            trace!(target: "ipc", "new ipc connection");
-            tokio::task::spawn(stream);
+        let mut connections = JoinSet::new();
+        loop {
+            tokio::select! {
+                stream = incoming.next() => {
+                    let Some(stream) = stream else { break };
+                    trace!(target: "ipc", "new ipc connection");
+                    connections.spawn(stream);
+                }
+                result = connections.join_next(), if !connections.is_empty() => {
+                    if let Some(Err(err)) = result {
+                        warn!(target: "ipc", %err, "IPC connection task failed");
+                    }
+                }
+            }
         }
     });
 

@@ -1,11 +1,14 @@
 use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::EvmVersion;
+#[cfg(feature = "monad")]
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::{
+    collections::BTreeMap,
     fs,
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -365,6 +368,28 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
     "init_size": 50125,
     "runtime_margin": 63938,
     "init_margin": 77875
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+#[cfg(feature = "monad")]
+forgetest!(build_sizes_respects_monad_network_code_size_limit, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_monad();
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 131010,
+    "init_margin": 212019
   }
 }
 "#]]
@@ -1092,10 +1117,10 @@ forgetest_init!(build_locked_supports_dependency_paths_with_spaces, |prj, cmd| {
     git(root, &["mv", "lib/forge-std", "lib/forge std"]);
 
     let foundry_lock = root.join("foundry.lock");
-    let mut lockfile: serde_json::Value =
+    let mut lockfile: BTreeMap<PathBuf, serde_json::Value> =
         serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
-    let forge_std = lockfile.as_object_mut().unwrap().remove("lib/forge-std").unwrap();
-    lockfile["lib/forge std"] = forge_std;
+    let forge_std = lockfile.remove(Path::new("lib/forge-std")).unwrap();
+    lockfile.insert("lib/forge std".into(), forge_std);
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
     cmd.args(["build", "--locked"]).assert_success();
@@ -1139,10 +1164,10 @@ forgetest_init!(build_locked_supports_custom_dependency_directory, |prj, cmd| {
     prj.update_config(|config| config.libs = vec!["dependencies".into()]);
 
     let foundry_lock = root.join("foundry.lock");
-    let mut lockfile: serde_json::Value =
+    let mut lockfile: BTreeMap<PathBuf, serde_json::Value> =
         serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
-    let forge_std = lockfile.as_object_mut().unwrap().remove("lib/forge-std").unwrap();
-    lockfile["dependencies/forge-std"] = forge_std;
+    let forge_std = lockfile.remove(Path::new("lib/forge-std")).unwrap();
+    lockfile.insert("dependencies/forge-std".into(), forge_std);
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
     cmd.args(["build", "--locked"]).assert_success();

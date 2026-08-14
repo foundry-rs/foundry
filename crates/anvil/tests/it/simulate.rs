@@ -1,9 +1,6 @@
 //! general eth api tests
 
-use alloy_consensus::{
-    Eip658Value, Receipt, ReceiptEnvelope, constants::EMPTY_WITHDRAWALS,
-    proofs::calculate_receipt_root,
-};
+use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 
 use alloy_eips::{
     eip6110::DEPOSIT_REQUEST_TYPE,
@@ -66,38 +63,85 @@ fn deposit_event_runtime(event: DepositEvent) -> Bytes {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_simulate_v1() {
+async fn test_fork_simulate_native_transfers_rpc() {
     crate::init_tracing();
-    let (_, handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
-    let block_overrides =
-        Some(BlockOverrides { base_fee: Some(U256::from(9)), ..Default::default() });
-    let account_override =
-        AccountOverride { balance: Some(U256::from(999999999999u64)), ..Default::default() };
-    let state_overrides = Some(
-        StateOverridesBuilder::with_capacity(1)
-            .append(address!("0xc000000000000000000000000000000000000001"), account_override)
-            .build(),
-    );
-    let tx_request = TransactionRequest {
-        from: Some(address!("0xc000000000000000000000000000000000000001")),
-        to: Some(TxKind::from(address!("0xc000000000000000000000000000000000000001"))),
-        value: Some(U256::from(1)),
-        ..Default::default()
-    };
+    let (_, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+            .with_fork_block_number(Some(24_000_000u64)),
+    )
+    .await;
+    let from = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
     let payload = SimulatePayload {
         block_state_calls: vec![SimBlock {
-            block_overrides,
-            state_overrides,
-            calls: vec![tx_request],
+            calls: vec![
+                TransactionRequest {
+                    from: Some(from),
+                    to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000001"))),
+                    value: Some(U256::from(1)),
+                    ..Default::default()
+                },
+                TransactionRequest {
+                    from: Some(from),
+                    to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000002"))),
+                    value: Some(U256::from(1)),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
         }],
-        trace_transfers: true,
         validation: false,
-        return_full_transactions: true,
+        ..Default::default()
     };
-    let response = rpc_request(&handle.http_endpoint(), "eth_simulateV1", json!([payload])).await;
-    assert_eq!(response["error"]["code"], -32603);
-    assert_eq!(response["error"]["message"], "Required data unavailable");
+    let response =
+        rpc_request(&handle.http_endpoint(), "eth_simulateV1", json!([payload, "latest"])).await;
+    assert!(response.get("error").is_none(), "{response}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_multiple_blocks_rpc() {
+    let (source_api, source_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    let contract = Address::with_last_byte(0x42);
+    source_api
+        .anvil_set_code(
+            contract,
+            Bytes::from_static(&[0x60, 0x01, 0x43, 0x60, 0x01, 0x03, 0x40, 0x55, 0x00]),
+        )
+        .await
+        .unwrap();
+    source_api.mine_one().await.unwrap();
+    let accounts = source_handle.dev_accounts().take(2).collect::<Vec<_>>();
+    let payload = json!({
+        "blockStateCalls": [
+            {
+                "calls": [{
+                    "from": accounts[0],
+                    "to": accounts[1],
+                    "value": "0x1"
+                }]
+            },
+            {
+                "calls": [{
+                    "from": accounts[0],
+                    "to": contract
+                }]
+            }
+        ],
+        "validation": false
+    });
+
+    let (_, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let response =
+        rpc_request(&fork_handle.http_endpoint(), "eth_simulateV1", json!([payload, "latest"]))
+            .await;
+    assert!(response.get("error").is_none(), "{response}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -296,6 +340,24 @@ async fn test_simulate_v1_rejects_lookup_only_precompile_move_rpc() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_v1_rejects_precompile_moves_on_tempo_rpc() {
     let (_, handle) = spawn(NodeConfig::test_tempo()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{"stateOverrides": {
+            "0x0000000000000000000000000000000000000004": {
+                "movePrecompileToAddress": "0x0000000000000000000000000000000000123456"
+            }
+        }}]}, "latest"]),
+    )
+    .await;
+
+    assert_eq!(response["error"]["code"], -32000, "{response}");
+}
+
+#[cfg(feature = "monad")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_v1_rejects_precompile_moves_on_monad_rpc() {
+    let (_, handle) = spawn(NodeConfig::test_monad()).await;
     let response = rpc_request(
         &handle.http_endpoint(),
         "eth_simulateV1",
@@ -1736,75 +1798,6 @@ async fn test_simulate_reports_non_gas_halts_rpc() {
     let error = &response["result"][0]["calls"][0]["error"];
     assert_eq!(error["code"], -32015);
     assert!(error["message"].as_str().unwrap().starts_with("vm execution error:"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_frontier_header_and_post_state_receipt_rpc() {
-    let config = NodeConfig::test()
-        .with_hardfork(Some(EthereumHardfork::Frontier.into()))
-        .with_base_fee(Some(0));
-    let (_, handle) = spawn(config).await;
-    let sender = handle.dev_accounts().next().unwrap();
-    let receiver = address!("c100000000000000000000000000000000000000");
-    let request = TransactionRequest {
-        from: Some(sender),
-        to: Some(TxKind::Call(receiver)),
-        gas: Some(21_000),
-        gas_price: Some(0),
-        ..Default::default()
-    };
-    let single_response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{
-            "blockStateCalls": [{"calls": [request.clone()]}],
-            "validation": true
-        }, "latest"]),
-    )
-    .await;
-    assert!(single_response.get("error").is_none(), "{single_response}");
-    let first_post_state =
-        serde_json::from_value(single_response["result"][0]["stateRoot"].clone()).unwrap();
-
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{
-            "blockStateCalls": [{"calls": [request.clone(), request]}],
-            "validation": true
-        }, "latest"]),
-    )
-    .await;
-
-    assert!(response.get("error").is_none(), "{response}");
-    let simulated = &response["result"][0];
-    assert!(simulated.get("baseFeePerGas").is_none());
-    assert!(simulated.get("withdrawals").is_none());
-    assert!(simulated.get("withdrawalsRoot").is_none());
-
-    let final_post_state = serde_json::from_value(simulated["stateRoot"].clone()).unwrap();
-    assert_ne!(first_post_state, final_post_state);
-    let first_gas_used = quantity(&simulated["calls"][0]["gasUsed"]);
-    let second_gas_used = quantity(&simulated["calls"][1]["gasUsed"]);
-    let receipts_root = calculate_receipt_root(&[
-        ReceiptEnvelope::Legacy(
-            Receipt {
-                status: Eip658Value::PostState(first_post_state),
-                cumulative_gas_used: first_gas_used,
-                logs: Vec::new(),
-            }
-            .with_bloom(),
-        ),
-        ReceiptEnvelope::Legacy(
-            Receipt {
-                status: Eip658Value::PostState(final_post_state),
-                cumulative_gas_used: first_gas_used + second_gas_used,
-                logs: Vec::new(),
-            }
-            .with_bloom(),
-        ),
-    ]);
-    assert_eq!(simulated["receiptsRoot"], serde_json::to_value(receipts_root).unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]

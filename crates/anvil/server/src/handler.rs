@@ -1,7 +1,7 @@
 use crate::RpcHandler;
 use anvil_rpc::{
     error::RpcError,
-    request::{Request, RpcCall},
+    request::{Id, Request, RpcCall, RpcMethodCall, Version},
     response::{Response, RpcResponse},
 };
 use axum::{
@@ -66,7 +66,14 @@ async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Op
             Some(handler.on_call(call).await)
         }
         RpcCall::Notification(notification) => {
-            trace!(target: "rpc", method = ?notification.method, "received rpc notification");
+            let call = RpcMethodCall {
+                jsonrpc: notification.jsonrpc.unwrap_or(Version::V2),
+                method: notification.method,
+                params: notification.params,
+                id: Id::Null,
+            };
+            trace!(target: "rpc", method = ?call.method, "handling rpc notification");
+            drop(handler.on_call(call).await);
             None
         }
         RpcCall::Invalid { id } => {
@@ -80,32 +87,48 @@ async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Op
 mod tests {
     use super::*;
     use anvil_rpc::{
-        request::{RequestParams, RpcNotification, Version},
+        request::{RequestParams, RpcNotification},
         response::ResponseResult,
     };
     use axum::body::to_bytes;
     use std::{
         pin::pin,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
         task::{Context, Poll, Waker},
     };
 
-    #[derive(Clone)]
-    struct TestHandler;
+    #[derive(Clone, Default)]
+    struct TestHandler {
+        requests: Arc<AtomicUsize>,
+    }
 
     #[async_trait::async_trait]
     impl RpcHandler for TestHandler {
         type Request = serde_json::Value;
 
-        async fn on_request(&self, request: Self::Request) -> ResponseResult {
-            ResponseResult::success(request)
+        async fn on_request(&self, _request: Self::Request) -> ResponseResult {
+            self.requests.fetch_add(1, Ordering::Relaxed);
+            ResponseResult::success(())
         }
     }
 
     fn notification() -> RpcCall {
         RpcCall::Notification(RpcNotification {
             jsonrpc: Some(Version::V2),
-            method: "eth_subscribe".to_owned(),
+            method: "record".to_owned(),
             params: RequestParams::None,
+        })
+    }
+
+    fn method_call(id: i64) -> RpcCall {
+        RpcCall::MethodCall(RpcMethodCall {
+            jsonrpc: Version::V2,
+            method: "record".to_owned(),
+            params: RequestParams::None,
+            id: Id::Number(id),
         })
     }
 
@@ -121,26 +144,51 @@ mod tests {
 
     #[test]
     fn empty_batch_returns_invalid_request() {
-        let response = run_ready(handle_request(Request::Batch(vec![]), TestHandler));
+        let response = run_ready(handle_request(Request::Batch(vec![]), TestHandler::default()));
 
         assert_eq!(response, Some(Response::error(RpcError::invalid_request())));
     }
 
     #[test]
-    fn notification_only_batch_returns_no_response() {
-        let response = run_ready(handle_request(Request::Batch(vec![notification()]), TestHandler));
+    fn notification_only_batch_executes_without_response() {
+        let handler = TestHandler::default();
+        let response = run_ready(handle_request(
+            Request::Batch(vec![notification(), notification()]),
+            handler.clone(),
+        ));
 
         assert_eq!(response, None);
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 2);
     }
 
     #[test]
-    fn http_notification_only_batch_returns_no_content() {
+    fn mixed_batch_executes_notification_without_including_response() {
+        let handler = TestHandler::default();
+        let response = run_ready(handle_request(
+            Request::Batch(vec![notification(), method_call(1)]),
+            handler.clone(),
+        ));
+
+        assert_eq!(
+            response,
+            Some(Response::Batch(vec![RpcResponse::new(
+                Id::Number(1),
+                ResponseResult::success(())
+            )]))
+        );
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn http_notification_returns_no_content_after_execution() {
+        let handler = TestHandler::default();
         let response = run_ready(handle(
-            State((TestHandler, ())),
-            Ok(Json(Request::Batch(vec![notification()]))),
+            State((handler.clone(), ())),
+            Ok(Json(Request::Single(notification()))),
         ));
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert!(run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap().is_empty());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
     }
 }

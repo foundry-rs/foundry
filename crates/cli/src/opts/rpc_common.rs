@@ -85,12 +85,7 @@ impl figment::Provider for RpcCommonOpts {
 impl RpcCommonOpts {
     /// Returns the RPC endpoint URL, resolving from CLI args or config.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let url = match (self.rpc_url.as_deref(), config) {
-            (Some(url), _) => Some(Cow::Borrowed(url)),
-            (None, Some(config)) => config.get_rpc_url().transpose()?,
-            (None, None) => None,
-        };
-        Ok(url)
+        resolve_rpc_url(self.rpc_url.as_deref(), config)
     }
 
     /// Builds a figment-compatible dictionary from these options.
@@ -116,4 +111,17 @@ impl RpcCommonOpts {
         }
         dict
     }
+}
+
+/// Resolves an RPC URL from an explicit CLI value or config.
+pub fn resolve_rpc_url<'a>(
+    rpc_url: Option<&'a str>,
+    config: Option<&'a Config>,
+) -> Result<Option<Cow<'a, str>>> {
+    let url = match (rpc_url, config) {
+        (Some(url), _) => Some(Cow::Borrowed(url)),
+        (None, Some(config)) => config.get_rpc_url().transpose()?,
+        (None, None) => None,
+    };
+    Ok(url)
 }

@@ -203,6 +203,7 @@ impl SymbolicExecutor {
                 }
                 TopLevelCallStatus::Revert => {
                     parent.world = failure_world.clone();
+                    parent.return_data = outcome.return_data.clone();
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                 }
                 TopLevelCallStatus::Failure => {
