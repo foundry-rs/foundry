@@ -540,6 +540,118 @@ contract SymbolicPass {
     );
 });
 
+forgetest_init!(symbolic_proves_bounded_carry_after_shift, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_bounded_carry_after_shift because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBoundedCarry.t.sol",
+        r#"
+contract SymbolicBoundedCarry {
+    function checkCarryBounds(uint248 limb, uint8 carry) public pure {
+        if (carry < 58) {
+            uint256 accumulator = uint256(limb) * 58 + uint256(carry);
+            assert((accumulator >> 248) < 58);
+        }
+    }
+
+    function checkCarryBoundary(uint248 limb, uint8 carry) public pure {
+        if (limb == type(uint248).max && carry == 58) {
+            uint256 accumulator = uint256(limb) * 58 + uint256(carry);
+            assert((accumulator >> 248) < 58);
+        }
+    }
+
+    function checkMulDivBoundary(uint256 value) public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        if (value == boundary) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
+        }
+    }
+
+    function checkMulDivPastBoundary(uint256 value) public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        if (value == boundary + 1) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--optimizer-runs",
+            "1000",
+            "--evm-version",
+            "paris",
+            "--match-test",
+            "checkCarryBounds",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkCarryBounds(uint248,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkCarryBoundary"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkCarryBoundary(uint248,uint8)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkMulDivBoundary"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivBoundary(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkMulDivPastBoundary",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivPastBoundary(uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+});
+
 forgetest_init!(symbolic_json_schema_reports_pass, |prj, cmd| {
     if !z3_available() {
         let _ =

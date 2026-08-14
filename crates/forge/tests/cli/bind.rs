@@ -307,3 +307,39 @@ forgetest!(bind_regression_fixtures_compile, |prj, cmd| {
     add_namespaced_type_derives_test(&bindings_path);
     assert_bindings_compile(&bindings_path);
 });
+
+forgetest!(bind_single_file_crate_and_module_match, |prj, cmd| {
+    add_duplicate_events_source(&prj);
+    add_namespaced_type_sources(&prj);
+
+    let crate_path = prj.root().join("crate-bindings");
+    cmd.args([
+        "bind",
+        "--select",
+        "^(DuplicateEvents|MyContract)$",
+        "--single-file",
+        "--bindings-path",
+        crate_path.to_str().unwrap(),
+    ])
+    .assert_success();
+    assert_bindings_compile(&crate_path);
+
+    let module_path = prj.root().join("module-bindings");
+    cmd.forge_fuse()
+        .args([
+            "bind",
+            "--skip-build",
+            "--select",
+            "^(DuplicateEvents|MyContract)$",
+            "--single-file",
+            "--module",
+            "--bindings-path",
+            module_path.to_str().unwrap(),
+        ])
+        .assert_success();
+
+    assert_eq!(
+        fs::read(crate_path.join("src/lib.rs")).unwrap(),
+        fs::read(module_path.join("mod.rs")).unwrap()
+    );
+});
