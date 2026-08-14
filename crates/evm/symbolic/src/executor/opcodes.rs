@@ -290,29 +290,38 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    fn guard_fixed_memory_access(
+    fn guard_fixed_memory_access<FEN: FoundryEvmNetwork>(
         &mut self,
+        executor: &Executor<FEN>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         offset: &SymExpr,
         size: usize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let max_offset = (usize::MAX & !31usize) - size;
+        let max_memory = usize::try_from(executor.evm_env().cfg_env.memory_limit())
+            .unwrap_or(usize::MAX)
+            & !31usize;
+        let max_offset = max_memory.checked_sub(size);
         if let Some(offset) = state.constrained_usize_checked(&mut self.cx, offset) {
-            if offset.is_ok_and(|offset| offset <= max_offset) {
+            if offset.is_ok_and(|offset| max_offset.is_some_and(|max| offset <= max)) {
                 return Ok(None);
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(Some(StepOutcome::Revert));
         }
-        if state.upper_bound_usize(&mut self.cx, offset).is_some_and(|offset| offset <= max_offset)
+        if state
+            .upper_bound_usize(&mut self.cx, offset)
+            .is_some_and(|offset| max_offset.is_some_and(|max| offset <= max))
         {
             return Ok(None);
         }
 
-        let max_offset = SymExpr::constant(&mut self.cx, U256::from(max_offset));
-        let representable =
-            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), max_offset);
+        let representable = if let Some(max_offset) = max_offset {
+            let max_offset = SymExpr::constant(&mut self.cx, U256::from(max_offset));
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), max_offset)
+        } else {
+            SymBoolExpr::constant(&mut self.cx, false)
+        };
         let (valid_constraints, valid_sat) =
             self.constraints_with_condition(state, representable.clone())?;
         let invalid = representable.clone().not(&mut self.cx);
@@ -782,7 +791,7 @@ impl SymbolicExecutor {
             opcode::MLOAD => {
                 let offset = state.stack.peek(0)?.clone();
                 if let Some(outcome) =
-                    self.guard_fixed_memory_access(state, worklist, &offset, 32)?
+                    self.guard_fixed_memory_access(executor, state, worklist, &offset, 32)?
                 {
                     return Ok(outcome);
                 }
@@ -793,7 +802,7 @@ impl SymbolicExecutor {
             opcode::MSTORE => {
                 let offset = state.stack.peek(0)?.clone();
                 if let Some(outcome) =
-                    self.guard_fixed_memory_access(state, worklist, &offset, 32)?
+                    self.guard_fixed_memory_access(executor, state, worklist, &offset, 32)?
                 {
                     return Ok(outcome);
                 }
@@ -804,7 +813,7 @@ impl SymbolicExecutor {
             opcode::MSTORE8 => {
                 let offset = state.stack.peek(0)?.clone();
                 if let Some(outcome) =
-                    self.guard_fixed_memory_access(state, worklist, &offset, 1)?
+                    self.guard_fixed_memory_access(executor, state, worklist, &offset, 1)?
                 {
                     return Ok(outcome);
                 }

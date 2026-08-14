@@ -160,6 +160,48 @@ args=[0]
     assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
 });
 
+forgetest_init!(symbolic_fixed_memory_access_respects_memory_limit, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fixed_memory_access_respects_memory_limit because z3 is not available"
+        );
+        return;
+    }
+
+    prj.wipe_contracts();
+    prj.update_config(|config| config.memory_limit = 4096);
+    prj.add_test(
+        "SymbolicMemoryLimit.t.sol",
+        r#"
+contract SymbolicMemoryLimit {
+    function store(uint256 offset) external pure {
+        assembly {
+            mstore(offset, 1)
+        }
+    }
+
+    function checkConfiguredMemoryLimit() public {
+        (bool ok,) = address(this).call(abi.encodeCall(this.store, (4096)));
+        assert(!ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkConfiguredMemoryLimit"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[PASS] checkConfiguredMemoryLimit()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_mstore_accepts_constrained_symbolic_offset, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
