@@ -21,12 +21,12 @@ pub const BIP32_HARDEN: u32 = 0x8000_0000;
 pub fn validate_bip32_path(path: &str) -> Result<(), String> {
     for c in path.split('/') {
         let num = c.strip_suffix('\'').or_else(|| c.strip_suffix('h')).unwrap_or(c);
-        if let Ok(v) = num.parse::<u32>() {
-            if v >= BIP32_HARDEN {
-                return Err(format!(
-                    "BIP32 component {c} overflows harden bit (index must be < {BIP32_HARDEN})"
-                ));
-            }
+        if let Ok(v) = num.parse::<u32>()
+            && v >= BIP32_HARDEN
+        {
+            return Err(format!(
+                "BIP32 component {c} overflows harden bit (index must be < {BIP32_HARDEN})"
+            ));
         }
     }
     Ok(())
