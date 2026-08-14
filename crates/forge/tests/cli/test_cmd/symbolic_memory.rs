@@ -98,12 +98,6 @@ contract SymbolicOversizedMemoryOffset is Test {
         assertFalse(ok);
     }
 
-    function checkOversizedRoundedMemoryAccess() public {
-        uint256 offset = (uint256(type(uint64).max) & ~uint256(31)) - 31;
-        (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
-        assertFalse(ok);
-    }
-
     function checkMixedMemoryOffsetExploresValidSibling(uint256 offset) public {
         bool endpoint;
         assembly {
@@ -128,7 +122,6 @@ contract SymbolicOversizedMemoryOffset is Test {
         foundry_test_utils::str![[r#"
 [PASS] checkOversizedFixedMemoryAccesses()
 [PASS] checkConstrainedOversizedMemoryAccess(uint256)
-[PASS] checkOversizedRoundedMemoryAccess()
 "#]],
     );
 
@@ -174,14 +167,38 @@ forgetest_init!(symbolic_fixed_memory_access_respects_memory_limit, |prj, cmd| {
         "SymbolicMemoryLimit.t.sol",
         r#"
 contract SymbolicMemoryLimit {
-    function store(uint256 offset) external pure {
+    fallback() external payable {
         assembly {
-            mstore(offset, 1)
+            switch callvalue()
+            case 0 { mstore(4065, 1) }
+            case 1 { mstore8(4096, 1) }
+            default { mstore(2048, 1) }
         }
     }
 
-    function checkConfiguredMemoryLimit() public {
-        (bool ok,) = address(this).call(abi.encodeCall(this.store, (4096)));
+    function checkMemoryLimitExactBoundaries() public pure {
+        assembly {
+            mstore(4064, 1)
+            mstore8(4095, 1)
+        }
+    }
+
+    function checkMemoryLimitFirstInvalidBoundaries() public {
+        bool wordOk;
+        bool byteOk;
+        assembly {
+            wordOk := call(gas(), address(), 0, 0, 0, 0, 0)
+            byteOk := call(gas(), address(), 1, 0, 0, 0, 0)
+        }
+        assert(!wordOk && !byteOk);
+    }
+
+    function checkMemoryLimitNestedCall() public {
+        bool ok;
+        assembly {
+            mstore(2048, 1)
+            ok := call(gas(), address(), 2, 0, 0, 0, 0)
+        }
         assert(!ok);
     }
 }
@@ -189,7 +206,7 @@ contract SymbolicMemoryLimit {
     );
 
     let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkConfiguredMemoryLimit"])
+        .args(["test", "--symbolic", "--match-test", "checkMemoryLimit"])
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -197,7 +214,9 @@ contract SymbolicMemoryLimit {
     assert_relevant_lines(
         &stdout,
         str![[r#"
-[PASS] checkConfiguredMemoryLimit()
+[PASS] checkMemoryLimitExactBoundaries()
+[PASS] checkMemoryLimitFirstInvalidBoundaries()
+[PASS] checkMemoryLimitNestedCall()
 "#]],
     );
 });

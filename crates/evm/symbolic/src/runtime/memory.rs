@@ -44,6 +44,7 @@ pub(crate) enum BoundedCopySize {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymMemory {
     symbolic_writes: Vec<SymbolicMemoryWrite>,
+    symbolic_read_sizes: Vec<SymExpr>,
     size: usize,
 }
 
@@ -55,12 +56,7 @@ struct SymbolicMemoryWrite {
 
 impl SymbolicMemoryWrite {
     fn size_after_access(&self, cx: &mut SymCx) -> SymExpr {
-        let len = SymExpr::constant(cx, U256::from(self.bytes.len()));
-        let end = SymExpr::binop(cx, SymBinOp::Add, self.offset.clone(), len);
-        let round = SymExpr::constant(cx, U256::from(31));
-        let rounded = SymExpr::binop(cx, SymBinOp::Add, end, round);
-        let mask = SymExpr::constant(cx, !U256::from(31));
-        SymExpr::binop(cx, SymBinOp::And, rounded, mask)
+        SymMemory::size_after_access_word(cx, self.offset.clone(), self.bytes.len())
     }
 
     fn concrete_offset(&self) -> Option<usize> {
@@ -79,6 +75,15 @@ impl SymbolicMemoryWrite {
 }
 
 impl SymMemory {
+    pub(crate) fn size_after_access_word(cx: &mut SymCx, offset: SymExpr, len: usize) -> SymExpr {
+        let len = SymExpr::constant(cx, U256::from(len));
+        let end = SymExpr::binop(cx, SymBinOp::Add, offset, len);
+        let round = SymExpr::constant(cx, U256::from(31));
+        let rounded = SymExpr::binop(cx, SymBinOp::Add, end, round);
+        let mask = SymExpr::constant(cx, !U256::from(31));
+        SymExpr::binop(cx, SymBinOp::And, rounded, mask)
+    }
+
     fn size_after_access(offset: usize, len: usize) -> usize {
         let Some(end) = offset.checked_add(len) else {
             return usize::MAX & !31usize;
@@ -167,14 +172,17 @@ impl SymMemory {
     }
 
     pub(crate) fn load_word_offset(
-        &self,
+        &mut self,
         cx: &mut SymCx,
         offset: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(offset) = offset.as_const() {
             let Ok(offset) = usize::try_from(offset) else { return Ok(SymExpr::zero(cx)) };
+            self.size = self.size.max(Self::size_after_access(offset, 32));
             self.load_word(cx, offset)
         } else {
+            let size = Self::size_after_access_word(cx, offset.clone(), 32);
+            self.symbolic_read_sizes.push(size);
             self.load_word_dynamic(cx, &offset)
         }
     }
@@ -405,6 +413,9 @@ impl SymMemory {
             }
             let write_size = write.size_after_access(cx);
             size = Self::max_size_word(cx, size, write_size);
+        }
+        for read_size in &self.symbolic_read_sizes {
+            size = Self::max_size_word(cx, size, read_size.clone());
         }
         size
     }

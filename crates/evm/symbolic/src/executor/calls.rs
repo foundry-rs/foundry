@@ -1046,7 +1046,7 @@ impl SymbolicExecutor {
         };
 
         let original_world = state.world.clone();
-        let mut child = state.child(frame);
+        let mut child = state.child(&mut self.cx, frame);
         if let Some((origin, origin_word)) = pranked_origin {
             child.origin = origin;
             child.origin_word = origin_word;

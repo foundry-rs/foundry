@@ -204,7 +204,7 @@ impl SymbolicExecutor {
             false,
             calldata,
         );
-        let child = state.storage_hook_child(frame);
+        let child = state.storage_hook_child(&mut self.cx, frame);
         let outcomes = self.execute_external_call(executor, child, &code, completed_paths)?;
         if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
@@ -298,38 +298,63 @@ impl SymbolicExecutor {
         offset: &SymExpr,
         size: usize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let max_memory = usize::try_from(executor.evm_env().cfg_env.memory_limit())
-            .unwrap_or(usize::MAX)
-            & !31usize;
-        let max_offset = max_memory.checked_sub(size);
-        if let Some(offset) = state.constrained_usize_checked(&mut self.cx, offset) {
-            if offset.is_ok_and(|offset| max_offset.is_some_and(|max| offset <= max)) {
+        let memory_limit = executor.evm_env().cfg_env.memory_limit();
+        let memory_limit_usize = usize::try_from(memory_limit).unwrap_or(usize::MAX);
+        let host_max_offset = (usize::MAX & !31usize).checked_sub(size);
+        let max_offset = |checkpoint: usize| {
+            memory_limit_usize
+                .checked_sub(checkpoint)
+                .map(|remaining| remaining & !31usize)
+                .and_then(|remaining| remaining.checked_sub(size))
+        };
+        let memory_checkpoint = state.memory_checkpoint.clone();
+        let constrained_offset = state.constrained_usize_checked(&mut self.cx, offset);
+        let constrained_checkpoint =
+            state.constrained_usize_checked(&mut self.cx, &memory_checkpoint);
+        if constrained_offset.as_ref().is_some_and(|offset| match offset {
+            Ok(offset) => host_max_offset.is_none_or(|max| *offset > max),
+            Err(_) => true,
+        }) || constrained_checkpoint.as_ref().is_some_and(Result::is_err)
+        {
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            return Ok(Some(StepOutcome::Revert));
+        }
+        if let (Some(Ok(offset)), Some(Ok(checkpoint))) =
+            (&constrained_offset, &constrained_checkpoint)
+        {
+            if max_offset(*checkpoint).is_some_and(|max| *offset <= max) {
                 return Ok(None);
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(Some(StepOutcome::Revert));
         }
-        if state
-            .upper_bound_usize(&mut self.cx, offset)
-            .is_some_and(|offset| max_offset.is_some_and(|max| offset <= max))
+        let offset_bound = state.upper_bound_usize(&mut self.cx, offset);
+        let checkpoint_bound = state.upper_bound_usize(&mut self.cx, &memory_checkpoint);
+        if let (Some(offset), Some(checkpoint)) = (offset_bound, checkpoint_bound)
+            && max_offset(checkpoint).is_some_and(|max| offset <= max)
         {
             return Ok(None);
         }
 
-        let representable = if let Some(max_offset) = max_offset {
-            let max_offset = SymExpr::constant(&mut self.cx, U256::from(max_offset));
-            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), max_offset)
+        let representable = if let Some(host_max_offset) = host_max_offset {
+            let host_max_offset = SymExpr::constant(&mut self.cx, U256::from(host_max_offset));
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), host_max_offset)
         } else {
             SymBoolExpr::constant(&mut self.cx, false)
         };
+        let local_size = SymMemory::size_after_access_word(&mut self.cx, offset.clone(), size);
+        let total_size = SymExpr::binop(&mut self.cx, SymBinOp::Add, memory_checkpoint, local_size);
+        let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
+        let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, total_size, memory_limit);
+        let valid_access = SymBoolExpr::and(&mut self.cx, vec![representable, within_limit]);
         let (valid_constraints, valid_sat) =
-            self.constraints_with_condition(state, representable.clone())?;
-        let invalid = representable.clone().not(&mut self.cx);
+            self.constraints_with_condition(state, valid_access.clone())?;
+        let invalid = valid_access.clone().not(&mut self.cx);
         let (invalid_constraints, invalid_sat) = self.constraints_with_condition(state, invalid)?;
         match (valid_sat, invalid_sat) {
             (true, true) => {
                 let (valid_seed_models, invalid_seed_models) =
-                    state.split_corpus_seed_models(&representable);
+                    state.split_corpus_seed_models(&valid_access);
                 let mut valid = state.clone();
                 valid.pc = valid.pc.saturating_sub(1);
                 valid.depth = valid.depth.saturating_sub(1);
