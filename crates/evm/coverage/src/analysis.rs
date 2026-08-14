@@ -5,7 +5,7 @@ use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
-    data_structures::{Never, map::FxHashSet},
+    data_structures::{Never, map::FxHashMap},
     interface::{BytePos, Span},
     sema::{Gcx, hir},
 };
@@ -33,8 +33,10 @@ struct SourceVisitor<'gcx> {
     items: Vec<CoverageItem>,
 
     all_lines: Vec<u32>,
-    function_calls: Vec<Span>,
-    function_calls_set: FxHashSet<Span>,
+    /// Deferred function-call spans, each paired with the contract scope active where the call
+    /// was collected, so scope travels with the span to the delayed HIR resolution pass.
+    function_calls: Vec<(Span, Arc<str>)>,
+    function_call_scopes: FxHashMap<Span, Arc<str>>,
 }
 
 struct SourceVisitorCheckpoint {
@@ -118,7 +120,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             branch_id: 0,
             all_lines: Default::default(),
             function_calls: Default::default(),
-            function_calls_set: Default::default(),
+            function_call_scopes: Default::default(),
             items: Default::default(),
         }
     }
@@ -153,12 +155,14 @@ impl<'gcx> SourceVisitor<'gcx> {
         })
     }
 
-    /// Disambiguate functions with the same name in the same contract.
+    /// Disambiguate overloaded functions that share a name within the same scope (a contract, or
+    /// the file level for free functions). Keyed by scope so a contract method and a same-named
+    /// free function are not treated as duplicates of each other.
     fn disambiguate_functions(&mut self) {
         let mut dups = HashMap::<_, Vec<usize>>::default();
         for (i, item) in self.items.iter().enumerate() {
             if let CoverageItemKind::Function { name } = &item.kind {
-                dups.entry(name.clone()).or_default().push(i);
+                dups.entry((item.loc.contract_name.clone(), name.clone())).or_default().push(i);
             }
         }
         for dups in dups.values() {
@@ -175,7 +179,7 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
-        self.function_calls_set = self.function_calls.iter().copied().collect();
+        self.function_call_scopes = self.function_calls.iter().cloned().collect();
         let _ = hir::Visit::visit_nested_source(self, hir_source_id);
     }
 
@@ -391,8 +395,8 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 }
             }
             ExprKind::Call(callee, _args) => {
-                // Resolve later.
-                self.function_calls.push(expr.span);
+                // Resolve later. Capture the current contract scope so it travels with the span.
+                self.function_calls.push((expr.span, self.contract_name.clone()));
 
                 if let ExprKind::Ident(ident) = &callee.kind {
                     // Might be a require call, add branch coverage.
@@ -487,10 +491,14 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let hir::ExprKind::Call(lhs, ..) = &expr.kind
-            && self.function_calls_set.contains(&expr.span)
             && is_regular_call(lhs)
+            && let Some(scope) = self.function_call_scopes.get(&expr.span).cloned()
         {
+            // Attribute the call with the scope captured where it was collected, not the
+            // visitor's final scope (which leaks across free functions and contracts).
+            let prev = std::mem::replace(&mut self.contract_name, scope);
             self.push_stmt(expr.span);
+            self.contract_name = prev;
         }
         self.walk_expr(expr)
     }
@@ -534,11 +542,12 @@ pub struct SourceAnalysis {
 }
 
 impl SourceAnalysis {
-    /// Analyzes contracts in the sources held by the source analyzer.
+    /// Analyzes the sources held by the source analyzer.
     ///
     /// Coverage items are found by:
     /// - Walking the AST of each contract (except interfaces)
-    /// - Recording the items of each contract
+    /// - Walking file-level (free) functions
+    /// - Recording the items found
     ///
     /// Each coverage item contains relevant information to find opcodes corresponding to them: the
     /// source ID the item is in, the source code range of the item, and the contract name the item
@@ -563,18 +572,31 @@ impl SourceAnalysis {
 
                     let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
                     for item in ast.items.iter() {
-                        // Visit only top-level contracts.
-                        let ItemKind::Contract(contract) = &item.kind else { continue };
+                        match &item.kind {
+                            // Contracts: walk their functions, dropping test contracts.
+                            ItemKind::Contract(contract) => {
+                                // Skip interfaces which have no function implementations.
+                                if contract.kind.is_interface() {
+                                    continue;
+                                }
 
-                        // Skip interfaces which have no function implementations.
-                        if contract.kind.is_interface() {
-                            continue;
-                        }
-
-                        let checkpoint = visitor.checkpoint();
-                        visitor.visit_contract(contract);
-                        if visitor.has_tests(&checkpoint) {
-                            visitor.restore_checkpoint(checkpoint);
+                                let checkpoint = visitor.checkpoint();
+                                visitor.visit_contract(contract);
+                                if visitor.has_tests(&checkpoint) {
+                                    visitor.restore_checkpoint(checkpoint);
+                                }
+                            }
+                            // File-level (free) functions are covered too, not only functions
+                            // defined inside a contract. Without this, a file of only free
+                            // functions gets no coverage record at all.
+                            ItemKind::Function(_) => {
+                                // A free function is not scoped to any contract. Clear any scope
+                                // left by a previously visited contract so it is attributed at
+                                // file level, not as `Contract.freeFn`.
+                                visitor.contract_name = Arc::default();
+                                let _ = ast::Visit::visit_item(&mut visitor, item);
+                            }
+                            _ => {}
                         }
                     }
 

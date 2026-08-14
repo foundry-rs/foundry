@@ -165,12 +165,7 @@ fn anvil_binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("target/debug directory")
-        .join("anvil")
+    foundry_test_utils::cargo_profile_dir().join("anvil")
 }
 
 #[tokio::test(flavor = "multi_thread")]
