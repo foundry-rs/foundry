@@ -538,7 +538,7 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7" }
 
 # Monad
-alloy-monad-evm = { version = "0.5.0", default-features = false, features = [
+alloy-monad-evm = { version = "0.6.0", default-features = false, features = [
     "std",
     "memory_limit",
 ] }
@@ -562,10 +562,6 @@ idna_adapter = "=1.1.0"
 solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
-
-## monad
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", rev = "334bda1826996118d40872af35c27316a01889a2" }
-monad-revm = { git = "https://github.com/category-labs/monad-revm", rev = "8ba4a51b221357105465cbe6d410906d3f12baeb" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
