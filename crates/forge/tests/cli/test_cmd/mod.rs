@@ -3342,15 +3342,20 @@ forgetest_init!(forged_skip_after_caught_revert_fails_setup, |prj, cmd| {
     prj.add_test(
         "ForgedSkip.t.sol",
         r#"
+import "forge-std/Test.sol";
+
 contract Reverter {
     fallback() external {
         revert("caught");
     }
 }
 
-contract ForgedSkipAfterCaughtRevert {
+contract ForgedSkipAfterCaughtRevert is Test {
     function setUp() public {
         (bool success,) = address(new Reverter()).call("");
+        require(!success);
+
+        (success,) = address(vm).call(abi.encodeWithSignature("skip(bool,string)", true, "caught skip"));
         require(!success);
 
         bytes memory reason = bytes("FOUNDRY::SKIPnot cheatcode");

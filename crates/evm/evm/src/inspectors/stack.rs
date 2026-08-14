@@ -418,6 +418,8 @@ pub struct InspectorStackInner {
     top_level_frame_failed_before_rewrite: bool,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
+    /// Payload of the skip that most recently set the reverter to the cheatcode address.
+    skip_revert: Option<Bytes>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
@@ -903,11 +905,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         );
 
         // Record the first address that reverted the call, but let an actual skip take precedence
-        // over earlier caught reverts so its cheatcode origin is preserved.
+        // over earlier caught reverts while its payload propagates to the terminal revert.
         let is_skip =
             inputs.target_address == CHEATCODE_ADDRESS && outcome.output().starts_with(MAGIC_SKIP);
-        if result.is_revert() && (self.reverter.is_none() || is_skip) {
-            self.reverter = Some(inputs.target_address);
+        if result.is_revert() {
+            if is_skip {
+                self.reverter = Some(inputs.target_address);
+                self.skip_revert = Some(outcome.output().clone());
+            } else if self.reverter.is_none()
+                || (self.reverter == Some(CHEATCODE_ADDRESS)
+                    && self.skip_revert.as_ref() != Some(outcome.output()))
+            {
+                self.reverter = Some(inputs.target_address);
+                self.skip_revert = None;
+            }
         }
     }
 
