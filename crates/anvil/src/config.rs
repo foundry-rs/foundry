@@ -1536,9 +1536,7 @@ impl NodeConfig {
     ) -> Result<ForkEndpointIdentity> {
         let Some(node_info) = node_info_probe.request(provider).await? else {
             let source_chain_id = source_chain_id_override.unwrap_or(fallback_execution_chain_id);
-            let explicit_fallback = self
-                .has_explicit_network_selection()
-                .then(|| self.networks.canonical_execution_profile());
+            let explicit_fallback = self.has_explicit_network_selection().then_some(self.networks);
             let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
                 source_chain_id,
                 None,
@@ -1586,9 +1584,7 @@ impl NodeConfig {
         };
         let identity_chain_id =
             if node_info.network.is_some() { execution_chain_id } else { source_chain_id };
-        let explicit_fallback = self
-            .has_explicit_network_selection()
-            .then(|| self.networks.canonical_execution_profile());
+        let explicit_fallback = self.has_explicit_network_selection().then_some(self.networks);
         let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
             identity_chain_id,
             Some(node_info.network.as_deref()),
@@ -1616,26 +1612,6 @@ impl NodeConfig {
         })
     }
 
-    fn offline_fork_identity(&self, chain_id: u64) -> Result<ForkEndpointIdentity> {
-        ensure_fork_network_supported(chain_id)?;
-        let network_profile = if self.networks.has_network_selection() {
-            Some(self.networks.canonical_execution_profile())
-        } else {
-            NetworkConfigs::from_rpc_identity_profile_with_fallback(chain_id, None, None)
-                .map_err(eyre::Report::msg)?
-        };
-        Ok(ForkEndpointIdentity {
-            execution_chain_id: chain_id,
-            source_chain_id: chain_id,
-            network: network_profile.map(|profile| profile.execution_network()),
-            network_profile,
-            hardfork: None,
-            instance_id: None,
-            source_fork_block_number: None,
-            source_fork_block_hash: None,
-        })
-    }
-
     async fn resolved_fork_endpoint_identity(
         &self,
         provider: &RetryProvider,
@@ -1656,22 +1632,46 @@ impl NodeConfig {
         Ok(identity)
     }
 
-    pub(crate) async fn stable_fork_provider(
+    pub(crate) async fn replacement_fork_provider(
         &self,
         eth_rpc_url: &str,
-    ) -> Result<Arc<RetryProvider>> {
+        expected: ForkEndpointIdentity,
+        block_number: u64,
+        block_hash: B256,
+        serving_instance_id: B256,
+    ) -> Result<(Arc<RetryProvider>, ForkEndpointIdentity)> {
         let provider = Arc::new(self.fork_provider(eth_rpc_url)?);
         let mut node_info_probe = AnvilNodeInfoProbe::default();
         for _ in 0..3 {
             let before =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
+            eyre::ensure!(
+                before.instance_id != Some(serving_instance_id),
+                "cannot set Anvil's fork provider to its own RPC endpoint"
+            );
+            let block = provider
+                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .await
+                .wrap_err("failed to confirm active fork block on replacement endpoint")?;
             let after =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
-            if before == after {
-                return Ok(provider);
+            if before != after {
+                continue;
             }
+            if !before.context_eq(expected) {
+                eyre::bail!("replacement fork endpoint has an incompatible execution context");
+            }
+            let actual_hash = block.map(|block| block.header.hash);
+            if actual_hash != Some(block_hash) {
+                eyre::bail!(
+                    "replacement fork endpoint does not contain active fork block {block_number} with hash {block_hash}"
+                );
+            }
+            return Ok((provider, before));
         }
-        eyre::bail!("fork endpoint changed while its identity was being resolved");
+        eyre::bail!(
+            "fork endpoint changed while its identity and active fork block were being resolved"
+        );
     }
 
     async fn stable_fork_snapshot(
@@ -1794,21 +1794,6 @@ impl NodeConfig {
         endpoint_identity.is_authoritative() || self.fork_urls.len() > 1
     }
 
-    pub(crate) async fn detect_fork_network(&self, eth_rpc_url: &str) -> Result<NetworkConfigs> {
-        if let Some(chain_id) = self.fork_chain_id {
-            let identity = self.offline_fork_identity(chain_id.to())?;
-            return Ok(identity.network_profile.unwrap_or_default());
-        }
-
-        let provider = self.fork_provider(eth_rpc_url)?;
-        let mut node_info_probe = AnvilNodeInfoProbe::default();
-        let identity =
-            self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
-        // Preserve Foundry's historical behavior for custom EVM chains that do not expose Anvil
-        // metadata. Authoritative metadata still wins when present.
-        Ok(identity.network_profile.unwrap_or_default())
-    }
-
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
     ///  - returning a tuple of a [ForkedDatabase] and [ClientForkConfig] which can be used to build
     ///    a [ClientFork] to fork from.
@@ -1867,7 +1852,7 @@ impl NodeConfig {
             && !self.networks.supports_fork_source(&target_profile)
         {
             eyre::bail!(
-                "cannot reset Anvil across execution profiles ({} -> {}); start a new instance \
+                "cannot reset Anvil across network families ({} -> {}); start a new instance \
                  with matching network configuration",
                 self.networks.execution_profile_name(),
                 target_profile.execution_profile_name()
@@ -2656,25 +2641,5 @@ mod tests {
 
         assert_eq!(config.get_chain_id(), 1);
         assert_eq!(config.get_hardfork(), FoundryHardfork::Monad(MonadHardfork::MonadEight));
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "monad")]
-    async fn fork_chain_id_network_detection_is_offline() {
-        let config =
-            NodeConfig::test().with_fork_chain_id(Some(U256::from(NamedChain::Monad as u64)));
-
-        let networks = config.detect_fork_network("http://127.0.0.1:1").await.unwrap();
-
-        assert!(networks.is_monad());
-    }
-
-    #[tokio::test]
-    async fn unknown_fork_chain_id_defaults_to_ethereum_offline() {
-        let config = NodeConfig::test().with_fork_chain_id(Some(U256::from(98_765_432u64)));
-
-        let networks = config.detect_fork_network("http://127.0.0.1:1").await.unwrap();
-
-        assert_eq!(networks, NetworkConfigs::default());
     }
 }

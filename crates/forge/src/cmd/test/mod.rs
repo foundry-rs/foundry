@@ -65,7 +65,8 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
+        TxEnvFor,
     },
     executors::ShowmapDomain,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
@@ -2976,7 +2977,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                FEN::EXTRA_CHEATCODE_ADDRESSES.iter().copied(),
+                FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.iter().copied(),
             )
         });
 
@@ -3170,12 +3171,12 @@ impl TestArgs {
                         // setUp and constructor.
                         for (kind, arena) in &result.traces {
                             if !matches!(kind, TraceKind::Execution) {
-                                decoder.identify(arena, &mut identifier);
+                                decoder.identify_scoped(arena, &mut identifier);
                             }
                         }
 
                         for arena in trace {
-                            decoder.identify(arena, &mut identifier);
+                            decoder.identify_scoped(arena, &mut identifier);
                             gas_report.analyze([arena], &decoder).await;
                         }
                     }

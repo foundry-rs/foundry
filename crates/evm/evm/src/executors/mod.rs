@@ -68,6 +68,8 @@ use std::{
 mod builder;
 pub use builder::ExecutorBuilder;
 
+mod campaign;
+
 pub mod fuzz;
 pub use fuzz::FuzzedExecutor;
 
@@ -101,8 +103,11 @@ pub fn should_ignore_revert<FEN: FoundryEvmNetwork>(
     reverter: Option<Address>,
 ) -> bool {
     !fail_on_revert
-        && reverter
-            .is_some_and(|reverter| reverter != target && !FEN::is_cheatcode_address(reverter))
+        && reverter.is_some_and(|reverter| {
+            reverter != target
+                && reverter != CHEATCODE_ADDRESS
+                && !FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.contains(&reverter)
+        })
 }
 
 sol! {
@@ -175,7 +180,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             },
         );
 
-        for &address in FEN::EXTRA_CHEATCODE_ADDRESSES {
+        for &address in FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES {
             backend.insert_account_info(
                 address,
                 revm::state::AccountInfo {

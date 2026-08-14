@@ -64,6 +64,17 @@ impl ForkEndpointIdentity {
     pub(crate) const fn is_authoritative(self) -> bool {
         self.hardfork.is_some()
     }
+
+    /// Returns whether two endpoints expose the same fork execution context.
+    pub(crate) fn context_eq(self, other: Self) -> bool {
+        self.execution_chain_id == other.execution_chain_id
+            && self.source_chain_id == other.source_chain_id
+            && self.network == other.network
+            && self.network_profile == other.network_profile
+            && self.hardfork == other.hardfork
+            && self.source_fork_block_number == other.source_fork_block_number
+            && self.source_fork_block_hash == other.source_fork_block_hash
+    }
 }
 
 /// Ensures the fork network can be executed by Anvil's EVM backend.

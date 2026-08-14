@@ -630,7 +630,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
         let mut persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
-        persistent_accounts.extend(FEN::EXTRA_CHEATCODE_ADDRESSES);
+        persistent_accounts.extend(FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES);
         let inner = BackendInner { persistent_accounts, ..Default::default() };
 
         let mut backend = Self {

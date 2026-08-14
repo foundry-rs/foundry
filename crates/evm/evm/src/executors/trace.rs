@@ -158,13 +158,6 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_opts.fork_block_number = config.fork_block_number;
         evm_opts.infer_network_from_fork().await?;
         let networks = evm_opts.networks;
-        if !FEN::supports_network(networks.execution_network()) {
-            eyre::bail!(
-                "the selected EVM network cannot execute `{}`",
-                networks.execution_network()
-            );
-        }
-
         let (evm_env, tx_env, resolved) =
             evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
         let resolved = resolved.context("fork context is missing for tracing executor")?;

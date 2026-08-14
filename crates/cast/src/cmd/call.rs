@@ -324,28 +324,6 @@ impl CallArgs {
         Ok(())
     }
 
-    pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>
-    where
-        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
-    {
-        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
-        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
-        let Some(auth_preflight) = self.preflight_auth_disclosure().await? else {
-            return Ok(());
-        };
-        evm_opts.infer_network_from_fork().await?;
-        let network = evm_opts.networks.execution_network();
-        if !FEN::supports_network(network) {
-            eyre::bail!(
-                "the selected EVM network cannot execute `{network}`; use the matching network \
-                 implementation"
-            );
-        }
-        // Keep the public generic wrapper independent of the network-specific future layout.
-        Box::pin(self.run_with_network_and_opts::<FEN>(config, evm_opts, auth_preflight)).await
-    }
-
     async fn run_with_network_and_opts<FEN: FoundryEvmNetwork>(
         self,
         mut config: Box<Config>,
