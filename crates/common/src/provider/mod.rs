@@ -49,6 +49,30 @@ const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
 /// Helper type alias for a retry provider
 pub type RetryProvider<N = AnyNetwork> = RootProvider<N>;
 
+/// Returns whether an RPC transport error reports JSON-RPC method-not-found.
+///
+/// Some providers encode JSON-RPC errors inside an HTTP error response instead of returning a
+/// normal JSON-RPC response. Only the exact `-32601` code is treated as method unavailability;
+/// authentication, internal, and transport errors must remain visible to callers.
+pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
+    if error.as_error_resp().is_some_and(|response| response.code == -32601) {
+        return true;
+    }
+    let TransportError::Transport(error) = error else { return false };
+    error
+        .as_http_error()
+        .and_then(|error| rpc_error_code(&error.body))
+        .is_some_and(|code| code == -32601)
+}
+
+fn rpc_error_code(body: &str) -> Option<i64> {
+    // HTTP transports may append human-readable diagnostics after the JSON-RPC body. Parse the
+    // first complete JSON value instead of requiring the entire body to be JSON.
+    let value =
+        serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
+    value.get("error").unwrap_or(&value).get("code")?.as_i64()
+}
+
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork, W = EthereumWallet> = FillProvider<
     JoinFill<JoinFill<Identity, <N as RecommendedFillers>::RecommendedFillers>, WalletFiller<W>>,
@@ -595,7 +619,41 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_json_rpc::ErrorPayload;
+
     use super::*;
+
+    #[test]
+    fn method_not_found_classification_is_exact() {
+        let method_not_found = TransportError::ErrorResp(ErrorPayload::method_not_found());
+        let internal_error = TransportError::ErrorResp(ErrorPayload::internal_error());
+        let http_method_not_found = alloy_transport::TransportErrorKind::http_error(
+            403,
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method not allowed"}}"#
+                .to_string(),
+        );
+        let http_internal_error = alloy_transport::TransportErrorKind::http_error(
+            500,
+            r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal error"}}"#.to_string(),
+        );
+        let http_method_not_found_with_diagnostics =
+            alloy_transport::TransportErrorKind::http_error(
+                403,
+                concat!(
+                    r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method not allowed"}}"#,
+                    "\n\nHTTP diagnostics:\nstatus: 403 Forbidden"
+                )
+                .to_string(),
+            );
+        let transport_error = alloy_transport::TransportErrorKind::backend_gone();
+
+        assert!(is_rpc_method_not_found(&method_not_found));
+        assert!(is_rpc_method_not_found(&http_method_not_found));
+        assert!(is_rpc_method_not_found(&http_method_not_found_with_diagnostics));
+        assert!(!is_rpc_method_not_found(&internal_error));
+        assert!(!is_rpc_method_not_found(&http_internal_error));
+        assert!(!is_rpc_method_not_found(&transport_error));
+    }
 
     #[test]
     fn can_auto_correct_missing_prefix() {

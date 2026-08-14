@@ -1,10 +1,11 @@
 //! IPC tests
 
 use crate::{init_tracing, utils::connect_pubsub};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use futures::StreamExt;
+use std::time::Duration;
 use tempfile::TempDir;
 
 fn ipc_config() -> (Option<TempDir>, NodeConfig) {
@@ -36,6 +37,25 @@ async fn can_get_block_number_ipc() {
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, block_num.to::<u64>());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_handle_closes_ipc_connections() {
+    let (_dir, config) = ipc_config();
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.ipc_provider().unwrap();
+
+    provider.get_balance(Address::ZERO).await.unwrap();
+    drop(handle);
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Ok(Ok(_)) =
+            tokio::time::timeout(Duration::from_millis(500), provider.get_balance(Address::ZERO))
+                .await
+        {}
+    })
+    .await
+    .expect("IPC connection continued serving requests after node shutdown");
 }
 
 #[tokio::test(flavor = "multi_thread")]

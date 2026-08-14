@@ -12,6 +12,8 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
+#[cfg(feature = "monad")]
+use foundry_evm::hardfork::MonadHardfork;
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
@@ -252,12 +254,21 @@ impl NodeArgs {
 
         let funded_accounts = self.parse_funded_accounts()?;
 
-        let networks = self
+        let local_chain_id = self
             .evm
             .chain_id
             .map(u64::from)
-            .or_else(|| self.evm.fork_chain_id.map(u64::from))
-            .map_or(self.evm.networks, |chain_id| self.evm.networks.with_chain_id(chain_id));
+            .or_else(|| self.init.as_ref().map(|genesis| genesis.config.chain_id));
+        let inferred_network_chain_id = self
+            .evm
+            .fork_chain_id
+            .map(u64::from)
+            .or(if self.evm.fork_url.is_empty() { local_chain_id } else { None });
+        let networks = if let Some(chain_id) = inferred_network_chain_id {
+            self.evm.networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)?
+        } else {
+            self.evm.networks
+        };
 
         let hardfork = match &self.hardfork {
             Some(hf) => Some(parse_hardfork(hf, &networks)?),
@@ -321,10 +332,10 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(networks)
-            // Apply chain-id after explicit network flags so auto-detection can fill in
-            // defaults when no network was set, without being overwritten afterward.
             .with_chain_id(self.evm.chain_id)
+            // Restore the source-derived or explicitly selected network after applying the
+            // execution chain ID. Fork source discovery can refine an unresolved network later.
+            .with_networks(networks)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -899,10 +910,15 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
         return Ok(OpHardfork::from_str(hf)?.into());
     }
     if networks.is_tempo() {
-        Ok(TempoHardfork::from_str(hf)?.into())
-    } else {
-        Ok(EthereumHardfork::from_str(hf)?.into())
+        return Ok(TempoHardfork::from_str(hf)?.into());
     }
+    #[cfg(feature = "monad")]
+    if networks.is_monad() {
+        return Ok(MonadHardfork::from_str(hf)
+            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hf}': {err:?}"))?
+            .into());
+    }
+    Ok(EthereumHardfork::from_str(hf)?.into())
 }
 
 /// Clap's value parser for genesis. Loads a genesis.json file.
@@ -960,6 +976,7 @@ mod tests {
         assert_eq!(config.hardfork, Some(EthereumHardfork::Berlin.into()));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn can_parse_optimism_hardfork() {
         let args: NodeArgs =
@@ -997,6 +1014,122 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "optimism"))]
+    fn chain_id_rejects_disabled_optimism_network() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "10"]);
+        let error = args.into_node_config().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 10: network family `optimism` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn chain_id_rejects_disabled_monad_network() {
+        for chain_id in ["143", "10143"] {
+            let args = NodeArgs::parse_from(["anvil", "--chain-id", chain_id]);
+            let error = args.into_node_config().unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "cannot infer execution network from chain ID {chain_id}: network family \
+                     `monad` is not enabled in this build"
+                )
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_ethereum_allows_monad_chain_id() {
+        let args = NodeArgs::parse_from(["anvil", "--network", "ethereum", "--chain-id", "143"]);
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 143);
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn genesis_chain_id_rejects_disabled_monad_network() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 143;
+        args.init = Some(genesis);
+
+        let error = args.into_node_config().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 143: network family `monad` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_network_overrides_genesis_chain_id_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--network", "ethereum"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 143;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 143);
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_chain_id_precedes_genesis_network_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--chain-id", "1"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 143;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+
+        assert!(!config.networks.has_network_selection());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn disabled_fork_chain_id_precedes_execution_chain_id() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "10143",
+            "--chain-id",
+            "1",
+        ]);
+        let error = args.into_node_config().unwrap_err();
+
+        assert!(error.to_string().contains(
+            "cannot infer execution network from chain ID 10143: network family `monad` is not \
+             enabled in this build"
+        ));
+    }
+
+    #[test]
+    fn unknown_chain_id_preserves_ethereum_fallback() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "98765432"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(!config.networks.has_network_selection());
+        assert_eq!(config.get_chain_id(), 98_765_432);
+    }
+
+    #[test]
     fn chain_id_infers_tempo_network_for_hardfork() {
         let args = NodeArgs::parse_from(["anvil", "--chain-id", "4217", "--hardfork", "T5"]);
         let config = args.into_node_config().unwrap();
@@ -1022,6 +1155,70 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn chain_id_infers_monad_network_in_node_config() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "143"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn fork_chain_id_precedes_execution_chain_id_for_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "10143",
+            "--chain-id",
+            "1",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_monad());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    fn fork_execution_chain_id_does_not_infer_source_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--chain-id",
+            "4217",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.resolved_network().is_none());
+        assert_eq!(config.get_chain_id(), 4217);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn can_parse_monad_hardfork() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(MonadHardfork::MonadNine.into()));
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_uses_monad_default_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, None);
+        assert_eq!(config.get_hardfork(), MonadHardfork::default().into());
+        assert!(config.networks.is_monad());
     }
 
     #[test]

@@ -15,7 +15,7 @@ use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_compilers::{ProjectCompileOutput, compilers::multi::MultiCompiler};
 use foundry_config::Config;
 use solar::{
-    ast::{BinOpKind, UnOpKind},
+    ast::{BinOpKind, LitKind, UnOpKind},
     interface::{Session, source_map::FileName},
     sema::{
         Compiler, CompilerRef, Gcx,
@@ -130,10 +130,14 @@ impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let ExprKind::Assign(destination, None, value) = &expr.kind
+        if let ExprKind::Assign(destination, op, value) = &expr.kind
             && let Some(ty) = self.gcx.type_of_expr(destination.id)
         {
-            self.collect_assignment(value, ty);
+            if let Some(op) = op {
+                self.collect_compound_assignment(value, ty, op.kind);
+            } else {
+                self.collect_assignment(value, ty);
+            }
         }
         if let ExprKind::Binary(left, op, right) = &expr.kind
             && (op.kind.is_cmp() || matches!(op.kind, BinOpKind::And | BinOpKind::Or))
@@ -141,10 +145,26 @@ impl<'hir> Visit<'hir> for MutationExclusionCollector<'hir> {
             self.collect_comparison(expr, left, op.kind, right);
         }
         if let ExprKind::Unary(_, operand) = &expr.kind
-            && is_unsigned(self.gcx, operand)
+            && let Some(kind) = unary_operand_kind(self.gcx, operand)
             && let Some(span) = self.local_span(expr.span)
         {
-            self.mutations.insert(MutationExclusion::unary(span, UnOpKind::Neg));
+            match kind {
+                UnaryOperandKind::SignedInteger => {}
+                UnaryOperandKind::UnsignedInteger => {
+                    self.mutations.insert(MutationExclusion::unary(span, UnOpKind::Neg));
+                }
+                UnaryOperandKind::FixedBytes => {
+                    for op in [
+                        UnOpKind::PreInc,
+                        UnOpKind::PreDec,
+                        UnOpKind::PostInc,
+                        UnOpKind::PostDec,
+                        UnOpKind::Neg,
+                    ] {
+                        self.mutations.insert(MutationExclusion::unary(span, op));
+                    }
+                }
+            }
         }
         if let ExprKind::Unary(_, operand) = &expr.kind
             && is_non_storage_push_call(self.gcx, operand)
@@ -174,6 +194,25 @@ impl MutationExclusionCollector<'_> {
             self.mutations.insert(MutationExclusion::assignment(span, AssignmentReplacement::Zero));
         }
         if !kind.accepts_negation() {
+            self.mutations
+                .insert(MutationExclusion::assignment(span, AssignmentReplacement::Negate));
+        }
+    }
+
+    fn collect_compound_assignment(
+        &mut self,
+        value: &hir::Expr<'_>,
+        destination: solar::sema::ty::Ty<'_>,
+        op: BinOpKind,
+    ) {
+        let Some(span) = self.local_span(value.span) else { return };
+        let Some(destination) = assignment_destination_kind(destination) else { return };
+        let Some(value_accepts_negation) = assignment_value_accepts_negation(self.gcx, value)
+        else {
+            return;
+        };
+
+        if op.is_shift() || !destination.accepts_negation() || !value_accepts_negation {
             self.mutations
                 .insert(MutationExclusion::assignment(span, AssignmentReplacement::Negate));
         }
@@ -247,6 +286,23 @@ fn assignment_destination_kind(ty: solar::sema::ty::Ty<'_>) -> Option<Assignment
     }
 }
 
+fn assignment_value_accepts_negation(gcx: Gcx<'_>, value: &hir::Expr<'_>) -> Option<bool> {
+    if matches!(&value.peel_parens().kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Number(_)))
+    {
+        return Some(true);
+    }
+
+    let ty = gcx.type_of_expr(value.peel_parens().id)?;
+    match ty.peel_refs().kind {
+        TyKind::Elementary(ElementaryType::Int(_) | ElementaryType::Fixed(..)) => Some(true),
+        TyKind::Elementary(
+            ElementaryType::UInt(_) | ElementaryType::UFixed(..) | ElementaryType::FixedBytes(_),
+        ) => Some(false),
+        TyKind::Udvt(..) | TyKind::Err(_) => None,
+        _ => Some(false),
+    }
+}
+
 fn is_type_invalid_replacement(
     gcx: Gcx<'_>,
     left: &hir::Expr<'_>,
@@ -294,10 +350,21 @@ fn comparison_operand_kind(
     }
 }
 
-fn is_unsigned(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
-    gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
-        matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::UInt(_)))
-    })
+#[derive(Clone, Copy)]
+enum UnaryOperandKind {
+    SignedInteger,
+    UnsignedInteger,
+    FixedBytes,
+}
+
+fn unary_operand_kind(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<UnaryOperandKind> {
+    let ty = gcx.type_of_expr(expr.peel_parens().id)?;
+    match ty.peel_refs().kind {
+        TyKind::Elementary(ElementaryType::Int(_)) => Some(UnaryOperandKind::SignedInteger),
+        TyKind::Elementary(ElementaryType::UInt(_)) => Some(UnaryOperandKind::UnsignedInteger),
+        TyKind::Elementary(ElementaryType::FixedBytes(_)) => Some(UnaryOperandKind::FixedBytes),
+        _ => None,
+    }
 }
 
 fn is_non_storage_push_call(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
@@ -434,6 +501,68 @@ contract Test {
     }
 
     #[test]
+    fn excludes_invalid_compound_assignment_negation() {
+        let source = r#"
+contract Test {
+    uint256 unsignedTotal;
+    int256 signedTotal;
+    bytes32 word;
+
+    function check(
+        uint256 unsignedAmount,
+        int256 signedAmount,
+        bytes32 mask,
+        uint8 shift
+    ) external {
+        unsignedTotal += unsignedAmount;
+        signedTotal += signedAmount;
+        word &= mask;
+        signedTotal <<= shift;
+        signedTotal += 11;
+        signedTotal &= 12;
+        signedTotal <<= 13;
+        signedTotal >>= 14;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for value in ["unsignedAmount", "mask", "shift"] {
+            assert!(mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Negate,
+            )));
+        }
+        assert!(!mutations.contains(&assignment_mutation(
+            source,
+            "signedAmount",
+            AssignmentReplacement::Negate,
+        )));
+        for value in ["11", "12"] {
+            assert!(!mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Negate,
+            )));
+        }
+        for value in ["13", "14"] {
+            assert!(mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Negate,
+            )));
+        }
+        for value in ["unsignedAmount", "signedAmount", "mask", "shift"] {
+            assert!(!mutations.contains(&assignment_mutation(
+                source,
+                value,
+                AssignmentReplacement::Zero,
+            )));
+        }
+    }
+
+    #[test]
     fn preserves_valid_signed_and_fixed_bytes_assignments() {
         let source = r#"
 contract Test {
@@ -560,6 +689,62 @@ contract Test {
 
         for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
             assert!(!mutations.contains(&unary_mutation(source, "-values.push()", op)));
+        }
+    }
+
+    #[test]
+    fn excludes_invalid_fixed_bytes_unary_mutations() {
+        let source = r#"
+contract Test {
+    function check(bytes32 word) external pure returns (bytes32) {
+        return ~word;
+    }
+
+    function checkNumber(uint256 number) external pure returns (uint256) {
+        return ~number;
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [
+            UnOpKind::PreInc,
+            UnOpKind::PreDec,
+            UnOpKind::PostInc,
+            UnOpKind::PostDec,
+            UnOpKind::Neg,
+        ] {
+            assert!(mutations.contains(&unary_mutation(source, "~word", op)));
+        }
+        assert!(!mutations.contains(&unary_mutation(source, "~word", UnOpKind::BitNot)));
+
+        for op in [UnOpKind::PreInc, UnOpKind::PreDec, UnOpKind::PostInc, UnOpKind::PostDec] {
+            assert!(!mutations.contains(&unary_mutation(source, "~number", op)));
+        }
+        assert!(mutations.contains(&unary_mutation(source, "~number", UnOpKind::Neg)));
+    }
+
+    #[test]
+    fn excludes_invalid_fixed_bytes_storage_push_mutations() {
+        let source = r#"
+contract Test {
+    bytes32[] values;
+
+    function check() external returns (bytes32) {
+        return ~values.push();
+    }
+}
+"#;
+        let mutations = collect(source);
+
+        for op in [
+            UnOpKind::PreInc,
+            UnOpKind::PreDec,
+            UnOpKind::PostInc,
+            UnOpKind::PostDec,
+            UnOpKind::Neg,
+        ] {
+            assert!(mutations.contains(&unary_mutation(source, "~values.push()", op)));
         }
     }
 
