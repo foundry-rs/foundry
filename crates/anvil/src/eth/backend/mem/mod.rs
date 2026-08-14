@@ -129,7 +129,7 @@ use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 #[cfg(feature = "monad")]
 use foundry_evm::core::{
-    FoundryContextExt, FromAnyRpcTransaction, MonadContextAux,
+    FromAnyRpcTransaction,
     evm::{
         FoundryEvmFactory, MonadBlockParticipants,
         monad_block_participants as collect_monad_block_participants,
@@ -456,7 +456,7 @@ impl<D> Drop for StagedForkDbUser<D> {
 }
 
 #[cfg(feature = "monad")]
-pub(crate) type MonadReplayContext = MonadContextAux;
+pub(crate) type MonadReplayContext = MonadChainContext;
 // Opaque stand-in that keeps feature-independent replay context plumbing type-stable.
 #[cfg(not(feature = "monad"))]
 #[derive(Clone)]
@@ -505,7 +505,7 @@ impl<'a> EnvelopeExecution<'a> {
 
 #[cfg(feature = "monad")]
 struct PreparedMonadExecution {
-    context: Option<MonadContextAux>,
+    context: Option<MonadChainContext>,
     kind: EnvelopeExecutionKind,
     hardfork: MonadHardfork,
 }
@@ -521,7 +521,7 @@ fn exact_monad_context_at(
     current_tx_index: usize,
 ) -> MonadExecutionContext<'static> {
     let mut context = context.clone();
-    context.chain.current_tx_index = current_tx_index;
+    context.current_tx_index = current_tx_index;
     exact_monad_context(context)
 }
 
@@ -574,11 +574,11 @@ fn prepare_monad_transaction<DB: alloy_evm::Database>(
 fn resolve_monad_execution_context(
     context: Option<MonadExecutionContext<'_>>,
     tx: &TxEnv,
-) -> Option<MonadContextAux> {
+) -> Option<MonadChainContext> {
     match context {
         Some(MonadExecutionContext::Exact(context)) => Some(*context),
         Some(MonadExecutionContext::Next(context)) => {
-            append_monad_transaction(&mut context.chain, tx);
+            append_monad_transaction(context, tx);
             Some(context.clone())
         }
         None => None,
@@ -586,19 +586,18 @@ fn resolve_monad_execution_context(
 }
 
 #[cfg(feature = "monad")]
-fn advance_monad_block(context: &mut MonadContextAux) {
+fn advance_monad_block(context: &mut MonadChainContext) {
     let current = context
-        .chain
         .current_block_senders
         .iter()
         .copied()
-        .chain(context.chain.current_block_authorities.iter().flatten().copied())
+        .chain(context.current_block_authorities.iter().flatten().copied())
         .collect();
-    context.chain.grandparent_senders_and_authorities =
-        std::mem::replace(&mut context.chain.parent_senders_and_authorities, current);
-    context.chain.current_block_senders.clear();
-    context.chain.current_block_authorities.clear();
-    context.chain.current_tx_index = 0;
+    context.grandparent_senders_and_authorities =
+        std::mem::replace(&mut context.parent_senders_and_authorities, current);
+    context.current_block_senders.clear();
+    context.current_block_authorities.clear();
+    context.current_tx_index = 0;
 }
 
 /// Removes a candidate transaction that failed before block inclusion.
@@ -1503,7 +1502,7 @@ impl<N: Network> Backend<N> {
     fn monad_context_for_child_of(
         &self,
         parent_hash: B256,
-    ) -> Result<MonadContextAux, BlockchainError> {
+    ) -> Result<MonadChainContext, BlockchainError> {
         self.monad_context_for_child_of_in_storage(&self.blockchain.storage.read(), parent_hash)
     }
 
@@ -1513,7 +1512,7 @@ impl<N: Network> Backend<N> {
         &self,
         storage: &BlockchainStorage<N>,
         parent_hash: B256,
-    ) -> Result<MonadContextAux, BlockchainError> {
+    ) -> Result<MonadChainContext, BlockchainError> {
         let (_, grandparent_hash, parent) =
             self.monad_block_participants_from_storage(storage, parent_hash)?;
         let grandparent = if grandparent_hash.is_zero() {
@@ -1529,7 +1528,7 @@ impl<N: Network> Backend<N> {
     async fn monad_context_for_child_of_block_number(
         &self,
         block_number: u64,
-    ) -> Result<MonadContextAux, BlockchainError> {
+    ) -> Result<MonadChainContext, BlockchainError> {
         let block = self
             .block_by_number_full(BlockNumber::Number(block_number))
             .await?
@@ -1546,7 +1545,7 @@ impl<N: Network> Backend<N> {
     async fn monad_context_for_child_of_block_hash(
         &self,
         block_hash: B256,
-    ) -> Result<MonadContextAux, BlockchainError> {
+    ) -> Result<MonadChainContext, BlockchainError> {
         let block =
             self.block_by_hash_full(block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
         let parent_hash = block.header().parent_hash();
@@ -1561,7 +1560,7 @@ impl<N: Network> Backend<N> {
     fn monad_context_for_mined_block(
         &self,
         block: &Block,
-    ) -> Result<MonadContextAux, BlockchainError> {
+    ) -> Result<MonadChainContext, BlockchainError> {
         let current = self.monad_tx_envs_from_storage(
             &self.blockchain.storage.read(),
             &block.body.transactions,
@@ -1582,7 +1581,7 @@ impl<N: Network> Backend<N> {
         &self,
         block: &Block,
         current_tx_index: usize,
-    ) -> Result<MonadContextAux, BlockchainError> {
+    ) -> Result<MonadChainContext, BlockchainError> {
         let current = self.monad_tx_envs_from_storage(
             &self.blockchain.storage.read(),
             &block.body.transactions,
@@ -2923,9 +2922,16 @@ impl<N: Network> Backend<N> {
             evm_env.block_env.clone(),
         );
         let factory = MonadEvmFactory::default();
-        let context = execution.context.unwrap_or_else(|| factory.context_for_transaction(&tx_env));
+        let context = execution.context.unwrap_or_else(|| {
+            monad_context_from_participants(
+                Default::default(),
+                Default::default(),
+                std::slice::from_ref(&tx_env),
+                0,
+            )
+        });
         let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
-        evm.ctx_mut().set_aux_state(context);
+        evm.ctx_mut().chain = context;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
@@ -3037,10 +3043,10 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
-            let context_aux = self
+            let transaction_context = self
                 .monad_context_for_child_of(parent_hash)
                 .expect("Monad ancestor context must be available before block execution");
-            evm.ctx_mut().set_aux_state(context_aux);
+            evm.ctx_mut().chain = transaction_context;
             return run!(
                 evm,
                 prepare_monad_transaction,
@@ -5672,9 +5678,9 @@ where
             );
             let mut evm =
                 MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
-            let context_aux = monad_context
+            let transaction_context = monad_context
                 .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?;
-            evm.ctx_mut().set_aux_state(context_aux);
+            evm.ctx_mut().chain = transaction_context;
             return run!(evm, |executor| {
                 execute_historical_replay_with(
                     executor,

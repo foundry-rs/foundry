@@ -1088,6 +1088,7 @@ impl Cheatcode for deleteSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
@@ -1098,6 +1099,7 @@ impl Cheatcode for deleteStateSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
@@ -1109,6 +1111,7 @@ impl Cheatcode for deleteSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
@@ -1119,6 +1122,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
@@ -1328,7 +1332,7 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
-        let context_aux = ccx.ecx.db().context_for_synthetic_transaction(&tx_env)?;
+        let chain_context = ccx.ecx.db().chain_context_for_synthetic_transaction(&tx_env)?;
         let created_address = tx_env.kind().is_create().then(|| sender.create(tx_env.nonce()));
 
         // Save current env for restoration after execution.
@@ -1389,7 +1393,7 @@ impl Cheatcode for executeTransactionCall {
                 ccx.state,
                 db,
                 modified_evm_env,
-                context_aux,
+                chain_context,
                 &mut |evm| {
                     // SAFETY: closure is called exactly once by the executor.
                     evm.journal_inner_mut().state = cold_state.take().expect("called once");
@@ -1581,12 +1585,17 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
             active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
         }
     }
-    let context_state = ccx.ecx.context_state();
-    let id = ccx.ecx.db_mut().snapshot_state(&context_state, &evm_env);
+    let journaled_state = ccx.ecx.journal_inner().clone();
+    let id = ccx.ecx.db_mut().snapshot_state(&journaled_state, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
+    let factory = FEN::EvmFactory::default();
+    ccx.state.context_snapshots.insert(
+        id,
+        (factory.capture_chain_context(ccx.ecx), factory.capture_transaction_state(ccx.ecx)),
+    );
     ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
 }
@@ -1637,15 +1646,21 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let context_state = ccx.ecx.context_state();
+    let journaled_state = ccx.ecx.journal_inner().clone();
     if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        &context_state,
+        &journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        ccx.ecx.set_context_state(restored);
+        ccx.ecx.set_journal_inner(restored);
+        if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
+            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(context));
+            FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state.clone());
+        } else {
+            refresh_context_after_state_change::<FEN>(ccx.ecx);
+        }
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
@@ -1666,15 +1681,21 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let context_state = ccx.ecx.context_state();
+    let journaled_state = ccx.ecx.journal_inner().clone();
     if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        &context_state,
+        &journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        ccx.ecx.set_context_state(restored);
+        ccx.ecx.set_journal_inner(restored);
+        if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
+            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(&context));
+            FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state);
+        } else {
+            refresh_context_after_state_change::<FEN>(ccx.ecx);
+        }
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;

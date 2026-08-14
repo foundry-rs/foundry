@@ -5,7 +5,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::{Result, WrapErr};
 
-use super::{BlockResponseFor, ContextAuxFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor};
+use super::{BlockResponseFor, ChainContextFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor};
 
 /// Transaction metadata for an exact block and its two ancestors.
 #[derive(Clone, Debug)]
@@ -46,8 +46,8 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
     }
 
     /// Builds context for the transaction at `index` in the current block.
-    pub fn transaction(&self, index: usize) -> ContextAuxFor<FEN> {
-        FEN::EvmFactory::default().context_for_block(
+    pub fn transaction(&self, index: usize) -> ChainContextFor<FEN> {
+        FEN::EvmFactory::default().chain_context_for_block(
             &self.grandparent,
             &self.parent,
             &self.current,
@@ -75,11 +75,11 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
     }
 
     /// Builds context for the next transaction at the cursor's current block position.
-    pub fn next_transaction(&self, tx: &TxEnvFor<FEN>) -> ContextAuxFor<FEN> {
+    pub fn next_transaction(&self, tx: &TxEnvFor<FEN>) -> ChainContextFor<FEN> {
         let mut current = self.current.clone();
         let index = current.len();
         current.push(tx.clone());
-        FEN::EvmFactory::default().context_for_block(
+        FEN::EvmFactory::default().chain_context_for_block(
             &self.grandparent,
             &self.parent,
             &current,
@@ -99,7 +99,7 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
     }
 
     /// Builds context for a synthetic transaction in a child of the current block.
-    pub fn child(&self, tx: &TxEnvFor<FEN>) -> ContextAuxFor<FEN> {
+    pub fn child(&self, tx: &TxEnvFor<FEN>) -> ChainContextFor<FEN> {
         self.clone().into_child().next_transaction(tx)
     }
 }
@@ -109,14 +109,13 @@ pub async fn context_for_child_transaction<FEN, P>(
     provider: &P,
     block_number: u64,
     tx: &TxEnvFor<FEN>,
-) -> Result<ContextAuxFor<FEN>>
+) -> Result<ChainContextFor<FEN>>
 where
     FEN: FoundryEvmNetwork,
     P: Provider<FEN::Network>,
 {
-    let factory = FEN::EvmFactory::default();
     if !FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
-        return Ok(factory.context_for_transaction(tx));
+        return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
     }
 
     let block = provider
