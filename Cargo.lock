@@ -2990,6 +2990,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.4",
  "revm",
+ "rexpect",
  "rpassword",
  "semver 1.0.28",
  "serde",

@@ -48,6 +48,7 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     let testdata =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata").canonicalize().unwrap();
     cmd.current_dir(&testdata);
+    cmd.arg("--allow-project-env");
 
     let mut dotenv = std::fs::File::create(testdata.join(".env")).unwrap();
     for (name, endpoint) in rpc_endpoints().iter() {
@@ -2903,7 +2904,7 @@ Traces:
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [558945] PauseTracingTest::test()
+  [558957] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
     ├─ [48460] TraceGenerator::generate()

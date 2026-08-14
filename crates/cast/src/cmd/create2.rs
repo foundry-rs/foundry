@@ -7,7 +7,7 @@ use foundry_cli::{
     opts::BuildOpts,
     utils::{LoadConfig, find_contract_artifacts, parse_constructor_args},
 };
-use foundry_common::compile;
+use foundry_common::{compile, shell};
 use foundry_compilers::{info::ContractInfo, utils::canonicalize};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use regex::RegexSetBuilder;
@@ -301,7 +301,11 @@ impl Create2Args {
         sh_status!("Successfully found contract address in {:?}", timer.elapsed())?;
         sh_status!("Address: {address}")?;
         sh_status!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
-        sh_println!("{address}\t{salt}")?;
+        // The machine-readable stdout record duplicates the prose above when stdout is an
+        // interactive terminal.
+        if !shell::is_out_tty() {
+            sh_println!("{address}\t{salt}")?;
+        }
 
         Ok(Create2Output { address, salt })
     }
