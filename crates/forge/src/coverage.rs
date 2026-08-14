@@ -170,7 +170,13 @@ impl CoverageReporter for LcovReporter {
                 let hits = item.hits;
                 match item.kind {
                     CoverageItemKind::Function { ref name } => {
-                        let name = format!("{}.{name}", item.loc.contract_name);
+                        // Free (file-level) functions have no contract scope; emit the bare
+                        // name rather than a leading-dot `.name`.
+                        let name = if item.loc.contract_name.is_empty() {
+                            name.to_string()
+                        } else {
+                            format!("{}.{name}", item.loc.contract_name)
+                        };
                         if self.version >= Version::new(2, 2, 0) {
                             // v2.2 changed the FN format.
                             writeln!(out, "FNL:{fn_index},{line},{end_line}")?;
