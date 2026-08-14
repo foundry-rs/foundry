@@ -1,6 +1,7 @@
 use clap::CommandFactory;
 use forge::cmd::coverage::CoverageArgs;
 use foundry_common::fs::{self, files_with_ext};
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
 use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData},
@@ -1866,10 +1867,10 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-// https://github.com/foundry-rs/foundry/issues/9270, https://github.com/foundry-rs/foundry/issues/9444
-// Test that special functions with no statements are not counted.
-// TODO: We should support this, but for now just ignore them.
-// See TODO in `visit_function_definition`: https://github.com/foundry-rs/foundry/issues/9458
+// https://github.com/foundry-rs/foundry/issues/9270,
+// https://github.com/foundry-rs/foundry/issues/9444,
+// https://github.com/foundry-rs/foundry/issues/9458
+// Test coverage for functions with no statements.
 forgetest!(empty_functions, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
@@ -1879,6 +1880,8 @@ contract AContract {
     constructor() {}
 
     receive() external payable {}
+
+    fallback() external {}
 
     function increment() public {}
 }
@@ -1897,6 +1900,8 @@ contract AContractTest is DSTest {
         a.increment();
         (bool success,) = address(a).call{value: 1}("");
         require(success);
+        (success,) = address(a).call(hex"deadbeef");
+        require(success);
     }
 }
     "#,
@@ -1907,9 +1912,199 @@ contract AContractTest is DSTest {
         str![[r#"
 TN:
 SF:src/AContract.sol
+DA:5,1
+FN:5,AContract.constructor
+FNDA:1,AContract.constructor
+DA:7,1
+FN:7,AContract.receive
+FNDA:1,AContract.receive
 DA:9,1
-FN:9,AContract.increment
+FN:9,AContract.fallback
+FNDA:1,AContract.fallback
+DA:11,1
+FN:11,AContract.increment
 FNDA:1,AContract.increment
+FNF:4
+FNH:4
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+--------------+------------+---------------╮
+| File              | % Lines       | % Statements | % Branches | % Funcs       |
++===============================================================================+
+| src/AContract.sol | 100.00% (4/4) | N/A (0/0)    | N/A (0/0)  | 100.00% (4/4) |
+|-------------------+---------------+--------------+------------+---------------|
+| Total             | 100.00% (4/4) | N/A (0/0)    | N/A (0/0)  | 100.00% (4/4) |
+╰-------------------+---------------+--------------+------------+---------------╯
+
+"#]]);
+});
+
+// Test empty shared-memory calldata used by nested calls with isolation disabled.
+forgetest!(empty_shared_calldata, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    receive() external payable {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    address internal target;
+
+    function setUp() public {
+        target = address(new AContract());
+    }
+
+    function test_receive() public {
+        (bool success,) = target.call{gas: 100_000}("");
+        require(success);
+    }
+}
+    "#,
+    );
+
+    let expected = str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,1
+FN:5,AContract.receive
+FNDA:1,AContract.receive
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
+    assert_lcov(cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]), expected);
+});
+
+// Test that inherited empty constructors, receive functions, and fallbacks have distinct anchors.
+forgetest!(empty_special_functions_are_distinct, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract Base {
+    constructor() {}
+
+    receive() external payable {}
+
+    fallback() external {}
+
+    function increment() public {}
+}
+
+contract AContract is Base {}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_receive() public {
+        AContract a = new AContract();
+        (bool success,) = address(a).call{value: 1}("");
+        require(success);
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,1
+FN:5,Base.constructor
+FNDA:1,Base.constructor
+DA:7,1
+FN:7,Base.receive
+FNDA:1,Base.receive
+DA:9,0
+FN:9,Base.fallback
+FNDA:0,Base.fallback
+DA:11,0
+FN:11,Base.increment
+FNDA:0,Base.increment
+FNF:4
+FNH:2
+LF:4
+LH:2
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
+
+// Test that a fallback without a receive uses the same anchor for empty and non-empty calldata.
+forgetest!(empty_fallback_without_receive, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    fallback() external payable {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_fallback() public {
+        AContract a = new AContract();
+        (bool success,) = address(a).call{value: 1}("");
+        require(success);
+        (success,) = address(a).call(hex"01");
+        require(success);
+        (success,) = address(a).call(hex"deadbeef");
+        require(success);
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,3
+FN:5,AContract.fallback
+FNDA:3,AContract.fallback
 FNF:1
 FNH:1
 LF:1
@@ -1920,19 +2115,54 @@ end_of_record
 
 "#]],
     );
+});
 
-    // Assert there's only one function (`increment`) reported.
-    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
-...
-╭-------------------+---------------+--------------+------------+---------------╮
-| File              | % Lines       | % Statements | % Branches | % Funcs       |
-+===============================================================================+
-| src/AContract.sol | 100.00% (1/1) | N/A (0/0)    | N/A (0/0)  | 100.00% (1/1) |
-|-------------------+---------------+--------------+------------+---------------|
-| Total             | 100.00% (1/1) | N/A (0/0)    | N/A (0/0)  | 100.00% (1/1) |
-╰-------------------+---------------+--------------+------------+---------------╯
+// Test that a nonpayable fallback is not covered by a rejected value-bearing call.
+forgetest!(empty_nonpayable_fallback_rejects_value, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    fallback() external {}
+}
+    "#,
+    );
 
-"#]]);
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_rejected_fallback() public {
+        AContract a = new AContract();
+        (bool success,) = address(a).call{value: 1}(hex"deadbeef");
+        require(!success);
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,0
+FN:5,AContract.fallback
+FNDA:0,AContract.fallback
+FNF:1
+FNH:0
+LF:1
+LH:0
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
 });
 
 // Test coverage for `receive` functions.
@@ -1951,6 +2181,8 @@ contract AContract {
     receive() external payable {
         counter = msg.value;
     }
+
+    fallback() external {}
 }
     "#,
     );
@@ -1972,7 +2204,7 @@ contract AContractTest is DSTest {
     "#,
     );
 
-    // Assert both constructor and receive functions coverage reported and appear in LCOV.
+    // Assert the constructor and receive are covered while the empty fallback is not.
     assert_lcov(
         cmd.arg("coverage"),
         str![[r#"
@@ -1986,9 +2218,12 @@ DA:11,1
 FN:11,AContract.receive
 FNDA:1,AContract.receive
 DA:12,1
-FNF:2
+DA:15,0
+FN:15,AContract.fallback
+FNDA:0,AContract.fallback
+FNF:3
 FNH:2
-LF:4
+LF:5
 LH:4
 BRF:0
 BRH:0
@@ -1999,15 +2234,61 @@ end_of_record
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
-╭-------------------+---------------+---------------+------------+---------------╮
-| File              | % Lines       | % Statements  | % Branches | % Funcs       |
-+================================================================================+
-| src/AContract.sol | 100.00% (4/4) | 100.00% (2/2) | N/A (0/0)  | 100.00% (2/2) |
-|-------------------+---------------+---------------+------------+---------------|
-| Total             | 100.00% (4/4) | 100.00% (2/2) | N/A (0/0)  | 100.00% (2/2) |
-╰-------------------+---------------+---------------+------------+---------------╯
+╭-------------------+--------------+---------------+------------+--------------╮
+| File              | % Lines      | % Statements  | % Branches | % Funcs      |
++==============================================================================+
+| src/AContract.sol | 80.00% (4/5) | 100.00% (2/2) | N/A (0/0)  | 66.67% (2/3) |
+|-------------------+--------------+---------------+------------+--------------|
+| Total             | 80.00% (4/5) | 100.00% (2/2) | N/A (0/0)  | 66.67% (2/3) |
+╰-------------------+--------------+---------------+------------+--------------╯
 
 "#]]);
+});
+
+// Test empty constructor coverage when via-IR source maps contain no matching span.
+forgetest!(empty_constructor_ir_minimum, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    constructor() {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_constructor() public {
+        new AContract();
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--ir-minimum"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,1
+FN:5,AContract.constructor
+FNDA:1,AContract.constructor
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
 });
 
 // https://github.com/foundry-rs/foundry/issues/9322
@@ -2972,6 +3253,272 @@ contract ReportScript {
     assert!(
         !output.contains("test/Unselected.t.sol"),
         "unselected tests should be omitted from coverage reports:\n{output}"
+    );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16084>
+forgetest!(coverage_separates_compiler_builds, |prj, cmd| {
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "via-ir".to_owned(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/A.sol".parse().unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+
+    prj.add_source(
+        "A.sol",
+        "contract A { function value() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "B.sol",
+        "contract B { function value() external pure returns (uint256) { return 2; } }",
+    );
+    prj.add_test(
+        "Coverage.t.sol",
+        r#"
+import {A} from "../src/A.sol";
+import {B} from "../src/B.sol";
+contract CoverageTest {
+    function testCoverage() public {
+        require(new A().value() == 1);
+        require(new B().value() == 2);
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/A.sol
+DA:3,1
+FN:3,A.value
+FNDA:1,A.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/B.sol
+DA:3,1
+FN:3,B.value
+FNDA:1,B.value
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
+
+// A file-level (free) function declared after a contract must be attributed at file level, not
+// leaked into the earlier contract's scope, and its deferred call must carry the same scope.
+// Regression for https://github.com/foundry-rs/foundry/issues/16085
+forgetest!(coverage_reports_free_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Mixed.sol",
+        r#"
+contract Counter {
+    function bump(uint256 x) public pure returns (uint256) {
+        return triple(x);
+    }
+}
+
+function triple(uint256 x) pure returns (uint256) {
+    return x * 3;
+}
+"#,
+    );
+    prj.add_source(
+        "MixedTest.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Mixed.sol";
+
+contract MixedTest is DSTest {
+    function testMixed() public {
+        Counter c = new Counter();
+        require(c.bump(2) == 6);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=lcov", "--report=attribution", "--lcov-version=2"])
+        .assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    let attribution =
+        std::fs::read_to_string(prj.root().join("coverage-attribution.json")).unwrap();
+    let attribution: Value = serde_json::from_str(&attribution).unwrap();
+
+    assert!(lcov.contains("SF:src/Mixed.sol"), "coverage must include Mixed.sol:\n{lcov}");
+    // The contract method keeps its contract scope.
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",Counter.bump")),
+        "contract function must be scoped as `Counter.bump`:\n{lcov}"
+    );
+    // The free function is attributed at file level: bare `triple`, with no contract prefix
+    // (`Counter.triple`) and no malformed empty scope (`.triple`).
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",triple")),
+        "free function must be attributed as bare `triple`:\n{lcov}"
+    );
+    assert!(
+        !lcov.contains(",Counter.triple"),
+        "free function must not leak the contract scope:\n{lcov}"
+    );
+    assert!(
+        !lcov.contains(",.triple"),
+        "free function must not have a malformed empty scope:\n{lcov}"
+    );
+    // Both functions were executed, so both record a nonzero hit count.
+    assert!(
+        lcov.lines()
+            .any(|l| l.starts_with("FNDA:") && !l.starts_with("FNDA:0,") && l.ends_with(",triple")),
+        "free function must record its hits:\n{lcov}"
+    );
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FNDA:")
+            && !l.starts_with("FNDA:0,")
+            && l.ends_with(",Counter.bump")),
+        "contract function must record its hits:\n{lcov}"
+    );
+    let covered = attribution["tests"][0]["covered"].as_array().unwrap();
+    assert_eq!(
+        covered
+            .iter()
+            .filter(|item| {
+                item["source"] == "src/Mixed.sol"
+                    && item["contract"] == "Counter"
+                    && item["kind"] == "statement"
+            })
+            .count(),
+        2,
+        "the return statement and its deferred call must retain the contract scope:\n{attribution}"
+    );
+});
+
+// A file whose only code is a file-level (free) function must still be reported, with the
+// function named at file level. Before the fix such a file was dropped from coverage entirely.
+// Regression for https://github.com/foundry-rs/foundry/issues/16085
+forgetest!(coverage_reports_free_only_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Free.sol",
+        r#"
+function double(uint256 x) pure returns (uint256) {
+    return x * 2;
+}
+"#,
+    );
+    prj.add_source(
+        "FreeTest.sol",
+        r#"
+import "./test.sol";
+import {double} from "./Free.sol";
+
+contract FreeTest is DSTest {
+    function testDouble() public {
+        require(double(3) == 6);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=lcov", "--lcov-version=2"]).assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+
+    // Inspect the Free.sol record in isolation so FNF/FNH counts are unambiguous.
+    let free_block = lcov
+        .split("SF:")
+        .find(|b| b.starts_with("src/Free.sol"))
+        .expect("free-function-only file must have a coverage record");
+    // The function is named `double`, not `.double`.
+    assert!(
+        free_block.lines().any(|l| l.starts_with("FN") && l.ends_with(",double")),
+        "free function must be reported as bare `double`:\n{free_block}"
+    );
+    assert!(!free_block.contains(".double"), "no leading-dot empty scope:\n{free_block}");
+    // Exactly one function, found and hit.
+    assert!(free_block.contains("FNF:1"), "exactly one function found:\n{free_block}");
+    assert!(free_block.contains("FNH:1"), "exactly one function hit:\n{free_block}");
+});
+
+// A contract method and a file-level function that share a name live in different scopes, so
+// neither should be renamed as if it were an overload of the other.
+forgetest!(coverage_disambiguates_functions_by_scope, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Same.sol",
+        r#"
+contract Lib {
+    function value() public pure returns (uint256) {
+        return 1;
+    }
+}
+
+function value() pure returns (uint256) {
+    return 2;
+}
+"#,
+    );
+    prj.add_source(
+        "SameTest.sol",
+        r#"
+import "./test.sol";
+import {Lib, value} from "./Same.sol";
+
+contract SameTest is DSTest {
+    function testValue() public {
+        Lib lib = new Lib();
+        require(lib.value() == 1);
+        require(value() == 2);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=lcov", "--lcov-version=2"]).assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+
+    // The contract method stays scoped; the free function stays bare.
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",Lib.value")),
+        "contract method must be `Lib.value`:\n{lcov}"
+    );
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",value")),
+        "free function must be bare `value`:\n{lcov}"
+    );
+    // Neither is a real overload, so neither gets a `.0` / `.1` disambiguation suffix.
+    assert!(
+        !lcov.contains("value.0") && !lcov.contains("value.1"),
+        "same-named functions in different scopes must not be disambiguated as overloads:\n{lcov}"
     );
 });
 

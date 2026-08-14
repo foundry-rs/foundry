@@ -121,8 +121,7 @@ tempfile.workspace = true
 alloy-signer-local.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
-# Keep this aligned with the Chisel PTY test dependency.
-rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
+rexpect.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
@@ -133,6 +132,17 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
+touch-id = ["foundry-wallets/touch-id"]
+monad = [
+    "anvil/monad",
+    "foundry-config/monad",
+    "foundry-evm/monad",
+    "foundry-evm-networks/monad",
+    "foundry-common/monad",
+    "foundry-cli/monad",
+    "forge-script/monad",
+    "forge-verify/monad",
+]
 optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

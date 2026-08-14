@@ -87,9 +87,9 @@ impl Mutator for AssignmentMutator {
                 },
                 Mutant {
                     span: replacement_span,
-                    mutation: MutationType::Assignment(AssignVarTypes::Identifier(format!(
-                        "-{ident}"
-                    ))),
+                    mutation: MutationType::Assignment(AssignVarTypes::NegatedIdentifier(
+                        ident.clone(),
+                    )),
                     path: context.path.clone(),
                     original,
                     source_line,
@@ -97,6 +97,7 @@ impl Mutator for AssignmentMutator {
                     column_number,
                 },
             ]),
+            AssignVarTypes::NegatedIdentifier(_) => Ok(vec![]),
         }
     }
 

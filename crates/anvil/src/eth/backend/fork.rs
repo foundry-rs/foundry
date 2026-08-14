@@ -1,6 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
+use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{
@@ -34,8 +35,9 @@ use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
-use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::RetryProvider;
 use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_primitives::FoundryTxReceipt;
 use parking_lot::{
     RawRwLock, RwLock,
@@ -44,6 +46,48 @@ use parking_lot::{
 use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ForkEndpointIdentity {
+    pub(crate) execution_chain_id: u64,
+    pub(crate) source_chain_id: u64,
+    pub(crate) network: Option<NetworkVariant>,
+    pub(crate) network_profile: Option<NetworkConfigs>,
+    pub(crate) hardfork: Option<FoundryHardfork>,
+    pub(crate) instance_id: Option<B256>,
+    pub(crate) source_fork_block_number: Option<u64>,
+    pub(crate) source_fork_block_hash: Option<B256>,
+}
+
+impl ForkEndpointIdentity {
+    /// Returns whether this identity was reported by an Anvil endpoint.
+    pub(crate) const fn is_authoritative(self) -> bool {
+        self.hardfork.is_some()
+    }
+
+    /// Returns whether two endpoints expose the same fork execution context.
+    pub(crate) fn context_eq(self, other: Self) -> bool {
+        self.execution_chain_id == other.execution_chain_id
+            && self.source_chain_id == other.source_chain_id
+            && self.network == other.network
+            && self.network_profile == other.network_profile
+            && self.hardfork == other.hardfork
+            && self.source_fork_block_number == other.source_fork_block_number
+            && self.source_fork_block_hash == other.source_fork_block_hash
+    }
+}
+
+/// Ensures the fork network can be executed by Anvil's EVM backend.
+pub(crate) fn ensure_fork_network_supported(chain_id: u64) -> Result<(), BlockchainError> {
+    if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::ZkSync | NamedChain::ZkSyncTestnet))
+    {
+        return Err(BlockchainError::UnsupportedForkNetwork {
+            chain_id,
+            reason: "Anvil's EVM backend cannot execute native EraVM bytecode; use `anvil-zksync` for zkSync Era forks",
+        });
+    }
+    Ok(())
+}
 
 /// Represents a fork of a remote client
 ///
@@ -59,20 +103,12 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     pub config: Arc<RwLock<ClientForkConfig<N>>>,
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
-    /// The RPC URL associated with the state in the underlying database.
-    database_rpc_url: Arc<RwLock<Option<String>>>,
 }
 
 impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
-        let database_rpc_url = config.eth_rpc_url().map(ToOwned::to_owned);
-        Self {
-            storage: Default::default(),
-            config: Arc::new(RwLock::new(config)),
-            database,
-            database_rpc_url: Arc::new(RwLock::new(database_rpc_url)),
-        }
+        Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
     }
 
     /// Removes all data cached from previous responses
@@ -119,16 +155,13 @@ impl<N: Network> ClientFork<N> {
         self.config.read().eth_rpc_url().map(|s| s.to_string())
     }
 
-    pub(crate) fn database_rpc_url(&self) -> Option<String> {
-        self.database_rpc_url.read().clone()
-    }
-
-    pub(crate) fn set_database_rpc_url(&self, url: Option<String>) {
-        *self.database_rpc_url.write() = url;
-    }
-
     pub fn chain_id(&self) -> u64 {
         self.config.read().chain_id
+    }
+
+    /// Returns the execution chain ID exposed by the forked node.
+    pub fn execution_chain_id(&self) -> u64 {
+        self.config.read().execution_chain_id
     }
 
     fn provider(&self) -> Arc<RetryProvider<N>> {
@@ -418,69 +451,6 @@ impl<N: Network> ClientFork<N> {
         block_id: BlockId,
     ) -> Result<Option<BlockOpcodeGas>, TransportError> {
         self.provider().raw_request("trace_blockOpcodeGas".into(), (block_id,)).await
-    }
-
-    /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub async fn reset(
-        &self,
-        urls: Vec<String>,
-        block_number: impl Into<BlockId>,
-    ) -> Result<(), BlockchainError> {
-        let block_number = block_number.into();
-        {
-            self.database
-                .write()
-                .await
-                .maybe_reset(urls.clone(), block_number)
-                .map_err(BlockchainError::Internal)?;
-        }
-
-        self.prepare_reset(urls, block_number).await?;
-
-        let number = self.block_number();
-        let block_hash = self.block_hash();
-        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
-
-        Ok(())
-    }
-
-    /// Updates the fork configuration for a reset without modifying the current database.
-    pub(crate) async fn prepare_reset(
-        &self,
-        urls: Vec<String>,
-        block_number: BlockId,
-    ) -> Result<(), BlockchainError> {
-        if !urls.is_empty() {
-            self.config.write().update_urls(urls)?;
-            let override_chain_id = self.config.read().override_chain_id;
-            let chain_id = if let Some(chain_id) = override_chain_id {
-                chain_id
-            } else {
-                self.provider().get_chain_id().await?
-            };
-            self.config.write().chain_id = chain_id;
-        }
-
-        let provider = self.provider();
-        let block =
-            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-        let block_hash = block.header().hash();
-        let timestamp = block.header().timestamp();
-        let base_fee = block.header().base_fee_per_gas();
-        let total_difficulty = block.header().difficulty();
-
-        let number = block.header().number();
-        self.config.write().update_block(
-            number,
-            block_hash,
-            timestamp,
-            base_fee.map(|g| g as u128),
-            total_difficulty,
-        );
-
-        self.clear_cached_storage();
-
-        Ok(())
     }
 
     /// Sends `eth_call`
@@ -863,10 +833,18 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     /// The transaction hash we forked off of, if any.
     pub transaction_hash: Option<B256>,
     pub provider: Arc<RetryProvider<N>>,
+    /// Chain ID of the remote fork source.
     pub chain_id: u64,
+    /// Chain ID exposed by the fork endpoint, including inherited execution overrides.
+    pub execution_chain_id: u64,
+    /// Explicit execution chain ID exposed by the local node.
     pub override_chain_id: Option<u64>,
-    /// The hardfork resolved for the forked block, if known.
+    /// User-provided source chain ID that avoids remote discovery.
+    pub fork_chain_id: Option<u64>,
+    /// The effective hardfork used to execute the forked block.
     pub hardfork: Option<FoundryHardfork>,
+    /// Stable endpoint identity captured with the fork block.
+    pub(crate) endpoint_identity: ForkEndpointIdentity,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block
@@ -893,35 +871,6 @@ impl<N: Network> ClientForkConfig<N> {
     /// Returns the primary RPC URL (first entry in `fork_urls`).
     pub fn eth_rpc_url(&self) -> Option<&str> {
         self.fork_urls.first().map(|s| s.as_str())
-    }
-
-    /// Updates the provider URLs
-    ///
-    /// # Errors
-    ///
-    /// This will fail if no new provider could be established (erroneous URL)
-    fn update_urls(&mut self, urls: Vec<String>) -> Result<(), BlockchainError> {
-        let primary = urls.first().ok_or_else(|| {
-            BlockchainError::InvalidUrl("at least one fork URL required".to_string())
-        })?;
-
-        let builder = ProviderBuilder::<N>::new(primary.as_str())
-            .timeout(self.timeout)
-            .max_retry(self.retries)
-            .initial_backoff(self.backoff.as_millis() as u64)
-            .compute_units_per_second(self.compute_units_per_second)
-            .headers(self.headers.clone());
-
-        self.provider = Arc::new(if urls.len() > 1 {
-            builder
-                .build_fallback(urls.clone())
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
-        } else {
-            builder.build().map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
-        });
-        trace!(target: "fork", "Updated fork urls: {:?}", urls);
-        self.fork_urls = urls;
-        Ok(())
     }
 
     /// Updates the block forked off `(block number, block hash, timestamp)`

@@ -3,10 +3,8 @@
 use crate::{
     NodeResult,
     eth::{
-        backend::validate::TransactionValidator,
-        fees::FeeHistoryService,
-        miner::Miner,
-        pool::{Pool, transactions::PoolTransaction},
+        backend::validate::TransactionValidator, error::BlockchainError, fees::FeeHistoryService,
+        miner::Miner, pool::Pool,
     },
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
@@ -86,15 +84,26 @@ where
         // producer
         loop {
             // advance block production until pending
-            while let Poll::Ready(Some(outcome)) = pin.block_producer.poll_next_unpin(cx) {
-                trace!(target: "node", "mined block {}", outcome.block_number);
-                // prune the transactions from the pool
-                pin.pool.on_mined_block(outcome);
+            while let Poll::Ready(Some(result)) = pin.block_producer.poll_next_unpin(cx) {
+                match result {
+                    BlockProduction::Mined(outcome) => {
+                        trace!(target: "node", "mined block {}", outcome.block_number);
+                        pin.pool.on_mined_block(outcome);
+                    }
+                    BlockProduction::Failed(generation) => {
+                        pin.miner.handle_failed_candidate(generation);
+                        break;
+                    }
+                }
             }
 
-            if let Poll::Ready(transactions) = pin.miner.poll(&pin.pool, cx) {
+            // Do not select snapshots while another candidate is in flight. This leaves newer
+            // ready notifications in the miner so a failed candidate cannot discard their work.
+            if pin.block_producer.is_idle()
+                && let Poll::Ready(work) = pin.miner.poll(&pin.pool, cx)
+            {
                 // miner returned a set of transaction that we feed to the producer
-                pin.block_producer.queued.push_back(transactions);
+                pin.block_producer.queued.push_back(work);
             } else {
                 // no progress made
                 break;
@@ -115,7 +124,13 @@ where
     }
 }
 
-type MiningResult<N> = (MinedBlockOutcome<<N as Network>::TxEnvelope>, Arc<Backend<N>>);
+type MiningResult<N> =
+    (Result<MinedBlockOutcome<<N as Network>::TxEnvelope>, BlockchainError>, Arc<Backend<N>>, u64);
+
+enum BlockProduction<T> {
+    Mined(MinedBlockOutcome<T>),
+    Failed(u64),
+}
 
 /// A type that exclusively mines one block at a time
 #[must_use = "streams do nothing unless polled"]
@@ -125,7 +140,7 @@ struct BlockProducer<N: Network> {
     /// Single active future that mines a new block
     block_mining: Option<JoinHandle<MiningResult<N>>>,
     /// backlog of sets of transactions ready to be mined
-    queued: VecDeque<Vec<Arc<PoolTransaction<N::TxEnvelope>>>>,
+    queued: VecDeque<crate::eth::miner::MiningWork<N::TxEnvelope>>,
 }
 
 impl<N: Network> BlockProducer<N>
@@ -136,6 +151,10 @@ where
     fn new(backend: Arc<Backend<N>>) -> Self {
         Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }
     }
+
+    fn is_idle(&self) -> bool {
+        self.idle_backend.is_some() && self.block_mining.is_none() && self.queued.is_empty()
+    }
 }
 
 impl<N: Network> Stream for BlockProducer<N>
@@ -143,7 +162,7 @@ where
     Backend<N>: TransactionValidator<N::TxEnvelope> + Send + Sync + 'static,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static,
 {
-    type Item = MinedBlockOutcome<N::TxEnvelope>;
+    type Item = BlockProduction<N::TxEnvelope>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -151,7 +170,8 @@ where
         if !pin.queued.is_empty() {
             // only spawn a building task if there's none in progress already
             if let Some(backend) = pin.idle_backend.take() {
-                let transactions = pin.queued.pop_front().expect("not empty; qed");
+                let work = pin.queued.pop_front().expect("not empty; qed");
+                let generation = work.generation;
 
                 // we spawn this on as blocking task because this can be blocking for a while in
                 // forking mode, because of all the rpc calls to fetch the required state
@@ -159,9 +179,11 @@ where
                 let mining = tokio::task::spawn_blocking(move || {
                     handle.block_on(async move {
                         trace!(target: "miner", "creating new block");
-                        let block = backend.mine_block(transactions).await;
-                        trace!(target: "miner", "created new block: {}", block.block_number);
-                        (block, backend)
+                        let block = backend.mine_block(work.transactions).await;
+                        if let Ok(block) = &block {
+                            trace!(target: "miner", "created new block: {}", block.block_number);
+                        }
+                        (block, backend, generation)
                     })
                 });
                 pin.block_mining = Some(mining);
@@ -171,9 +193,15 @@ where
         if let Some(mut mining) = pin.block_mining.take() {
             if let Poll::Ready(res) = mining.poll_unpin(cx) {
                 return match res {
-                    Ok((outcome, backend)) => {
+                    Ok((Ok(outcome), backend, _)) => {
                         pin.idle_backend = Some(backend);
-                        Poll::Ready(Some(outcome))
+                        Poll::Ready(Some(BlockProduction::Mined(outcome)))
+                    }
+                    Ok((Err(error), backend, generation)) => {
+                        pin.idle_backend = Some(backend);
+                        pin.queued.clear();
+                        warn!(target: "miner", %error, "failed to finalize block");
+                        Poll::Ready(Some(BlockProduction::Failed(generation)))
                     }
                     Err(err) => {
                         panic!("miner task failed: {err}");

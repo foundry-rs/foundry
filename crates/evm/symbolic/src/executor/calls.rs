@@ -11,7 +11,8 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         let pre_call_state = (!state.function_mocks.is_empty()
             || !state.expected_calls.is_empty()
-            || !state.call_mocks.is_empty())
+            || !state.call_mocks.is_empty()
+            || (state.is_static && matches!(kind, CallKind::Call)))
         .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
         let gas = state.stack.pop()?;
@@ -86,11 +87,43 @@ impl SymbolicExecutor {
             }
         };
 
-        if state.is_static
-            && !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero())
-        {
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(StepOutcome::Revert);
+        if state.is_static && matches!(kind, CallKind::Call) {
+            match state.constrained_word(&mut self.cx, &value) {
+                Some(value) if value.is_zero() => {}
+                Some(_) => {
+                    state.return_data = SymReturnData::empty(&mut self.cx);
+                    return Ok(StepOutcome::Revert);
+                }
+                None => {
+                    let zero = SymBoolExpr::eq_word_const(&mut self.cx, &value, U256::ZERO);
+                    let (zero_constraints, zero_sat) =
+                        self.constraints_with_condition(state, zero.clone())?;
+                    let nonzero = zero.not(&mut self.cx);
+                    let (nonzero_constraints, nonzero_sat) =
+                        self.constraints_with_condition(state, nonzero)?;
+                    match (zero_sat, nonzero_sat) {
+                        (true, true) => {
+                            let mut zero_state = pre_call_state
+                                .as_ref()
+                                .expect("static calls preserve pre-call state")
+                                .clone();
+                            zero_state.pc = call_pc;
+                            zero_state.constraints = zero_constraints;
+                            worklist.push_back(zero_state);
+                            state.constraints = nonzero_constraints;
+                            state.return_data = SymReturnData::empty(&mut self.cx);
+                            return Ok(StepOutcome::Revert);
+                        }
+                        (true, false) => state.constraints = zero_constraints,
+                        (false, true) => {
+                            state.constraints = nonzero_constraints;
+                            state.return_data = SymReturnData::empty(&mut self.cx);
+                            return Ok(StepOutcome::Revert);
+                        }
+                        (false, false) => return Ok(StepOutcome::AssumeRejected),
+                    }
+                }
+            }
         }
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
@@ -810,6 +843,12 @@ impl SymbolicExecutor {
                 {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
+                    CheatcodeOutcome::Revert(ret) => {
+                        state.return_data = ret;
+                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        return Ok(StepOutcome::Continue);
+                    }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
                 }
@@ -840,40 +879,45 @@ impl SymbolicExecutor {
             }
         }
         let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
+        let call_context =
+            (!matches!(kind, CallKind::DelegateCall)).then(|| state.prank_for_next_call());
+        let transfer_to = if matches!(kind, CallKind::Call) { to } else { state.address };
+        if matches!(kind, CallKind::Call | CallKind::CallCode) {
+            let call_caller = call_context.as_ref().expect("value calls have a call context").0;
+            if !self.prepare_value_transfer(
+                executor,
+                state,
+                worklist,
+                call_caller,
+                transfer_to,
+                value.clone(),
+                out_offset.clone(),
+                &out_size,
+            )? {
+                return Ok(StepOutcome::Continue);
+            }
+        }
         if !state.call_mocks.is_empty() {
             let concrete_value = state.constrained_word(&mut self.cx, &value);
             if let Some(mock) =
                 self.take_call_mock(state, code_address, concrete_value, &call_input)?
             {
-                if !matches!(kind, CallKind::DelegateCall) {
-                    let _ = state.prank_for_next_call();
-                }
                 let (return_data, reverts) = mock.into_parts();
                 state.return_data = return_data;
+                if !reverts && let Some((call_caller, _, _)) = call_context {
+                    self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
+                }
                 state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
                 let success = SymExpr::constant(&mut self.cx, U256::from(!reverts));
                 state.stack.push(success)?;
                 return Ok(StepOutcome::Continue);
             }
         }
-
         if matches!(kind, CallKind::DelegateCall) && state.prank.has_active() {
             return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
         }
-        let (call_caller, call_caller_word, pranked_origin) = state.prank_for_next_call();
-        if matches!(kind, CallKind::Call)
-            && !self.prepare_value_transfer(
-                executor,
-                state,
-                worklist,
-                call_caller,
-                value.clone(),
-                out_offset.clone(),
-                &out_size,
-            )?
-        {
-            return Ok(StepOutcome::Continue);
-        }
+        let (call_caller, call_caller_word, pranked_origin) =
+            call_context.unwrap_or_else(|| state.prank_for_next_call());
 
         let spec_id: SpecId = executor.spec_id().into();
         if is_supported_precompile(code_address, spec_id) {
@@ -904,9 +948,7 @@ impl SymbolicExecutor {
             )? {
                 Some(return_data) => {
                     state.return_data = return_data;
-                    if matches!(kind, CallKind::Call) {
-                        state.world.transfer(&mut self.cx, executor, call_caller, to, value);
-                    }
+                    self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
                     state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
                     state.stack.push(SymExpr::one(&mut self.cx))?;
                 }
@@ -921,9 +963,7 @@ impl SymbolicExecutor {
 
         let child_code = state.world.extcode(&mut self.cx, executor, code_address)?;
         if child_code.is_empty() {
-            if matches!(kind, CallKind::Call) {
-                state.world.transfer(&mut self.cx, executor, call_caller, to, value);
-            }
+            self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
             state.return_data = SymReturnData::empty(&mut self.cx);
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
             state.stack.push(SymExpr::one(&mut self.cx))?;
@@ -1011,9 +1051,7 @@ impl SymbolicExecutor {
             child.origin = origin;
             child.origin_word = origin_word;
         }
-        if matches!(kind, CallKind::Call) {
-            child.world.transfer(&mut self.cx, executor, call_caller, to, value);
-        }
+        self.apply_call_value_transfer(executor, &mut child, kind, to, call_caller, value);
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
         let outcomes = self.execute_external_call(executor, child, &child_code, completed_paths)?;
@@ -1027,6 +1065,10 @@ impl SymbolicExecutor {
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
             parent.inherit_branch_target_progress(&outcome.state);
+            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
+            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
+            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
+            parent.inherit_mapping_hook_provenance(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -1253,9 +1295,7 @@ impl SymbolicExecutor {
         match outcome {
             Some(return_data) => {
                 state.return_data = return_data;
-                if matches!(kind, CallKind::Call) {
-                    state.world.transfer(&mut self.cx, executor, call_caller, to, value);
-                }
+                self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
                 state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
                 state.stack.push(SymExpr::one(&mut self.cx))?;
             }
@@ -1268,6 +1308,23 @@ impl SymbolicExecutor {
         Ok(())
     }
 
+    fn apply_call_value_transfer<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        kind: CallKind,
+        to: Address,
+        from: Address,
+        value: SymExpr,
+    ) {
+        let to = match kind {
+            CallKind::Call => to,
+            CallKind::CallCode => state.address,
+            CallKind::DelegateCall | CallKind::StaticCall => return,
+        };
+        state.world.transfer(&mut self.cx, executor, from, to, value);
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub(super) fn prepare_value_transfer<FEN: FoundryEvmNetwork>(
         &mut self,
@@ -1275,6 +1332,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         from: Address,
+        to: Address,
         value: SymExpr,
         out_offset: SymExpr,
         out_size: &BoundedCopySize,
@@ -1284,8 +1342,16 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(&mut self.cx, executor, from);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
-        match can_pay.as_const() {
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value.clone());
+        let can_transfer = if from == to {
+            can_pay
+        } else {
+            let balance = state.world.balance_word_for_address(&mut self.cx, executor, to);
+            let sum = SymExpr::binop(&mut self.cx, SymBinOp::Add, balance.clone(), value);
+            let no_overflow = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, sum, balance);
+            SymBoolExpr::and(&mut self.cx, vec![can_pay, no_overflow])
+        };
+        match can_transfer.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
@@ -1295,11 +1361,11 @@ impl SymbolicExecutor {
             }
             None => {
                 let mut success_constraints = state.constraints.clone();
-                success_constraints.push(can_pay.clone());
+                success_constraints.push(can_transfer.clone());
                 let success_sat = self.solver.is_sat(&mut self.cx, &success_constraints)?;
 
                 let mut failure_constraints = state.constraints.clone();
-                failure_constraints.push(can_pay.not(&mut self.cx));
+                failure_constraints.push(can_transfer.not(&mut self.cx));
                 let failure_sat = self.solver.is_sat(&mut self.cx, &failure_constraints)?;
 
                 match (success_sat, failure_sat) {
@@ -1439,30 +1505,39 @@ impl SymbolicExecutor {
                 return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
             }
             let (call_caller, _, _) = branch.prank_for_next_call();
-            if matches!(kind, CallKind::Call) {
+            if matches!(kind, CallKind::Call | CallKind::CallCode) {
+                let transfer_to = if matches!(kind, CallKind::Call) {
+                    branch.world.symbolic_address_slot(target)
+                } else {
+                    branch.address
+                };
                 if self.prepare_value_transfer(
                     executor,
                     &mut branch,
                     &mut parents,
                     call_caller,
+                    transfer_to,
                     value.clone(),
                     out_offset.clone(),
                     &out_size,
                 )? {
-                    let symbolic_target = target;
-                    let to = branch.world.symbolic_address_slot(symbolic_target);
-                    branch.world.transfer(&mut self.cx, executor, call_caller, to, value.clone());
+                    branch.world.transfer(
+                        &mut self.cx,
+                        executor,
+                        call_caller,
+                        transfer_to,
+                        value.clone(),
+                    );
                     branch.return_data = SymReturnData::empty(&mut self.cx);
                     branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     branch.stack.push(SymExpr::one(&mut self.cx))?;
-                    parents.push_back(branch);
                 }
             } else {
                 branch.return_data = SymReturnData::empty(&mut self.cx);
                 branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                 branch.stack.push(SymExpr::one(&mut self.cx))?;
-                parents.push_back(branch);
             }
+            parents.push_back(branch);
         }
 
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {

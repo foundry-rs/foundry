@@ -1,7 +1,12 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, State, sanitize_simulation_blocks},
+    backend::mem::{
+        BlockRequest, DatabaseRef, GasEstimateCallOptions, MonadReplayContext, State,
+        sanitize_simulation_blocks,
+    },
     preserve_simulation_request_fields,
 };
+#[cfg(feature = "monad")]
+use crate::eth::backend::executor::build_tx_env_for_pending;
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
@@ -15,7 +20,10 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{
+            FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, MIN_SUGGESTED_PRIORITY_FEE,
+            create_fee_history_cache_item,
+        },
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -30,7 +38,8 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    transaction::Recovered,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
@@ -38,6 +47,8 @@ use alloy_eips::{
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
+#[cfg(feature = "monad")]
+use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, BlockResponse, Network,
     NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
@@ -72,7 +83,6 @@ use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction,
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
-use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         EthRequest,
@@ -86,10 +96,11 @@ use anvil_rpc::{
     response::ResponseResult,
 };
 use foundry_common::{
-    provider::ProviderBuilder,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::FoundryEvmFactory;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -99,9 +110,13 @@ use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
 };
+#[cfg(feature = "monad")]
+use monad_revm::staking::constants::SYSTEM_ADDRESS as MONAD_SYSTEM_ADDRESS;
 use parking_lot::RwLock;
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 use revm::{
-    context::{BlockEnv, Cfg},
+    context::BlockEnv,
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{HaltReason, Output},
@@ -152,6 +167,10 @@ pub struct EthApi<N: Network> {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
+    /// Serializes endpoint identity reads with reset transitions.
+    lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
+    /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
+    reset_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -169,6 +188,8 @@ impl<N: Network> Clone for EthApi<N> {
             transaction_order: self.transaction_order.clone(),
             net_listening: self.net_listening,
             instance_id: self.instance_id.clone(),
+            lifecycle_lock: self.lifecycle_lock.clone(),
+            reset_lock: self.reset_lock.clone(),
         }
     }
 }
@@ -202,6 +223,8 @@ impl<N: Network> EthApi<N> {
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
+            lifecycle_lock: Arc::new(tokio::sync::RwLock::new(())),
+            reset_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -223,14 +246,27 @@ impl<N: Network> EthApi<N> {
     /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
     fn lowest_suggestion_tip(&self) -> u128 {
         let block_number = self.backend.best_number();
-        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
+        let cache = self.fee_history_cache.lock();
+        let latest_tip = self
+            .backend
+            .get_block_with_hash(block_number)
+            .and_then(|(_, hash)| cache.get(&block_number).filter(|item| item.block_hash == hash))
+            .and_then(|item| item.rewards.iter().copied().min());
 
-        match latest_cached_block {
-            Some(block) => block.rewards.iter().copied().min(),
-            None => self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min(),
-        }
-        .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
-        .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
+        latest_tip
+            .or_else(|| {
+                cache
+                    .iter()
+                    .filter(|(number, item)| {
+                        self.backend
+                            .get_block_with_hash(**number)
+                            .is_some_and(|(_, hash)| item.block_hash == hash)
+                    })
+                    .flat_map(|(_, item)| item.rewards.iter().copied())
+                    .min()
+            })
+            .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
+            .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
     }
 
     /// Returns true if auto mining is enabled, and false.
@@ -425,6 +461,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_nodeInfo`
     pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
         node_info!("anvil_nodeInfo");
+        let _lifecycle = self.lifecycle_lock.read().await;
 
         let evm_env = self.backend.evm_env().read();
         let fork_config = self.backend.get_fork();
@@ -457,7 +494,9 @@ impl<N: Network> EthApi<N> {
                     }
                 })
                 .unwrap_or_default(),
-            network: self.backend.is_tempo().then(|| "tempo".to_string()),
+            // Always emit the execution profile. Older Anvil versions omitted plain Ethereum, so
+            // consumers must still treat `None` as legacy unspecified metadata.
+            network: Some(self.backend.execution_profile_name().to_string()),
         })
     }
 
@@ -466,6 +505,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_metadata`
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
+        let _lifecycle = self.lifecycle_lock.read().await;
         let fork_config = self.backend.get_fork();
 
         Ok(Metadata {
@@ -496,6 +536,8 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
+        let _lifecycle = self.lifecycle_lock.read().await;
+        let _mining = self.backend.lock_mining().await;
         Ok(self.backend.create_state_snapshot().await)
     }
 
@@ -564,25 +606,44 @@ impl<N: Network> EthApi<N> {
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
-        if let Some(fork) = self.backend.get_fork() {
+        let _reset = self.reset_lock.lock().await;
+        let staged_fork = if let Some(fork) = self.backend.get_fork() {
+            let mut validation_config = self.backend.node_config.read().await.clone();
+            let (expected_identity, block_number, block_hash) = {
+                let config = fork.config.read();
+                (config.endpoint_identity, config.block_number, config.block_hash)
+            };
+            // A new URL replaces an offline discovery hint. Resolve the actual source identity so
+            // unsupported networks cannot be hidden behind the previous endpoint's hint.
+            validation_config.fork_chain_id = None;
+            let (provider, endpoint_identity) = validation_config
+                .replacement_fork_provider(
+                    &url,
+                    expected_identity,
+                    block_number,
+                    block_hash,
+                    self.instance_id(),
+                )
+                .await?;
+            Some((fork, provider, endpoint_identity))
+        } else {
+            None
+        };
+
+        let _lifecycle = self.lifecycle_lock.write().await;
+        let _mining = self.backend.lock_mining().await;
+        let mut node_config = self.backend.node_config.write().await;
+        if let Some((fork, provider, endpoint_identity)) = staged_fork {
             let mut config = fork.config.write();
-            // let interval = config.provider.get_interval();
-            let new_provider = Arc::new(
-                ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000).build().map_err(
-                    |_| {
-                        TransportErrorKind::custom_str(
-                            format!("Failed to parse invalid url {url}").as_str(),
-                        )
-                    },
-                    // TODO: Add interval
-                )?, // .interval(interval),
-            );
-            config.provider = new_provider;
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().unwrap_or("none"), url);
+            config.provider = provider;
             config.fork_urls = vec![url.clone()];
+            config.fork_chain_id = None;
+            config.endpoint_identity = endpoint_identity;
         }
-        // Keep node_config in sync so anvil_reset(None) uses the updated URL
-        self.backend.node_config.write().await.fork_urls = vec![url];
+        // Keep node_config in sync so a subsequent URL-less fork reset uses the updated endpoint.
+        node_config.fork_urls = vec![url];
+        node_config.fork_chain_id = None;
         Ok(())
     }
 
@@ -705,17 +766,28 @@ impl<N: Network> EthApi<N> {
     ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
-        self.reset_instance_id();
         node_info!("anvil_reset");
+        let _reset = self.reset_lock.lock().await;
         if let Some(forking) = forking {
-            // if we're resetting the fork we need to reset the instance id
-            self.backend.reset_fork(forking).await?;
+            let staged = self.backend.prepare_fork_reset(forking, self.instance_id()).await?;
+            let _lifecycle = self.lifecycle_lock.write().await;
+            // Stop an old-context block before publishing the replacement DB and environment.
+            let _mining = self.backend.lock_mining().await;
+            self.backend.commit_fork_reset(staged).await?;
+            self.reset_instance_id();
+            self.pool.clear();
+            self.fee_history_cache.lock().clear();
         } else {
-            // Reset to a fresh in-memory state
-            self.backend.reset_to_in_mem().await?;
+            let _lifecycle = self.lifecycle_lock.write().await;
+            // Unlike fork preparation, memory preparation snapshots live local fee state and does
+            // no remote I/O. Keep that snapshot and its publication in one lifecycle transition.
+            let _mining = self.backend.lock_mining().await;
+            let staged = self.backend.prepare_memory_reset().await?;
+            self.backend.commit_memory_reset(staged).await?;
+            self.reset_instance_id();
+            self.pool.clear();
+            self.fee_history_cache.lock().clear();
         }
-        // Clear pending transactions since they reference the old chain state.
-        self.pool.clear();
         Ok(())
     }
 
@@ -725,6 +797,8 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         node_info!("evm_revert");
+        let _lifecycle = self.lifecycle_lock.read().await;
+        let _mining = self.backend.lock_mining().await;
         self.backend.revert_state_snapshot(id).await
     }
 
@@ -1156,17 +1230,27 @@ impl<N: Network> EthApi<N> {
         block_count: U256,
         newest_block: BlockNumber,
         reward_percentiles: Vec<f64>,
-    ) -> Result<FeeHistory> {
+    ) -> Result<FeeHistory>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
         let number = self.backend.convert_block_number(Some(newest_block));
 
+        // Snapshot the fork block once so the early return here and the pre-fork split below agree
+        // on the same value. Reading it a second time lets an `anvil_reset` move the fork between
+        // the reads: the newest block could clear this early return, then the split treats the
+        // whole range as pre-fork and tacks on a stray local next-block fee.
+        let fork = self.get_fork();
+        let fork_block = fork.as_ref().map(|fork| fork.block_number());
+
         // check if the number predates the fork, if in fork mode
-        if let Some(fork) = self.get_fork() {
+        if let (Some(fork), Some(fork_block)) = (fork.as_ref(), fork_block) {
             // if we're still at the forked block we don't have any history and can't compute it
             // efficiently, instead we fetch it from the fork
-            if fork.predates_fork_inclusive(number) {
+            if number <= fork_block {
                 return fork
                     .fee_history(block_count.to(), BlockNumber::Number(number), &reward_percentiles)
                     .await
@@ -1196,46 +1280,128 @@ impl<N: Network> EthApi<N> {
         };
         let mut rewards = Vec::new();
 
+        // The early return above only delegates when the *newest* block predates the fork, but a
+        // range can dip below the fork block while its newest block is post-fork. Local storage
+        // has no pre-fork blocks, so resolving them via `backend.get_block` below would fail.
+        // Serve the pre-fork portion from the fork provider and compute only post-fork locally.
+        // Reuse the `fork_block` snapshot from above so this split stays consistent with the early
+        // return; we didn't return, so `fork_block < highest` and only a crossing range splits.
+        let local_lowest = if let (Some(fork), Some(fork_block)) = (fork.as_ref(), fork_block) {
+            if lowest <= fork_block {
+                let count_pre = fork_block - lowest + 1;
+                let pre = fork
+                    .fee_history(count_pre, BlockNumber::Number(fork_block), &reward_percentiles)
+                    .await
+                    .map_err(BlockchainError::AlloyForkProvider)?;
+                merge_pre_fork_fee_history(&mut response, &mut rewards, pre, fork_block);
+                // Compute only post-fork blocks locally; the pre-fork portion is served above.
+                fork_block + 1
+            } else {
+                lowest
+            }
+        } else {
+            lowest
+        };
+
         {
-            let fee_history = self.fee_history_cache.lock();
+            let storage_info = self.storage_info();
+            let blob_params = self.backend.blob_params();
 
-            // iter over the requested block range
-            for n in lowest..=highest {
-                // <https://eips.ethereum.org/EIPS/eip-1559>
-                if let Some(block) = fee_history.get(&n) {
-                    response.base_fee_per_gas.push(block.base_fee);
-                    response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
-                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
-                    response.gas_used_ratio.push(block.gas_used_ratio);
+            // Snapshot the cached entries for the whole range under a single lock. The
+            // `FeeHistoryService` populates the cache asynchronously and can lag the chain head,
+            // so some entries may still be missing here.
+            let cached: Vec<Option<FeeHistoryCacheItem>> = {
+                let cache = self.fee_history_cache.lock();
+                (local_lowest..=highest).map(|n| cache.get(&n).cloned()).collect()
+            };
 
-                    // requested percentiles
-                    if !reward_percentiles.is_empty() {
-                        let mut block_rewards = Vec::new();
-                        let resolution_per_percentile: f64 = 2.0;
-                        for p in &reward_percentiles {
-                            let p = p.clamp(0.0, 100.0);
-                            let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                            let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
-                            block_rewards.push(reward);
-                        }
-                        rewards.push(block_rewards);
+            // Resolve the whole range into concrete items. Cache entries include their block hash
+            // so a reset or reorg that reuses a block number cannot return data from the old
+            // canonical chain. Compute misses and stale entries on demand without holding the
+            // lock. A block that can't be found is a hard error rather than a silently dropped
+            // entry, so `items` always holds exactly one entry per requested block.
+            let mut warmed: Vec<(u64, FeeHistoryCacheItem)> = Vec::new();
+            let mut items: Vec<FeeHistoryCacheItem> = Vec::with_capacity(cached.len());
+            for (cached_item, n) in cached.into_iter().zip(local_lowest..=highest) {
+                let hash = self
+                    .backend
+                    .block_hash_by_number(n)
+                    .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                let item = match cached_item {
+                    Some(item) if item.block_hash == hash => item,
+                    _ => {
+                        let block = self
+                            .backend
+                            .get_block_by_hash(hash)
+                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                        let header = block.header;
+                        let (item, block_number) = create_fee_history_cache_item(
+                            hash,
+                            &header,
+                            &storage_info,
+                            blob_params,
+                        );
+                        // The block was found above, but missing stored block/receipts make the
+                        // helper hand back a zero-filled item. Error out rather than serve
+                        // synthetic data for a block we already confirmed exists.
+                        let block_number = block_number
+                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                        warmed.push((block_number, item.clone()));
+                        item
                     }
+                };
+                items.push(item);
+            }
+
+            // Warm the cache with the on-demand entries under a single lock, then trim to the
+            // limit by dropping the oldest blocks so the fallback can't grow the cache unbounded.
+            if !warmed.is_empty() {
+                let mut cache = self.fee_history_cache.lock();
+                for (block_number, item) in warmed {
+                    cache.insert(block_number, item);
+                }
+                while cache.len() as u64 > self.fee_history_limit {
+                    cache.pop_first();
+                }
+            }
+
+            for item in items {
+                response.base_fee_per_gas.push(item.base_fee);
+                response.base_fee_per_blob_gas.push(item.base_fee_per_blob_gas.unwrap_or(0));
+                response.blob_gas_used_ratio.push(item.blob_gas_used_ratio);
+                response.gas_used_ratio.push(item.gas_used_ratio);
+
+                // requested percentiles
+                if !reward_percentiles.is_empty() {
+                    let mut block_rewards = Vec::new();
+                    let resolution_per_percentile: f64 = 2.0;
+                    for p in &reward_percentiles {
+                        let p = p.clamp(0.0, 100.0);
+                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                        let reward = item.rewards.get(index as usize).map_or(0, |r| *r);
+                        block_rewards.push(reward);
+                    }
+                    rewards.push(block_rewards);
                 }
             }
         }
 
         response.reward = Some(rewards);
 
-        // add the next block's base fee to the response
-        // The spec states that `base_fee_per_gas` "[..] includes the next block after the
-        // newest of the returned range, because this value can be derived from the
-        // newest block"
-        response.base_fee_per_gas.push(self.backend.fees().base_fee() as u128);
-
-        // Same goes for the `base_fee_per_blob_gas`:
-        // > [..] includes the next block after the newest of the returned range, because this
-        // > value can be derived from the newest block.
-        response.base_fee_per_blob_gas.push(self.backend.fees().base_fee_per_blob_gas());
+        // Both base-fee arrays include the block after the returned range. For a historical
+        // request, use that block's header; the fee manager tracks the block after the current
+        // chain head and would therefore append an unrelated value. Prefer an existing child even
+        // when `highest` was the head at the start of this request, since mining can advance it.
+        let next_number = highest
+            .checked_add(1)
+            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(highest)))?;
+        let (next_base_fee, next_blob_base_fee) = self
+            .backend
+            .fee_history_next_fees(highest)
+            .await
+            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(next_number)))?;
+        response.base_fee_per_gas.push(next_base_fee);
+        response.base_fee_per_blob_gas.push(next_blob_base_fee);
 
         Ok(response)
     }
@@ -1554,6 +1720,7 @@ impl EthApi<FoundryNetwork> {
         request: FoundryTransactionRequest,
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
+        monad_context: Option<MonadReplayContext>,
     ) -> Result<u128> {
         let inner = request.as_ref();
         let fees = FeeDetails::new(
@@ -1628,8 +1795,11 @@ impl EthApi<FoundryNetwork> {
             request.clone(),
             fees.clone(),
             block_env.clone(),
-            highest_gas_limit as u64,
-            is_tempo_keychain,
+            GasEstimateCallOptions::new(
+                highest_gas_limit as u64,
+                is_tempo_keychain,
+                monad_context.clone(),
+            ),
         );
 
         let gas_used = match ethres.try_into()? {
@@ -1665,8 +1835,11 @@ impl EthApi<FoundryNetwork> {
                 request.clone(),
                 fees.clone(),
                 block_env.clone(),
-                mid_gas_limit as u64,
-                is_tempo_keychain,
+                GasEstimateCallOptions::new(
+                    mid_gas_limit as u64,
+                    is_tempo_keychain,
+                    monad_context.clone(),
+                ),
             );
 
             match ethres.try_into()? {
@@ -1701,6 +1874,23 @@ impl EthApi<FoundryNetwork> {
     #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
+        // Fork reset and RPC URL replacement take the write lock internally after their fallible
+        // remote staging work. Memory reset takes it before staging because it snapshots live
+        // state. Identity and snapshot methods also lock internally to keep direct API callers
+        // safe without recursively acquiring this fair RwLock.
+        let _lifecycle = if matches!(
+            &request,
+            EthRequest::Reset(_)
+                | EthRequest::SetRpcUrl(_)
+                | EthRequest::NodeInfo(_)
+                | EthRequest::AnvilMetadata(_)
+                | EthRequest::EvmSnapshot(_)
+                | EthRequest::EvmRevert(_)
+        ) {
+            None
+        } else {
+            Some(self.lifecycle_lock.read().await)
+        };
         let response = match request.clone() {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
@@ -3054,18 +3244,20 @@ impl EthApi<FoundryNetwork> {
         let typed_request = self.parse_transaction_request(request.clone())?;
 
         self.backend
-            .with_database_at(Some(block_request), |state, block_env| {
+            .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
                 let mut cache_db = CacheDB::new(state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
                 }
 
-                let (_, _, _, access_list) = self.backend.build_access_list_with_state(
-                    &cache_db,
-                    request.clone(),
-                    FeeDetails::zero(),
-                    block_env.clone(),
-                )?;
+                let (_, _, _, access_list) =
+                    self.backend.build_access_list_with_state_and_context(
+                        &cache_db,
+                        request.clone(),
+                        FeeDetails::zero(),
+                        block_env.clone(),
+                        monad_context.clone(),
+                    )?;
 
                 // Re-execute with the access list applied to get the post-AL gas usage.
                 // EVM failures (including reverts) are surfaced in the result's `error`
@@ -3077,6 +3269,7 @@ impl EthApi<FoundryNetwork> {
                     FeeDetails::zero(),
                     block_env,
                     access_list.clone(),
+                    monad_context,
                 )?;
 
                 Ok(AccessListResult {
@@ -3085,7 +3278,7 @@ impl EthApi<FoundryNetwork> {
                     error: execution_error(exit),
                 })
             })
-            .await?
+            .await
     }
 
     /// Estimate gas needed for execution of given contract.
@@ -3617,10 +3810,14 @@ impl EthApi<FoundryNetwork> {
             // mine all the blocks
             for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
-                if let Some(interval) = interval {
-                    this.backend.time().increase_time(interval);
+                let pending_increase =
+                    interval.map(|interval| this.backend.time().apply_time_increase(interval));
+                if let Err(error) = this.mine_one().await {
+                    if let Some(pending) = pending_increase {
+                        this.backend.time().revert_time_increase(pending);
+                    }
+                    return Err(error);
                 }
-                this.mine_one().await;
             }
             Ok(())
         })
@@ -3792,6 +3989,28 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
+    /// Recognizes a canonical Monad protocol envelope without requiring its reserved sender to be
+    /// globally impersonated or recoverable from the envelope signature.
+    #[cfg(feature = "monad")]
+    fn monad_protocol_reorg_transaction(
+        &self,
+        transaction: FoundryTxEnvelope,
+    ) -> Option<PendingTransaction<FoundryTxEnvelope>> {
+        if !self.backend.is_monad() {
+            return None;
+        }
+
+        let pending = PendingTransaction::with_sender(
+            MaybeImpersonatedTransaction::new(transaction),
+            MONAD_SYSTEM_ADDRESS,
+        );
+        let tx_env: TxEnv = build_tx_env_for_pending(&pending, self.backend.cheats());
+        MonadEvmFactory::default()
+            .protocol_system_call(&tx_env)
+            .is_ok_and(|call| call.is_some())
+            .then_some(pending)
+    }
+
     /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
     ///
     /// e.g depth = 3
@@ -3854,7 +4073,21 @@ impl EthApi<FoundryNetwork> {
                         let mut data = bytes.as_ref();
                         let decoded = FoundryTxEnvelope::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
-                        PendingTransaction::new(decoded)?
+                        let protocol_pending = {
+                            #[cfg(feature = "monad")]
+                            {
+                                self.monad_protocol_reorg_transaction(decoded.clone())
+                            }
+                            #[cfg(not(feature = "monad"))]
+                            {
+                                None
+                            }
+                        };
+                        if let Some(pending) = protocol_pending {
+                            pending
+                        } else {
+                            PendingTransaction::new(decoded)?
+                        }
                     }
 
                     TransactionData::JSON(request) => {
@@ -3880,8 +4113,25 @@ impl EthApi<FoundryNetwork> {
                         // Increment nonce
                         *curr_nonce += 1;
 
-                        // Handle signer and convert to pending transaction
-                        if self.is_impersonated(from) {
+                        let protocol_pending = {
+                            #[cfg(feature = "monad")]
+                            {
+                                if from == MONAD_SYSTEM_ADDRESS {
+                                    self.monad_protocol_reorg_transaction(
+                                        typed_tx.clone().into_impersonated(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            }
+                            #[cfg(not(feature = "monad"))]
+                            {
+                                None
+                            }
+                        };
+                        if let Some(pending) = protocol_pending {
+                            pending
+                        } else if self.is_impersonated(from) {
                             let transaction = typed_tx.into_impersonated();
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)
@@ -4145,7 +4395,7 @@ impl EthApi<FoundryNetwork> {
         self.on_blocking_task(|this| async move {
             // mine all the blocks
             for _ in 0..blocks_to_mine {
-                this.mine_one().await;
+                this.mine_one().await?;
             }
             Ok(())
         })
@@ -4179,20 +4429,23 @@ impl EthApi<FoundryNetwork> {
         self.on_blocking_task(|this| async move {
             let request = this.parse_transaction_request(request)?;
             this.backend
-                .with_database_at(Some(block_request), |state, mut block| {
-                    let mut cache_db = CacheDB::new(state);
-                    if let Some(state_overrides) = overrides.state {
-                        apply_state_overrides(
-                            state_overrides.into_iter().collect(),
-                            &mut cache_db,
-                        )?;
-                    }
-                    if let Some(block_overrides) = overrides.block {
-                        cache_db.apply_block_overrides(*block_overrides, &mut block);
-                    }
-                    this.do_estimate_gas_with_state(request, &cache_db, block)
-                })
-                .await?
+                .with_database_at_and_context(
+                    Some(block_request),
+                    |state, mut block, monad_context| {
+                        let mut cache_db = CacheDB::new(state);
+                        if let Some(state_overrides) = overrides.state {
+                            apply_state_overrides(
+                                state_overrides.into_iter().collect(),
+                                &mut cache_db,
+                            )?;
+                        }
+                        if let Some(block_overrides) = overrides.block {
+                            cache_db.apply_block_overrides(*block_overrides, &mut block);
+                        }
+                        this.do_estimate_gas_with_state(request, &cache_db, block, monad_context)
+                    },
+                )
+                .await
         })
         .await
     }
@@ -4205,10 +4458,10 @@ impl EthApi<FoundryNetwork> {
         let block_request = self.block_request(block_number).await?;
         self.on_blocking_task(|this| async move {
             this.backend
-                .with_database_at(Some(block_request), |state, block| {
-                    this.do_estimate_gas_with_state(request, &state, block)
+                .with_database_at_and_context(Some(block_request), |state, block, monad_context| {
+                    this.do_estimate_gas_with_state(request, &state, block, monad_context)
                 })
-                .await?
+                .await
         })
         .await
     }
@@ -4320,12 +4573,13 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Mines exactly one block
-    pub async fn mine_one(&self) {
+    pub async fn mine_one(&self) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await;
+        let outcome = self.backend.mine_block(transactions).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);
+        Ok(())
     }
 
     /// Returns the pending block with tx hashes
@@ -4387,12 +4641,7 @@ impl EthApi<FoundryNetwork> {
         if request.gas_limit().is_none() {
             let fallback_gas_limit = {
                 let evm_env = self.backend.evm_env().read();
-                let block_gas_limit = evm_env.block_env.gas_limit;
-                if evm_env.cfg_env.tx_gas_limit_cap.is_none() {
-                    block_gas_limit.min(evm_env.cfg_env().tx_gas_limit_cap())
-                } else {
-                    block_gas_limit
-                }
+                self.backend.fallback_tx_gas_limit(&evm_env)
             };
             let estimated_gas = self
                 .do_estimate_gas_typed(request.clone(), None)
@@ -4778,5 +5027,148 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
             },
         }
+    }
+}
+
+/// Appends the upstream part of a fee-history range that crosses the fork boundary.
+fn merge_pre_fork_fee_history(
+    response: &mut FeeHistory,
+    rewards: &mut Vec<Vec<u128>>,
+    pre: FeeHistory,
+    fork_block: u64,
+) {
+    // Upstream may return fewer blocks than requested when its available history starts later.
+    response.oldest_block = pre.oldest_block;
+    let count = fork_block.checked_sub(pre.oldest_block).map_or(0, |count| count.saturating_add(1))
+        as usize;
+
+    // Base-fee arrays include a trailing next-block entry. The caller computes that block locally.
+    response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(count));
+    response.gas_used_ratio.extend(pre.gas_used_ratio.into_iter().take(count));
+    if let Some(reward) = pre.reward {
+        rewards.extend(reward.into_iter().take(count));
+    }
+
+    // EIP-4844 fields may be omitted for pre-Cancun blocks. Pad to the actual returned count.
+    response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(count));
+    response.base_fee_per_blob_gas.resize(count, 0);
+    response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(count));
+    response.blob_gas_used_ratio.resize(count, 0.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_rpc_url_installs_context_equivalent_identity_with_new_instance() {
+        let genesis_timestamp = 1_700_000_000u64;
+        let (_origin_api, origin_handle) =
+            spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
+        let (api, _handle) =
+            spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+        let (target_api, target_handle) =
+            spawn(NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp))).await;
+        let target_url = target_handle.http_endpoint();
+        let fork = api.backend.get_fork().unwrap();
+        let identity_before = fork.config.read().endpoint_identity;
+
+        api.anvil_set_rpc_url(target_url.clone()).await.unwrap();
+
+        let fork = api.backend.get_fork().unwrap();
+        let config = fork.config.read();
+        assert!(config.endpoint_identity.context_eq(identity_before));
+        assert_ne!(config.endpoint_identity.instance_id, identity_before.instance_id);
+        assert_eq!(config.endpoint_identity.instance_id, Some(target_api.instance_id()));
+        assert_eq!(config.eth_rpc_url(), Some(target_url.as_str()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn memory_reset_stages_live_fees_after_active_mining() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        api.backend.set_base_fee(123);
+
+        // Model an in-flight miner that publishes its final fee update before completing. Reset
+        // must wait to snapshot that state until mining finishes.
+        let mining = api.backend.lock_mining().await;
+        let reset_api = api.clone();
+        let reset = tokio::spawn(async move { reset_api.anvil_reset(None).await });
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while api.lifecycle_lock.try_read().is_ok() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        api.backend.set_base_fee(456);
+        drop(mining);
+        tokio::time::timeout(Duration::from_secs(5), reset).await.unwrap().unwrap().unwrap();
+
+        assert_eq!(api.backend.evm_env().read().block_env.basefee, 456);
+        assert_eq!(api.base_fee().unwrap(), Some(U256::from(crate::eth::fees::INITIAL_BASE_FEE)));
+    }
+
+    // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fee_history_is_complete_when_cache_entries_are_missing() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let count = 10u64;
+        api.anvil_mine(Some(U256::from(count)), None).await.unwrap();
+
+        // Wait until the asynchronous service has consumed all block notifications, then clear
+        // its cache. With no notifications left to repopulate it, this deterministically exercises
+        // the RPC handler's fallback for canonical blocks whose cache entries are absent.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if (1..=count).all(|number| api.fee_history_cache.lock().contains_key(&number)) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        api.fee_history_cache.lock().clear();
+
+        let fee_history =
+            api.fee_history(U256::from(count), BlockNumber::Latest, vec![50.0]).await.unwrap();
+
+        assert_eq!(fee_history.oldest_block, 1);
+        assert_eq!(fee_history.gas_used_ratio.len(), count as usize);
+        assert_eq!(fee_history.blob_gas_used_ratio.len(), count as usize);
+        assert_eq!(fee_history.base_fee_per_gas.len(), count as usize + 1);
+        assert_eq!(fee_history.base_fee_per_blob_gas.len(), count as usize + 1);
+        let rewards = fee_history.reward.unwrap();
+        assert_eq!(rewards.len(), count as usize);
+        assert!(rewards.iter().all(|reward| reward.len() == 1));
+    }
+
+    #[test]
+    fn shortened_pre_fork_fee_history_uses_upstream_start() {
+        let requested_lowest = 4;
+        let fork_block = 10;
+        let pre = FeeHistory {
+            oldest_block: 5,
+            base_fee_per_gas: vec![1; 7],
+            gas_used_ratio: vec![0.0; 6],
+            reward: Some(vec![vec![]; 6]),
+            base_fee_per_blob_gas: vec![],
+            blob_gas_used_ratio: vec![],
+        };
+
+        let mut response = FeeHistory { oldest_block: requested_lowest, ..Default::default() };
+        let mut rewards = Vec::new();
+
+        merge_pre_fork_fee_history(&mut response, &mut rewards, pre, fork_block);
+
+        assert_eq!(response.oldest_block, 5);
+        assert_eq!(response.gas_used_ratio.len(), 6);
+        assert_eq!(response.base_fee_per_gas.len(), 6);
+        assert_eq!(response.blob_gas_used_ratio.len(), 6);
+        assert_eq!(response.base_fee_per_blob_gas.len(), 6);
+        assert_eq!(rewards.len(), 6);
     }
 }

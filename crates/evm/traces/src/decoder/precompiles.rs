@@ -1,3 +1,4 @@
+use super::MonadHardfork;
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
@@ -11,7 +12,12 @@ use foundry_evm_core::{
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses},
 };
 use foundry_evm_hardforks::TempoHardfork;
+use foundry_evm_networks::NetworkConfigs;
+#[cfg(feature = "monad")]
+use foundry_evm_networks::is_monad_precompile_active_at;
 use itertools::Itertools;
+#[cfg(feature = "monad")]
+use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::DecodedCallTrace;
 
 sol! {
@@ -57,9 +63,14 @@ use Precompiles::*;
 
 pub(crate) fn is_known_precompile(
     address: Address,
+    networks: Option<NetworkConfigs>,
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
 ) -> bool {
+    #[cfg(not(feature = "monad"))]
+    let _ = monad_hardfork;
+
     // Standard EVM precompiles (all chains).
     // An 18-byte zero prefix, as `P256_VERIFY` (0x..0100) occupies the two lowest bytes.
     let is_standard = address[..18].iter().all(|&x| x == 0)
@@ -92,17 +103,56 @@ pub(crate) fn is_known_precompile(
         Some(hardfork) => active_tempo_precompile_addresses(hardfork).any(|addr| addr == address),
         None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
     };
-    let is_tempo_context = chain_id
-        .map(|id| Chain::from_id(id).is_tempo())
-        .unwrap_or_else(|| tempo_hardfork.is_some());
+    let is_tempo_context = networks.map_or_else(
+        || {
+            chain_id
+                .map(|id| Chain::from_id(id).is_tempo())
+                .unwrap_or_else(|| tempo_hardfork.is_some())
+        },
+        |networks| networks.is_tempo(),
+    );
     if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
         return true;
     }
-    // Celo transfer precompile (only on Celo chains).
-    if chain_id.is_some_and(|id| {
-        matches!(Chain::from_id(id).named(), Some(NamedChain::Celo | NamedChain::CeloSepolia))
-    }) && address == CELO_TRANSFER
+    // Monad precompiles (only on a Monad chain or in an explicitly configured Monad context).
+    #[cfg(feature = "monad")]
     {
+        let is_monad_context = networks.map_or_else(
+            || {
+                chain_id.is_some_and(|id| {
+                    matches!(
+                        Chain::from_id(id).named(),
+                        Some(NamedChain::Monad | NamedChain::MonadTestnet)
+                    )
+                }) || monad_hardfork.is_some()
+            },
+            |networks| networks.is_monad(),
+        );
+        if is_monad_context {
+            if address == STAKING_ADDRESS {
+                return true;
+            }
+            if address == RESERVE_BALANCE_ADDRESS
+                && monad_hardfork
+                    .is_none_or(|hardfork| is_monad_precompile_active_at(address, hardfork))
+            {
+                return true;
+            }
+        }
+    }
+    // Celo transfer precompile (only on Celo chains).
+    let is_celo_context = networks.map_or_else(
+        || {
+            chain_id.is_some_and(|id| {
+                matches!(
+                    Chain::from_id(id).named(),
+                    Some(NamedChain::Celo | NamedChain::CeloSepolia)
+                )
+            })
+        },
+        |networks| networks.is_celo(),
+    );
+    if is_celo_context && address == CELO_TRANSFER {
         return true;
     }
     false
@@ -111,8 +161,10 @@ pub(crate) fn is_known_precompile(
 /// Tries to decode a precompile call. Returns `Some` if successful.
 pub(super) fn decode(
     trace: &CallTrace,
+    networks: Option<NetworkConfigs>,
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
 ) -> Option<DecodedCallTrace> {
     // The tracer determined the call did not execute as a precompile, e.g. code etched at the
     // address of a precompile that is not active on the current hardfork.
@@ -120,7 +172,7 @@ pub(super) fn decode(
         return None;
     }
 
-    if !is_known_precompile(trace.address, chain_id, tempo_hardfork) {
+    if !is_known_precompile(trace.address, networks, chain_id, tempo_hardfork, monad_hardfork) {
         return None;
     }
 
@@ -574,14 +626,18 @@ mod tests {
 
     #[test]
     fn known_precompile_boundaries() {
-        assert!(is_known_precompile(P256_VERIFY, None, None));
+        assert!(is_known_precompile(P256_VERIFY, None, None, None, None));
         assert!(!is_known_precompile(
             address!("0x0000000000000000000000000000000000000101"),
+            None,
+            None,
             None,
             None
         ));
         assert!(!is_known_precompile(
             address!("0x0000000000000000000000000000000000000012"),
+            None,
+            None,
             None,
             None
         ));
@@ -591,7 +647,7 @@ mod tests {
     fn skips_calls_not_executed_as_precompile() {
         let trace =
             CallTrace { address: P256_VERIFY, maybe_precompile: Some(false), ..Default::default() };
-        assert!(decode(&trace, None, None).is_none());
+        assert!(decode(&trace, None, None, None, None).is_none());
     }
 
     #[test]

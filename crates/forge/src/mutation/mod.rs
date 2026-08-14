@@ -341,7 +341,7 @@ pub struct MutationHandler {
     /// Optional regex used to restrict mutation to specific contracts within
     /// the file (matches against contract name).
     contract_filter: Option<regex::Regex>,
-    equivalent_mutations: type_analysis::EquivalentMutationSet,
+    mutation_exclusions: type_analysis::MutationExclusionSet,
 }
 
 impl MutationHandler {
@@ -354,7 +354,7 @@ impl MutationHandler {
             report: MutationsSummary::new(),
             survived_spans: SurvivedSpans::new(),
             contract_filter: None,
-            equivalent_mutations: type_analysis::EquivalentMutationSet::new(),
+            mutation_exclusions: type_analysis::MutationExclusionSet::new(),
         }
     }
 
@@ -364,12 +364,12 @@ impl MutationHandler {
         self
     }
 
-    /// Exclude binary operator replacements proven equivalent by type analysis.
-    pub(crate) fn with_equivalent_mutations(
+    /// Exclude operator replacements rejected by type analysis.
+    pub(crate) fn with_mutation_exclusions(
         mut self,
-        mutations: type_analysis::EquivalentMutationSet,
+        mutations: type_analysis::MutationExclusionSet,
     ) -> Self {
-        self.equivalent_mutations = mutations;
+        self.mutation_exclusions = mutations;
         self
     }
 
@@ -430,7 +430,7 @@ impl MutationHandler {
         let mut mutant_cfg_hasher = DefaultHasher::new();
         // Version salt for this mutant-set cache schema. Bump this if the
         // inputs that define generated mutants change.
-        "mutant-set-v3".hash(&mut mutant_cfg_hasher);
+        "mutant-set-v7".hash(&mut mutant_cfg_hasher);
         for op in self.config.mutation.enabled_operators() {
             op.to_string().hash(&mut mutant_cfg_hasher);
         }
@@ -440,6 +440,21 @@ impl MutationHandler {
                 re.as_str().hash(&mut mutant_cfg_hasher);
             }
             None => "nofilter".hash(&mut mutant_cfg_hasher),
+        }
+        let mut exclusion_hashes = self
+            .mutation_exclusions
+            .iter()
+            .map(|exclusion| {
+                let mut hasher = DefaultHasher::new();
+                exclusion.hash(&mut hasher);
+                hasher.finish()
+            })
+            .collect::<Vec<_>>();
+        exclusion_hashes.sort_unstable();
+        "exclusions:".hash(&mut mutant_cfg_hasher);
+        exclusion_hashes.len().hash(&mut mutant_cfg_hasher);
+        for exclusion_hash in exclusion_hashes {
+            exclusion_hash.hash(&mut mutant_cfg_hasher);
         }
         let mutant_cfg_hash = mutant_cfg_hasher.finish();
 
@@ -513,7 +528,7 @@ impl MutationHandler {
             let operators = self.config.mutation.enabled_operators();
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
                 .with_source(&target_content)
-                .with_equivalent_mutations(self.equivalent_mutations.clone());
+                .with_mutation_exclusions(self.mutation_exclusions.clone());
 
             if let Some(filter) = contract_filter {
                 mutant_visitor =
@@ -597,6 +612,7 @@ impl MutationHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mutation::type_analysis::{AssignmentReplacement, MutationExclusion};
     use foundry_config::Config;
     use solar::ast::interface::BytePos;
     use tempfile::TempDir;
@@ -669,6 +685,31 @@ mod tests {
         let second = test_handler(second_config).cache_file_path("build", CacheKind::Mutants);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn mutation_cache_paths_include_type_analysis_exclusions() {
+        let (_temp, config) = test_config();
+        let without_exclusions = test_handler(config.clone());
+        let exclusion = MutationExclusion::assignment(
+            Span::new(BytePos(10), BytePos(20)),
+            AssignmentReplacement::Zero,
+        );
+        let with_exclusions = test_handler(config).with_mutation_exclusions([exclusion].into());
+        without_exclusions.persist_cached_mutants("build", &[mutant(10, 20, "account")]).unwrap();
+
+        assert!(with_exclusions.retrieve_cached_mutants("build").is_none());
+
+        for kind in [
+            CacheKind::Mutants,
+            CacheKind::Results { execution_key: "exec" },
+            CacheKind::Survived { execution_key: "exec" },
+        ] {
+            assert_ne!(
+                without_exclusions.cache_file_path("build", kind),
+                with_exclusions.cache_file_path("build", kind),
+            );
+        }
     }
 
     #[test]

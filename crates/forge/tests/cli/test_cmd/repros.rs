@@ -778,8 +778,8 @@ contract Contract {}
     // We expect a compilation error due to the missing import
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
-Error (6275): Source "Missing.sol" not found: File not found. Searched the following locations: [..]
-ParserError: Source "Missing.sol" not found: File not found. Searched the following locations: [..]
+Error (6275): Source "Missing.sol" not found: File not found. Searched the following locations: "[..]".
+ParserError: Source "Missing.sol" not found: File not found. Searched the following locations: "[..]".
  [FILE]:4:1:
   |
 4 | import '../Missing.sol';

@@ -244,7 +244,6 @@ const fn real_body<'hir>(source: LoopSource, body: &'hir [Stmt<'hir>]) -> &'hir 
             {
                 return std::slice::from_ref(*then);
             }
-            body
         }
         LoopSource::DoWhile => {
             if let Some((last, rest)) = body.split_last()
@@ -254,9 +253,9 @@ const fn real_body<'hir>(source: LoopSource, body: &'hir [Stmt<'hir>]) -> &'hir 
             {
                 return rest;
             }
-            body
         }
     }
+    body
 }
 
 /// Whether every statement of a loop body runs on one straight line: no branch (`if`/`try`), no

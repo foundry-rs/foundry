@@ -18,7 +18,7 @@ use alloy_primitives::{
 };
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockTransactions, erc4337::TransactionConditional,
+    BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions, erc4337::TransactionConditional,
     request::TransactionRequest, state::AccountOverride,
 };
 use alloy_rpc_types_eth::{Bundle, EthCallResponse};
@@ -83,12 +83,19 @@ async fn can_get_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_null_base_fee_before_london() {
-    let (_api, handle) =
+    let (api, handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
     let provider = handle.http_provider();
 
     let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
     assert_eq!(base_fee, None);
+
+    api.anvil_reset(None).await.unwrap();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, None);
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -571,6 +578,41 @@ async fn can_call_many() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn call_many_progresses_block_context() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let probe = Address::repeat_byte(0x42);
+    // Return NUMBER followed by TIMESTAMP.
+    api.anvil_set_code(probe, bytes!("435f524260205260405ff3")).await.unwrap();
+
+    let request = || {
+        WithOtherFields::new(TransactionRequest::default().with_to(probe).with_gas_limit(100_000))
+    };
+    let bundles = vec![
+        Bundle {
+            transactions: vec![request()],
+            block_override: Some(BlockOverrides {
+                number: Some(U256::from(99)),
+                time: Some(1_234),
+                ..Default::default()
+            }),
+        },
+        Bundle { transactions: Vec::new(), block_override: None },
+        Bundle { transactions: vec![request()], block_override: None },
+    ];
+
+    let response: Vec<Vec<EthCallResponse>> =
+        provider.client().request("eth_callMany", (bundles,)).await.unwrap();
+    let first = response[0][0].clone().ensure_ok().unwrap();
+    let third = response[2][0].clone().ensure_ok().unwrap();
+
+    assert_eq!(U256::from_be_slice(&first[..32]), U256::from(99));
+    assert_eq!(U256::from_be_slice(&first[32..]), U256::from(1_234));
+    assert_eq!(U256::from_be_slice(&third[..32]), U256::from(101));
+    assert_eq!(U256::from_be_slice(&third[32..]), U256::from(1_236));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_bundle() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -755,6 +797,38 @@ async fn can_parse_raw_tx_sync_timeout() {
         .request("eth_sendRawTransactionSync", (alloy_primitives::Bytes::default(), 1u64))
         .await;
     assert!(timeout.unwrap_err().to_string().contains("Empty transaction data"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn raw_tx_sync_timeout_returns_transaction_hash() {
+    let (_api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let mut tx = TxEip1559 {
+        max_fee_per_gas: eip1559_est.max_fee_per_gas,
+        max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
+        gas_limit: 100000,
+        chain_id: 31337,
+        to: alloy_primitives::TxKind::Call(wallets[0].address()),
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let expected_hash = *tx.hash();
+    let mut encoded = Vec::new();
+    tx.eip2718_encode(&mut encoded);
+
+    let response: Result<serde_json::Value, _> = provider
+        .client()
+        .request("eth_sendRawTransactionSync", (alloy_primitives::Bytes::from(encoded), 1u64))
+        .await;
+    let error = response.unwrap_err();
+    assert_eq!(error.tx_hash_data(), Some(expected_hash));
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, 4);
+    assert_eq!(error.message, "Transaction confirmation timeout");
 }
 
 #[tokio::test(flavor = "multi_thread")]

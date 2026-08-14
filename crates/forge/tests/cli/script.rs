@@ -10,6 +10,7 @@ use alloy_primitives::{Address, Bytes, U256, address, hex};
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -133,6 +134,160 @@ contract DebugRemote {{
     ]);
     cmd.assert_success();
     assert_debug_dump_identifies_contract(&dump_path, &deployed, "ScriptForkDebugTarget");
+});
+
+#[cfg(feature = "monad")]
+forgetest_async!(monad_simulation_advances_transaction_context, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    api.anvil_set_balance(sender, U256::from(12_000_000_000_000_000_000u128)).await.unwrap();
+    // Payable runtime calls `dippedIntoReserve()` and reverts when it returns true.
+    api.anvil_set_code(
+        address!("0x000000000000000000000000000000000000bEEF"),
+        hex!("633a61584e5f5260205f6004601c5f6110015af1505f5115601e575f5ffd5b00").into(),
+    )
+    .await
+    .unwrap();
+
+    prj.add_script(
+        "SequentialMonadContext.s.sol",
+        r#"
+interface Vm {
+    function broadcast(uint256 privateKey) external;
+    function deal(address account, uint256 newBalance) external;
+}
+
+contract SequentialMonadContextScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 constant FIRST_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 constant SECOND_KEY = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    uint256 constant THIRD_KEY = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
+    address constant FIRST = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+    address payable constant RECIPIENT = payable(address(0xBEEF));
+
+    function send(uint256 privateKey, uint256 value) internal {
+        vm.broadcast(privateKey);
+        (bool success,) = RECIPIENT.call{value: value}("");
+        require(success, "sender dipped unexpectedly");
+    }
+
+    function run() external {
+        // This only affects local script execution, not the separate on-chain simulation runner.
+        vm.deal(FIRST, 100 ether);
+
+        send(FIRST_KEY, 1 wei);
+        send(SECOND_KEY, 1 wei);
+        send(THIRD_KEY, 1 wei);
+        send(FIRST_KEY, 3 ether);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadNine".parse().unwrap());
+    });
+
+    let endpoint = handle.http_endpoint();
+    let common = [
+        "script",
+        "SequentialMonadContextScript",
+        "--rpc-url",
+        endpoint.as_str(),
+        "--network",
+        "monad",
+        "--non-interactive",
+    ];
+
+    // Batched simulation keeps all four transactions in one block. The final sender therefore
+    // cannot dip into reserve after already appearing earlier in that block.
+    cmd.forge_fuse().args(common).assert_failure();
+
+    // Slow simulation places one transaction in each block. By the fourth transaction, the first
+    // sender is outside Monad's parent/grandparent window and may dip again.
+    cmd.forge_fuse().args(common).arg("--slow").assert_success();
+});
+
+#[cfg(feature = "monad")]
+forgetest_async!(monad_multi_rpc_sequence_uses_per_fork_decoder, |prj, cmd| {
+    let (monad_eight_api, monad_eight) =
+        spawn(NodeConfig::test_monad().with_hardfork(Some("monad:MonadEight".parse().unwrap())))
+            .await;
+    let (monad_nine_api, monad_nine) =
+        spawn(NodeConfig::test_monad().with_hardfork(Some("monad:MonadNine".parse().unwrap())))
+            .await;
+    monad_eight_api.mine_one().await.unwrap();
+    monad_nine_api.mine_one().await.unwrap();
+    let monad_eight_rpc = monad_eight.http_endpoint();
+    let monad_nine_rpc = monad_nine.http_endpoint();
+
+    let script = r#"
+interface Vm {
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract PerForkMetadataScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant RESERVE_BALANCE = 0x0000000000000000000000000000000000001001;
+
+    function recordReserveCall() internal {
+        vm.startBroadcast();
+        (bool success,) = RESERVE_BALANCE.call(abi.encodeWithSignature("dippedIntoReserve()"));
+        require(success, "reserve call failed");
+        vm.stopBroadcast();
+    }
+
+    function run() external {
+        vm.createSelectFork("<MONAD_EIGHT_RPC>");
+        recordReserveCall();
+
+        vm.createSelectFork("<MONAD_NINE_RPC>");
+        recordReserveCall();
+    }
+}
+"#
+    .replace("<MONAD_EIGHT_RPC>", &monad_eight_rpc)
+    .replace("<MONAD_NINE_RPC>", &monad_nine_rpc);
+    prj.add_script("PerForkMetadata.s.sol", &script);
+
+    let common = [
+        "script",
+        "PerForkMetadataScript",
+        "--rpc-url",
+        monad_eight_rpc.as_str(),
+        "--network",
+        "monad",
+        "--non-interactive",
+    ];
+
+    let assert_metadata = || {
+        let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| path.to_string_lossy().contains("-latest") && path.ends_with("run.json"))
+            .expect("No multi-RPC broadcast artifact");
+        let sequence: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        let deployments = sequence["deployments"].as_array().expect("multi-RPC deployments");
+        assert_eq!(deployments.len(), 2);
+
+        let monad_eight_tx = &deployments[0]["transactions"][0];
+        assert!(monad_eight_tx["function"].is_null());
+        assert!(monad_eight_tx["functionAbi"].is_null());
+        assert!(monad_eight_tx["arguments"].is_null());
+
+        let monad_nine_tx = &deployments[1]["transactions"][0];
+        assert_eq!(monad_nine_tx["function"], "dippedIntoReserve()");
+        assert_eq!(
+            monad_nine_tx["functionAbi"],
+            "function dippedIntoReserve() returns (bool dipped)"
+        );
+        assert_eq!(monad_nine_tx["arguments"], serde_json::json!([]));
+    };
+
+    cmd.forge_fuse().args(common).assert_success();
+    assert_metadata();
+
+    cmd.forge_fuse().args(common).arg("--skip-simulation").assert_success();
+    assert_metadata();
 });
 
 // Tests that the `run` command works correctly
@@ -4777,6 +4932,77 @@ forgetest_async!(script_check_contract_sizes_warns_at_default_limit, |prj, cmd| 
 Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
 
 "#]]);
+});
+
+forgetest_async!(script_check_contract_sizes_uses_amsterdam_code_size_limit, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 50_000);
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Amsterdam;
+    });
+
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000_000))).await;
+    cmd.set_current_dir(prj.root());
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    let assert = cmd
+        .args([
+            "script",
+            "DeployLarge",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--gas-limit",
+            "1000000000",
+        ])
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(!stderr.contains("above the contract size limit"), "{stderr}");
+});
+
+forgetest_async!(script_check_contract_sizes_uses_network_specific_spec, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 50_000);
+
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000_000))).await;
+    let (_tempo_api, tempo_handle) =
+        spawn(NodeConfig::test_tempo().with_gas_limit(Some(1_000_000_000))).await;
+    let rpc = handle.http_endpoint();
+    let tempo_rpc = tempo_handle.http_endpoint();
+    cmd.set_current_dir(prj.root());
+    for (networks, hardfork, rpc_url, is_tempo) in [
+        (foundry_evm_networks::NetworkConfigs::with_optimism(), None, rpc.as_str(), false),
+        (Default::default(), Some("optimism:karst"), rpc.as_str(), false),
+        (foundry_evm_networks::NetworkConfigs::with_tempo(), None, tempo_rpc.as_str(), true),
+        (Default::default(), Some("tempo:T8"), tempo_rpc.as_str(), true),
+    ] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Amsterdam;
+            config.networks = networks;
+            config.hardfork = hardfork.map(|hardfork| hardfork.parse().unwrap());
+        });
+
+        cmd.forge_fuse();
+        for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"]
+        {
+            cmd.unset_env(var);
+        }
+        cmd.args(["script", "DeployLarge", "--rpc-url", rpc_url, "--gas-limit", "1000000000"]);
+        if is_tempo {
+            cmd.args([
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "--tempo.fee-token",
+                "0x20c0000000000000000000000000000000000000",
+            ]);
+        }
+        let assert = cmd.assert_success();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        assert!(
+            stderr.contains("above the contract size limit (50308 > 24576)"),
+            "missing size warning for {hardfork:?}: {stderr}"
+        );
+    }
 });
 
 // Tests that `forge script` honors `code_size_limit` configured via foundry.toml

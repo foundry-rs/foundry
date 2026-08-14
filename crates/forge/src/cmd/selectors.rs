@@ -98,13 +98,12 @@ impl SelectorsSubcommands {
                 }
 
                 sh_status!("Caching selectors for contracts in the project...")?;
-                let mut project = project_from_paths(project_paths)?;
-                let outcome =
-                    compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 cache_local_signatures(&outcome)?;
             }
             Self::Upload { contract, all, project_paths } => {
-                let mut project = project_from_paths(project_paths)?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
                 let output = if let Some(contract_info) = &contract {
                     let Some(contract_name) = contract_info.name() else {
                         eyre::bail!("No contract name provided.");
@@ -114,9 +113,9 @@ impl SelectorsSubcommands {
                         .path()
                         .map(Ok)
                         .unwrap_or_else(|| project.find_contract_path(contract_name))?;
-                    compile_abi_project(&mut project, ProjectCompiler::new().files([target_path]))?
+                    compile_abi_project(&mut project, compiler.files([target_path]))?
                 } else {
-                    compile_abi_project(&mut project, ProjectCompiler::new())?
+                    compile_abi_project(&mut project, compiler)?
                 };
                 let artifacts = if all {
                     output
@@ -149,21 +148,18 @@ impl SelectorsSubcommands {
                     vec![(contract, artifact)]
                 };
 
-                let mut artifacts = artifacts.into_iter().peekable();
-                while let Some((contract, artifact)) = artifacts.next() {
+                let mut abis = Vec::with_capacity(artifacts.len());
+                for (contract, artifact) in artifacts {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
                         continue;
                     }
 
                     sh_status!("Uploading selectors for {contract}...")?;
-
-                    // upload abi to selector database
-                    import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
-
-                    if artifacts.peek().is_some() {
-                        sh_println!()?
-                    }
+                    abis.push(abi);
+                }
+                if !abis.is_empty() {
+                    import_selectors(SelectorImportData::Abi(abis)).await?.describe();
                 }
             }
             Self::Collision { mut first_contract, mut second_contract, build } => {
@@ -241,9 +237,8 @@ impl SelectorsSubcommands {
             }
             Self::List { contract, project_paths, no_group } => {
                 sh_status!("Listing selectors for contracts in the project...")?;
-                let mut project = project_from_paths(project_paths)?;
-                let outcome =
-                    compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact
@@ -377,9 +372,8 @@ impl SelectorsSubcommands {
             Self::Find { selector, project_paths } => {
                 sh_status!("Searching for selector {selector:?} in the project...")?;
 
-                let mut project = project_from_paths(project_paths)?;
-                let outcome =
-                    compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = outcome
                     .into_artifacts_with_files()
                     .filter(|(file, _, _)| {
@@ -450,11 +444,14 @@ impl SelectorsSubcommands {
     }
 }
 
-fn project_from_paths(project_paths: ProjectPathOpts) -> Result<Project<MultiCompiler>> {
+fn project_from_paths(
+    project_paths: ProjectPathOpts,
+) -> Result<(Project<MultiCompiler>, ProjectCompiler)> {
     let config = BuildOpts { project_paths, ..Default::default() }.load_config()?;
+    let compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
     let mut project = config.project()?;
     if !project.build_info {
         project.no_artifacts = true;
     }
-    Ok(project)
+    Ok((project, compiler))
 }

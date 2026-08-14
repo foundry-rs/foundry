@@ -143,7 +143,7 @@ impl CoverageReporter for LcovReporter {
 
         let mut fn_index = 0usize;
         for (path, items) in report.items_by_file() {
-            let summary = CoverageSummary::from_items(items.iter().copied());
+            let summary = CoverageSummary::from_items(&items);
 
             writeln!(out, "TN:")?;
             writeln!(out, "SF:{}", path.display())?;
@@ -170,7 +170,13 @@ impl CoverageReporter for LcovReporter {
                 let hits = item.hits;
                 match item.kind {
                     CoverageItemKind::Function { ref name } => {
-                        let name = format!("{}.{name}", item.loc.contract_name);
+                        // Free (file-level) functions have no contract scope; emit the bare
+                        // name rather than a leading-dot `.name`.
+                        let name = if item.loc.contract_name.is_empty() {
+                            name.to_string()
+                        } else {
+                            format!("{}.{name}", item.loc.contract_name)
+                        };
                         if self.version >= Version::new(2, 2, 0) {
                             // v2.2 changed the FN format.
                             writeln!(out, "FNL:{fn_index},{line},{end_line}")?;
@@ -370,9 +376,8 @@ fn attributed_items(
         for (item, hits) in
             report.hit_items_for_hit_map(&resolved.contract_id, map, resolved.is_deployed_code)
         {
-            let Some(source_path) = report
-                .source_paths
-                .get(&(resolved.contract_id.version.clone(), item.loc.source_id))
+            let Some(source_path) =
+                report.get_source_path(&resolved.contract_id.build_id, item.loc.source_id)
             else {
                 continue;
             };
@@ -478,13 +483,13 @@ impl CoverageReporter for DebugReporter {
                 .filter_map(|(is_runtime, anchor)| {
                     let item = report
                         .analyses
-                        .get(&contract_id.version)
+                        .get(&contract_id.build_id)
                         .and_then(|items| items.get(anchor.item_id))?;
                     // Source filters retain analyses to keep anchor item IDs stable, so debug
                     // output must apply the same reportable-source filter as other reporters.
                     report
-                        .source_paths
-                        .contains_key(&(contract_id.version.clone(), item.loc.source_id))
+                        .get_source_path(&contract_id.build_id, item.loc.source_id)
+                        .is_some()
                         .then_some((is_runtime, anchor, item))
                 })
                 .collect::<Vec<_>>();
@@ -545,9 +550,8 @@ impl CoverageReporter for BytecodeReporter {
                     .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
-                let source_path = source_id.and_then(|i| {
-                    report.source_paths.get(&(contract_id.version.clone(), i as usize))
-                });
+                let source_path = source_id
+                    .and_then(|i| report.get_source_path(&contract_id.build_id, i as usize));
 
                 let code = format!("{code:?}");
                 let start = source_element.offset() as usize;

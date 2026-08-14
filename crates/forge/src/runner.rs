@@ -52,7 +52,7 @@ use foundry_evm::{
             replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
-        replay_sequence_for_minimization,
+        replay_sequence_for_minimization, should_ignore_revert,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -95,6 +95,18 @@ fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> boo
 
 fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
+}
+
+pub(crate) fn effective_test_function_kind(
+    kind: TestFunctionKind,
+    config: &Config,
+    func: &Function,
+) -> TestFunctionKind {
+    if should_symbolically_import_fuzz_corpus(config, func) {
+        TestFunctionKind::SymbolicTest
+    } else {
+        kind
+    }
 }
 
 fn should_symbolically_use_fuzz_frontiers(config: &Config, func: &Function) -> bool {
@@ -326,7 +338,7 @@ pub(crate) fn function_matches_network_pass(
     }
 }
 
-fn inline_config_for(
+pub(crate) fn inline_config_for(
     config: &Config,
     inline_config: &InlineConfig,
     contract_name: &str,
@@ -1455,6 +1467,7 @@ struct ReplayedInvariantSequence {
     call_sequence: Vec<BaseCounterExample>,
     artifact: Option<SymbolicArtifactRef>,
     minimization: Option<SymbolicCounterexampleMinimization>,
+    fork_block_number: Option<u64>,
 }
 
 struct SymbolicSequenceFailure {
@@ -1852,6 +1865,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.tcfg.early_exit,
             position,
         )?;
+        let fork_block_number = replay.fork_block_number;
         let call_sequence = replay.counterexample_sequence;
 
         let (artifact, minimization) = self.persist_invariant_sequence_artifacts(
@@ -1864,7 +1878,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_failure,
         );
 
-        Ok(ReplayedInvariantSequence { call_sequence, artifact, minimization })
+        Ok(ReplayedInvariantSequence { call_sequence, artifact, minimization, fork_block_number })
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -2113,11 +2127,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
         }
-        let kind = if should_symbolically_import_fuzz_corpus(&self.config, func) {
-            TestFunctionKind::SymbolicTest
-        } else {
-            kind
-        };
+        let kind = effective_test_function_kind(kind, &self.config, func);
 
         // In showmap replay mode and `forge fuzz`, only fuzz/invariant tests are runnable.
         if (self.cr.mcr.tcfg.showmap.is_some() || self.cr.mcr.tcfg.fuzz_only)
@@ -3109,6 +3119,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 self.result.invariant_result(
                                     Vec::new(),
                                     false,
+                                    None,
                                     Vec::new(),
                                     Vec::new(),
                                     None,
@@ -3363,20 +3374,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return SymbolicFuzzSeedReplay::Rejected;
         }
 
-        let success = if !fuzz_config.fail_on_revert
-            && raw_call_result
-                .reverter
-                .is_some_and(|reverter| reverter != self.address && reverter != CHEATCODE_ADDRESS)
-        {
-            true
-        } else {
-            self.executor.is_raw_call_success(
-                self.address,
-                Cow::Borrowed(&raw_call_result.state_changeset),
-                &raw_call_result,
-                false,
-            )
-        };
+        let success = should_ignore_revert::<FEN>(
+            fuzz_config.fail_on_revert,
+            self.address,
+            raw_call_result.reverter,
+        ) || self.executor.is_raw_call_success(
+            self.address,
+            Cow::Borrowed(&raw_call_result.state_changeset),
+            &raw_call_result,
+            false,
+        );
 
         if success { SymbolicFuzzSeedReplay::Success } else { SymbolicFuzzSeedReplay::Failure }
     }
@@ -4208,6 +4215,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                         call_sequence,
                                         artifact,
                                         minimization,
+                                        fork_block_number,
                                     } = replayed;
                                     let symbolic_artifact = artifact.clone();
                                     let symbolic_minimization = minimization.clone();
@@ -4268,6 +4276,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                             self.result.invariant_result(
                                                 Vec::new(),
                                                 false,
+                                                fork_block_number,
                                                 invariant_failures,
                                                 invariant_predicate_results,
                                                 Some(failure_dir.clone()),
@@ -4328,6 +4337,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                                 "symbolic handler counterexample"
                                                                     .to_string()
                                                             }),
+                                                        fork_block_number: None,
                                                         edge_fingerprint: fingerprint,
                                                     },
                                                 ),
@@ -4412,6 +4422,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Success requires zero predicate breaks *and* zero handler-side assertion bugs.
         let success =
             invariant_result.errors.is_empty() && invariant_result.handler_errors.is_empty();
+        let single_failure =
+            invariant_result.errors.len() + invariant_result.handler_errors.len() == 1;
+        let mut fork_block_number = invariant_result.fork_block_number;
         let mut invariant_failures: Vec<InvariantFailure> = vec![];
         let mut any_failure_persisted = false;
 
@@ -4501,6 +4514,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             Some((1, total_broken)),
                         ) {
                             Ok(replayed) if !replayed.call_sequence.is_empty() => {
+                                if single_failure {
+                                    fork_block_number =
+                                        replayed.fork_block_number.or(fork_block_number);
+                                }
                                 record_invariant_failure(
                                     failure_dir.as_path(),
                                     primary_failure_file.as_path(),
@@ -4615,6 +4632,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             Some((position, total_broken)),
                         ) {
                             Ok(replayed) if !replayed.call_sequence.is_empty() => {
+                                if single_failure {
+                                    fork_block_number =
+                                        replayed.fork_block_number.or(fork_block_number);
+                                }
                                 record_invariant_failure(
                                     failure_dir.as_path(),
                                     persisted_failure.as_path(),
@@ -4788,6 +4809,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result.invariant_result(
             invariant_result.gas_report_traces,
             success,
+            fork_block_number,
             invariant_failures,
             invariant_predicate_results,
             invariant_failure_dir,
@@ -4842,6 +4864,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.cr.name,
             &func.name,
         );
+        let fuzz_input = self.cr.mcr.tcfg.fuzz_input.as_ref();
+        let is_explicit_target = fuzz_input
+            .is_some_and(|input| input.contract == self.cr.name && input.test == func.signature());
+        if is_explicit_target && fuzz_config.run.is_some() {
+            self.result.fuzz_setup_fail(eyre::eyre!(
+                "`--fuzz-input-file` cannot be combined with `fuzz.run`"
+            ));
+            return self.result;
+        }
 
         // Showmap replay mode: replay the persisted corpus and emit coverage
         // files instead of running the fuzz campaign.
@@ -4925,9 +4956,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        // Load persisted counterexample, if any.
-        let persisted_failure =
-            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
+        // Load the validated explicit input for its unique target, or fall back to this test's
+        // canonical cache.
+        let persisted_failure = if is_explicit_target {
+            fuzz_input.map(|input| input.failure.as_ref().clone())
+        } else {
+            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok()
+        };
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let Some(failure) = persisted_failure.as_ref() else {
                 let result = FuzzTestResult {

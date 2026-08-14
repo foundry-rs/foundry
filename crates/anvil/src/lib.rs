@@ -141,9 +141,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
+    let init_state = config.init_state.take();
     let (backend, fork_transaction_replay) = config.setup::<FoundryNetwork>().await?;
 
-    if let Some(state) = config.init_state.clone() {
+    if let Some(state) = init_state {
         backend.load_state(state).await.wrap_err("failed to load init state")?;
     }
 
@@ -154,6 +155,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
             .wrap_err("failed to replay fork transaction prefix")?;
     }
 
+    backend.commit_startup_fork_cache();
     let backend = Arc::new(backend);
 
     if config.enable_auto_impersonate {
@@ -211,7 +213,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
-        backend.blob_params(),
+        backend.fees().clone(),
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),

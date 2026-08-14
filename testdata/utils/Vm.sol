@@ -213,6 +213,10 @@ interface Vm {
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function difficulty(uint256 newDifficulty) external;
     function dumpState(string calldata pathToStateJson) external;
+    function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2) external pure returns (uint256 resultX, uint256 resultY);
+    function ecAddProjective(uint256 pointX1, uint256 pointY1, uint256 pointZ1, uint256 pointX2, uint256 pointY2, uint256 pointZ2) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+    function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);
+    function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
     function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
@@ -262,6 +266,7 @@ interface Vm {
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data, uint64 count) external;
     function expectCreate(bytes calldata bytecode, address deployer) external;
     function expectCreate2(bytes calldata bytecode, address deployer) external;
+    function expectDelegateCall(address callee, bytes calldata data) external;
     function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;
     function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
     function expectEmitAnonymous() external;
@@ -450,6 +455,9 @@ interface Vm {
     function readLink(string calldata linkPath) external view returns (string memory targetPath);
     function record() external;
     function recordLogs() external;
+    function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;
+    function registerSloadHook(address target, bytes4 callback) external;
+    function registerSstoreHook(address target, bytes4 callback) external;
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
     function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
     function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);

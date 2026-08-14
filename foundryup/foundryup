@@ -7,7 +7,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.9.2"
+FOUNDRYUP_INSTALLER_VERSION="1.9.3"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -226,49 +226,27 @@ main() {
         # Check if the binaries are already installed and match the expected hashes.
         # If they do, skip the download.
         version_dir="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-        all_match=true
-        for bin in "${BINS[@]}"; do
-          expected=""
-          for i in "${!HASH_NAMES[@]}"; do
-            if [ "${HASH_NAMES[$i]}" = "$bin" ] || [ "${HASH_NAMES[$i]}" = "$bin.exe" ]; then
-              expected="${HASH_VALUES[$i]}"
-              break
-            fi
-          done
-
-          path="$version_dir/$bin"
-
-          if [ -z "$expected" ]; then
-            if is_missing_optional_bin "$bin" "$expected" "$path"; then
-              continue
-            fi
-            all_match=false
-            break
-          fi
-
-          if [ ! -x "$path" ]; then
-            all_match=false
-            break
-          fi
-
-          actual=$(compute_sha256 "$path")
-          if [ "$actual" != "$expected" ]; then
-            all_match=false
-            break
-          fi
-        done
-
-        if $all_match; then
-          say "version $FOUNDRYUP_TAG already installed and verified, activating..."
-          FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
-          use
-          say "done!"
-          exit 0
+        if [ ! -d "$version_dir" ]; then
+          installed_status=not-installed
+        else
+          installed_status=$(installed_bins_status "$version_dir")
         fi
+        case "$installed_status" in
+          verified)
+            say "version $FOUNDRYUP_TAG already installed and verified, activating..."
+            FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
+            use
+            say "done!"
+            exit 0
+            ;;
+          hash-error:*)
+            err "$(installed_bins_message "$installed_status" "$FOUNDRYUP_TAG")"
+            ;;
+          *)
+            say "$(installed_bins_message "$installed_status" "$FOUNDRYUP_TAG")"
+            ;;
+        esac
       fi
-
-      # If we reach here, we need to download the binaries.
-      say "binaries not found or do not match expected hashes, downloading new binaries"
     fi
 
     # Download and extract the binaries archive
@@ -337,7 +315,7 @@ main() {
             continue
           fi
 
-          actual=$(compute_sha256 "$path")
+          actual=$(compute_downloaded_sha256 "$bin" "$path")
           if [ "$actual" != "$expected" ]; then
             say "$bin hash verification failed:"
             say "  expected: $expected"
@@ -606,6 +584,85 @@ compute_sha256() {
   else
     shasum -a 256 "$1" | awk '{print $1}'
   fi
+}
+
+compute_downloaded_sha256() {
+  local bin="$1" path="$2" actual
+  if ! actual=$(compute_sha256 "$path" 2>/dev/null); then
+    err "could not calculate SHA-256 hash for downloaded $bin, aborting installation"
+  fi
+  printf '%s\n' "$actual"
+}
+
+installed_bins_status() {
+  local version_dir="$1" bin expected path actual i
+  for bin in "${BINS[@]}"; do
+    expected=""
+    for i in "${!HASH_NAMES[@]}"; do
+      if [ "${HASH_NAMES[$i]}" = "$bin" ] || [ "${HASH_NAMES[$i]}" = "$bin.exe" ]; then
+        expected="${HASH_VALUES[$i]}"
+        break
+      fi
+    done
+
+    path="$version_dir/$bin"
+    if is_missing_optional_bin "$bin" "$expected" "$path"; then
+      continue
+    fi
+    if [ ! -e "$path" ]; then
+      printf 'missing:%s\n' "$bin"
+      return
+    fi
+    if [ ! -f "$path" ] || [ ! -x "$path" ]; then
+      printf 'not-executable:%s\n' "$bin"
+      return
+    fi
+    if [ -z "$expected" ]; then
+      printf 'unverifiable:%s\n' "$bin"
+      return
+    fi
+    if ! actual=$(compute_sha256 "$path" 2>/dev/null); then
+      printf 'hash-error:%s\n' "$bin"
+      return
+    fi
+    if [ "$actual" != "$expected" ]; then
+      printf 'mismatch:%s\n' "$bin"
+      return
+    fi
+  done
+  printf 'verified\n'
+}
+
+installed_bins_message() {
+  local status="$1" tag="$2"
+  case "$status" in
+    not-installed)
+      printf 'version %s is not installed, downloading binaries\n' "$tag"
+      ;;
+    missing:*)
+      printf 'installed version %s is incomplete (missing %s), downloading and verifying a fresh copy\n' \
+        "$tag" "${status#missing:}"
+      ;;
+    not-executable:*)
+      printf 'installed version %s is incomplete (%s is not executable), downloading and verifying a fresh copy\n' \
+        "$tag" "${status#not-executable:}"
+      ;;
+    unverifiable:*)
+      printf 'installed version %s cannot be verified (no expected hash for %s), downloading a fresh copy\n' \
+        "$tag" "${status#unverifiable:}"
+      ;;
+    hash-error:*)
+      printf 'installed version %s cannot be verified (could not calculate a hash for %s), aborting installation\n' \
+        "$tag" "${status#hash-error:}"
+      ;;
+    mismatch:*)
+      printf 'installed version %s did not match the expected SHA-256 hash (%s), downloading and verifying a fresh copy\n' \
+        "$tag" "${status#mismatch:}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 need_cmd() {

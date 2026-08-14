@@ -255,6 +255,9 @@ fn parse_inline_config<'ast>(
         }
         let item = item.trim_start().strip_prefix("forgefmt:")?.trim();
         match item.parse::<InlineConfigItem<()>>() {
+            Ok(InlineConfigItem::DisableLine(())) if cmnt.style.is_isolated() => {
+                Some((cmnt.span, InlineConfigItem::DisableNextItem(())))
+            }
             Ok(item) => Some((cmnt.span, item)),
             Err(e) => {
                 sess.dcx.warn(e.to_string()).span(cmnt.span).emit();

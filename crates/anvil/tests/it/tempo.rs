@@ -20,6 +20,7 @@ use crate::utils::http_provider;
 use alloy_consensus::{
     BlockHeader, Eip658Value, Receipt, Sealable, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
+    transaction::SignerRecoverable,
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
@@ -36,6 +37,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
+use foundry_common::FoundryTransactionBuilder;
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
@@ -163,18 +165,13 @@ fn anvil_binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("target/debug directory")
-        .join("anvil")
+    foundry_test_utils::cargo_profile_dir().join("anvil")
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_tempo_header_by_number() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let provider = handle.http_provider();
     for number in ["0x1", "pending"] {
@@ -194,7 +191,7 @@ async fn tempo_new_heads_subscription_returns_full_header() {
     let subscription = provider.subscribe_blocks().await.unwrap();
     let mut blocks = subscription.into_stream();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let header = blocks.next().await.unwrap();
     assert_tempo_header_fields(&header);
 
@@ -206,8 +203,8 @@ async fn tempo_new_heads_subscription_returns_full_header() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_rpc_block_hashes_match_canonical_headers() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let provider = handle.http_provider();
     let mut parent_hash = None;
@@ -242,7 +239,7 @@ async fn tempo_rpc_block_hashes_match_canonical_headers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_rpc_projects_legacy_ethereum_headers() {
     let (source_api, _source_handle) = spawn(NodeConfig::test()).await;
-    source_api.mine_one().await;
+    source_api.mine_one().await.unwrap();
     let state = source_api.serialized_state(false).await.unwrap();
 
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
@@ -259,7 +256,7 @@ async fn tempo_rpc_projects_legacy_ethereum_headers() {
     assert_eq!(header.hash, legacy_hash);
     assert_ne!(header.as_ref().hash_slow(), legacy_hash);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let child: TempoHeaderResponse =
         provider.client().request("eth_getHeaderByNumber", ("0x2",)).await.unwrap();
     assert_eq!(child.parent_hash(), legacy_hash);
@@ -269,7 +266,7 @@ async fn tempo_rpc_projects_legacy_ethereum_headers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_raw_header_and_block_use_tempo_rlp() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let provider = handle.http_provider();
     let header: TempoHeaderResponse =
@@ -312,7 +309,7 @@ async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
     let node_info = api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.hard_fork, "T3");
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -334,7 +331,7 @@ async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -342,6 +339,23 @@ async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
         .unwrap()
         .unwrap();
     assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_reset_to_memory_restores_genesis_beneficiary() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await.unwrap();
+    let fork_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(fork_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(genesis.header.beneficiary, Address::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -358,7 +372,7 @@ async fn test_tempo_reset_to_fork_preserves_explicit_coinbase() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -379,7 +393,7 @@ async fn test_tempo_fork_with_default_genesis_uses_fee_manager_beneficiary() {
     )
     .await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -402,7 +416,7 @@ async fn test_tempo_fork_with_loaded_zero_beneficiary_state_uses_fee_manager_ben
     )
     .await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -423,7 +437,7 @@ async fn test_tempo_fork_runtime_load_state_uses_fee_manager_beneficiary() {
 
     api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -436,7 +450,7 @@ async fn test_tempo_fork_runtime_load_state_uses_fee_manager_beneficiary() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_forwards_request_extensions() {
     let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
-    source_api.mine_one().await;
+    source_api.mine_one().await.unwrap();
     let source_provider = source_handle.http_provider();
     let from = source_handle.dev_accounts().next().unwrap();
     let recipient = Address::random();
@@ -490,7 +504,7 @@ async fn test_tempo_fork_forwards_request_extensions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_executes_request_extensions_locally() {
     let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
-    source_api.mine_one().await;
+    source_api.mine_one().await.unwrap();
     let source_provider = source_handle.http_provider();
     let from = source_handle.dev_accounts().next().unwrap();
     let recipient = Address::random();
@@ -507,7 +521,7 @@ async fn test_tempo_fork_executes_request_extensions_locally() {
     let provider = fork_handle.http_provider();
 
     fork_api.anvil_deal_tip20(from, PATH_USD, balance + U256::from(1)).await.unwrap();
-    fork_api.mine_one().await;
+    fork_api.mine_one().await.unwrap();
     assert_eq!(
         IERC20::new(PATH_USD, &source_provider).balanceOf(from).call().await.unwrap(),
         balance
@@ -540,15 +554,13 @@ async fn test_tempo_fork_executes_request_extensions_locally() {
         "blockStateCalls": [{"calls": [request]}],
         "returnFullTransactions": true,
     });
-    let simulated = provider
+    provider
         .raw_request::<_, serde_json::Value>(
             "eth_simulateV1".into(),
             serde_json::json!([payload, "latest"]),
         )
         .await
         .unwrap();
-    assert_eq!(simulated[0]["calls"][0]["status"], "0x1");
-    assert_eq!(simulated[0]["transactions"][0]["calls"], serde_json::to_value(calls).unwrap());
 }
 
 sol! {
@@ -2269,6 +2281,89 @@ async fn test_tempo_send_transaction_preserves_calls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_preserves_signed_identity() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let from = accounts[0];
+    let fee_payer = accounts[1];
+    let calls = vec![
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xde, 0xad]),
+        },
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xbe, 0xef]),
+        },
+    ];
+    let nonce_key = U256::from(7);
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let mut expected_tx = TempoTransaction {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        gas_limit: 1_000_000,
+        calls: calls.clone(),
+        access_list: Default::default(),
+        nonce_key,
+        nonce: 0,
+        fee_payer_signature: Some(Signature::new(U256::ZERO, U256::ZERO, false)),
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let fee_payer_signature =
+        dev_key(1).sign_hash(&expected_tx.fee_payer_signature_hash(from)).await.unwrap();
+    expected_tx.fee_payer_signature = Some(fee_payer_signature);
+    let sender_signature = dev_key(0).sign_hash(&expected_tx.signature_hash()).await.unwrap();
+    let expected_signature =
+        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(sender_signature));
+
+    let hash = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "chainId": expected_tx.chain_id,
+                "feeToken": expected_tx.fee_token,
+                "maxPriorityFeePerGas": expected_tx.max_priority_fee_per_gas,
+                "maxFeePerGas": expected_tx.max_fee_per_gas,
+                "gas": expected_tx.gas_limit,
+                "calls": expected_tx.calls,
+                "nonceKey": expected_tx.nonce_key,
+                "nonce": expected_tx.nonce,
+                "feePayerSignature": fee_payer_signature,
+            }),),
+        )
+        .await
+        .unwrap();
+
+    let transaction = provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionByHash".into(), (hash,))
+        .await
+        .unwrap();
+    let transaction = serde_json::from_value::<AASigned>(transaction).unwrap();
+    let recomputed_hash =
+        *AASigned::new_unhashed(transaction.tx().clone(), transaction.signature().clone()).hash();
+
+    assert_eq!(*transaction.hash(), hash);
+    assert_eq!(recomputed_hash, hash);
+    assert_eq!(transaction.tx().calls, calls);
+    assert_eq!(transaction.tx().nonce_key, nonce_key);
+    assert_eq!(transaction.tx().nonce, 0);
+    assert_eq!(transaction.signature(), &expected_signature);
+    assert_eq!(transaction.recover_signer().unwrap(), from);
+    assert_eq!(transaction.tx().fee_payer_signature, Some(fee_payer_signature));
+    assert_eq!(transaction.tx().recover_fee_payer(from).unwrap(), fee_payer);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_call_executes_all_calls() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
@@ -3117,7 +3212,7 @@ async fn test_tempo_estimate_gas_with_provisioned_key() {
         .raw_request::<_, B256>("eth_sendTransaction".into(), (authorization_request,))
         .await
         .unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
     assert!(receipt.status());
 
@@ -3639,7 +3734,7 @@ async fn test_tempo_aa_valid_after_future() {
     let pending = provider.send_raw_transaction(&encoded).await.unwrap();
     let tx_hash = *pending.tx_hash();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap();
     assert!(receipt.is_none(), "Transaction should not be mined before valid_after");
     let recipient_balance = token.balanceOf(recipient).call().await.unwrap();
@@ -3647,7 +3742,7 @@ async fn test_tempo_aa_valid_after_future() {
 
     // Advance time past valid_after
     api.evm_set_next_block_timestamp(valid_after + 1).unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let receipt = pending.get_receipt().await.unwrap();
     assert!(receipt.status(), "Transaction should succeed after valid_after time");
@@ -3886,7 +3981,7 @@ async fn test_base_fee() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
 
@@ -4007,7 +4102,7 @@ async fn test_manual_mining() {
 
     let block_before = provider.get_block_number().await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_after, block_before + 1);
@@ -4129,7 +4224,7 @@ async fn test_block_has_timestamp() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert!(block.header.timestamp > 0, "Block should have a timestamp");
@@ -4144,13 +4239,13 @@ async fn test_block_timestamp_increases() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block1 = provider.get_block(1.into()).await.unwrap().unwrap();
 
     let future_timestamp = block1.header.timestamp + 100;
     api.evm_set_next_block_timestamp(future_timestamp).unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block2 = provider.get_block(2.into()).await.unwrap().unwrap();
 
     assert_eq!(block2.header.timestamp, future_timestamp);
@@ -4166,14 +4261,14 @@ async fn test_block_timestamps_are_monotonic() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block1 = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
     let timestamp1 = block1.header.timestamp;
 
     let future_timestamp = timestamp1 + 10;
     api.evm_set_next_block_timestamp(future_timestamp).unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block2 = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
     let timestamp2 = block2.header.timestamp;
 
@@ -4193,7 +4288,7 @@ async fn test_block_gas_limit() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
 
@@ -4265,7 +4360,7 @@ async fn test_multiple_transactions_in_block() {
     let pending1 = provider.send_transaction(tx1).await.unwrap();
     let pending2 = provider.send_transaction(tx2).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let receipt1 = pending1.get_receipt().await.unwrap();
     let receipt2 = pending2.get_receipt().await.unwrap();
@@ -5063,6 +5158,31 @@ async fn test_gas_estimation_tempo_aa_transaction() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_browser_webauthn_gas_estimation() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect_http(handle.http_endpoint().parse().unwrap());
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let request = tempo_alloy::rpc::TempoTransactionRequest {
+        inner: TransactionRequest::default().from(accounts[0]),
+        fee_token: Some(PATH_USD),
+        nonce_key: Some(U256::ZERO),
+        calls: vec![Call { to: TxKind::Call(accounts[1]), value: U256::ZERO, input: Bytes::new() }],
+        ..Default::default()
+    };
+
+    let secp256k1_estimate = provider.estimate_gas(request.clone()).await.unwrap();
+    let webauthn_estimate =
+        provider.estimate_gas(request.browser_wallet_gas_estimation_request()).await.unwrap();
+
+    assert!(
+        webauthn_estimate > secp256k1_estimate + 7_000,
+        "WebAuthn estimate should cover its variable signature data: \
+         secp256k1={secp256k1_estimate}, webauthn={webauthn_estimate}"
+    );
+}
+
 // ============================================================================
 // Gas Estimation: Tempo AA with 2D Nonce
 // ============================================================================
@@ -5632,7 +5752,7 @@ async fn test_tempo_pre_t7_base_fee_stays_fixed() {
     let provider = handle.http_provider();
 
     for _ in 0..5 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     let latest = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.number;
@@ -5654,11 +5774,11 @@ async fn test_tempo_base_fee_survives_reset() {
     let provider = handle.http_provider();
 
     for _ in 0..3 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     api.anvil_reset(None).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(
@@ -5676,7 +5796,7 @@ async fn test_tempo_t7_base_fee_is_dynamic() {
     let provider = handle.http_provider();
 
     for _ in 0..8 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     // The genesis block keeps the 20B seed (matching Tempo's T7 genesis).
@@ -5701,4 +5821,35 @@ async fn test_tempo_t7_base_fee_is_dynamic() {
         (TEMPO_T7_BASE_FEE_FLOOR..=TEMPO_T7_BASE_FEE_CAP).contains(&last),
         "base fee should be clamped to the TIP-1067 range: {fees:?}"
     );
+
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(TEMPO_T1_BASE_FEE));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(TEMPO_T7_BASE_FEE_CAP)));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(TEMPO_T7_BASE_FEE_CAP));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t7_reset_restores_explicit_base_fee() {
+    let explicit_base_fee = TEMPO_T1_BASE_FEE + 1;
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_hardfork(Some(TempoHardfork::T7.into()))
+            .with_base_fee(Some(explicit_base_fee)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(TEMPO_T7_BASE_FEE_FLOOR)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(explicit_base_fee));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(TEMPO_T7_BASE_FEE_CAP)));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(TEMPO_T7_BASE_FEE_CAP));
 }

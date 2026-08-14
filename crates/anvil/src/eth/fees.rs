@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
 
@@ -38,32 +38,30 @@ pub const MIN_SUGGESTED_PRIORITY_FEE: u128 = 1e9 as u128;
 /// Stores the fee related information
 #[derive(Clone, Debug)]
 pub struct FeeManager {
-    /// Hardfork identifier
-    spec_id: SpecId,
-    /// The blob params that determine blob fees
-    blob_params: Arc<RwLock<BlobParams>>,
-    /// Tracks the base fee for the next block post London
-    ///
-    /// This value will be updated after a new block was mined
-    base_fee: Arc<RwLock<u64>>,
+    /// Fee state published as one coherent execution context.
+    state: Arc<RwLock<FeeState>>,
     /// Whether the minimum suggested priority fee is enforced
     is_min_priority_fee_enforced: bool,
-    /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
-    ///
-    /// This value will be updated after a new block was mined
-    blob_excess_gas_and_price: Arc<RwLock<BlobExcessGasAndPrice>>,
-    /// The base price to use Pre London
-    ///
-    /// This will be constant value unless changed manually
-    gas_price: Arc<RwLock<u128>>,
-    elasticity: Arc<RwLock<f64>>,
-    /// Network-specific base fee params for EIP-1559 calculations
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FeeRules {
+    spec_id: SpecId,
     base_fee_params: BaseFeeParams,
     /// The active Tempo hardfork, set only when running a Tempo chain.
-    ///
-    /// Tempo replaces EIP-1559: pre-T7 the base fee is fixed, and T7+ uses the TIP-1067 dynamic
-    /// controller. It is updated once after a fork's hardfork is auto-detected.
-    tempo_hardfork: Arc<RwLock<Option<TempoHardfork>>>,
+    tempo_hardfork: Option<TempoHardfork>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FeeState {
+    rules: FeeRules,
+    blob_params: BlobParams,
+    /// Base fee for the next block.
+    base_fee: u64,
+    /// Excess blob gas and price for the next block.
+    blob_excess_gas_and_price: BlobExcessGasAndPrice,
+    /// Legacy gas price.
+    gas_price: u128,
 }
 
 impl FeeManager {
@@ -78,50 +76,79 @@ impl FeeManager {
         base_fee_params: BaseFeeParams,
         tempo_hardfork: Option<TempoHardfork>,
     ) -> Self {
-        let elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
         Self {
-            spec_id,
-            blob_params: Arc::new(RwLock::new(blob_params)),
-            base_fee: Arc::new(RwLock::new(base_fee)),
+            state: Arc::new(RwLock::new(FeeState {
+                rules: FeeRules { spec_id, base_fee_params, tempo_hardfork },
+                blob_params,
+                base_fee,
+                blob_excess_gas_and_price,
+                gas_price,
+            })),
             is_min_priority_fee_enforced,
-            gas_price: Arc::new(RwLock::new(gas_price)),
-            blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
-            elasticity: Arc::new(RwLock::new(elasticity)),
-            base_fee_params,
-            tempo_hardfork: Arc::new(RwLock::new(tempo_hardfork)),
         }
+    }
+
+    /// Creates an independent copy suitable for staging a fork reset.
+    pub(crate) fn detached(&self) -> Self {
+        let state = *self.state.read();
+        Self::new(
+            state.rules.spec_id,
+            state.base_fee,
+            self.is_min_priority_fee_enforced,
+            state.gas_price,
+            state.blob_excess_gas_and_price,
+            state.blob_params,
+            state.rules.base_fee_params,
+            state.rules.tempo_hardfork,
+        )
+    }
+
+    /// Replaces all mutable fee state with a staged manager's values.
+    pub(crate) fn replace_from(&self, other: &Self) {
+        *self.state.write() = *other.state.read();
     }
 
     /// Returns the active Tempo hardfork, if running a Tempo chain.
     pub fn tempo_hardfork(&self) -> Option<TempoHardfork> {
-        *self.tempo_hardfork.read()
+        self.state.read().rules.tempo_hardfork
     }
 
-    /// Sets the active Tempo hardfork, used after a fork's hardfork is auto-detected.
-    pub fn set_tempo_hardfork(&self, hardfork: Option<TempoHardfork>) {
-        *self.tempo_hardfork.write() = hardfork;
+    /// Atomically replaces all execution-dependent fee rules.
+    pub fn set_execution_rules(
+        &self,
+        spec_id: SpecId,
+        base_fee_params: BaseFeeParams,
+        tempo_hardfork: Option<TempoHardfork>,
+    ) {
+        self.state.write().rules = FeeRules { spec_id, base_fee_params, tempo_hardfork };
     }
 
     pub fn elasticity(&self) -> f64 {
-        *self.elasticity.read()
+        1f64 / self.state.read().rules.base_fee_params.elasticity_multiplier as f64
     }
 
     /// Returns true for post London
-    pub const fn is_eip1559(&self) -> bool {
-        (self.spec_id as u8) >= (SpecId::LONDON as u8)
+    pub fn is_eip1559(&self) -> bool {
+        (self.state.read().rules.spec_id as u8) >= (SpecId::LONDON as u8)
     }
 
-    pub const fn is_eip4844(&self) -> bool {
-        (self.spec_id as u8) >= (SpecId::CANCUN as u8)
+    pub fn is_eip4844(&self) -> bool {
+        (self.state.read().rules.spec_id as u8) >= (SpecId::CANCUN as u8)
     }
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
-        if self.is_eip4844() { self.base_fee_per_blob_gas() } else { 0 }
+        let state = self.state.read();
+        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            state.blob_excess_gas_and_price.blob_gasprice
+        } else {
+            0
+        }
     }
 
     pub fn base_fee(&self) -> u64 {
-        if self.is_eip1559() { *self.base_fee.read() } else { 0 }
+        let state = self.state.read();
+        if (state.rules.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 }
     }
 
     pub const fn is_min_priority_fee_enforced(&self) -> bool {
@@ -130,35 +157,39 @@ impl FeeManager {
 
     /// Raw base gas price
     pub fn raw_gas_price(&self) -> u128 {
-        *self.gas_price.read()
+        self.state.read().gas_price
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        self.is_eip4844().then(|| *self.blob_excess_gas_and_price.read())
+        let state = self.state.read();
+        ((state.rules.spec_id as u8) >= (SpecId::CANCUN as u8))
+            .then_some(state.blob_excess_gas_and_price)
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
-        if self.is_eip4844() { self.blob_excess_gas_and_price.read().blob_gasprice } else { 0 }
+        let state = self.state.read();
+        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            state.blob_excess_gas_and_price.blob_gasprice
+        } else {
+            0
+        }
     }
 
     /// Returns the current gas price
     pub fn set_gas_price(&self, price: u128) {
-        let mut gas = self.gas_price.write();
-        *gas = price;
+        self.state.write().gas_price = price;
     }
 
     /// Returns the current base fee
     pub fn set_base_fee(&self, fee: u64) {
         trace!(target: "backend::fees", "updated base fee {:?}", fee);
-        let mut base = self.base_fee.write();
-        *base = fee;
+        self.state.write().base_fee = fee;
     }
 
     /// Sets the current blob excess gas and price
     pub fn set_blob_excess_gas_and_price(&self, blob_excess_gas_and_price: BlobExcessGasAndPrice) {
         trace!(target: "backend::fees", "updated blob base fee {:?}", blob_excess_gas_and_price);
-        let mut base = self.blob_excess_gas_and_price.write();
-        *base = blob_excess_gas_and_price;
+        self.state.write().blob_excess_gas_and_price = blob_excess_gas_and_price;
     }
 
     /// Calculates the base fee for the next block
@@ -168,13 +199,14 @@ impl FeeManager {
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
+        let state = self.state.read();
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if self.base_fee() == 0 {
+        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
             return 0;
         }
-        self.calculate_next_block_base_fee_per_gas(gas_used, gas_limit, last_fee_per_gas)
+        calculate_next_block_base_fee_per_gas(state.rules, gas_used, gas_limit, last_fee_per_gas)
     }
 
     /// Calculates the next block base fee from the parent block without applying the configured
@@ -185,40 +217,50 @@ impl FeeManager {
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
-        if !self.is_eip1559() {
+        let rules = self.state.read().rules;
+        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
             return 0;
         }
-        // Tempo replaces EIP-1559 with its own hardfork-specific base fee rules.
-        if let Some(hardfork) = self.tempo_hardfork() {
-            return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
-        }
-        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, self.base_fee_params)
+        calculate_next_block_base_fee_per_gas(rules, gas_used, gas_limit, last_fee_per_gas)
     }
 
     /// Calculates the next block blob base fee.
     pub fn get_next_block_blob_base_fee_per_gas(&self) -> u128 {
-        self.blob_params().calc_blob_fee(self.blob_excess_gas_and_price.read().excess_blob_gas)
+        let state = self.state.read();
+        state.blob_params.calc_blob_fee(state.blob_excess_gas_and_price.excess_blob_gas)
     }
 
     /// Calculates the next block blob excess gas, using the provided parent blob excess gas and
     /// parent blob gas used
     pub fn get_next_block_blob_excess_gas(&self, blob_excess_gas: u64, blob_gas_used: u64) -> u64 {
-        self.blob_params().next_block_excess_blob_gas_osaka(
-            blob_excess_gas,
-            blob_gas_used,
-            self.base_fee(),
-        )
+        let state = self.state.read();
+        let base_fee =
+            if (state.rules.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 };
+        state.blob_params.next_block_excess_blob_gas_osaka(blob_excess_gas, blob_gas_used, base_fee)
     }
 
     /// Configures the blob params
     pub fn set_blob_params(&self, blob_params: BlobParams) {
-        *self.blob_params.write() = blob_params;
+        self.state.write().blob_params = blob_params;
     }
 
     /// Returns the active [`BlobParams`]
     pub fn blob_params(&self) -> BlobParams {
-        *self.blob_params.read()
+        self.state.read().blob_params
     }
+}
+
+fn calculate_next_block_base_fee_per_gas(
+    rules: FeeRules,
+    gas_used: u64,
+    gas_limit: u64,
+    last_fee_per_gas: u64,
+) -> u64 {
+    // Tempo replaces EIP-1559 with its own hardfork-specific base fee rules.
+    if let Some(hardfork) = rules.tempo_hardfork {
+        return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
+    }
+    calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, rules.base_fee_params)
 }
 
 /// Computes the next block's base fee for a Tempo chain.
@@ -238,8 +280,8 @@ pub struct FeeHistoryService<N: Network>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    /// blob parameters for the current spec
-    blob_params: BlobParams,
+    /// Live fee rules, including blob parameters replaced by fork resets.
+    fees: FeeManager,
     /// incoming notifications about new blocks
     new_blocks: ChainNotifications,
     /// contains all fee history related entries
@@ -255,13 +297,13 @@ where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     pub const fn new(
-        blob_params: BlobParams,
+        fees: FeeManager,
         new_blocks: ChainNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo<N>,
     ) -> Self {
         Self {
-            blob_params,
+            fees,
             new_blocks,
             cache,
             fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
@@ -286,111 +328,151 @@ where
         hash: B256,
         header: &impl BlockHeader,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
-        // percentile list from 0.0 to 100.0 with a 0.5 resolution.
-        // this will create 200 percentile points
-        let reward_percentiles: Vec<f64> = {
-            let mut percentile: f64 = 0.0;
-            (0..=200)
-                .map(|_| {
-                    let val = percentile;
-                    percentile += 0.5;
-                    val
-                })
-                .collect()
-        };
-
-        let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas().unwrap_or_default();
-        let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
-        let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
-
-        let mut item = FeeHistoryCacheItem {
-            base_fee: base_fee as u128,
-            gas_used_ratio: 0f64,
-            blob_gas_used_ratio: 0f64,
-            rewards: Vec::new(),
-            excess_blob_gas,
-            base_fee_per_blob_gas,
-            blob_gas_used,
-        };
-
-        let current_block = self.storage_info.block(hash);
-        let current_receipts = self.storage_info.receipts(hash);
-
-        if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number());
-
-            let gas_used = block.header.gas_used() as f64;
-            let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
-            item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
-            item.blob_gas_used_ratio = blob_gas_used
-                .map(|g| {
-                    let max = self.blob_params.max_blob_gas_per_block() as f64;
-                    if max == 0.0 { 0.0 } else { g / max }
-                })
-                .unwrap_or(0.0);
-
-            // extract useful tx info (gas_used, effective_reward)
-            let mut transactions: Vec<(_, _)> = receipts
-                .iter()
-                .enumerate()
-                .map(|(i, receipt)| {
-                    let cumulative = receipt.cumulative_gas_used();
-                    let prev_cumulative =
-                        if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
-                    let gas_used = cumulative - prev_cumulative;
-                    let effective_reward = block
-                        .body
-                        .transactions
-                        .get(i)
-                        .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
-                        .unwrap_or(0);
-
-                    (gas_used, effective_reward)
-                })
-                .collect();
-
-            // sort by effective reward asc
-            transactions.sort_by_key(|(_, reward)| *reward);
-
-            // calculate percentile rewards
-            item.rewards = reward_percentiles
-                .into_iter()
-                .filter_map(|p| {
-                    let target_gas = (p * gas_used / 100f64) as u64;
-                    let mut sum_gas = 0;
-                    for (gas_used, effective_reward) in transactions.iter().copied() {
-                        sum_gas += gas_used;
-                        if target_gas <= sum_gas {
-                            return Some(effective_reward);
-                        }
-                    }
-                    None
-                })
-                .collect();
-        } else {
-            item.rewards = vec![0; reward_percentiles.len()];
-        }
-        (item, block_number)
+        create_fee_history_cache_item(hash, header, &self.storage_info, self.fees.blob_params())
     }
 
     fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
-        if let Some(block_number) = block_number {
-            trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
-            let mut cache = self.cache.lock();
-            cache.insert(block_number, item);
+        insert_fee_history_cache_item(&self.cache, item, block_number, self.fee_history_limit);
+    }
+}
 
-            // adhere to cache limit
-            let pop_next = block_number.saturating_sub(self.fee_history_limit);
+/// Inserts an entry into the fee history cache and trims it back to `fee_history_limit`.
+///
+/// Used by the async [`FeeHistoryService`]. The `eth_feeHistory` fallback applies the same bounded
+/// insertion policy to a batch under one lock.
+pub(crate) fn insert_fee_history_cache_item(
+    cache: &FeeHistoryCache,
+    item: FeeHistoryCacheItem,
+    block_number: Option<u64>,
+    fee_history_limit: u64,
+) {
+    if let Some(block_number) = block_number {
+        trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
+        let mut cache = cache.lock();
+        cache.insert(block_number, item);
 
-            let num_remove = (cache.len() as u64).saturating_sub(self.fee_history_limit);
-            for num in 0..num_remove {
-                let key = pop_next - num;
-                cache.remove(&key);
-            }
+        // Trim to the cache limit by dropping the oldest entries (smallest block numbers).
+        // `pop_first` is saturating and correct regardless of insertion order, unlike the
+        // previous index math which could underflow when the `eth_feeHistory` fallback inserts
+        // entries out of order.
+        while cache.len() as u64 > fee_history_limit {
+            cache.pop_first();
         }
     }
+}
+
+/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
+///
+/// Constant across blocks, so it is computed once instead of being rebuilt on every
+/// `create_fee_history_cache_item` call.
+static REWARD_PERCENTILES: LazyLock<Vec<f64>> = LazyLock::new(|| {
+    let mut percentile: f64 = 0.0;
+    (0..=200)
+        .map(|_| {
+            let val = percentile;
+            percentile += 0.5;
+            val
+        })
+        .collect()
+});
+
+/// Calculates percentile rewards from transactions sorted by effective reward.
+///
+/// [`REWARD_PERCENTILES`] must remain ascending because the transaction cursor never rewinds.
+fn reward_percentiles(transactions: &[(u64, u128)], block_gas_used: f64) -> Vec<u128> {
+    let mut rewards = Vec::with_capacity(REWARD_PERCENTILES.len());
+    let mut transactions = transactions.iter().copied();
+    let Some((mut cumulative_gas, mut current_reward)) = transactions.next() else {
+        return rewards;
+    };
+
+    for &percentile in REWARD_PERCENTILES.iter() {
+        let target_gas = (percentile * block_gas_used / 100f64) as u64;
+        while target_gas > cumulative_gas {
+            let Some((tx_gas_used, effective_reward)) = transactions.next() else { return rewards };
+            cumulative_gas += tx_gas_used;
+            current_reward = effective_reward;
+        }
+        rewards.push(current_reward);
+    }
+
+    rewards
+}
+
+/// Builds the [`FeeHistoryCacheItem`] for a single block.
+///
+/// Shared by the async [`FeeHistoryService`] and by `eth_feeHistory` itself: the service can lag
+/// the chain head (it only runs when the node task is polled), so the RPC handler computes any
+/// missing entry on demand with the same logic instead of returning a short response.
+pub(crate) fn create_fee_history_cache_item<N: Network>(
+    hash: B256,
+    header: &impl BlockHeader,
+    storage_info: &StorageInfo<N>,
+    blob_params: BlobParams,
+) -> (FeeHistoryCacheItem, Option<u64>)
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+{
+    let mut block_number: Option<u64> = None;
+    let base_fee = header.base_fee_per_gas().unwrap_or_default();
+    let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
+    let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
+    let base_fee_per_blob_gas = header.blob_fee(blob_params);
+
+    let mut item = FeeHistoryCacheItem {
+        block_hash: hash,
+        base_fee: base_fee as u128,
+        gas_used_ratio: 0f64,
+        blob_gas_used_ratio: 0f64,
+        rewards: Vec::new(),
+        excess_blob_gas,
+        base_fee_per_blob_gas,
+        blob_gas_used,
+    };
+
+    let current_block = storage_info.block(hash);
+    let current_receipts = storage_info.receipts(hash);
+
+    if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
+        block_number = Some(block.header.number());
+
+        let gas_used = block.header.gas_used() as f64;
+        let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
+        item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
+        item.blob_gas_used_ratio = blob_gas_used
+            .map(|g| {
+                let max = blob_params.max_blob_gas_per_block() as f64;
+                if max == 0.0 { 0.0 } else { g / max }
+            })
+            .unwrap_or(0.0);
+
+        // extract useful tx info (gas_used, effective_reward)
+        let mut transactions: Vec<(_, _)> = receipts
+            .iter()
+            .enumerate()
+            .map(|(i, receipt)| {
+                let cumulative = receipt.cumulative_gas_used();
+                let prev_cumulative = if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
+                let gas_used = cumulative - prev_cumulative;
+                let effective_reward = block
+                    .body
+                    .transactions
+                    .get(i)
+                    .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
+                    .unwrap_or(0);
+
+                (gas_used, effective_reward)
+            })
+            .collect();
+
+        // sort by effective reward asc
+        transactions.sort_by_key(|(_, reward)| *reward);
+
+        item.rewards = reward_percentiles(&transactions, gas_used);
+    } else {
+        item.rewards = vec![0; REWARD_PERCENTILES.len()];
+    }
+    (item, block_number)
 }
 
 // An endless future that listens for new blocks and updates the cache
@@ -419,6 +501,7 @@ pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 /// A single item in the whole fee history cache
 #[derive(Clone, Debug)]
 pub struct FeeHistoryCacheItem {
+    pub block_hash: B256,
     pub base_fee: u128,
     pub gas_used_ratio: f64,
     pub base_fee_per_blob_gas: Option<u128>,
@@ -519,6 +602,34 @@ impl fmt::Debug for FeeDetails {
 mod tests {
     use super::*;
 
+    fn reward_percentiles_reference(
+        transactions: &[(u64, u128)],
+        block_gas_used: f64,
+    ) -> Vec<u128> {
+        REWARD_PERCENTILES
+            .iter()
+            .filter_map(|&percentile| {
+                let target_gas = (percentile * block_gas_used / 100f64) as u64;
+                let mut cumulative_gas = 0;
+                for (tx_gas_used, effective_reward) in transactions.iter().copied() {
+                    cumulative_gas += tx_gas_used;
+                    if target_gas <= cumulative_gas {
+                        return Some(effective_reward);
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
+    fn assert_reward_percentiles_match(transactions: &mut [(u64, u128)], gas_used: u64) {
+        transactions.sort_by_key(|(_, reward)| *reward);
+        assert_eq!(
+            reward_percentiles(transactions, gas_used as f64),
+            reward_percentiles_reference(transactions, gas_used as f64)
+        );
+    }
+
     fn fee_manager(spec_id: SpecId) -> FeeManager {
         FeeManager::new(
             spec_id,
@@ -545,5 +656,49 @@ mod tests {
             london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
             0
         );
+    }
+
+    #[test]
+    fn reward_percentile_sweep_preserves_boundaries_and_empty_results() {
+        assert_reward_percentiles_match(&mut [], 0);
+
+        let mut transactions = [(5, 1), (0, 2), (5, 3)];
+        assert_reward_percentiles_match(&mut transactions, 1_000);
+        assert_eq!(reward_percentiles(&transactions, 1_000f64), [1, 1, 3]);
+
+        let mut transactions = [(0, 10), (1, 20)];
+        assert_reward_percentiles_match(&mut transactions, 1);
+        let rewards = reward_percentiles(&transactions, 1f64);
+        assert_eq!(&rewards[..200], &[10; 200]);
+        assert_eq!(rewards[200], 20);
+    }
+
+    #[test]
+    fn reward_percentile_sweep_matches_reference_for_randomized_inputs() {
+        let mut state = 0x4d59_5df4_d0f3_3173u64;
+        for _ in 0..2_000 {
+            let len = (next_random(&mut state) % 129) as usize;
+            let mut transactions = (0..len)
+                .map(|_| {
+                    let gas_used = next_random(&mut state) % 100;
+                    let effective_reward = (next_random(&mut state) % 16) as u128;
+                    (gas_used, effective_reward)
+                })
+                .collect::<Vec<_>>();
+            let total_gas = transactions.iter().map(|(gas_used, _)| gas_used).sum::<u64>();
+            let header_gas_used = match next_random(&mut state) % 4 {
+                0 => total_gas,
+                1 => next_random(&mut state) % (total_gas.saturating_add(1)),
+                2 => total_gas.saturating_add(next_random(&mut state) % 1_000),
+                _ => 0,
+            };
+
+            assert_reward_percentiles_match(&mut transactions, header_gas_used);
+        }
+    }
+
+    fn next_random(state: &mut u64) -> u64 {
+        *state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        *state
     }
 }

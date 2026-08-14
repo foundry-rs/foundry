@@ -156,6 +156,35 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn bsc_fork_execution_chain_override_preserves_p256() {
+    let (_origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(BSC_MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_genesis_timestamp(Some(BSC_MAINNET_HABER_TIMESTAMP)),
+    )
+    .await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    assert_eq!(provider.get_chain_id().await.unwrap(), 1);
+    assert!(
+        api.config().unwrap().current.precompiles.values().any(|&address| address == P256_VERIFY)
+    );
+    let output = provider
+        .call(TransactionRequest::default().with_to(P256_VERIFY).with_input(P256_INPUT).into())
+        .await
+        .unwrap();
+    assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn bsc_default_timestamp_enables_p256_immediately() {
     let (api, handle) = spawn(
         NodeConfig::test()
@@ -208,7 +237,7 @@ async fn test_can_handle_large_timestamp() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let num = 317071597274;
     api.evm_set_next_block_timestamp(num).unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, num);
@@ -218,7 +247,7 @@ async fn test_can_handle_large_timestamp() {
 async fn test_shanghai_fields() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.withdrawals_root, Some(EMPTY_ROOT_HASH));
@@ -231,7 +260,7 @@ async fn test_shanghai_fields() {
 async fn test_cancun_fields() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.withdrawals_root, Some(EMPTY_ROOT_HASH));

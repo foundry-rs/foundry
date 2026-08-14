@@ -191,19 +191,7 @@ impl RuntimeTransport {
         }
     }
 
-    /// Creates a new reqwest client from this transport.
-    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .danger_accept_invalid_certs(self.accept_invalid_certs);
-
-        // Disable automatic proxy detection if requested. This helps in sandboxed environments
-        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
-        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
-        if self.no_proxy || guess_local_url(self.url.as_str()) {
-            client_builder = client_builder.no_proxy();
-        }
-
+    fn reqwest_headers(&self) -> Result<reqwest::header::HeaderMap, RuntimeTransportError> {
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
@@ -252,15 +240,39 @@ impl RuntimeTransport {
             }
         }
 
+        Ok(headers)
+    }
+
+    fn reqwest_client_with_headers(
+        &self,
+        headers: reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Client, RuntimeTransportError> {
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(self.timeout)
+            .danger_accept_invalid_certs(self.accept_invalid_certs);
+
+        // Disable automatic proxy detection if requested. This helps in sandboxed environments
+        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
+        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
+        if self.no_proxy || guess_local_url(self.url.as_str()) {
+            client_builder = client_builder.no_proxy();
+        }
+
         client_builder = client_builder.default_headers(headers);
 
         Ok(client_builder.build()?)
     }
 
+    /// Creates a new reqwest client from this transport.
+    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
+        self.reqwest_client_with_headers(self.reqwest_headers()?)
+    }
+
     /// Connects to an HTTP transport with lazy MPP 402 handling.
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let client = self.reqwest_client()?;
-        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone())))
+        let headers = self.reqwest_headers()?;
+        let client = self.reqwest_client_with_headers(headers.clone())?;
+        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone(), headers)))
     }
 
     /// Connects to a WS transport.

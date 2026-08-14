@@ -226,6 +226,7 @@ pub struct Config {
     /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
     /// Remappings to use for this repo
+    #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
@@ -773,6 +774,8 @@ impl Config {
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
+    const DEFAULT_SRC: &'static str = "src";
+
     /// The name of the directory foundry reserves for itself under the user's home directory: `~`
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
@@ -951,9 +954,14 @@ impl Config {
     }
 
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
+        self.networks.validate().map_err(Error::from)?;
         let Some(hardfork) = self.hardfork else { return Ok(()) };
         self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
         Ok(())
+    }
+
+    fn uses_default_src(&self) -> bool {
+        self.src == Path::new(Self::DEFAULT_SRC)
     }
 
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
@@ -969,7 +977,8 @@ impl Config {
 
         let root = self.root.as_path();
         let profile = Self::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
+        let mut figment = Figment::default()
+            .merge(DappHardhatDirProvider { root, detect_src: self.uses_default_src() });
 
         // merge global foundry.toml file
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
@@ -1371,6 +1380,21 @@ impl Config {
 
         let project = builder.build(self.compiler()?)?;
 
+        // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
+        // directory boundary with the native separator so a later `Remapping::to_string` does not
+        // discard it while converting the context back to slash-separated solc syntax.
+        #[cfg(windows)]
+        let mut project = project;
+        #[cfg(windows)]
+        for remapping in &mut project.paths.remappings {
+            if let Some(context) = &mut remapping.context
+                && context.ends_with('/')
+            {
+                context.pop();
+                context.push(std::path::MAIN_SEPARATOR);
+            }
+        }
+
         if self.force {
             // Warnings are intentionally dropped here because `sh_warn!` is a circular
             // dependency. Callers that need warnings should call `cleanup()` directly.
@@ -1475,12 +1499,9 @@ impl Config {
                 }
                 SolcReq::Local(solc) => {
                     if !solc.is_file() {
-                        return Err(SolcError::msg(format!(
-                            "`solc` {} does not exist",
-                            solc.display()
-                        )));
+                        return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
                     }
-                    Solc::new(solc)?
+                    Solc::new_with_approval(solc)?
                 }
             };
             return Ok(Some(solc));
@@ -1534,7 +1555,7 @@ impl Config {
             .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.iter())
-            .remappings(self.get_all_remappings())
+            .remappings(self.project_remappings())
             .allowed_path(&self.root)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
@@ -1568,7 +1589,7 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            Some(Vyper::new(path)?)
+            Some(Vyper::new_with_approval(path)?)
         } else {
             Vyper::new("vyper").ok()
         };
@@ -1588,6 +1609,42 @@ impl Config {
     /// Returns all configured remappings.
     pub fn get_all_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.remappings.iter().map(|m| m.clone().into())
+    }
+
+    /// Returns project remappings with absolute aliases for relative filesystem contexts.
+    fn project_remappings(&self) -> Vec<Remapping> {
+        let remappings = self.get_all_remappings().collect::<Vec<_>>();
+        let mut adjusted = Vec::with_capacity(remappings.len());
+
+        // External source unit names remain absolute in the compiler input, while configured
+        // contexts are root-relative. Preserve the configured order and add an equivalent absolute
+        // context immediately after each relative form so both the project resolver and compiler
+        // select the same mapping.
+        for remapping in &remappings {
+            adjusted.push(remapping.clone());
+
+            let Some(context) = remapping.context.as_deref() else { continue };
+            if Path::new(context).is_absolute() {
+                continue;
+            }
+            let Ok(context_path) = foundry_compilers::utils::normalize_solidity_import_path(
+                &self.root,
+                Path::new(context),
+            ) else {
+                continue;
+            };
+            let mut context_path = context_path.display().to_string();
+            if context.ends_with(['/', '\\']) && !context_path.ends_with(['/', '\\']) {
+                context_path.push(std::path::MAIN_SEPARATOR);
+            }
+
+            let mut absolute = remapping.clone();
+            absolute.context = Some(context_path);
+            if !remappings.contains(&absolute) && !adjusted.contains(&absolute) {
+                adjusted.push(absolute);
+            }
+        }
+        adjusted
     }
 
     /// Returns the configured rpc jwt secret
@@ -2042,14 +2099,16 @@ impl Config {
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
-        Self {
-            root: paths.root,
-            src: paths.sources.file_name().unwrap().into(),
-            out: artifacts.clone(),
-            libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
-            ..Self::default()
+        let mut config = Self::default();
+        if config.uses_default_src() {
+            config.src = paths.sources.file_name().unwrap().into();
         }
+        config.root = paths.root;
+        config.out = artifacts.clone();
+        config.libs =
+            paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect();
+        config.fs_permissions = FsPermissions::new([PathPermission::read(artifacts)]);
+        config
     }
 
     /// Returns the default config but with hardhat paths
@@ -2077,7 +2136,7 @@ impl Config {
             out: self.out,
             libs: self.libs,
             remappings: self.remappings,
-            network: self.networks.active_network_name().map(String::from),
+            network: self.networks.resolved_network().map(|network| network.name().to_string()),
         }
     }
 
@@ -2421,19 +2480,24 @@ impl Config {
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
         if let Some(cache_dir) = Self::foundry_rpc_cache_dir() {
             let mut cache = Cache { chains: vec![] };
-            if !cache_dir.exists() {
+            let Some(entries) = Self::ignore_not_found(cache_dir.read_dir())? else {
                 return Ok(cache);
-            }
-            if let Ok(entries) = cache_dir.as_path().read_dir() {
-                for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
-                        cache.chains.push(Self::list_foundry_chain_cache(chain)?);
-                    }
+            };
+            for entry in entries {
+                let Some(entry) = Self::ignore_not_found(entry)? else {
+                    continue;
+                };
+                let Some(metadata) = Self::ignore_not_found(fs::metadata(entry.path()))? else {
+                    continue;
+                };
+                if !metadata.is_dir() {
+                    continue;
                 }
-                Ok(cache)
-            } else {
-                eyre::bail!("failed to access foundry_cache_dir");
+                if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
+                    cache.chains.push(Self::list_foundry_chain_cache(chain)?);
+                }
             }
+            Ok(cache)
         } else {
             eyre::bail!("failed to get foundry_cache_dir");
         }
@@ -2464,63 +2528,109 @@ impl Config {
     /// The path provided to this function should point to a cached chain folder.
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
-        if !chain_path.exists() {
+        let Some(entries) = Self::ignore_not_found(chain_path.read_dir())? else {
             return Ok(blocks);
-        }
-        for block in chain_path.read_dir()?.flatten() {
-            let file_type = block.file_type()?;
-            let file_name = block.file_name();
-            let size = if file_type.is_dir() {
-                let mut size = 0;
-                for cache_file in block.path().read_dir()?.flatten() {
-                    let cache_file_name = cache_file.file_name();
-                    let cache_file_name = cache_file_name.to_string_lossy();
-                    if cache_file.file_type()?.is_file()
-                        && (cache_file_name == "storage.json"
-                            || cache_file_name
-                                .strip_prefix("storage-")
-                                .and_then(|name| name.strip_suffix(".json"))
-                                .is_some_and(|hash| {
-                                    hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
-                                }))
-                    {
-                        size += cache_file.metadata()?.len();
-                    }
-                }
-                if size == 0 {
-                    continue;
-                }
-                size
-            } else if file_type.is_file()
-                && file_name.to_string_lossy().chars().all(char::is_numeric)
-            {
-                block.metadata()?.len()
-            } else {
+        };
+        for block in entries {
+            let Some(block) = Self::ignore_not_found(block)? else {
                 continue;
             };
-            blocks.push((file_name.to_string_lossy().into_owned(), size));
+            if let Some(block) = Self::get_cached_block(block)? {
+                blocks.push(block);
+            }
         }
         Ok(blocks)
     }
 
+    fn get_cached_block(block: fs::DirEntry) -> eyre::Result<Option<(String, u64)>> {
+        let file_name = block.file_name();
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(block.path()))? else {
+            return Ok(None);
+        };
+        let size = if metadata.is_dir() {
+            let Some(cache_files) = Self::ignore_not_found(block.path().read_dir())? else {
+                return Ok(None);
+            };
+            let mut size = 0;
+            for cache_file in cache_files {
+                let Some(cache_file) = Self::ignore_not_found(cache_file)? else {
+                    continue;
+                };
+                size += Self::get_cache_file_size(cache_file)?.unwrap_or_default();
+            }
+            if size == 0 {
+                return Ok(None);
+            }
+            size
+        } else if metadata.is_file() && file_name.to_string_lossy().chars().all(char::is_numeric) {
+            metadata.len()
+        } else {
+            return Ok(None);
+        };
+        Ok(Some((file_name.to_string_lossy().into_owned(), size)))
+    }
+
+    fn get_cache_file_size(cache_file: fs::DirEntry) -> eyre::Result<Option<u64>> {
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(cache_file.path()))?
+        else {
+            return Ok(None);
+        };
+        let cache_file_name = cache_file.file_name();
+        let cache_file_name = cache_file_name.to_string_lossy();
+        if !metadata.is_file()
+            || (cache_file_name != "storage.json"
+                && !cache_file_name
+                    .strip_prefix("storage-")
+                    .and_then(|name| name.strip_suffix(".json"))
+                    .is_some_and(|hash| {
+                        hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                    }))
+        {
+            return Ok(None);
+        }
+        Ok(Some(metadata.len()))
+    }
+
     /// The path provided to this function should point to the etherscan cache for a chain.
     fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
-        if !chain_path.exists() {
+        let Some(entries) = Self::ignore_not_found(fs::read_dir(chain_path))? else {
             return Ok(0);
-        }
+        };
+        Self::get_cached_dir_size(entries)
+    }
 
-        fn dir_size_recursive(mut dir: fs::ReadDir) -> eyre::Result<u64> {
-            dir.try_fold(0, |acc, file| {
-                let file = file?;
-                let size = match file.metadata()? {
-                    data if data.is_dir() => dir_size_recursive(fs::read_dir(file.path())?)?,
-                    data => data.len(),
-                };
-                Ok(acc + size)
-            })
+    fn get_cached_dir_size(entries: fs::ReadDir) -> eyre::Result<u64> {
+        let mut size = 0;
+        for entry in entries {
+            let Some(entry) = Self::ignore_not_found(entry)? else {
+                continue;
+            };
+            size += Self::get_cached_entry_size(entry)?.unwrap_or_default();
         }
+        Ok(size)
+    }
 
-        dir_size_recursive(fs::read_dir(chain_path)?)
+    fn get_cached_entry_size(entry: fs::DirEntry) -> eyre::Result<Option<u64>> {
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(entry.path()))? else {
+            return Ok(None);
+        };
+        if metadata.is_dir() {
+            let Some(entries) = Self::ignore_not_found(fs::read_dir(entry.path()))? else {
+                return Ok(None);
+            };
+            Ok(Some(Self::get_cached_dir_size(entries)?))
+        } else {
+            Ok(Some(metadata.len()))
+        }
+    }
+
+    /// Treats cache entries removed during enumeration as absent.
+    fn ignore_not_found<T>(result: io::Result<T>) -> eyre::Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err.into()),
+        }
     }
 
     fn merge_toml_provider(
@@ -2799,7 +2909,7 @@ impl Default for Config {
             isolate: true,
             root: root_default(),
             extends: None,
-            src: "src".into(),
+            src: Self::DEFAULT_SRC.into(),
             test: "test".into(),
             script: "script".into(),
             out: "out".into(),
@@ -2988,10 +3098,10 @@ impl SolcReq {
     ///
     /// If the `SolcReq` is a `Version` it will return the version, if it's a path to a binary it
     /// will try to get the version from the binary.
-    fn try_version(&self) -> Result<Version, SolcError> {
+    pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => Solc::new(path).map(|solc| solc.version),
+            Self::Local(path) => Solc::new_with_approval(path).map(|solc| solc.version),
         }
     }
 }
@@ -3026,9 +3136,13 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "remappings_serde::serialize"
+    )]
     pub remappings: Vec<RelativeRemapping>,
-    /// The active non-Ethereum network (e.g. `"tempo"`).
+    /// The explicitly selected network (e.g. `"ethereum"`, `"monad"`, or `"tempo"`).
     #[serde(skip)]
     pub network: Option<String>,
 }
@@ -3068,6 +3182,46 @@ impl BasicConfig {
         Ok(format!(
             "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
+    }
+}
+
+mod remappings_serde {
+    use foundry_compilers::artifacts::remappings::RelativeRemapping;
+    #[cfg(windows)]
+    use path_slash::PathExt as _;
+    use serde::{Serialize, Serializer};
+    #[cfg(windows)]
+    use std::path::Path;
+
+    #[cfg(windows)]
+    fn slash_context(context: &str) -> String {
+        let has_trailing_separator =
+            context.as_bytes().last().is_some_and(|c| *c == b'/' || *c == b'\\');
+        let mut context = Path::new(context).to_slash_lossy().into_owned();
+        if has_trailing_separator && !context.ends_with('/') {
+            context.push('/');
+        }
+        context
+    }
+
+    pub fn serialize<S>(remappings: &[RelativeRemapping], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        remappings
+            .iter()
+            .map(|remapping| {
+                let Some(context) = &remapping.context else { return remapping.to_string() };
+                let mut remapping = remapping.clone();
+                remapping.context = None;
+                #[cfg(windows)]
+                let context = slash_context(context);
+                #[cfg(not(windows))]
+                let context = context.as_str();
+                format!("{context}:{remapping}")
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
     }
 }
 
@@ -3118,10 +3272,16 @@ mod tests {
         ModelCheckerEngine, YulDetails,
         vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
+    #[cfg(feature = "monad")]
+    use foundry_evm_hardforks::MonadHardfork;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write, num::NonZeroUsize};
+    use std::{
+        fs::File,
+        io::{self, Write},
+        num::NonZeroUsize,
+    };
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -3133,6 +3293,65 @@ mod tests {
     fn mark_serialized_invariant_provenance(config: &mut Config) {
         config.invariant.corpus_random_sequence_weight_configured = true;
         config.invariant.workers_configured = true;
+    }
+
+    #[test]
+    fn project_remappings_alias_relative_filesystem_contexts_in_place() {
+        let root = tempdir().unwrap();
+        let dependency = root.path().join("dependency");
+        let absolute_dependency = root.path().join("absolute-dependency");
+        fs::create_dir(&dependency).unwrap();
+        fs::create_dir(&absolute_dependency).unwrap();
+
+        let global_before = Remapping {
+            context: None,
+            name: "global-before/".into(),
+            path: "lib/global-before/".into(),
+        };
+        let relative = Remapping {
+            context: Some(format!("dependency{}", std::path::MAIN_SEPARATOR)),
+            name: "relative/".into(),
+            path: "lib/relative/".into(),
+        };
+        let absolute = Remapping {
+            context: Some(format!(
+                "{}{}",
+                absolute_dependency.display(),
+                std::path::MAIN_SEPARATOR
+            )),
+            name: "absolute/".into(),
+            path: "lib/absolute/".into(),
+        };
+        let missing = Remapping {
+            context: Some(format!("missing{}", std::path::MAIN_SEPARATOR)),
+            name: "missing/".into(),
+            path: "lib/missing/".into(),
+        };
+        let global_after = Remapping {
+            context: None,
+            name: "global-after/".into(),
+            path: "lib/global-after/".into(),
+        };
+        let mut config = Config::with_root(root.path());
+        config.remappings = [
+            global_before.clone(),
+            relative.clone(),
+            absolute.clone(),
+            missing.clone(),
+            global_after.clone(),
+        ]
+        .map(Into::into)
+        .into();
+
+        let mut absolute_alias = relative.clone();
+        let mut absolute_context =
+            config.root.join("dependency").display().to_string().replace('\\', "/");
+        absolute_context.push(std::path::MAIN_SEPARATOR);
+        absolute_alias.context = Some(absolute_context);
+        assert_eq!(
+            config.project_remappings(),
+            vec![global_before, relative, absolute_alias, absolute, missing, global_after]
+        );
     }
 
     #[test]
@@ -3283,6 +3502,29 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_custom_src_skips_directory_auto_detection() {
+        figment::Jail::expect_with(|jail| {
+            fs::create_dir(jail.directory().join("contracts")).unwrap();
+
+            let config = Config { root: jail.directory().into(), ..Default::default() };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("contracts"));
+
+            let config = Config {
+                root: jail.directory().into(),
+                src: "custom-src".into(),
+                ..Default::default()
+            };
+            let figment: Figment = config.into();
+            let config = figment.extract::<Config>().unwrap();
+            assert_eq!(config.src, PathBuf::from("custom-src"));
+
             Ok(())
         });
     }
@@ -4892,6 +5134,38 @@ mod tests {
     }
 
     #[test]
+    fn config_serialization_preserves_context_directory_boundary() {
+        let remapping = "lib/outer/:inner/=lib/outer/lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(remapping));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_serialization_preserves_verbatim_unc_context() {
+        let remapping = r"\\?\UNC\server\share\project\:inner/=lib/inner/";
+        let expected = r"\\?\UNC\server\share/project/:inner/=lib/inner/";
+        let config = Config {
+            remappings: vec![Remapping::from_str(remapping).unwrap().into()],
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
+
+        let serialized = toml::Value::try_from(config.into_basic()).unwrap();
+        assert_eq!(serialized["remappings"][0].as_str(), Some(expected));
+    }
+
+    #[test]
     fn test_fs_permissions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -5484,6 +5758,131 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
+    fn namespaced_hardfork_infers_monad_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "monad:MonadNine"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+            assert_eq!(config.evm_spec_id::<MonadHardfork>(), MonadHardfork::MonadNine);
+            assert_eq!(
+                config.hardfork.as_ref().and_then(FoundryHardfork::namespace),
+                Some("monad")
+            );
+            assert_eq!(
+                config.hardfork.as_ref().map(FoundryHardfork::name).as_deref(),
+                Some("MonadNine")
+            );
+            assert!(config.networks.is_monad());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn network_selectors_reject_profile_merged_hybrid() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+
+                [profile.ci]
+                celo = true
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains(
+                "network selectors `celo = true` and `monad = true` conflict; select only one \
+                 network"
+            ));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn network_selectors_reject_canonical_environment_conflict() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_NETWORK", "monad");
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains(
+                "network selectors `network = \"monad\"` and `tempo = true` conflict; select only \
+                 one network"
+            ));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn matching_canonical_and_legacy_network_selectors_remain_valid() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "monad"
+                monad = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.networks.is_monad());
+            assert_eq!(
+                config.networks.resolved_network(),
+                Some(foundry_evm_networks::NetworkVariant::Monad)
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn celo_network_accepts_ethereum_hardfork() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                celo = true
+                hardfork = "prague"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.networks.is_celo());
+            assert_eq!(
+                config.hardfork,
+                Some(FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::Prague))
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn hardfork_rejects_conflicting_network() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -5690,6 +6089,100 @@ mod tests {
         assert_eq!(block3.1, 900);
 
         chain_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn list_cached_blocks_ignores_removed_entries() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let block_path = chain_dir.path().join("1");
+        fs::create_dir(&block_path)?;
+        File::create(block_path.join("storage.json"))?;
+
+        let block = fs::read_dir(chain_dir.path())?.next().unwrap()?;
+        let cache_file = fs::read_dir(&block_path)?.next().unwrap()?;
+        fs::remove_dir_all(block_path)?;
+
+        assert!(Config::get_cached_block(block)?.is_none());
+        assert!(Config::get_cache_file_size(cache_file)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ignore_not_found_propagates_other_errors() {
+        assert!(
+            Config::ignore_not_found::<()>(Err(io::Error::from(io::ErrorKind::NotFound)))
+                .unwrap()
+                .is_none()
+        );
+
+        let err =
+            Config::ignore_not_found::<()>(Err(io::Error::from(io::ErrorKind::PermissionDenied)))
+                .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn cache_listing_propagates_not_a_directory() -> eyre::Result<()> {
+        let cache_file = tempfile::NamedTempFile::new()?;
+
+        let err = Config::get_cached_blocks(cache_file.path()).unwrap_err();
+        assert_eq!(err.downcast_ref::<io::Error>().unwrap().kind(), io::ErrorKind::NotADirectory);
+
+        let err = Config::get_cached_block_explorer_data(cache_file.path()).unwrap_err();
+        assert_eq!(err.downcast_ref::<io::Error>().unwrap().kind(), io::ErrorKind::NotADirectory);
+        Ok(())
+    }
+
+    #[test]
+    fn list_cached_blocks_uses_replaced_entry_type() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let block_path = chain_dir.path().join("1");
+        File::create(&block_path)?;
+        let block = fs::read_dir(chain_dir.path())?.next().unwrap()?;
+
+        fs::remove_file(&block_path)?;
+        fs::create_dir(&block_path)?;
+        fs::write(block_path.join("storage.json"), [0; 10])?;
+
+        assert_eq!(Config::get_cached_block(block)?, Some(("1".to_string(), 10)));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_cached_blocks_ignores_symlinks() -> eyre::Result<()> {
+        let chain_dir = tempdir()?;
+        let target_dir = tempdir()?;
+        fs::write(target_dir.path().join("storage.json"), [0; 10])?;
+        std::os::unix::fs::symlink(target_dir.path(), chain_dir.path().join("1"))?;
+
+        let block_path = chain_dir.path().join("2");
+        fs::create_dir(&block_path)?;
+        let target_file = tempfile::NamedTempFile::new()?;
+        fs::write(target_file.path(), [0; 10])?;
+        std::os::unix::fs::symlink(target_file.path(), block_path.join("storage.json"))?;
+
+        assert!(Config::get_cached_blocks(chain_dir.path())?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn list_etherscan_cache_ignores_removed_entries() -> eyre::Result<()> {
+        let cache_dir = tempdir()?;
+        let sources_path = cache_dir.path().join("sources");
+        fs::create_dir(&sources_path)?;
+        File::create(sources_path.join("metadata.json"))?;
+
+        let sources = fs::read_dir(cache_dir.path())?.next().unwrap()?;
+        let metadata = fs::read_dir(&sources_path)?.next().unwrap()?;
+        fs::remove_dir_all(sources_path)?;
+
+        assert!(Config::get_cached_entry_size(sources)?.is_none());
+        assert!(Config::get_cached_entry_size(metadata)?.is_none());
         Ok(())
     }
 
@@ -7809,6 +8302,54 @@ mod tests {
                     .iter()
                     .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
                 "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn no_unknown_key_warning_for_legacy_monad_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
+                "did not expect UnknownKey warning for `monad`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn warns_for_monad_alias_without_monad_support() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
+                "expected UnknownKey warning for `monad`, got: {:?}",
                 cfg.warnings
             );
             Ok(())

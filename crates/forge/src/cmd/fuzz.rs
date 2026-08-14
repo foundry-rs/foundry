@@ -197,8 +197,8 @@ pub struct FuzzRunArgs {
     pub(crate) showmap_corpus_dir: Option<PathBuf>,
 
     /// File to rerun fuzz failures from.
-    #[arg(long)]
-    pub(crate) fuzz_input_file: Option<String>,
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath, conflicts_with = "list")]
+    pub(crate) fuzz_input_file: Option<PathBuf>,
 }
 
 /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
@@ -211,6 +211,9 @@ pub struct FuzzReplayArgs {
 impl FuzzReplayArgs {
     async fn run(self) -> Result<TestOutcome> {
         let corpus_dir = self.run.campaign.corpus_dir.clone();
+        if corpus_dir.is_some() && self.run.fuzz_input_file.is_some() {
+            bail!("`--fuzz-input-file` cannot be combined with `--corpus-dir`");
+        }
         let mut test = TestArgs::from_fuzz_run(self.run);
         if corpus_dir.is_none() {
             test.enable_fuzz_failure_replay();

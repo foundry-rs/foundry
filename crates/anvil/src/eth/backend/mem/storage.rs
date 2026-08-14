@@ -1,4 +1,6 @@
 //! In-memory blockchain storage
+#[cfg(feature = "monad")]
+use crate::eth::backend::db::MonadBlockReplayProfile;
 use crate::eth::{
     backend::{
         db::{
@@ -28,6 +30,8 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadBlockParticipants;
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
@@ -314,6 +318,12 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Monad senders and authorities retained even when old transaction bodies are pruned.
+    #[cfg(feature = "monad")]
+    pub monad_block_participants: B256HashMap<MonadBlockParticipants>,
+    /// Execution profile used when each locally stored Monad block was created.
+    #[cfg(feature = "monad")]
+    pub monad_block_replay_profiles: B256HashMap<MonadBlockReplayProfile>,
 }
 
 impl<N: Network> BlockchainStorage<N> {
@@ -366,6 +376,10 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_replay_profiles: Default::default(),
         }
     }
 
@@ -382,6 +396,10 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_replay_profiles: Default::default(),
         }
     }
 
@@ -401,6 +419,10 @@ impl<N: Network> BlockchainStorage<N> {
                 if let Some(block) = self.blocks.remove(&hash) {
                     removed.push(block);
                 }
+                #[cfg(feature = "monad")]
+                self.monad_block_participants.remove(&hash);
+                #[cfg(feature = "monad")]
+                self.monad_block_replay_profiles.remove(&hash);
                 self.hashes.remove(&i);
             }
         }
@@ -419,6 +441,10 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_replay_profiles: Default::default(),
         }
     }
 
@@ -444,22 +470,29 @@ impl<N: Network> BlockchainStorage<N> {
         self.blocks.values().map(|block| block.clone().into()).collect()
     }
 
+    /// Adds a block to storage and returns its hash.
+    pub fn insert_block(&mut self, block: Block) -> B256 {
+        let block_hash = block.header.hash_slow();
+        let block_number = block.header.number();
+        self.blocks.insert(block_hash, block);
+        self.hashes.insert(block_number, block_hash);
+
+        // Update genesis_hash if we are loading the genesis block, so that
+        // Finalized/Safe/Earliest block tag lookups return the correct hash. The genesis
+        // number can be non-zero when configured via `--block-number`.
+        // See: https://github.com/foundry-rs/foundry/issues/12645
+        if block_number == self.genesis_number {
+            self.genesis_hash = block_hash;
+        }
+
+        block_hash
+    }
+
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in &serializable_blocks {
-            let block: Block = serializable_block.clone().into();
-            let block_hash = block.header.hash_slow();
-            let block_number = block.header.number();
-            self.blocks.insert(block_hash, block);
-            self.hashes.insert(block_number, block_hash);
-
-            // Update genesis_hash if we are loading the genesis block, so that
-            // Finalized/Safe/Earliest block tag lookups return the correct hash. The genesis
-            // number can be non-zero when configured via `--block-number`.
-            // See: https://github.com/foundry-rs/foundry/issues/12645
-            if block_number == self.genesis_number {
-                self.genesis_hash = block_hash;
-            }
+        for serializable_block in serializable_blocks {
+            let block: Block = serializable_block.into();
+            self.insert_block(block);
         }
     }
 
@@ -495,8 +528,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> 
 
     /// Deserialize and add all transactions data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
-        for serializable_transaction in &serializable_transactions {
-            let transaction: MinedTransaction<N> = serializable_transaction.clone().into();
+        for serializable_transaction in serializable_transactions {
+            let transaction: MinedTransaction<N> = serializable_transaction.into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }

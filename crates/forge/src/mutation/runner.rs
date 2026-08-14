@@ -21,6 +21,8 @@ use eyre::Result;
 use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -634,6 +636,18 @@ fn compile_and_test(
             isolate,
         )
     } else {
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return compile_and_test_inner::<MonadEvmNetwork>(
+                config,
+                evm_opts,
+                create2_deployer_available,
+                filter_args,
+                rerun_failures,
+                selected_sources_relative,
+                isolate,
+            );
+        }
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
             return compile_and_test_inner::<OpEvmNetwork>(
@@ -700,8 +714,11 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork_context) = evm_opts
+            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+            .await?;
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
 
         // Build test runner mirroring the canonical `forge test` runner: same
         // isolation flag, same fail-fast semantics for mutation, and same
@@ -711,7 +728,11 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
+            .with_fork(
+                fork_context.and_then(|context| evm_opts.get_fork_with_context(config, context)),
+            )
+            .with_fork_chain_id(fork_chain_id)
+            .with_fork_hardfork(fork_hardfork)
             .enable_isolation(isolate)
             .fail_fast(true)
             .with_create2_deployer_available(create2_deployer_available)

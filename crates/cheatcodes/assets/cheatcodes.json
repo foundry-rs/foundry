@@ -4406,6 +4406,86 @@
     },
     {
       "func": {
+        "id": "ecAddAffine",
+        "description": "Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and\n`point2 = (pointX2, pointY2)`.\nThe point at infinity is represented as `(0, 0)`.",
+        "declaration": "function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAddAffine(uint256,uint256,uint256,uint256)",
+        "selector": "0x1af9eefc",
+        "selectorBytes": [
+          26,
+          249,
+          238,
+          252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecAddProjective",
+        "description": "Adds the secp256k1 projective points `point1 = (pointX1, pointY1, pointZ1)` and\n`point2 = (pointX2, pointY2, pointZ2)`.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
+        "declaration": "function ecAddProjective(uint256 pointX1, uint256 pointY1, uint256 pointZ1, uint256 pointX2, uint256 pointY2, uint256 pointZ2) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAddProjective(uint256,uint256,uint256,uint256,uint256,uint256)",
+        "selector": "0x45b12879",
+        "selectorBytes": [
+          69,
+          177,
+          40,
+          121
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecMulAffine",
+        "description": "Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is represented as `(0, 0)`.",
+        "declaration": "function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecMulAffine(uint256,uint256,uint256)",
+        "selector": "0xc74ca094",
+        "selectorBytes": [
+          199,
+          76,
+          160,
+          148
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecMulProjective",
+        "description": "Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
+        "declaration": "function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecMulProjective(uint256,uint256,uint256,uint256)",
+        "selector": "0x031661fc",
+        "selectorBytes": [
+          3,
+          22,
+          97,
+          252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "eip712HashStruct_0",
         "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
@@ -5378,6 +5458,26 @@
           84,
           164,
           114
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectDelegateCall",
+        "description": "Expects a delegate call to an address with the specified calldata.\nCalldata can either be a strict or a partial match.",
+        "declaration": "function expectDelegateCall(address callee, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectDelegateCall(address,bytes)",
+        "selector": "0x3d6ac1e7",
+        "selectorBytes": [
+          61,
+          106,
+          193,
+          231
         ]
       },
       "group": "testing",
@@ -9150,6 +9250,66 @@
     },
     {
       "func": {
+        "id": "registerMappingSstoreHook",
+        "description": "Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.\nThe callback signature is `function(address account, bytes32 computedSlot, bytes32 rootSlot,\nbytes32[] keys, bytes32 oldValue, bytes32 newValue) external`; keys are raw words in\nroot-to-leaf order. Only complete 64-byte Keccak chains observed after the latest mapping\nhook registration for `target` in the current top-level execution match; provenance is\ncleared between top-level executions. Resolution follows the complete chain to its terminal\nroot and ignores registered intermediate hashes. Offsets, incomplete or unknown chains,\nhashes computed before registration or in an earlier top-level execution, and source layouts\ndo not match. The contract that calls this cheatcode receives the callback. Registration\npersists across reverts and replaces the same target/root callback; callback state rolls back\nwith its enclosing context, callback reverts propagate, and hooks are suppressed throughout\ncallback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent\nexternal spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping\nroots may be registered.",
+        "declaration": "function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerMappingSstoreHook(address,bytes32,bytes4)",
+        "selector": "0x12d14123",
+        "selectorBytes": [
+          18,
+          209,
+          65,
+          35
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSloadHook",
+        "description": "Registers a callback invoked after each SLOAD against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a load at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the load.",
+        "declaration": "function registerSloadHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSloadHook(address,bytes4)",
+        "selector": "0x37c7cf5e",
+        "selectorBytes": [
+          55,
+          199,
+          207,
+          94
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSstoreHook",
+        "description": "Registers a callback invoked after each SSTORE against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a store at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the store.",
+        "declaration": "function registerSstoreHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSstoreHook(address,bytes4)",
+        "selector": "0xe0c3bdd9",
+        "selectorBytes": [
+          224,
+          195,
+          189,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "rememberKey",
         "description": "Adds a private key to the local forge wallet and returns the address.",
         "declaration": "function rememberKey(uint256 privateKey) external returns (address keyAddr);",
@@ -11061,7 +11221,7 @@
     {
       "func": {
         "id": "startMappingRecording",
-        "description": "Starts recording all map SSTOREs for later retrieval.",
+        "description": "Starts recording mapping SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",
         "visibility": "external",
         "mutability": "",
@@ -11301,7 +11461,7 @@
     {
       "func": {
         "id": "stopMappingRecording",
-        "description": "Stops recording all map SSTOREs for later retrieval and clears the recorded data.",
+        "description": "Stops recording mapping SSTOREs and clears the recorded data.",
         "declaration": "function stopMappingRecording() external;",
         "visibility": "external",
         "mutability": "",

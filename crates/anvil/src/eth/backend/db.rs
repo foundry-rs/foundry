@@ -1,8 +1,12 @@
-//! Helper types for working with [revm](foundry_evm::revm)
+//! Helper types for working with [revm]
 
+#[cfg(feature = "monad")]
+use std::collections::BTreeSet;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
+    fs::File,
+    io::BufReader,
     path::Path,
 };
 
@@ -25,6 +29,8 @@ use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
     StateSnapshot,
 };
+#[cfg(feature = "monad")]
+use foundry_evm::hardfork::MonadHardfork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
@@ -45,6 +51,16 @@ use crate::mem::storage::MinedTransaction;
 
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
 pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
+
+/// Execution inputs needed to replay a locally stored Monad block faithfully.
+#[cfg(feature = "monad")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonadBlockReplayProfile {
+    /// Chain ID active when the block was executed.
+    pub execution_chain_id: u64,
+    /// Monad hardfork active when the block was executed.
+    pub hardfork: MonadHardfork,
+}
 
 /// Inserts a block hash, discards entries outside the EVM-visible cache, and returns its head.
 pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, hash: B256) -> U256 {
@@ -295,7 +311,7 @@ pub trait Db:
         historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>>;
 
-    /// Deserialize and add all chain data to the backend storage
+    /// Deserialize and add all accounts to the backend storage.
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts {
             let old_account_nonce = DatabaseRef::basic_ref(self, addr)
@@ -589,7 +605,7 @@ pub struct LegacyBlockEnv {
 #[derive(Debug, Deserialize)]
 pub struct LegacyBlobExcessGasAndPrice {
     pub excess_blob_gas: u64,
-    pub blob_gasprice: u64,
+    pub blob_gasprice: u128,
 }
 
 /// Legacy string or u64 type from before v1.3.
@@ -632,7 +648,10 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             slot_num: 0,
             blob_excess_gas_and_price: legacy
                 .blob_excess_gas_and_price
-                .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
+                .map(|v| BlobExcessGasAndPrice {
+                    excess_blob_gas: v.excess_blob_gas,
+                    blob_gasprice: v.blob_gasprice,
+                })
                 .or_else(|| {
                     Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
                 }),
@@ -701,6 +720,17 @@ pub struct SerializableState {
     pub blocks: Vec<SerializableBlock>,
     #[serde(default)]
     pub transactions: Vec<SerializableTransaction>,
+    /// Authoritative Monad senders and EIP-7702 authorities for locally stored blocks.
+    ///
+    /// This metadata can differ from transaction-body recovery when signature impersonation was
+    /// used, so it is preserved even while the corresponding transaction bodies are retained.
+    #[cfg(feature = "monad")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub monad_block_participants: BTreeMap<B256, BTreeSet<Address>>,
+    /// Execution profile used for each locally stored Monad block.
+    #[cfg(feature = "monad")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub monad_block_replay_profiles: BTreeMap<B256, MonadBlockReplayProfile>,
     /// Historical states of accounts and storage at particular block hashes.
     ///
     /// Note: This is an Option for backwards compatibility.
@@ -711,12 +741,19 @@ pub struct SerializableState {
 impl SerializableState {
     /// Loads the `Genesis` object from the given json file path
     pub fn load(path: impl AsRef<Path>) -> Result<Self, FsPathError> {
-        let path = path.as_ref();
+        let mut path = path.as_ref().to_path_buf();
         if path.is_dir() {
-            foundry_common::fs::read_json_file(&path.join("state.json"))
-        } else {
-            foundry_common::fs::read_json_file(path)
+            path = path.join("state.json");
         }
+
+        let file = File::open(&path).map_err(|err| FsPathError::read(err, &path))?;
+        serde_json::from_reader(BufReader::new(file)).map_err(|err| {
+            if err.is_io() {
+                FsPathError::read(err.into(), &path)
+            } else {
+                FsPathError::ReadJson { source: err, path }
+            }
+        })
     }
 
     /// This is used as the clap `value_parser` implementation
@@ -878,6 +915,29 @@ impl IntoIterator for SerializableHistoricalStates {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::fs;
+
+    #[test]
+    fn loads_state_from_file_or_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state_path = tmp.path().join("state.json");
+        fs::write(&state_path, serde_json::to_vec(&SerializableState::default()).unwrap()).unwrap();
+
+        assert!(SerializableState::load(&state_path).unwrap().accounts.is_empty());
+        assert!(SerializableState::load(tmp.path()).unwrap().accounts.is_empty());
+
+        fs::write(&state_path, b"not json").unwrap();
+        let Err(FsPathError::ReadJson { path, .. }) = SerializableState::load(tmp.path()) else {
+            panic!("expected invalid JSON error")
+        };
+        assert_eq!(path, state_path);
+
+        let missing_path = tmp.path().join("missing.json");
+        let Err(FsPathError::Read { path, .. }) = SerializableState::load(&missing_path) else {
+            panic!("expected file read error")
+        };
+        assert_eq!(path, missing_path);
+    }
 
     #[test]
     fn cache_db_full_state_merges_base_and_overlay() {

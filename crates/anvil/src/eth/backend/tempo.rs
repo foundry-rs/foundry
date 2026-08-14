@@ -190,6 +190,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         0
     }
 
+    fn state_gas_spilled(&self) -> u64 {
+        0
+    }
+
     fn gas_limit(&self) -> u64 {
         u64::MAX
     }

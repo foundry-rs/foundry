@@ -23,7 +23,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
-    utils::common_setup();
+    utils::common_setup::<Forge>()?;
     utils::subscriber();
 
     Ok(())
@@ -76,11 +76,11 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Bind(cmd) => cmd.run(),
-        ForgeSubcommand::Build(cmd) => {
-            if cmd.is_watch() {
-                global.block_on(watch::watch_build(cmd))
+        ForgeSubcommand::Build { args, locked } => {
+            if args.is_watch() {
+                global.block_on(watch::watch_build(args))
             } else {
-                global.block_on(cmd.run()).map(drop)
+                global.block_on(args.run(locked)).map(drop)
             }
         }
         ForgeSubcommand::VerifyContract(mut args) => {

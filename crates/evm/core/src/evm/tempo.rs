@@ -9,7 +9,7 @@ use revm::{
     },
     handler::{EvmTr, FrameResult, Handler},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
+    interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
     state::Bytecode,
 };
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
@@ -23,7 +23,7 @@ use tempo_revm::{
 };
 
 use crate::{
-    FoundryContextExt, FoundryInspectorExt,
+    FoundryContextExt, FoundryContextState, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
     evm::{FoundryEvmFactory, NestedEvm},
@@ -78,15 +78,26 @@ pub(crate) fn initialize_tempo_evm<
 }
 
 impl FoundryEvmFactory for TempoEvmFactory {
+    type ContextAux = ();
     type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         TempoEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
+    fn create_evm_with_context<DB: alloy_evm::Database>(
+        &self,
+        db: DB,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        _context_aux: Self::ContextAux,
+    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
+        self.create_evm(db, evm_env)
+    }
+
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        _context_aux: Self::ContextAux,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
@@ -118,10 +129,15 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        context_aux: Self::ContextAux,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<dyn NestedEvm<Spec = TempoHardfork, Block = TempoBlockEnv, Tx = TempoTxEnv> + 'db>
-    {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
+    ) -> Box<
+        dyn NestedEvm<Spec = TempoHardfork, Block = TempoBlockEnv, Tx = TempoTxEnv, Aux = ()> + 'db,
+    > {
+        Box::new(
+            self.create_foundry_evm_with_inspector(db, evm_env, context_aux, inspector)
+                .into_inner(),
+        )
     }
 }
 
@@ -150,15 +166,26 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     type Spec = TempoHardfork;
     type Block = TempoBlockEnv;
     type Tx = TempoTxEnv;
+    type Aux = ();
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
     }
 
+    fn context_state(&self) -> FoundryContextState<Self::Aux> {
+        self.ctx_ref().context_state()
+    }
+
+    fn aux_state(&self) -> Self::Aux {
+        self.ctx_ref().aux_state()
+    }
+
+    fn set_context_state(&mut self, state: FoundryContextState<Self::Aux>) {
+        self.ctx_mut().set_context_state(state);
+    }
+
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = TempoEvmHandler::new();
-        let reservoir = frame.reservoir();
-
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
         let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
@@ -166,7 +193,14 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
         let mut frame_result =
             handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_tempo_error)?;
 
-        handler.last_frame_result(self, reservoir, &mut frame_result).map_err(map_tempo_error)?;
+        let mut parent_gas = GasTracker::new(
+            frame_result.gas().limit(),
+            frame_result.gas().remaining(),
+            frame_result.gas().reservoir(),
+        );
+        handler
+            .last_frame_result(self, &mut frame_result, &mut parent_gas)
+            .map_err(map_tempo_error)?;
 
         Ok(frame_result)
     }
