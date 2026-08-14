@@ -547,7 +547,11 @@ impl WalletSubcommands {
                                         hex::encode(wallet.public_key())
                                     )?;
                                 }
-                                sh_println!("{}", wallet.address().to_checksum(None))?;
+                                // The machine-readable stdout record duplicates the prose above
+                                // when stdout is an interactive terminal.
+                                if !shell::is_out_tty() {
+                                    sh_println!("{}", wallet.address().to_checksum(None))?;
+                                }
                             }
                         }
                     }
@@ -574,11 +578,15 @@ impl WalletSubcommands {
                                     "Private key: 0x{}",
                                     hex::encode(wallet.credential().to_bytes())
                                 )?;
-                                sh_println!(
-                                    "{}\t0x{}",
-                                    wallet.address().to_checksum(None),
-                                    hex::encode(wallet.credential().to_bytes())
-                                )?;
+                                // The machine-readable stdout record duplicates the prose above
+                                // when stdout is an interactive terminal.
+                                if !shell::is_out_tty() {
+                                    sh_println!(
+                                        "{}\t0x{}",
+                                        wallet.address().to_checksum(None),
+                                        hex::encode(wallet.credential().to_bytes())
+                                    )?;
+                                }
                             }
                         }
                     }

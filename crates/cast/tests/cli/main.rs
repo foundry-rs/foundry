@@ -27,6 +27,8 @@ use foundry_test_utils::{
     str,
     util::OutputExt,
 };
+#[cfg(unix)]
+use rexpect::{Encoding, reader::Options, spawn_with_options};
 use serde_json::json;
 use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
@@ -376,6 +378,38 @@ Successfully created new keypair.
 
 "#]]);
 });
+
+// tests that the machine-readable stdout record is omitted on an interactive terminal, where it
+// would duplicate the stderr prose
+casttest!(
+    #[cfg(unix)]
+    new_wallet_tty_omits_stdout_record,
+    |_prj, _cmd| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+        command.env("NO_COLOR", "1").env("TERM", "dumb").args(["wallet", "new"]);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Successfully created new keypair.").unwrap();
+        session.exp_string("Address:").unwrap();
+        session.exp_string("Private key: 0x").unwrap();
+        // Only the private key value may follow; the `address\tprivate_key` record must not be
+        // printed to a tty.
+        let rest = session.exp_eof().unwrap();
+        assert!(
+            !rest.contains("0x") && !rest.contains('\t'),
+            "unexpected stdout record on tty: {rest:?}"
+        );
+    }
+);
 
 // tests that we can create a new wallet with json output
 casttest!(new_wallet_json, |_prj, cmd| {
@@ -3424,6 +3458,44 @@ casttest!(create2_output_channels, |_prj, cmd| {
 
 "#]]);
 });
+
+// tests that the machine-readable stdout record is omitted on an interactive terminal, where it
+// would duplicate the stderr prose
+casttest!(
+    #[cfg(unix)]
+    create2_tty_omits_stdout_record,
+    |_prj, _cmd| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+        command.env("NO_COLOR", "1").env("TERM", "dumb").args([
+            "create2",
+            "--starts-with",
+            "cc",
+            "--init-code-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+        ]);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Successfully found contract address").unwrap();
+        session.exp_string("Address: 0x").unwrap();
+        session.exp_string("Salt: 0x").unwrap();
+        // Only the salt value and its decimal representation may follow; the `address\tsalt`
+        // record must not be printed to a tty.
+        let rest = session.exp_eof().unwrap();
+        assert!(
+            !rest.contains("0x") && !rest.contains('\t'),
+            "unexpected stdout record on tty: {rest:?}"
+        );
+    }
+);
 
 // tests that `cast create2 --salt` writes `address\tsalt` to stdout
 casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
