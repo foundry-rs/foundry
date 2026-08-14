@@ -12,10 +12,10 @@ use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{
     FoundryContextExt,
-    backend::{ContextAuxUpdate, JournaledState, LocalForkId},
+    backend::{ContextUpdate, JournaledState, LocalForkId},
     evm::{
-        BlockEnvFor, ContextAuxFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor,
-        rebase_context_after_state_transition,
+        BlockEnvFor, ChainContextFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor,
+        apply_context_transition,
     },
     fork::CreateFork,
 };
@@ -434,23 +434,21 @@ fn fork_env_op<FEN: FoundryEvmNetwork, T: SolValue>(
         &mut EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
         &mut TxEnvFor<FEN>,
         &mut JournaledState,
-    ) -> eyre::Result<(T, ContextAuxUpdate<ContextAuxFor<FEN>>)>,
+    ) -> eyre::Result<(T, ContextUpdate<ChainContextFor<FEN>>)>,
 ) -> Result {
     let mut evm_env = ecx.evm_clone();
     let mut tx_env = ecx.tx_clone();
-    let current_aux = ecx.aux_state();
     let (db, inner) = ecx.db_journal_inner_mut();
     let (result, context_update) = f(db, &mut evm_env, &mut tx_env, inner)?;
     ecx.set_evm(evm_env);
     ecx.set_tx(tx_env);
     match context_update {
-        ContextAuxUpdate::Unchanged => {}
-        ContextAuxUpdate::Replace(auxiliary) => {
-            rebase_context_after_state_transition::<FEN>(ecx, &current_aux, auxiliary);
+        ContextUpdate::Unchanged => {}
+        ContextUpdate::Replace(chain_context) => {
+            apply_context_transition::<FEN>(ecx, Some(&chain_context));
         }
-        ContextAuxUpdate::Rebase => {
-            let replacement = current_aux.clone();
-            rebase_context_after_state_transition::<FEN>(ecx, &current_aux, replacement);
+        ContextUpdate::Rebase => {
+            apply_context_transition::<FEN>(ecx, None);
         }
     }
     Ok(result.abi_encode())
@@ -505,17 +503,15 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let current_aux = ccx.ecx.aux_state();
     let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
     match context_update {
-        ContextAuxUpdate::Replace(auxiliary) => {
-            rebase_context_after_state_transition::<FEN>(ccx.ecx, &current_aux, auxiliary);
+        ContextUpdate::Replace(chain_context) => {
+            apply_context_transition::<FEN>(ccx.ecx, Some(&chain_context));
         }
-        ContextAuxUpdate::Rebase => {
-            let replacement = current_aux.clone();
-            rebase_context_after_state_transition::<FEN>(ccx.ecx, &current_aux, replacement);
+        ContextUpdate::Rebase => {
+            apply_context_transition::<FEN>(ccx.ecx, None);
         }
-        ContextAuxUpdate::Unchanged => {}
+        ContextUpdate::Unchanged => {}
     }
     Ok(Default::default())
 }
