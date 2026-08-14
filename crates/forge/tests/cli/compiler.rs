@@ -1,6 +1,6 @@
 //! Tests for the `forge compiler` command.
 
-use foundry_compilers::compilers::solc::Solc;
+use foundry_compilers::compilers::{solc::Solc, vyper::Vyper};
 use foundry_test_utils::{
     snapbox::IntoData,
     util::{SOLC_VERSION, get_vyper},
@@ -103,13 +103,15 @@ forgetest_init!(can_print_resolved_compiler_path, |prj, cmd| {
 
 forgetest!(can_print_resolved_vyper_path, |prj, cmd| {
     let vyper = get_vyper();
+    foundry_compilers::set_compiler_approval_handler(|_| Ok(()));
+    let resolved_vyper = Vyper::new_with_approval(&vyper.path).unwrap();
     prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE);
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT);
     prj.update_config(|config| config.vyper.path = Some(vyper.path.clone()));
 
-    cmd.args(["compiler", "resolve", "--path"])
+    cmd.args(["compiler", "resolve", "--path", "--allow-local-compiler"])
         .assert_success()
-        .stdout_eq(format!("{}\n", vyper.path.display()));
+        .stdout_eq(format!("{}\n", resolved_vyper.path.display()));
 });
 
 forgetest!(compiler_path_requires_single_version, |prj, cmd| {
