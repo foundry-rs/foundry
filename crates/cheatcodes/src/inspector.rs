@@ -685,6 +685,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// execution block environment.
     pub block: Option<BlockEnvFor<FEN>>,
 
+    /// The active fork block override updated by a fork-switching cheatcode.
+    ///
+    /// This persists fork changes made through a copy-on-write backend between invariant calls.
+    pub fork_block_number_override: Option<u64>,
+
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
     /// transaction construction.
@@ -878,6 +883,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// the post-snapshot value even though `EvmEnv` was rolled back.
     pub env_overrides_snapshots: HashMap<U256, HashMap<Option<LocalForkId>, EnvOverrides>>,
 
+    /// Per-state-snapshot copies of [`Self::fork_block_number_override`].
+    pub fork_block_number_override_snapshots: HashMap<U256, Option<u64>>,
+
     /// Transaction-position context and family-owned execution state captured atomically alongside
     /// state snapshots.
     pub context_snapshots: HashMap<U256, (ChainContextFor<FEN>, TransactionStateFor<FEN>)>,
@@ -912,6 +920,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
+            fork_block_number_override: Default::default(),
             active_delegations: Default::default(),
             active_blob_sidecar: Default::default(),
             gas_price: Default::default(),
@@ -968,6 +977,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             execution_evm_version: None,
             env_overrides: Default::default(),
             env_overrides_snapshots: Default::default(),
+            fork_block_number_override_snapshots: Default::default(),
             context_snapshots: Default::default(),
             in_isolation_context: false,
         }
