@@ -44,7 +44,7 @@ use revm::{
     state::{Account, AccountStatus},
 };
 use std::{
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
 
@@ -300,6 +300,18 @@ macro_rules! call_inspectors {
             }
         )+
     };
+    (#[stop] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {{
+        let mut stop = false;
+        $(
+            if !stop {
+                if let Some($id) = $inspector {
+                    $crate::utils::cold_path();
+                    stop = $body;
+                }
+            }
+        )+
+        stop
+    }};
     (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {{
         $(
             if let Some($id) = $inspector {
@@ -336,6 +348,68 @@ pub struct InnerContextData {
     original_origin: Address,
     /// Accounts that were created locally before entering the nested EVM context.
     locally_created_accounts: AddressHashSet,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SkipFrameProvenance {
+    return_data_len: Option<usize>,
+    memory: Vec<Range<usize>>,
+    reverting_skip: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SkipProvenance {
+    frames: Vec<SkipFrameProvenance>,
+}
+
+impl SkipProvenance {
+    fn is_active(&self) -> bool {
+        self.frames.iter().any(|frame| frame.return_data_len.is_some() || !frame.memory.is_empty())
+    }
+
+    fn ensure_depth(&mut self, depth: usize) {
+        let len = depth + 1;
+        if self.frames.len() < len {
+            self.frames.resize_with(len, SkipFrameProvenance::default);
+        }
+    }
+
+    fn clear_frame(&mut self, depth: usize) {
+        if let Some(frame) = self.frames.get_mut(depth) {
+            *frame = SkipFrameProvenance::default();
+        }
+    }
+
+    fn take_reverting_skip(&mut self, depth: usize) -> bool {
+        self.frames.get_mut(depth).is_some_and(|frame| std::mem::take(&mut frame.reverting_skip))
+    }
+
+    fn set_return_data(&mut self, depth: usize, len: Option<usize>) {
+        self.ensure_depth(depth);
+        self.frames[depth].return_data_len = len;
+    }
+
+    fn invalidate_memory(&mut self, depth: usize, range: &Range<usize>) {
+        if range.is_empty() {
+            return;
+        }
+        if let Some(frame) = self.frames.get_mut(depth) {
+            frame.memory.retain(|tagged| tagged.start >= range.end || range.start >= tagged.end);
+        }
+    }
+
+    fn tag_memory(&mut self, depth: usize, range: Range<usize>) {
+        if range.is_empty() {
+            return;
+        }
+        self.ensure_depth(depth);
+        self.invalidate_memory(depth, &range);
+        self.frames[depth].memory.push(range);
+    }
+
+    fn is_tagged(&self, depth: usize, range: &Range<usize>) -> bool {
+        self.frames.get(depth).is_some_and(|frame| frame.memory.contains(range))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -418,8 +492,8 @@ pub struct InspectorStackInner {
     top_level_frame_failed_before_rewrite: bool,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
-    /// Payload of the skip that most recently set the reverter to the cheatcode address.
-    skip_revert: Option<Bytes>,
+    /// Tracks genuine skip data as it propagates through return data and memory.
+    skip_provenance: SkipProvenance,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
@@ -875,6 +949,97 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx.tx_mut().set_caller(inner_context_data.original_origin);
     }
 
+    fn memory_range(
+        interpreter: &Interpreter,
+        offset_depth: usize,
+        size_depth: usize,
+    ) -> Option<Range<usize>> {
+        let offset = interpreter.stack.peek(offset_depth).ok()?.saturating_to::<usize>();
+        let size = interpreter.stack.peek(size_depth).ok()?.saturating_to::<usize>();
+        Some(offset..offset.saturating_add(size))
+    }
+
+    fn track_skip_provenance(&mut self, interpreter: &Interpreter, depth: usize) {
+        let opcode = interpreter.bytecode.opcode();
+        let provenance = &mut self.inner.skip_provenance;
+
+        match opcode {
+            op::RETURNDATACOPY => {
+                let Some(range) = Self::memory_range(interpreter, 0, 2) else { return };
+                let source = interpreter.stack.peek(1).ok().map(|v| v.saturating_to::<usize>());
+                let copies_full_skip = source == Some(0)
+                    && provenance.frames.get(depth).and_then(|frame| frame.return_data_len)
+                        == Some(range.len());
+                provenance.invalidate_memory(depth, &range);
+                if copies_full_skip {
+                    provenance.tag_memory(depth, range);
+                }
+            }
+            op::MCOPY => {
+                let Some(destination) = Self::memory_range(interpreter, 0, 2) else { return };
+                let source = interpreter
+                    .stack
+                    .peek(1)
+                    .ok()
+                    .map(|v| v.saturating_to::<usize>())
+                    .map(|offset| offset..offset.saturating_add(destination.len()));
+                let copies_skip =
+                    source.as_ref().is_some_and(|range| provenance.is_tagged(depth, range));
+                provenance.invalidate_memory(depth, &destination);
+                if copies_skip {
+                    provenance.tag_memory(depth, destination);
+                }
+            }
+            op::REVERT => {
+                let Some(range) = Self::memory_range(interpreter, 0, 1) else { return };
+                provenance.ensure_depth(depth);
+                provenance.frames[depth].reverting_skip = provenance.is_tagged(depth, &range);
+            }
+            op::MSTORE => {
+                if let Some(range) = Self::memory_range(interpreter, 0, 0) {
+                    provenance
+                        .invalidate_memory(depth, &(range.start..range.start.saturating_add(32)));
+                }
+            }
+            op::MSTORE8 => {
+                if let Some(range) = Self::memory_range(interpreter, 0, 0) {
+                    provenance
+                        .invalidate_memory(depth, &(range.start..range.start.saturating_add(1)));
+                }
+            }
+            op::CALLDATACOPY | op::CODECOPY => {
+                if let Some(range) = Self::memory_range(interpreter, 0, 2) {
+                    provenance.invalidate_memory(depth, &range);
+                }
+            }
+            op::EXTCODECOPY => {
+                if let Some(range) = Self::memory_range(interpreter, 1, 3) {
+                    provenance.invalidate_memory(depth, &range);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finish_skip_frame(
+        &mut self,
+        depth: usize,
+        genuine_skip: bool,
+        rewritten: bool,
+        result: InstructionResult,
+        output_len: usize,
+    ) -> bool {
+        let propagated_skip =
+            self.inner.skip_provenance.take_reverting_skip(depth + 1) && !rewritten;
+        self.inner.skip_provenance.clear_frame(depth + 1);
+
+        let is_skip = result.is_revert() && (genuine_skip || propagated_skip);
+        if depth > 0 {
+            self.inner.skip_provenance.set_return_data(depth, is_skip.then_some(output_len));
+        }
+        is_skip
+    }
+
     fn do_call_end(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
@@ -888,37 +1053,55 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let result = outcome.result.result;
-        call_inspectors!(
-            #[ret]
+        let rewritten = call_inspectors!(
+            #[stop]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer, &mut self.revert_diag],
             |inspector| {
                 let previous_output = outcome.output().clone();
                 inspector.call_end(ecx, inputs, outcome);
 
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = outcome.result.result != result
+                // If the inspector returns a different status or revert output, we assume it wants
+                // to tell us something.
+                outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != &previous_output);
-                different.then_some(())
+                        && outcome.output() != &previous_output)
             },
         );
 
-        // Record the first address that reverted the call, but let an actual skip take precedence
-        // over earlier caught reverts while its payload propagates to the terminal revert.
-        let is_skip =
-            inputs.target_address == CHEATCODE_ADDRESS && outcome.output().starts_with(MAGIC_SKIP);
-        if result.is_revert() {
+        let depth = ecx.journal().depth();
+        let genuine_skip = inputs.target_address == CHEATCODE_ADDRESS
+            && outcome.result.result.is_revert()
+            && outcome.output().starts_with(MAGIC_SKIP);
+        let output = outcome.output();
+        let is_skip = self.finish_skip_frame(
+            depth,
+            genuine_skip,
+            rewritten,
+            outcome.result.result,
+            output.len(),
+        );
+
+        if depth == 0 {
             if is_skip {
-                self.reverter = Some(inputs.target_address);
-                self.skip_revert = Some(outcome.output().clone());
-            } else if self.reverter.is_none()
-                || (self.reverter == Some(CHEATCODE_ADDRESS)
-                    && self.skip_revert.as_ref() != Some(outcome.output()))
+                self.reverter = Some(CHEATCODE_ADDRESS);
+            } else if (outcome.result.result.is_revert() && output.starts_with(MAGIC_SKIP))
+                || (!rewritten && result.is_revert() && self.reverter.is_none())
             {
                 self.reverter = Some(inputs.target_address);
-                self.skip_revert = None;
             }
+            return;
+        }
+
+        let copied_len = output.len().min(outcome.memory_offset.len());
+        let copied_range =
+            outcome.memory_offset.start..outcome.memory_offset.start.saturating_add(copied_len);
+        self.inner.skip_provenance.invalidate_memory(depth, &copied_range);
+        if is_skip {
+            if copied_len == output.len() {
+                self.inner.skip_provenance.tag_memory(depth, copied_range);
+            }
+        } else if !rewritten && result.is_revert() && self.reverter.is_none() {
+            self.reverter = Some(inputs.target_address);
         }
     }
 
@@ -929,21 +1112,32 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         outcome: &mut CreateOutcome,
     ) {
         let result = outcome.result.result;
-        call_inspectors!(
-            #[ret]
+        let rewritten = call_inspectors!(
+            #[stop]
             [&mut self.line_coverage, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 let previous_output = outcome.output().clone();
                 inspector.create_end(ecx, call, outcome);
 
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = outcome.result.result != result
+                // If the inspector returns a different status or revert output, we assume it wants
+                // to tell us something.
+                outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != &previous_output);
-                different.then_some(())
+                        && outcome.output() != &previous_output)
             },
         );
+
+        let depth = ecx.journal().depth();
+        let output = outcome.output();
+        let is_skip =
+            self.finish_skip_frame(depth, false, rewritten, outcome.result.result, output.len());
+        if depth == 0 {
+            if is_skip {
+                self.reverter = Some(CHEATCODE_ADDRESS);
+            } else if outcome.result.result.is_revert() && output.starts_with(MAGIC_SKIP) {
+                self.reverter = None;
+            }
+        }
     }
 
     fn transact_inner(
@@ -1171,6 +1365,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.locally_created_accounts.clear();
         self.top_level_frame_failed_before_rewrite = false;
+        self.skip_provenance = SkipProvenance::default();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
         }
@@ -1293,6 +1488,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 crate::utils::cold_path();
                 cheats.step(interpreter, ecx);
             }
+        }
+
+        if self.inner.skip_provenance.is_active() && interpreter.bytecode.action.is_none() {
+            crate::utils::cold_path();
+            self.track_skip_provenance(interpreter, ecx.journal().depth());
         }
     }
 
