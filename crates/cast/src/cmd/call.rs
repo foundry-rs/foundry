@@ -664,7 +664,7 @@ impl CallArgs {
             context_tx.set_kind(tx_kind);
             context_tx.set_data(input.clone());
             context_tx.set_value(value);
-            let context_aux = context_for_child_transaction::<FEN, _>(
+            let chain_context = context_for_child_transaction::<FEN, _>(
                 &provider,
                 context_block_number,
                 &context_tx,
@@ -674,11 +674,11 @@ impl CallArgs {
             let trace = match tx_kind {
                 TxKind::Create => {
                     let deploy_result =
-                        executor.deploy_with_context(from, input, value, context_aux, None);
+                        executor.deploy_with_context(from, input, value, chain_context, None);
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw_with_context(from, to, input, value, context_aux)?,
+                    executor.transact_raw_with_context(from, to, input, value, chain_context)?,
                     TraceKind::Execution,
                 ),
             };

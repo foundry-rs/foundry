@@ -41,7 +41,7 @@ use foundry_evm::{
     core::{
         FoundryTransaction as _,
         evm::{
-            BlockContext, ContextAuxFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
+            BlockContext, ChainContextFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
             TempoEvmNetwork, TxEnvFor,
         },
     },
@@ -785,7 +785,7 @@ impl VerifyBytecodeArgs {
 
             apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
             let factory = FEN::EvmFactory::default();
-            let mut target_context = None::<ContextAuxFor<FEN>>;
+            let mut target_context = None::<ChainContextFor<FEN>>;
             if let Some(ref block) = block {
                 let BlockTransactions::Full(txs) = block.transactions() else {
                     return Err(eyre::eyre!("Could not get block txs"));
@@ -804,7 +804,7 @@ impl VerifyBytecodeArgs {
                     txs[target_index].from(),
                 );
                 target_context = Some(block_context.as_ref().map_or_else(
-                    || factory.context_for_transaction(&target_tx_env),
+                    || factory.chain_context_for_transaction(&target_tx_env),
                     |context| context.transaction(target_index),
                 ));
 
@@ -823,8 +823,8 @@ impl VerifyBytecodeArgs {
                     {
                         continue;
                     }
-                    let context_aux = block_context.as_ref().map_or_else(
-                        || factory.context_for_transaction(&tx_env),
+                    let chain_context = block_context.as_ref().map_or_else(
+                        || factory.chain_context_for_transaction(&tx_env),
                         |context| context.transaction(index),
                     );
 
@@ -833,7 +833,7 @@ impl VerifyBytecodeArgs {
                             .transact_protocol_system_with_env_and_context(
                                 evm_env.clone(),
                                 tx_env.clone(),
-                                context_aux,
+                                chain_context,
                             )
                             .wrap_err_with(|| {
                                 format!(
@@ -847,7 +847,7 @@ impl VerifyBytecodeArgs {
                             .transact_with_env_and_context(
                                 evm_env.clone(),
                                 tx_env.clone(),
-                                context_aux,
+                                chain_context,
                             )
                             .wrap_err_with(|| {
                                 format!(
@@ -859,7 +859,7 @@ impl VerifyBytecodeArgs {
                     } else if let Err(error) = executor.deploy_with_env_and_context(
                         evm_env.clone(),
                         tx_env.clone(),
-                        context_aux,
+                        chain_context,
                         None,
                     ) {
                         match error {
@@ -888,7 +888,7 @@ impl VerifyBytecodeArgs {
                 TxEnvFor::<FEN>::from_recovered_tx(transaction.as_ref(), transaction.from());
             tx_env.set_nonce(prev_block_nonce);
             let target_context =
-                target_context.unwrap_or_else(|| factory.context_for_transaction(&tx_env));
+                target_context.unwrap_or_else(|| factory.chain_context_for_transaction(&tx_env));
 
             // Replace the `input` with local creation code in the creation tx.
             if let TxKind::Call(to) = kind {
