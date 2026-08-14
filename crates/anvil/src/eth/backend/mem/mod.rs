@@ -231,8 +231,8 @@ use tempo_primitives::{
     },
 };
 use tempo_revm::{
-    TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
-    gas_params::tempo_gas_params,
+    ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv,
+    evm::TempoContext, gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
@@ -3391,6 +3391,7 @@ impl<N: Network> Backend<N> {
         let tx_env = TempoTxEnv {
             fee_token: request.fee_token,
             is_system_tx: false,
+            execution_context: ExecutionContext::Simulation,
             unique_tx_identifier: Some(TEMPO_RPC_SIMULATION_CONTEXT),
             fee_payer,
             tempo_tx_env: Some(Box::new(TempoBatchCallEnv {

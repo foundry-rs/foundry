@@ -68,6 +68,10 @@ pub struct SendTxArgs {
     #[arg(long)]
     force: bool,
 
+    /// Relative percentage to multiply the gas estimate by.
+    #[arg(long, value_name = "PERCENT", help_heading = "Transaction options")]
+    gas_estimate_multiplier: Option<u64>,
+
     #[command(flatten)]
     tx: TransactionOpts,
 
@@ -127,8 +131,19 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
-            self;
+        let Self {
+            to,
+            mut sig,
+            mut args,
+            data,
+            send_tx,
+            mut tx,
+            command,
+            unlocked,
+            force,
+            gas_estimate_multiplier,
+            path,
+        } = self;
 
         let has_session = tx.tempo.session_id()?.is_some();
         if has_session && unlocked {
@@ -231,6 +246,7 @@ impl SendTxArgs {
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
+            .with_gas_estimate_multiplier(gas_estimate_multiplier)
             .with_to(to)
             .await?
             .with_code_sig_and_args(code, sig, args)
@@ -755,6 +771,17 @@ mod tests {
         // bypass attempts that fooled the old starts_with check
         assert!(validate_sponsor_url("http://localhost.evil.com").is_err());
         assert!(validate_sponsor_url("http://127.0.0.1.evil.com").is_err());
+    }
+
+    #[test]
+    fn parses_gas_estimate_multiplier() {
+        let args = SendTxArgs::parse_from([
+            "cast-send",
+            "0x0000000000000000000000000000000000000000",
+            "--gas-estimate-multiplier",
+            "125",
+        ]);
+        assert_eq!(args.gas_estimate_multiplier, Some(125));
     }
 
     #[tokio::test]

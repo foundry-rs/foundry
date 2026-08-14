@@ -21,7 +21,7 @@ env:
   # Keep the base features in sync with `docker-publish.yml`.
   # Platform-specific release features are added in the build step.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
 
 jobs:
   prepare:

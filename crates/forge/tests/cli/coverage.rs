@@ -3335,6 +3335,193 @@ end_of_record
     );
 });
 
+// A file-level (free) function declared after a contract must be attributed at file level, not
+// leaked into the earlier contract's scope, and its deferred call must carry the same scope.
+// Regression for https://github.com/foundry-rs/foundry/issues/16085
+forgetest!(coverage_reports_free_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Mixed.sol",
+        r#"
+contract Counter {
+    function bump(uint256 x) public pure returns (uint256) {
+        return triple(x);
+    }
+}
+
+function triple(uint256 x) pure returns (uint256) {
+    return x * 3;
+}
+"#,
+    );
+    prj.add_source(
+        "MixedTest.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Mixed.sol";
+
+contract MixedTest is DSTest {
+    function testMixed() public {
+        Counter c = new Counter();
+        require(c.bump(2) == 6);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=lcov", "--report=attribution", "--lcov-version=2"])
+        .assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    let attribution =
+        std::fs::read_to_string(prj.root().join("coverage-attribution.json")).unwrap();
+    let attribution: Value = serde_json::from_str(&attribution).unwrap();
+
+    assert!(lcov.contains("SF:src/Mixed.sol"), "coverage must include Mixed.sol:\n{lcov}");
+    // The contract method keeps its contract scope.
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",Counter.bump")),
+        "contract function must be scoped as `Counter.bump`:\n{lcov}"
+    );
+    // The free function is attributed at file level: bare `triple`, with no contract prefix
+    // (`Counter.triple`) and no malformed empty scope (`.triple`).
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",triple")),
+        "free function must be attributed as bare `triple`:\n{lcov}"
+    );
+    assert!(
+        !lcov.contains(",Counter.triple"),
+        "free function must not leak the contract scope:\n{lcov}"
+    );
+    assert!(
+        !lcov.contains(",.triple"),
+        "free function must not have a malformed empty scope:\n{lcov}"
+    );
+    // Both functions were executed, so both record a nonzero hit count.
+    assert!(
+        lcov.lines()
+            .any(|l| l.starts_with("FNDA:") && !l.starts_with("FNDA:0,") && l.ends_with(",triple")),
+        "free function must record its hits:\n{lcov}"
+    );
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FNDA:")
+            && !l.starts_with("FNDA:0,")
+            && l.ends_with(",Counter.bump")),
+        "contract function must record its hits:\n{lcov}"
+    );
+    let covered = attribution["tests"][0]["covered"].as_array().unwrap();
+    assert_eq!(
+        covered
+            .iter()
+            .filter(|item| {
+                item["source"] == "src/Mixed.sol"
+                    && item["contract"] == "Counter"
+                    && item["kind"] == "statement"
+            })
+            .count(),
+        2,
+        "the return statement and its deferred call must retain the contract scope:\n{attribution}"
+    );
+});
+
+// A file whose only code is a file-level (free) function must still be reported, with the
+// function named at file level. Before the fix such a file was dropped from coverage entirely.
+// Regression for https://github.com/foundry-rs/foundry/issues/16085
+forgetest!(coverage_reports_free_only_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Free.sol",
+        r#"
+function double(uint256 x) pure returns (uint256) {
+    return x * 2;
+}
+"#,
+    );
+    prj.add_source(
+        "FreeTest.sol",
+        r#"
+import "./test.sol";
+import {double} from "./Free.sol";
+
+contract FreeTest is DSTest {
+    function testDouble() public {
+        require(double(3) == 6);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=lcov", "--lcov-version=2"]).assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+
+    // Inspect the Free.sol record in isolation so FNF/FNH counts are unambiguous.
+    let free_block = lcov
+        .split("SF:")
+        .find(|b| b.starts_with("src/Free.sol"))
+        .expect("free-function-only file must have a coverage record");
+    // The function is named `double`, not `.double`.
+    assert!(
+        free_block.lines().any(|l| l.starts_with("FN") && l.ends_with(",double")),
+        "free function must be reported as bare `double`:\n{free_block}"
+    );
+    assert!(!free_block.contains(".double"), "no leading-dot empty scope:\n{free_block}");
+    // Exactly one function, found and hit.
+    assert!(free_block.contains("FNF:1"), "exactly one function found:\n{free_block}");
+    assert!(free_block.contains("FNH:1"), "exactly one function hit:\n{free_block}");
+});
+
+// A contract method and a file-level function that share a name live in different scopes, so
+// neither should be renamed as if it were an overload of the other.
+forgetest!(coverage_disambiguates_functions_by_scope, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Same.sol",
+        r#"
+contract Lib {
+    function value() public pure returns (uint256) {
+        return 1;
+    }
+}
+
+function value() pure returns (uint256) {
+    return 2;
+}
+"#,
+    );
+    prj.add_source(
+        "SameTest.sol",
+        r#"
+import "./test.sol";
+import {Lib, value} from "./Same.sol";
+
+contract SameTest is DSTest {
+    function testValue() public {
+        Lib lib = new Lib();
+        require(lib.value() == 1);
+        require(value() == 2);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=lcov", "--lcov-version=2"]).assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+
+    // The contract method stays scoped; the free function stays bare.
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",Lib.value")),
+        "contract method must be `Lib.value`:\n{lcov}"
+    );
+    assert!(
+        lcov.lines().any(|l| l.starts_with("FN") && l.ends_with(",value")),
+        "free function must be bare `value`:\n{lcov}"
+    );
+    // Neither is a real overload, so neither gets a `.0` / `.1` disambiguation suffix.
+    assert!(
+        !lcov.contains("value.0") && !lcov.contains("value.1"),
+        "same-named functions in different scopes must not be disambiguated as overloads:\n{lcov}"
+    );
+});
+
 #[test]
 fn coverage_help_renders_notes() {
     let help = CoverageArgs::command().render_long_help().to_string();

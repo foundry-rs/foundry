@@ -197,8 +197,19 @@ impl<'a> From<&'a BuildOpts> for Figment {
         let mut figment = Config::figment_with_root(&root);
 
         // remappings should stack
-        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
-            .with_figment(&figment);
+        let remappings_root = canonicalized(&root);
+        let cli_remappings = args
+            .project_paths
+            .get_remappings()
+            .into_iter()
+            .map(|remapping| {
+                let remapping = relative_remapping_preserving_context_boundary(remapping, &root)
+                    .to_relative_remapping();
+                relative_remapping_preserving_context_boundary(remapping, &remappings_root)
+                    .to_relative_remapping()
+            })
+            .collect();
+        let mut remappings = Remappings::new_with_remappings(cli_remappings).with_figment(&figment);
         let generated_remappings = Remappings::generated_from_figment(&figment);
         remappings.extend_with_config_remappings(
             figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default(),
