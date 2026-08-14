@@ -168,6 +168,12 @@ impl<T: SignerRecoverable + TxHashRef + Encodable> PendingTransaction<T> {
         Self { transaction, sender, hash }
     }
 
+    /// Creates a pending transaction from an existing wrapper and authoritative sender.
+    pub fn with_sender(transaction: MaybeImpersonatedTransaction<T>, sender: Address) -> Self {
+        let hash = transaction.hash();
+        Self { transaction, sender, hash }
+    }
+
     /// Converts a [`MaybeImpersonatedTransaction`] into a [`PendingTransaction`].
     pub fn from_maybe_impersonated(
         transaction: MaybeImpersonatedTransaction<T>,
