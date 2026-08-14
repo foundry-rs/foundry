@@ -321,6 +321,7 @@ impl SymbolicExecutor {
             (true, true) => {
                 let mut valid = state.clone();
                 valid.pc = valid.pc.saturating_sub(1);
+                valid.depth = valid.depth.saturating_sub(1);
                 valid.constraints = valid_constraints;
                 worklist.push_back(valid);
                 state.constraints = invalid_constraints;

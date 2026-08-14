@@ -97,6 +97,16 @@ contract SymbolicOversizedMemoryOffset is Test {
         (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
         assertFalse(ok);
     }
+
+    function checkMixedMemoryOffsetExploresValidSibling(uint256 offset) public {
+        bool endpoint;
+        assembly {
+            endpoint := or(iszero(offset), eq(offset, not(0)))
+        }
+        vm.assume(endpoint);
+        (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
+        assertFalse(ok);
+    }
 }
 "#,
     );
@@ -114,6 +124,33 @@ contract SymbolicOversizedMemoryOffset is Test {
 [PASS] checkConstrainedOversizedMemoryAccess(uint256)
 "#]],
     );
+
+    cmd.forge_fuse();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkMixedMemoryOffsetExploresValidSibling"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMixedMemoryOffsetExploresValidSibling(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[0]
+"#]],
+    );
+    assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
 });
 
 forgetest_init!(symbolic_mstore_accepts_constrained_symbolic_offset, |prj, cmd| {
