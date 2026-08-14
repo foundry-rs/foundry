@@ -39,20 +39,22 @@ use foundry_common::{
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
-    Config, Eip1559FeeEstimatePreset, figment,
+    Config, Eip1559FeeEstimatePreset, FoundryHardfork, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
     },
 };
 use foundry_debugger::DebuggerLayout;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
         fork::ResolvedFork,
     },
     executors::ExecutorBuilder,
@@ -60,7 +62,7 @@ use foundry_evm::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
@@ -294,15 +296,16 @@ impl ScriptArgs {
 
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
-        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if self.tempo.is_tempo() || self.has_tempo_session()? {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
-        } else {
-            // Auto-detect network from fork chain ID when not explicitly configured.
-            evm_opts.infer_network_from_fork().await;
         }
+        // Discover endpoint source identity and exact hardfork even when execution network is
+        // explicit. Without an explicit selection this also infers the execution network.
+        evm_opts.infer_network_from_fork().await?;
+        config.networks = evm_opts.networks;
 
         Ok((config, evm_opts))
     }
@@ -405,6 +408,11 @@ impl ScriptArgs {
             .await;
         }
 
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return Box::pin(self.run_generic_script::<MonadEvmNetwork>(config, evm_opts)).await;
+        }
+
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
             return Box::pin(self.run_generic_script::<OpEvmNetwork>(config, evm_opts)).await;
@@ -481,17 +489,10 @@ impl ScriptArgs {
                 return Ok(None);
             }
 
-            let size_limits = pre_simulation
-                .script_config
-                .evm_opts
-                .env
-                .code_size_limit
-                .or(pre_simulation.script_config.config.code_size_limit)
-                .map(ContractSizeLimits::with_runtime_limit)
-                .unwrap_or_else(|| {
-                    let spec_id: SpecFor<FEN> = pre_simulation.script_config.config.evm_spec_id();
-                    ContractSizeLimits::for_spec_id(spec_id.into())
-                });
+            let size_limits = pre_simulation.args.contract_size_limits::<FEN>(
+                &pre_simulation.script_config.config,
+                &pre_simulation.script_config.evm_opts,
+            );
             pre_simulation.args.check_contract_sizes(
                 size_limits,
                 &pre_simulation.execution_result,
@@ -696,6 +697,29 @@ impl ScriptArgs {
         Ok(())
     }
 
+    fn contract_size_limits<FEN: FoundryEvmNetwork>(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+    ) -> ContractSizeLimits {
+        self.evm
+            .env
+            .code_size_limit
+            .or(evm_opts.env.code_size_limit)
+            .or(config.code_size_limit)
+            .map(ContractSizeLimits::with_runtime_limit)
+            .or_else(|| {
+                evm_opts
+                    .networks
+                    .contract_size_limits()
+                    .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+            })
+            .unwrap_or_else(|| {
+                let spec_id: SpecFor<FEN> = config.evm_spec_id();
+                ContractSizeLimits::for_spec_id(spec_id.into())
+            })
+    }
+
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
     const fn should_broadcast(&self) -> bool {
         self.broadcast || self.resume || self.verify
@@ -832,6 +856,10 @@ struct JsonResult<'a, N: Network> {
 pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
+    /// Exact network hardfork selected for script execution.
+    pub hardfork: Option<FoundryHardfork>,
+    /// Source chain used for trace decoding and external identifiers.
+    pub source_chain_id: Option<u64>,
     pub sender_nonce: u64,
     sender_nonce_override: Option<u64>,
     resolved_fork: Option<ResolvedFork>,
@@ -843,17 +871,44 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub tempo: TempoOpts,
 }
 
+async fn resolve_script_fork(
+    config: &mut Config,
+    evm_opts: &mut EvmOpts,
+    active_networks: Option<NetworkConfigs>,
+) -> Result<Option<ResolvedFork>> {
+    if evm_opts.fork_url.is_none() {
+        return Ok(None);
+    }
+    if evm_opts.fork_endpoint.is_none() {
+        evm_opts.infer_network_from_fork().await?;
+    }
+    if let Some(active_networks) = active_networks
+        && !active_networks.supports_fork_source(&evm_opts.networks)
+    {
+        eyre::bail!(
+            "fork network `{}` is incompatible with the active EVM",
+            evm_opts.networks.execution_network()
+        );
+    }
+    config.networks = evm_opts.networks;
+    if let Some(identity) = evm_opts.fork_endpoint.clone() {
+        let network_is_inferred = evm_opts.fork_network_is_inferred;
+        evm_opts.expect_fork_endpoint(identity, network_is_inferred);
+    }
+    evm_opts.resolve_fork().await
+}
+
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
-    pub async fn new(
-        config: Config,
-        evm_opts: EvmOpts,
+    pub(crate) async fn new(
+        mut config: Config,
+        mut evm_opts: EvmOpts,
         batch: bool,
         tempo: TempoOpts,
         sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
         // Linking happens before runner construction, so resolve the fork context now and reuse it
         // for all preflight reads and environment construction.
-        let resolved_fork = evm_opts.resolve_fork().await?;
+        let resolved_fork = resolve_script_fork(&mut config, &mut evm_opts, None).await?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if evm_opts.fork_url.is_some() {
@@ -867,6 +922,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(Self {
             config,
             evm_opts,
+            hardfork: None,
+            source_chain_id: None,
             sender_nonce,
             sender_nonce_override,
             resolved_fork,
@@ -904,7 +961,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     fn set_fork_url(&mut self, fork_url: String) {
-        self.evm_opts.fork_url = Some(fork_url);
+        self.evm_opts.set_fork_url(fork_url);
     }
 
     async fn ensure_resolved_fork(&mut self) -> Result<Option<ResolvedFork>> {
@@ -919,8 +976,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         {
             return Ok(Some(fork.clone()));
         }
+        // Script execution was already dispatched to `FEN`; compare the new selection with that
+        // execution profile, not with the previous RPC source profile.
+        let active_networks = Some(self.config.networks);
+        if let Some(fork) = &self.resolved_fork {
+            self.evm_opts.invalidate_fork_endpoint_if_source_changed(fork);
+        }
 
-        let fork = self.evm_opts.resolve_fork().await?;
+        let fork =
+            resolve_script_fork(&mut self.config, &mut self.evm_opts, active_networks).await?;
         self.resolved_fork = fork.clone();
         Ok(fork)
     }
@@ -956,21 +1020,14 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let resolved = self.ensure_resolved_fork().await?;
-        let (evm_env, mut tx_env) =
-            self.evm_opts.env_with_resolved_fork::<_, _, TxEnvFor<FEN>>(resolved.as_ref()).await?;
-        let fork_block_number = resolved.as_ref().map(ResolvedFork::number);
+        let (resolved, evm_env, mut tx_env) = self.resolve_execution_env().await?;
 
         let db = if self.evm_opts.fork_url.is_some() {
             let resolved = resolved.context("fork must be resolved")?;
             if let Some(backend) = self.backends.get(&resolved) {
                 backend.clone()
             } else {
-                let fork = self.evm_opts.get_fork(
-                    &self.config,
-                    evm_env.cfg_env.chain_id,
-                    fork_block_number,
-                );
+                let fork = self.evm_opts.get_fork_with_context(&self.config, resolved.context());
                 let backend = Backend::spawn(fork)?;
                 self.backends.insert(resolved, backend.clone());
                 backend
@@ -991,7 +1048,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
-            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 
@@ -1030,6 +1086,28 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         Ok(runner)
     }
+
+    /// Resolves the configured fork and execution spec without constructing a database or runner.
+    async fn resolve_execution_env(
+        &mut self,
+    ) -> Result<(Option<ResolvedFork>, EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
+        let resolved = self.ensure_resolved_fork().await?;
+        let (mut evm_env, tx_env) =
+            self.evm_opts.env_with_resolved_fork::<_, _, TxEnvFor<FEN>>(resolved.as_ref()).await?;
+        let fork_context = resolved.as_ref().map(ResolvedFork::context);
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        self.source_chain_id = fork_chain_id;
+        self.hardfork = resolve_execution_spec(
+            &self.config,
+            self.evm_opts.networks,
+            &mut evm_env,
+            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            None,
+            None,
+        );
+        Ok((resolved, evm_env, tx_env))
+    }
 }
 
 const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
@@ -1061,6 +1139,8 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
+    #[cfg(feature = "monad")]
+    use foundry_evm::hardforks::MonadHardfork;
     use foundry_evm::{
         revm::context::Block as _,
         traces::{
@@ -1125,6 +1205,39 @@ mod tests {
         assert_eq!(config.evm_opts.fork_block_number, None);
         assert!(config.evm_opts.resolved_fork_matches(&second));
         assert_ne!(first, second);
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_explicit_network_is_preserved_for_a_new_rpc() {
+        let (api_a, handle_a) = spawn(NodeConfig::test_monad()).await;
+        let (api_b, handle_b) = spawn(NodeConfig::test_monad()).await;
+        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_b.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle_a.http_endpoint()),
+            sender: handle_a.dev_accounts().next().unwrap(),
+            networks: NetworkConfigs::with_ethereum(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(config.evm_opts.networks, NetworkConfigs::with_ethereum());
+
+        config.set_fork_url(handle_b.http_endpoint());
+        let second = config.ensure_resolved_fork().await.unwrap().unwrap();
+
+        assert_eq!(second.number(), 3);
+        assert_eq!(second.context().network_profile, NetworkConfigs::with_monad());
+        assert_eq!(config.evm_opts.networks, NetworkConfigs::with_ethereum());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1338,6 +1451,74 @@ mod tests {
         assert!(config.backends.contains_key(&without_headers));
         assert!(config.backends.contains_key(&with_headers));
         assert_eq!(config.backends.len(), 2);
+    }
+
+    async fn assert_same_url_fork_auth_change_re_resolves(
+        configure_initial: impl FnOnce(&mut EvmOpts),
+        configure_changed: impl FnOnce(&mut EvmOpts),
+    ) {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        let mut evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(0),
+            networks: NetworkConfigs::with_ethereum(),
+            ..Default::default()
+        };
+        evm_opts.env.chain_id = Some(42);
+        configure_initial(&mut evm_opts);
+
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        config._get_runner(None, false, false).await.unwrap();
+        let first = config.resolved_fork().unwrap().unwrap().clone();
+        let first_instance = first.context().instance_id.unwrap();
+        assert_eq!(config.backends.len(), 1);
+
+        api.anvil_reset(None).await.unwrap();
+        assert_ne!(api.instance_id(), first_instance);
+        configure_changed(&mut config.evm_opts);
+
+        let second = config.ensure_resolved_fork().await.unwrap().unwrap();
+        assert_ne!(second.context().instance_id, Some(first_instance));
+        assert_ne!(second, first);
+        assert_eq!(config.evm_opts.fork_block_number, Some(0));
+        assert_eq!(config.evm_opts.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.evm_opts.env.chain_id, Some(42));
+        assert!(config.backends.contains_key(&first));
+        assert!(!config.backends.contains_key(&second));
+
+        config._get_runner(None, false, false).await.unwrap();
+        assert!(config.backends.contains_key(&first));
+        assert!(config.backends.contains_key(&second));
+        assert_eq!(config.backends.len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_same_url_rpc_headers_change_adopts_new_fork_identity() {
+        assert_same_url_fork_auth_change_re_resolves(
+            |evm_opts| evm_opts.rpc_headers = Some(vec!["x-fork-source: first".to_string()]),
+            |evm_opts| evm_opts.rpc_headers = Some(vec!["x-fork-source: second".to_string()]),
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_same_url_jwt_change_adopts_new_fork_identity() {
+        const FIRST_JWT: &str = "5c43996d0d150a81f06ae452fce38120d97a4156650aec7487b3384bfe32edae";
+        const SECOND_JWT: &str = "cabee703106087906e50f3e75a6ddbab60809f980511d1d1548d449d52220795";
+
+        assert_same_url_fork_auth_change_re_resolves(
+            |evm_opts| evm_opts.rpc_jwt = Some(FIRST_JWT.to_string()),
+            |evm_opts| evm_opts.rpc_jwt = Some(SECOND_JWT.to_string()),
+        )
+        .await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1718,6 +1899,43 @@ mod tests {
         assert_eq!(config.sender_nonce, 7);
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
+    async fn script_runner_preserves_nested_fork_source_chain() {
+        let (_origin_api, origin_handle) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::MonadTestnet as u64))
+                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+        )
+        .await;
+        let (_fork_api, fork_handle) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Mainnet as u64))
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+        let mut evm_opts =
+            EvmOpts { fork_url: Some(fork_handle.http_endpoint()), ..Default::default() };
+        evm_opts.infer_network_from_fork().await.unwrap();
+        let config = Config { networks: evm_opts.networks, ..Default::default() };
+        let mut script = ScriptConfig::<MonadEvmNetwork>::new(
+            config,
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let _runner = script._get_runner(None, false, false).await.unwrap();
+
+        assert_eq!(script.source_chain_id, Some(NamedChain::MonadTestnet as u64));
+        assert_eq!(script.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+    }
+
     #[test]
     fn can_parse_shared_tempo_opts() {
         let args = ScriptArgs::parse_from([
@@ -2037,6 +2255,45 @@ mod tests {
         // The CLI flag must land in evm_opts so that the size_limits computation in run() picks
         // it up via `.evm_opts.env.code_size_limit.or(config.code_size_limit)`.
         assert_eq!(args.evm.env.code_size_limit, Some(2147483647));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn contract_size_limits_use_resolved_monad_network() {
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
+        let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
+
+        let limits = args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts);
+
+        assert!(limits.runtime > ContractSizeLimits::default().runtime);
+        assert!(limits.initcode > ContractSizeLimits::default().initcode);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn contract_size_limits_prefer_cli_then_config_over_network() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--code-size-limit",
+            "64",
+        ]);
+        let mut config = Config { code_size_limit: Some(128), ..Default::default() };
+        let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
+        assert_eq!(
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
+            ContractSizeLimits::with_runtime_limit(64)
+        );
+
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
+        config.code_size_limit = Some(128);
+        assert_eq!(
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
+            ContractSizeLimits::with_runtime_limit(128)
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Gas related tests
 
 use crate::utils::http_provider_with_signer;
+use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
@@ -274,8 +275,34 @@ async fn test_fee_history_ignores_stale_cache_after_reset() {
     let new_history =
         api.fee_history(U256::from(1), BlockNumberOrTag::Number(0), vec![]).await.unwrap();
 
+    assert_eq!(genesis_base_fee, 123);
     assert_ne!(old_history.base_fee_per_gas[0], genesis_base_fee);
     assert_eq!(new_history.base_fee_per_gas[0], genesis_base_fee);
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(INITIAL_BASE_FEE)));
+
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(INITIAL_BASE_FEE));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_memory_reset_restores_explicit_genesis_base_fee() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() })),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(999)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(0));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::ZERO));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(0));
 }
 
 #[tokio::test(flavor = "multi_thread")]

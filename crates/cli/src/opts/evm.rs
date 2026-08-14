@@ -186,8 +186,8 @@ impl Provider for EvmArgs {
 
         // Only insert network flags when explicitly set via CLI to avoid overriding
         // values from foundry.toml (NetworkConfigs is flattened in Config).
-        if let Some(name) = self.networks.active_network_name() {
-            dict.insert("network".to_string(), name.into());
+        if let Some(network) = self.networks.resolved_network() {
+            dict.insert("network".to_string(), network.name().into());
         }
         if self.networks.is_celo() {
             dict.insert("celo".to_string(), true.into());
@@ -313,6 +313,26 @@ mod tests {
         let dict = data.get(&Config::selected_profile()).expect("profile dict");
         let val = dict.get("compute_units_per_second").expect("cups present");
         assert_eq!(val, &Value::from(1000u64));
+    }
+
+    #[test]
+    fn celo_network_is_included_in_provider_data() {
+        let args = EvmArgs { networks: NetworkConfigs::with_celo(), ..Default::default() };
+        let data = args.data().expect("provider data");
+        let dict = data.get(&Config::selected_profile()).expect("profile dict");
+
+        assert_eq!(dict.get("celo"), Some(&Value::from(true)));
+        assert!(!dict.contains_key("network"));
+    }
+
+    #[test]
+    fn explicit_ethereum_network_is_included_in_provider_data() {
+        let args = EvmArgs { networks: NetworkConfigs::with_ethereum(), ..Default::default() };
+        let data = args.data().expect("provider data");
+        let dict = data.get(&Config::selected_profile()).expect("profile dict");
+
+        assert_eq!(dict.get("network"), Some(&Value::from("ethereum")));
+        assert!(!dict.contains_key("celo"));
     }
 
     #[test]

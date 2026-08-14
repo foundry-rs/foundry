@@ -1195,6 +1195,414 @@ outer/=lib/outer/src/
     cmd.forge_fuse().arg("lint").assert_success();
 });
 
+forgetest!(duplicate_transitive_remappings_are_scoped_to_their_owners, |prj, cmd| {
+    let a = prj.root().join("deps-a/a");
+    let b = prj.root().join("deps-b/b");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&a, fs::create_dir_all(a.join("lib/shared/src")));
+    pretty_err(&b, fs::create_dir_all(b.join("src")));
+    pretty_err(&b, fs::create_dir_all(b.join("lib/shared/src")));
+    prj.update_config(|config| config.libs = vec!["deps-b".into(), "deps-a".into()]);
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; contract A is VersionA {}\n",
+        ),
+    );
+    pretty_err(&a, fs::write(a.join("lib/shared/src/Version.sol"), "contract VersionA {}\n"));
+    pretty_err(
+        &b,
+        fs::write(
+            b.join("src/B.sol"),
+            "import {VersionB} from \"shared/Version.sol\"; contract B is VersionB {}\n",
+        ),
+    );
+    pretty_err(&b, fs::write(b.join("lib/shared/src/Version.sol"), "contract VersionB {}\n"));
+    prj.add_source("UsesDependencies.sol", "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; import {VersionA} from \"shared/Version.sol\"; contract UsesDependencies { A a; B b; VersionA version; }\n");
+
+    let expected = str![[r#"
+deps-a/a/:shared/=deps-a/a/lib/shared/src/
+deps-b/b/:shared/=deps-b/b/lib/shared/src/
+a/=deps-a/a/src/
+b/=deps-b/b/src/
+shared/=deps-a/a/lib/shared/src/
+
+"#]];
+    cmd.arg("remappings").assert_success().stdout_eq(expected.clone());
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+    prj.update_config(|config| config.libs = vec!["deps-a".into(), "deps-b".into()]);
+    cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
+});
+
+forgetest!(contextual_remapping_dedup_uses_context_and_name, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let z = prj.root().join("lib/z");
+    for dependency in [&a, &z] {
+        pretty_err(dependency, fs::create_dir_all(dependency.join("src")));
+        pretty_err(dependency, fs::create_dir_all(dependency.join("lib/shared/src")));
+    }
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/collision")));
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("lib/z/shared/=src/collision/").unwrap().into()];
+    });
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; contract A is VersionA {}\n",
+        ),
+    );
+    pretty_err(
+        &z,
+        fs::write(
+            z.join("src/Z.sol"),
+            "import {VersionZ} from \"shared/Version.sol\"; contract Z is VersionZ {}\n",
+        ),
+    );
+    pretty_err(&a, fs::write(a.join("lib/shared/src/Version.sol"), "contract VersionA {}\n"));
+    pretty_err(&z, fs::write(z.join("lib/shared/src/Version.sol"), "contract VersionZ {}\n"));
+    prj.add_source(
+        "UsesDependencies.sol",
+        "import {A} from \"a/A.sol\"; import {Z} from \"z/Z.sol\"; contract UsesDependencies is A, Z {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/z/shared/=src/collision/
+lib/a/:shared/=lib/a/lib/shared/src/
+lib/z/:shared/=lib/z/lib/shared/src/
+a/=lib/a/src/
+shared/=lib/a/lib/shared/src/
+z/=lib/z/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(contextual_auto_remapping_uses_configured_dependency_source, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let b = prj.root().join("lib/b");
+    let shared_a = a.join("lib/shared");
+    let shared_b = b.join("lib/shared");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&b, fs::create_dir_all(b.join("src")));
+    pretty_err(&shared_a, fs::create_dir_all(shared_a.join("custom-source")));
+    pretty_err(&shared_b, fs::create_dir_all(shared_b.join("src")));
+    pretty_err(&a, fs::write(a.join("foundry.toml"), "[profile.default]\nlibs = [\"lib\"]\n"));
+    pretty_err(
+        &shared_a,
+        fs::write(shared_a.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n"),
+    );
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; contract A is VersionA {}\n",
+        ),
+    );
+    pretty_err(
+        &shared_a,
+        fs::write(shared_a.join("custom-source/Version.sol"), "contract VersionA {}\n"),
+    );
+    pretty_err(
+        &b,
+        fs::write(
+            b.join("src/B.sol"),
+            "import {VersionB} from \"shared/Version.sol\"; contract B is VersionB {}\n",
+        ),
+    );
+    pretty_err(&shared_b, fs::write(shared_b.join("src/Version.sol"), "contract VersionB {}\n"));
+    prj.add_source("UsesDependencies.sol", "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; contract UsesDependencies { A a; B b; }\n");
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/a/:shared/=lib/a/lib/shared/custom-source/
+lib/b/:shared/=lib/b/lib/shared/src/
+a/=lib/a/src/
+b/=lib/b/src/
+shared/=lib/b/lib/shared/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(explicit_context_precedes_nested_auto_remapping, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let shared_a = a.join("lib/shared/src");
+    let x = a.join("lib/x");
+    let shared_x = x.join("lib/shared/src");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&shared_a, fs::create_dir_all(&shared_a));
+    pretty_err(&x, fs::create_dir_all(x.join("src")));
+    pretty_err(&shared_x, fs::create_dir_all(&shared_x));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/override")));
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("lib/a/:shared/=src/override/").unwrap().into()];
+    });
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/override/Version.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(&shared_a, fs::write(shared_a.join("Version.sol"), "contract ShadowedA {}\n"));
+    pretty_err(&shared_x, fs::write(shared_x.join("Version.sol"), "contract ShadowedX {}\n"));
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {Selected} from \"shared/Version.sol\"; import {X} from \"x/X.sol\"; contract A is Selected, X {}\n",
+        ),
+    );
+    pretty_err(
+        &x,
+        fs::write(
+            x.join("src/X.sol"),
+            "import {Selected} from \"shared/Version.sol\"; contract X is Selected {}\n",
+        ),
+    );
+    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; contract UsesA is A {}\n");
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| config.remappings.clear());
+    let remapping = "lib/a/:shared/=src/override/";
+    cmd.forge_fuse().args(["build", "--force", "--remappings", remapping]).assert_success();
+    cmd.forge_fuse().args(["lint", "--remappings", remapping]).assert_success();
+
+    #[cfg(unix)]
+    {
+        let linked_parent = tempfile::tempdir().unwrap();
+        let linked_root = linked_parent.path().join("linked-root");
+        std::os::unix::fs::symlink(prj.root(), &linked_root).unwrap();
+        let linked_context = linked_root.join("lib/a");
+        let remapping = format!("{}:shared/=src/override/", linked_context.display());
+        let root = linked_root.to_str().unwrap();
+        cmd.forge_fuse()
+            .args(["build", "--force", "--root", root, "--remappings", &remapping])
+            .assert_success();
+        cmd.forge_fuse()
+            .args(["lint", "--root", root, "--remappings", &remapping])
+            .assert_success();
+    }
+});
+
+forgetest!(slashless_context_is_a_lexical_prefix, |prj, cmd| {
+    let abc = prj.root().join("lib/abc");
+    let shared = abc.join("lib/shared/src");
+    pretty_err(&abc, fs::create_dir_all(abc.join("src")));
+    pretty_err(&shared, fs::create_dir_all(&shared));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/override")));
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/override/Version.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(&shared, fs::write(shared.join("Version.sol"), "contract Shadowed {}\n"));
+    pretty_err(
+        &abc,
+        fs::write(
+            abc.join("src/Abc.sol"),
+            "import {Selected} from \"shared/Version.sol\"; contract Abc is Selected {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesAbc.sol",
+        "import {Abc} from \"abc/Abc.sol\"; contract UsesAbc is Abc {}\n",
+    );
+
+    let remapping = "lib/a:shared/=src/override/";
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str(remapping).unwrap().into()];
+    });
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| config.remappings.clear());
+    cmd.forge_fuse().args(["build", "--force", "--remappings", remapping]).assert_success();
+    cmd.forge_fuse().args(["lint", "--remappings", remapping]).assert_success();
+});
+
+forgetest!(nested_auto_remapping_preserves_declared_precedence, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let pinned_a = a.join("src/pinned");
+    let shared_a = a.join("lib/shared/src");
+    let x = a.join("lib/x");
+    let shared_x = x.join("lib/shared");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&pinned_a, fs::create_dir_all(&pinned_a));
+    pretty_err(&shared_a, fs::create_dir_all(&shared_a));
+    pretty_err(&x, fs::create_dir_all(x.join("src")));
+    pretty_err(&shared_x, fs::create_dir_all(shared_x.join("src")));
+    pretty_err(&a, fs::write(a.join("foundry.toml"), "[profile.default]\nlibs = [\"lib\"]\n"));
+    pretty_err(&a, fs::write(a.join("remappings.txt"), "shared/=src/pinned/\n"));
+    pretty_err(&pinned_a, fs::write(pinned_a.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&pinned_a, fs::write(pinned_a.join("Version.sol"), "contract VersionA {}\n"));
+    pretty_err(&shared_a, fs::write(shared_a.join("Version.sol"), "contract ShadowedA {}\n"));
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; import {X} from \"x/X.sol\"; contract A is VersionA, X {}\n",
+        ),
+    );
+    pretty_err(
+        &x,
+        fs::write(
+            x.join("src/X.sol"),
+            "import {VersionX} from \"shared/Version.sol\"; contract X is VersionX {}\n",
+        ),
+    );
+    pretty_err(&shared_x, fs::write(shared_x.join("src/Version.sol"), "contract VersionX {}\n"));
+    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"shared/Marker.sol\"; contract UsesA is A, Marker {}\n");
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/a/lib/x/:shared/=lib/a/lib/x/lib/shared/src/
+lib/a/:shared/=lib/a/src/pinned/
+a/=lib/a/src/
+shared/=lib/a/src/pinned/
+x/=lib/a/lib/x/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(nested_contextual_remapping_precedes_auto_detection, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let b = prj.root().join("lib/b");
+    pretty_err(&a, fs::create_dir_all(a.join("src/pinned")));
+    pretty_err(&a, fs::create_dir_all(a.join("lib/shared/src")));
+    pretty_err(&b, fs::create_dir_all(b.join("src")));
+    pretty_err(&b, fs::create_dir_all(b.join("lib/shared/src")));
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"src/../src/:shared/=src/pinned/\"]\n",
+        ),
+    );
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {Selected} from \"shared/Version.sol\"; contract A is Selected {}\n",
+        ),
+    );
+    pretty_err(&a, fs::write(a.join("src/pinned/Version.sol"), "contract Selected {}\n"));
+    pretty_err(&a, fs::write(a.join("lib/shared/src/Version.sol"), "contract ShadowedA {}\n"));
+    pretty_err(
+        &b,
+        fs::write(
+            b.join("src/B.sol"),
+            "import {VersionB} from \"shared/Version.sol\"; contract B is VersionB {}\n",
+        ),
+    );
+    pretty_err(&b, fs::write(b.join("lib/shared/src/Version.sol"), "contract VersionB {}\n"));
+    prj.add_source(
+        "UsesDependencies.sol",
+        "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; contract UsesDependencies is A, B {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/a/src/:shared/=lib/a/src/pinned/
+lib/a/:shared/=lib/a/lib/shared/src/
+lib/b/:shared/=lib/b/lib/shared/src/
+a/=lib/a/src/
+b/=lib/b/src/
+shared/=lib/a/lib/shared/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(external_dependency_uses_contextual_remapping, |prj, cmd| {
+    let project = prj.root().join("utils");
+    let dependency = prj.root().join("node_modules/dependency");
+    let library = prj.root().join("node_modules/library/src");
+    pretty_err(&project, fs::create_dir_all(project.join("src")));
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("src/internal")));
+    pretty_err(&library, fs::create_dir_all(&library));
+    pretty_err(
+        &project,
+        fs::write(
+            project.join("foundry.toml"),
+            r#"
+[profile.default]
+src = "src"
+allow_paths = ["../"]
+auto_detect_remappings = false
+remappings = [
+    "dependency/=../node_modules/dependency/src/",
+    "../node_modules/dependency/:library/=../node_modules/library/src/",
+    "library/=../node_modules/library/",
+]
+"#,
+        ),
+    );
+    pretty_err(
+        &project,
+        fs::write(
+            project.join("src/Root.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {Dep} from "dependency/Dep.sol";
+import {RootLibrary} from "library/src/RootLibrary.sol";
+
+contract Root is Dep, RootLibrary {}
+"#,
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/Dep.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {Core} from "./internal/Core.sol";
+
+contract Dep is Core {}
+"#,
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/internal/Core.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {DependencyLibrary} from "library/DependencyLibrary.sol";
+
+contract Core is DependencyLibrary {}
+"#,
+        ),
+    );
+    pretty_err(
+        &library,
+        fs::write(
+            library.join("RootLibrary.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0;\ncontract RootLibrary {}\n",
+        ),
+    );
+    pretty_err(
+        &library,
+        fs::write(
+            library.join("DependencyLibrary.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0;\ncontract DependencyLibrary {}\n",
+        ),
+    );
+
+    cmd.current_dir(project).args(["build", "--no-lint"]).assert_success();
+});
+
 forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
     let dependency = prj.paths().libraries[0].join("dep");
     pretty_err(&dependency, fs::create_dir_all(dependency.join("src")));

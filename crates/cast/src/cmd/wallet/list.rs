@@ -139,11 +139,16 @@ impl ListArgs {
         let mut accounts = Vec::new();
 
         // List all files within the keystore directory.
-        for entry in std::fs::read_dir(keystore_dir)? {
-            let path = entry?.path();
+        let mut paths = std::fs::read_dir(keystore_dir)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        paths.sort();
+        for path in paths {
             if path.is_file()
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
+                // Skip recognized Touch ID sidecars while retaining ambiguous files.
+                && !matches!(super::is_touch_id_sidecar(&path), Ok(true))
             {
                 let account = local_account_name(name);
                 if format_json {

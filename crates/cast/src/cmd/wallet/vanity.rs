@@ -10,8 +10,11 @@ use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -190,7 +193,17 @@ fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
 
     wallets.wallets.push(WalletData::new(wallet));
 
-    fs::write(path, serde_json::to_string_pretty(&wallets)?)?;
+    let contents = serde_json::to_string_pretty(&wallets)?;
+    let mut options = fs::File::options();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())?;
     Ok(())
 }
 
@@ -424,6 +437,28 @@ mod tests {
 
         assert!(err.to_string().contains("failed to parse wallet file"));
         assert_eq!(fs::read_to_string(tmp.path()).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_wallet_file_is_owner_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("wallets.json");
+
+        save_wallet_to_file(&PrivateKeySigner::random(), &path).unwrap();
+
+        assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_wallet_file_is_made_owner_only() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o644)).unwrap();
+
+        save_wallet_to_file(&PrivateKeySigner::random(), tmp.path()).unwrap();
+
+        assert_eq!(fs::metadata(tmp.path()).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     #[test]
