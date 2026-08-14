@@ -87,3 +87,52 @@ impl RevertStateSnapshotAction {
         matches!(self, Self::RevertKeep)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Address;
+
+    #[test]
+    fn state_snapshot_serializes_maps_in_key_order() {
+        let low_address = Address::from_word(B256::from(U256::from(1)));
+        let high_address = Address::from_word(B256::from(U256::from(2)));
+        let low_slot = U256::from(1);
+        let high_slot = U256::from(2);
+        let mut snapshot = StateSnapshot::default();
+
+        snapshot.accounts.insert(high_address, AccountInfo::from_balance(U256::from(2)));
+        snapshot.accounts.insert(low_address, AccountInfo::from_balance(U256::from(1)));
+        snapshot.storage.insert(
+            high_address,
+            [(high_slot, U256::from(200)), (low_slot, U256::from(100))].into_iter().collect(),
+        );
+        snapshot.storage.insert(
+            low_address,
+            [(high_slot, U256::from(200)), (low_slot, U256::from(100))].into_iter().collect(),
+        );
+        snapshot.block_hashes.insert(high_slot, B256::from(U256::from(200)));
+        snapshot.block_hashes.insert(low_slot, B256::from(U256::from(100)));
+
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let storage_start = json.find("\"storage\"").unwrap();
+        let block_hashes_start = json.find("\"block_hashes\"").unwrap();
+        let accounts = &json[..storage_start];
+        let storage = &json[storage_start..block_hashes_start];
+        let block_hashes = &json[block_hashes_start..];
+        let low_address = serde_json::to_string(&low_address).unwrap();
+        let high_address = serde_json::to_string(&high_address).unwrap();
+        let low_slot = serde_json::to_string(&low_slot).unwrap();
+        let high_slot = serde_json::to_string(&high_slot).unwrap();
+
+        assert!(accounts.find(&low_address).unwrap() < accounts.find(&high_address).unwrap());
+        let low_storage_start = storage.find(&low_address).unwrap();
+        let high_storage_start = storage.find(&high_address).unwrap();
+        assert!(low_storage_start < high_storage_start);
+        let low_storage = &storage[low_storage_start..high_storage_start];
+        let high_storage = &storage[high_storage_start..];
+        assert!(low_storage.find(&low_slot).unwrap() < low_storage.find(&high_slot).unwrap());
+        assert!(high_storage.find(&low_slot).unwrap() < high_storage.find(&high_slot).unwrap());
+        assert!(block_hashes.find(&low_slot).unwrap() < block_hashes.find(&high_slot).unwrap());
+    }
+}

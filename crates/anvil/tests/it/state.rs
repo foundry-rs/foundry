@@ -296,12 +296,11 @@ async fn test_load_state_fork_rollback_reanchors_time_to_fork_head() {
     );
 }
 
-// A state file can carry stale blocks above its own best block: dump an older state, keep
-// mining, load that older dump back (best rolls back, the higher block stays in storage),
-// then dump again. Loading such a file must anchor block time on the canonical best block,
-// not on the highest stale block and not on the node's startup anchor.
+// A state file can carry competing blocks at the same height: dump an older state, keep mining,
+// load that older dump back, then mine a replacement block. Loading such a file must select the
+// replacement as the canonical head and continue its timeline.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_load_state_stale_blocks_do_not_leak_into_timeline() {
+async fn test_load_state_stale_blocks_preserve_canonical_head() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let one_year_ahead = now + 31_536_000;
@@ -317,13 +316,25 @@ async fn test_load_state_stale_blocks_do_not_leak_into_timeline() {
     api.evm_set_next_block_timestamp(two_years_ahead).unwrap();
     api.mine_one().await.unwrap();
     assert!(api.anvil_load_state(older_dump).await.unwrap());
-    let stale_dump = api.serialized_state(false).await.unwrap();
-    let max_block = stale_dump.blocks.iter().map(|b| b.header.number).max().unwrap();
-    assert_eq!(max_block, 2, "the dump must carry the stale height-2 block");
-    assert_eq!(stale_dump.best_block_number, Some(1));
 
-    // A fresh node loading that file continues the canonical (height 1) timeline.
-    let (api, _handle) = spawn(NodeConfig::test().with_init_state(Some(stale_dump))).await;
+    // Mine a replacement at height 2. The stale height-2 block remains in storage, while the
+    // replacement becomes canonical.
+    api.evm_set_next_block_timestamp(one_year_ahead + 1).unwrap();
+    api.mine_one().await.unwrap();
+    let canonical_head = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .clone();
+    let state = api.serialized_state(false).await.unwrap();
+    assert_eq!(state.blocks.iter().filter(|block| block.header.number == 2).count(), 2);
+    assert_eq!(state.best_block_number, Some(2));
+
+    // A fresh node selects the replacement as its head and mines on top of it.
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state(Some(state))).await;
+    assert_eq!(api.backend.best_hash(), canonical_head.hash);
     api.mine_one().await.unwrap();
     let new_head = api
         .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
@@ -332,6 +343,7 @@ async fn test_load_state_stale_blocks_do_not_leak_into_timeline() {
         .unwrap()
         .header
         .clone();
+    assert_eq!(new_head.parent_hash, canonical_head.hash);
     assert!(
         new_head.timestamp >= one_year_ahead && new_head.timestamp < two_years_ahead,
         "block after loading a dump with stale blocks must continue the canonical timeline: \

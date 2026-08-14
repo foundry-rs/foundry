@@ -715,7 +715,7 @@ mod tests {
     use crate::eth::backend::{db::Db, mem::in_memory_db::StateRootDb};
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
-    use revm::{database::DatabaseRef, state::AccountInfo};
+    use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;
 
     #[test]
@@ -954,6 +954,62 @@ mod tests {
         let mut loaded = BlockchainStorage::<FoundryNetwork>::empty();
         loaded.load_blocks(storage.serialized_blocks());
         assert_eq!(loaded.hashes.get(&1), Some(&canonical_hash));
+    }
+
+    #[test]
+    fn serialized_transactions_are_sorted() {
+        let transaction = |block_number, transaction_index, transaction_hash| MinedTransaction::<
+            FoundryNetwork,
+        > {
+            info: TransactionInfo {
+                transaction_hash,
+                transaction_index,
+                from: Address::ZERO,
+                to: None,
+                contract_address: None,
+                traces: Vec::new(),
+                exit: InstructionResult::Stop,
+                out: None,
+                nonce: 0,
+                gas_used: 0,
+            },
+            receipt: FoundryReceiptEnvelope::Legacy(Default::default()),
+            block_hash: B256::ZERO,
+            block_number,
+        };
+        let first = B256::from(U256::from(1));
+        let second = B256::from(U256::from(2));
+        let third = B256::from(U256::from(3));
+        let fourth = B256::from(U256::from(4));
+        let mut storage = BlockchainStorage::<FoundryNetwork>::empty();
+        for transaction in [
+            transaction(2, 0, fourth),
+            transaction(1, 1, third),
+            transaction(1, 0, second),
+            transaction(1, 0, first),
+        ] {
+            storage.transactions.insert(transaction.info.transaction_hash, transaction);
+        }
+
+        let hashes = storage
+            .serialized_transactions()
+            .into_iter()
+            .map(|transaction| transaction.info.transaction_hash)
+            .collect::<Vec<_>>();
+        assert_eq!(hashes, [first, second, third, fourth]);
+    }
+
+    #[test]
+    fn serialized_historical_states_are_sorted() {
+        let hashes = [3, 1, 2].map(|number| B256::from(U256::from(number)));
+        let mut states = InMemoryBlockStates::default();
+        for hash in hashes {
+            states.insert(hash, StateDb::new(MemDb::default()));
+        }
+
+        let serialized_hashes =
+            states.serialized_states().into_iter().map(|(hash, _)| hash).collect::<Vec<_>>();
+        assert_eq!(serialized_hashes, [hashes[1], hashes[2], hashes[0]]);
     }
 
     #[test]
