@@ -2987,6 +2987,51 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
 
+    /// Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and
+    /// `point2 = (pointX2, pointY2)`.
+    /// The point at infinity is represented as `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
+
+    /// Adds the secp256k1 projective points `point1 = (pointX1, pointY1, pointZ1)` and
+    /// `point2 = (pointX2, pointY2, pointZ2)`.
+    /// The point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as
+    /// `(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.
+    #[cheatcode(group = Crypto)]
+    function ecAddProjective(
+        uint256 pointX1,
+        uint256 pointY1,
+        uint256 pointZ1,
+        uint256 pointX2,
+        uint256 pointY2,
+        uint256 pointZ2
+    )
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+
+    /// Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.
+    /// The scalar is reduced modulo the secp256k1 group order.
+    /// The point at infinity is represented as `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
+
+    /// Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.
+    /// The scalar is reduced modulo the secp256k1 group order.
+    /// The point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as
+    /// `(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.
+    #[cheatcode(group = Crypto)]
+    function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+
     /// Generates an Ed25519 key pair from a deterministic salt.
     /// Returns (publicKey, privateKey) as 32-byte values.
     #[cheatcode(group = Crypto, safety = Safe)]
