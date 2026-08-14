@@ -1458,7 +1458,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let value = call.transfer_value();
 
             // Match every partial/full calldata
-            for (calldata, (expected, actual_count)) in expected_calls_for_target {
+            for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target
+            {
                 // Increment actual times seen if...
                 // The calldata is at most, as big as this call's input, and
                 if calldata.len() <= input.len() &&
@@ -1469,7 +1470,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // The gas matches, if provided
                     expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
-                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit)
+                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit) &&
+                    // The call scheme matches, if provided
+                    expected_scheme.is_none_or(|scheme| scheme == call.scheme)
                 {
                     *actual_count += 1;
                 }
@@ -2672,7 +2675,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Match expected calls
             for (address, calldatas) in &self.expected_calls {
                 // Loop over each address, and for each address, loop over each calldata it expects.
-                for (calldata, (expected, actual_count)) in calldatas {
+                for ((calldata, scheme), (expected, actual_count)) in calldatas {
                     // Grab the values we expect to see
                     let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
 
@@ -2693,6 +2696,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                             value.as_ref().map(|v| format!("value {v}")),
                             gas.map(|g| format!("gas {g}")),
                             min_gas.map(|g| format!("minimum gas {g}")),
+                            scheme.map(|scheme| format!("call type {scheme:?}")),
                         ]
                         .into_iter()
                         .flatten()

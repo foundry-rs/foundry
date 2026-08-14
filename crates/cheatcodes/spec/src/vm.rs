@@ -1185,6 +1185,11 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data, uint64 count) external;
 
+    /// Expects a delegate call to an address with the specified calldata.
+    /// Calldata can either be a strict or a partial match.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectDelegateCall(address callee, bytes calldata data) external;
+
     /// Expect a call to an address with the specified `msg.value` and calldata, and a *minimum* amount of gas.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
