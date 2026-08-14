@@ -669,6 +669,24 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     assert_eq!(greeting_after_change, "World!");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn state_dump_is_deterministic() {
+    let timestamp = 1_700_000_000u64;
+    let (api, handle) = spawn(NodeConfig::test().with_genesis_timestamp(timestamp.into())).await;
+    let provider = handle.http_provider();
+    let greeter = Greeter::deploy(&provider, "Hello".to_string()).await.unwrap();
+    greeter.setGreeting("World!".to_string()).send().await.unwrap().watch().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let dump = api.anvil_dump_state(Some(true)).await.unwrap();
+    assert_eq!(dump, api.anvil_dump_state(Some(true)).await.unwrap());
+
+    let (loaded_api, _handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(timestamp.into())).await;
+    assert!(loaded_api.anvil_load_state(dump.clone()).await.unwrap());
+    assert_eq!(dump, loaded_api.anvil_dump_state(Some(true)).await.unwrap());
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9053>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_load_state() {

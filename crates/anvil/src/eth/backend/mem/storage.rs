@@ -265,6 +265,7 @@ impl InMemoryBlockStates {
                 states.push((*hash, state_snapshot));
             }
         }
+        states.sort_unstable_by_key(|(hash, _)| *hash);
 
         SerializableHistoricalStates::new(states)
     }
@@ -467,7 +468,14 @@ impl<N: Network> BlockchainStorage<N> {
 
     /// Serialize all blocks in storage
     pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
-        self.blocks.values().map(|block| block.clone().into()).collect()
+        let mut blocks = self.blocks.iter().collect::<Vec<_>>();
+        blocks.sort_unstable_by_key(|(hash, block)| {
+            let hash = **hash;
+            let number = block.header.number();
+            let is_canonical = self.hashes.get(&number).is_some_and(|canonical| *canonical == hash);
+            (number, is_canonical, hash)
+        });
+        blocks.into_iter().map(|(_, block)| block.clone().into()).collect()
     }
 
     /// Adds a block to storage and returns its hash.
@@ -523,7 +531,15 @@ impl<N: Network> BlockchainStorage<N> {
 
 impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> {
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
-        self.transactions.values().map(|tx: &MinedTransaction<N>| tx.clone().into()).collect()
+        let mut transactions = self
+            .transactions
+            .values()
+            .map(|tx: &MinedTransaction<N>| SerializableTransaction::from(tx.clone()))
+            .collect::<Vec<_>>();
+        transactions.sort_unstable_by_key(|tx| {
+            (tx.block_number, tx.info.transaction_index, tx.info.transaction_hash)
+        });
+        transactions
     }
 
     /// Deserialize and add all transactions data to the backend storage
@@ -912,6 +928,32 @@ mod tests {
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
+    }
+
+    #[test]
+    fn serialized_blocks_puts_canonical_block_last() {
+        let block = |timestamp| {
+            create_block(
+                Header { number: 1, timestamp, ..Default::default() }.into(),
+                Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+            )
+        };
+        let block_a = block(1);
+        let block_b = block(2);
+        let (canonical, stale) = if block_a.header.hash_slow() < block_b.header.hash_slow() {
+            (block_a, block_b)
+        } else {
+            (block_b, block_a)
+        };
+
+        let mut storage = BlockchainStorage::<FoundryNetwork>::empty();
+        let stale_hash = storage.insert_block(stale);
+        let canonical_hash = storage.insert_block(canonical);
+        assert!(canonical_hash < stale_hash);
+
+        let mut loaded = BlockchainStorage::<FoundryNetwork>::empty();
+        loaded.load_blocks(storage.serialized_blocks());
+        assert_eq!(loaded.hashes.get(&1), Some(&canonical_hash));
     }
 
     #[test]
