@@ -98,6 +98,12 @@ contract SymbolicOversizedMemoryOffset is Test {
         assertFalse(ok);
     }
 
+    function checkOversizedRoundedMemoryAccess() public {
+        uint256 offset = (uint256(type(uint64).max) & ~uint256(31)) - 31;
+        (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
+        assertFalse(ok);
+    }
+
     function checkMixedMemoryOffsetExploresValidSibling(uint256 offset) public {
         bool endpoint;
         assembly {
@@ -122,6 +128,7 @@ contract SymbolicOversizedMemoryOffset is Test {
         foundry_test_utils::str![[r#"
 [PASS] checkOversizedFixedMemoryAccesses()
 [PASS] checkConstrainedOversizedMemoryAccess(uint256)
+[PASS] checkOversizedRoundedMemoryAccess()
 "#]],
     );
 

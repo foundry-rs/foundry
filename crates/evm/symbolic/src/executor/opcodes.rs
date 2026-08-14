@@ -297,7 +297,7 @@ impl SymbolicExecutor {
         offset: &SymExpr,
         size: usize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let max_offset = usize::MAX - size;
+        let max_offset = (usize::MAX & !31usize) - size;
         if let Some(offset) = state.constrained_usize_checked(&mut self.cx, offset) {
             if offset.is_ok_and(|offset| offset <= max_offset) {
                 return Ok(None);
@@ -315,16 +315,20 @@ impl SymbolicExecutor {
             SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), max_offset);
         let (valid_constraints, valid_sat) =
             self.constraints_with_condition(state, representable.clone())?;
-        let invalid = representable.not(&mut self.cx);
+        let invalid = representable.clone().not(&mut self.cx);
         let (invalid_constraints, invalid_sat) = self.constraints_with_condition(state, invalid)?;
         match (valid_sat, invalid_sat) {
             (true, true) => {
+                let (valid_seed_models, invalid_seed_models) =
+                    state.split_corpus_seed_models(&representable);
                 let mut valid = state.clone();
                 valid.pc = valid.pc.saturating_sub(1);
                 valid.depth = valid.depth.saturating_sub(1);
                 valid.constraints = valid_constraints;
+                valid.set_corpus_seed_models(valid_seed_models);
                 worklist.push_back(valid);
                 state.constraints = invalid_constraints;
+                state.set_corpus_seed_models(invalid_seed_models);
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 Ok(Some(StepOutcome::Revert))
             }
