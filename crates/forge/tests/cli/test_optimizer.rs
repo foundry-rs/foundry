@@ -31,8 +31,10 @@ exit 1
         config.solc = Some(foundry_config::SolcReq::Local(solc));
     });
 
-    let output =
-        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--match-contract", "CounterTest", "--allow-local-compiler"])
+        .assert_success();
     let stdout = output.get_output().stdout_lossy();
     assert!(
         stdout.contains("Ran 2 tests for test/Counter.t.sol:CounterTest"),
@@ -40,7 +42,7 @@ exit 1
     );
     assert!(!invoked.exists(), "filtered test compilation did not reuse the preprocessed cache");
 
-    cmd.forge_fuse().args(["selectors", "list"]).assert_success();
+    cmd.forge_fuse().args(["selectors", "list", "--allow-local-compiler"]).assert_success();
     assert!(!invoked.exists(), "selector compilation did not reuse the preprocessed cache");
 });
 

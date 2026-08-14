@@ -19,9 +19,9 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
-use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
+use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{
-    Chain, Config, SolcReq,
+    Chain, Config,
     figment::{
         Error, Metadata, Profile, Provider as FigmentProvider,
         value::{Dict, Map, Value},
@@ -825,10 +825,7 @@ impl VerifyArgs {
             let mut version = if let Some(ref version) = self.compiler_version {
                 version.trim_start_matches('v').parse()?
             } else if let Some(ref solc) = config.solc {
-                match solc {
-                    SolcReq::Version(version) => version.to_owned(),
-                    SolcReq::Local(solc) => Solc::new(solc)?.version,
-                }
+                solc.try_version()?
             } else if let Some(entry) =
                 cache.as_ref().and_then(|cache| cache.files.get(&contract_path).cloned())
             {
