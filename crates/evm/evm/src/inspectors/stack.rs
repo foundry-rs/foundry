@@ -14,7 +14,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{ContextAuxUpdate, DatabaseError, DatabaseExt, JournaledState},
-    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH, MAGIC_SKIP},
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
@@ -890,8 +890,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             },
         );
 
-        // Record first address that reverted the call.
-        if result.is_revert() && self.reverter.is_none() {
+        // Record the first address that reverted the call, but let an actual skip take precedence
+        // over earlier caught reverts so its cheatcode origin is preserved.
+        let is_skip =
+            inputs.target_address == CHEATCODE_ADDRESS && outcome.output().starts_with(MAGIC_SKIP);
+        if result.is_revert() && (self.reverter.is_none() || is_skip) {
             self.reverter = Some(inputs.target_address);
         }
     }
