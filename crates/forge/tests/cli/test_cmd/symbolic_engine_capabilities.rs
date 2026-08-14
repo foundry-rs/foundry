@@ -255,6 +255,40 @@ Ran 1 test for test/SoladyMinMax.t.sol:SoladyMinMax
 });
 
 // ---------------------------------------------------------------------------
+// EVM word-ring distributivity — nonlinear proof without overflow assumptions.
+// ---------------------------------------------------------------------------
+// Addition and multiplication form a ring modulo 2^256. This identity must hold even when any
+// intermediate operation wraps; proving it exercises exact nonlinear algebra rather than an
+// unbounded-integer approximation.
+forgetest_init!(word_ring_distributivity_passes, |prj, cmd| {
+    skip_unless_z3!("word_ring_distributivity_passes");
+
+    prj.add_test(
+        "WordRingDistributivity.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract WordRingDistributivity is Test {
+    function checkDistributivity(uint256 x, uint256 y, uint256 z) public pure {
+        unchecked {
+            assertEq((x + y) * z, x * z + y * z);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkDistributivity"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/WordRingDistributivity.t.sol:WordRingDistributivity
+[PASS] checkDistributivity(uint256,uint256,uint256) ([METRICS])
+...
+"#]]);
+});
+
+// ---------------------------------------------------------------------------
 // Cancun transient storage (TLOAD / TSTORE).
 // ---------------------------------------------------------------------------
 // Verifies symbolic semantics: `TSTORE` is visible within a transaction but
