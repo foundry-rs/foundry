@@ -546,8 +546,8 @@ impl RunArgs {
                         continue;
                     }
 
-                    let context_aux = block_context.as_ref().map_or_else(
-                        || FEN::EvmFactory::default().context_for_transaction(&tx_env),
+                    let chain_context = block_context.as_ref().map_or_else(
+                        || factory.chain_context_for_transaction(&tx_env),
                         |context| context.transaction(index),
                     );
 
@@ -559,7 +559,7 @@ impl RunArgs {
                             .transact_protocol_system_with_env_and_context(
                                 evm_env.clone(),
                                 tx_env.clone(),
-                                context_aux,
+                                chain_context,
                             )
                             .wrap_err_with(|| {
                                 format!(
@@ -574,7 +574,7 @@ impl RunArgs {
                             .transact_with_env_and_context(
                                 evm_env.clone(),
                                 tx_env.clone(),
-                                context_aux,
+                                chain_context,
                             )
                             .wrap_err_with(|| {
                                 format!(
@@ -588,7 +588,7 @@ impl RunArgs {
                         if let Err(error) = executor.deploy_with_env_and_context(
                             evm_env.clone(),
                             tx_env.clone(),
-                            context_aux,
+                            chain_context,
                             None,
                         ) {
                             match error {
@@ -642,8 +642,8 @@ impl RunArgs {
             } else {
                 0
             };
-            let context_aux = block_context.as_ref().map_or_else(
-                || FEN::EvmFactory::default().context_for_transaction(&tx_env),
+            let chain_context = block_context.as_ref().map_or_else(
+                || factory.chain_context_for_transaction(&tx_env),
                 |context| context.transaction(target_index),
             );
 
@@ -656,21 +656,21 @@ impl RunArgs {
                 TraceResult::from(executor.transact_protocol_system_with_env_and_context(
                     evm_env,
                     tx_env,
-                    context_aux,
+                    chain_context,
                 )?)
             } else if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
                 TraceResult::from(executor.transact_with_env_and_context(
                     evm_env,
                     tx_env,
-                    context_aux,
+                    chain_context,
                 )?)
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
                 TraceResult::try_from(executor.deploy_with_env_and_context(
                     evm_env,
                     tx_env,
-                    context_aux,
+                    chain_context,
                     None,
                 ))?
             }
