@@ -107,6 +107,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+[target.'cfg(unix)'.dev-dependencies]
+# Keep this aligned with the Chisel PTY test dependency.
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
+
 [dev-dependencies]
 alloy-hardforks.workspace = true
 alloy-serde.workspace = true
