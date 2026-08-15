@@ -5926,6 +5926,7 @@ where
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
+            self.time.mark_block_created();
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
                 storage.monad_block_participants.insert(block_hash, participants);
