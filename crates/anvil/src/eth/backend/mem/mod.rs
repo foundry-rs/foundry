@@ -5096,8 +5096,13 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let Some((num, hash)) = self.active_state_snapshots.lock().remove(&id) else {
-            return Ok(false);
+        let (num, hash) = {
+            let mut snapshots = self.active_state_snapshots.lock();
+            let Some(snapshot) = snapshots.remove(&id) else {
+                return Ok(false);
+            };
+            snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+            snapshot
         };
         let best_block_hash = {
             // revert the storage that's newer than the snapshot

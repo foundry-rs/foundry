@@ -116,7 +116,7 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
 
     /// Removes the snapshot from the tracked snapshot and sets it as the current state
     pub fn revert_state_snapshot(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
-        let state_snapshot = { self.state_snapshots().lock().remove_at(id) };
+        let state_snapshot = { self.state_snapshots().lock().remove(id) };
         if let Some(state_snapshot) = state_snapshot {
             if action.is_keep() {
                 self.state_snapshots().lock().insert_at(state_snapshot.clone(), id);

@@ -721,6 +721,22 @@ async fn test_fork_revert_next_block_timestamp() {
     assert!(block.header.timestamp >= latest_block.header.timestamp);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_invalidates_newer_snapshots() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let first_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    let second_snapshot = api.evm_snapshot().await.unwrap();
+
+    assert!(api.evm_revert(first_snapshot).await.unwrap());
+    assert!(!api.evm_revert(second_snapshot).await.unwrap());
+
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(latest_block, initial_block);
+}
+
 // Tests that `anvil_setNextBlockPrevRandao` overrides the `prevrandao` (block header `mixHash`) of
 // the next mined block, and that the override is one-shot: subsequent blocks fall back to anvil's
 // default per-block `prevrandao` derivation.
