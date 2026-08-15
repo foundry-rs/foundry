@@ -10,8 +10,12 @@ use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+#[cfg(target_os = "macos")]
+use std::os::fd::AsRawFd;
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     io::Write,
@@ -179,8 +183,14 @@ impl VanityArgs {
 /// If the file exists, the wallet data is appended to the existing content;
 /// otherwise, a new file is created.
 fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
+    // Persist to a symlink's target so atomic replacement does not replace the symlink itself.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let path = resolve_wallet_path(path)?;
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let path = path.to_path_buf();
+
     let mut wallets = if path.exists() {
-        let data = fs::read_to_string(path)?;
+        let data = fs::read_to_string(&path)?;
         if data.trim().is_empty() {
             Wallets::default()
         } else {
@@ -194,6 +204,11 @@ fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
     wallets.wallets.push(WalletData::new(wallet));
 
     let contents = serde_json::to_string_pretty(&wallets)?;
+    write_wallet_file(&path, contents.as_bytes())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn write_wallet_file(path: &Path, contents: &[u8]) -> Result<()> {
     let mut options = fs::File::options();
     options.write(true).create(true);
     #[cfg(unix)]
@@ -203,7 +218,93 @@ fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
     #[cfg(unix)]
     file.set_permissions(fs::Permissions::from_mode(0o600))?;
     file.set_len(0)?;
-    file.write_all(contents.as_bytes())?;
+    file.write_all(contents)?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_wallet_file(path: &Path, contents: &[u8]) -> Result<()> {
+    if path.exists() {
+        // Preserve the existing behavior of requiring write access to the destination itself.
+        let file = fs::OpenOptions::new().write(true).open(path)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        drop(file);
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut staging_builder = tempfile::Builder::new();
+    staging_builder.prefix(".cast-wallet-");
+    staging_builder.permissions(fs::Permissions::from_mode(0o700));
+    let staging = staging_builder.tempdir_in(parent)?;
+    #[cfg(target_os = "macos")]
+    clear_acl(&fs::File::open(staging.path())?)?;
+
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".cast-wallet-");
+    builder.permissions(fs::Permissions::from_mode(0o600));
+
+    let mut file = builder.tempfile_in(staging.path())?;
+    file.as_file().set_permissions(fs::Permissions::from_mode(0o600))?;
+    file.write_all(contents)?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|err| err.error)?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn resolve_wallet_path(path: &Path) -> Result<PathBuf> {
+    let mut resolved = path.to_path_buf();
+    for _ in 0..40 {
+        let metadata = match fs::symlink_metadata(&resolved) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(resolved),
+            Err(err) => return Err(err.into()),
+        };
+        if !metadata.file_type().is_symlink() {
+            return Ok(resolved);
+        }
+
+        let target = fs::read_link(&resolved)?;
+        resolved = if target.is_absolute() {
+            target
+        } else {
+            resolved
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."))
+                .join(target)
+        };
+    }
+    eyre::bail!("failed to resolve wallet file {}: too many symbolic links", path.display());
+}
+
+#[cfg(target_os = "macos")]
+fn clear_acl(file: &fs::File) -> Result<()> {
+    unsafe extern "C" {
+        fn acl_init(count: libc::c_int) -> *mut libc::c_void;
+        fn acl_free(acl: *mut libc::c_void) -> libc::c_int;
+        fn acl_set_fd(fd: libc::c_int, acl: *mut libc::c_void) -> libc::c_int;
+    }
+
+    // SAFETY: `acl_init` returns an owned ACL pointer that remains valid until `acl_free`.
+    let acl = unsafe { acl_init(0) };
+    if acl.is_null() {
+        return Err(std::io::Error::last_os_error().into());
+    }
+
+    // SAFETY: The file descriptor and ACL pointer are both valid for the duration of this call.
+    let result = unsafe { acl_set_fd(file.as_raw_fd(), acl) };
+    let error = (result == -1).then(std::io::Error::last_os_error);
+    // SAFETY: `acl` was allocated by `acl_init` and has not previously been freed.
+    unsafe { acl_free(acl) };
+    if let Some(error) = error {
+        if matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EOPNOTSUPP)) {
+            return Ok(());
+        }
+        return Err(error.into());
+    }
     Ok(())
 }
 
@@ -382,6 +483,10 @@ fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use std::os::unix::fs::{MetadataExt, symlink};
+    #[cfg(target_os = "macos")]
+    use std::process::Command;
 
     #[test]
     fn find_simple_vanity_start() {
@@ -459,6 +564,78 @@ mod tests {
         save_wallet_to_file(&PrivateKeySigner::random(), tmp.path()).unwrap();
 
         assert_eq!(fs::metadata(tmp.path()).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn existing_wallet_file_is_replaced_atomically() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("wallets.json");
+        save_wallet_to_file(&PrivateKeySigner::random(), &path).unwrap();
+        let original_inode = fs::metadata(&path).unwrap().ino();
+
+        save_wallet_to_file(&PrivateKeySigner::random(), &path).unwrap();
+
+        assert_ne!(fs::metadata(&path).unwrap().ino(), original_inode);
+        let wallets: Wallets = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(wallets.wallets.len(), 2);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn symlink_wallet_path_is_preserved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("wallets.json");
+        let link = tmp.path().join("wallets-link.json");
+        fs::write(&target, "{\"wallets\":[]}").unwrap();
+        symlink(&target, &link).unwrap();
+
+        save_wallet_to_file(&PrivateKeySigner::random(), &link).unwrap();
+
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        let wallets: Wallets = serde_json::from_str(&fs::read_to_string(target).unwrap()).unwrap();
+        assert_eq!(wallets.wallets.len(), 1);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn dangling_symlink_wallet_path_is_preserved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("wallets.json");
+        let link = tmp.path().join("wallets-link.json");
+        symlink(&target, &link).unwrap();
+
+        save_wallet_to_file(&PrivateKeySigner::random(), &link).unwrap();
+
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        let wallets: Wallets = serde_json::from_str(&fs::read_to_string(target).unwrap()).unwrap();
+        assert_eq!(wallets.wallets.len(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn wallet_replacement_does_not_inherit_parent_acl() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("wallets.json");
+        fs::write(&path, "{\"wallets\":[]}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            Command::new("chmod")
+                .args(["+a", "everyone allow read,file_inherit"])
+                .arg(tmp.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        save_wallet_to_file(&PrivateKeySigner::random(), &path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     #[test]
