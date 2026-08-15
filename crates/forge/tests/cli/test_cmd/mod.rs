@@ -3317,9 +3317,17 @@ forgetest_init!(skip_setup, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
+contract Reverter {
+    fallback() external {
+        revert("caught");
+    }
+}
+
 contract SkipCounterSetup is Test {
 
     function setUp() public {
+        (bool success,) = address(new Reverter()).call("");
+        require(!success);
         vm.skip(true, "skip counter test");
     }
 
@@ -3350,6 +3358,117 @@ Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest_init!(forged_skip_after_caught_skip_fails_setup, |prj, cmd| {
+    prj.add_test(
+        "ForgedSkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ForgedSkipAfterCaughtSkip is Test {
+    function setUp() public {
+        (bool assertionSuccess,) = address(vm).call(
+            abi.encodeWithSignature("assertEq(uint256,uint256)", 1, 2)
+        );
+        require(!assertionSuccess);
+
+        (bool success,) = address(vm).call(
+            abi.encodeWithSignature("skip(bool,string)", true, "not cheatcode")
+        );
+        require(!success);
+
+        bytes memory reason = bytes("FOUNDRY::SKIPnot cheatcode");
+        assembly {
+            revert(add(reason, 32), mload(reason))
+        }
+    }
+
+    function test_neverRuns() public pure {}
+}
+    "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgedSkipAfterCaughtSkip"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForgedSkip.t.sol:ForgedSkipAfterCaughtSkip
+[FAIL: FOUNDRY::SKIPnot cheatcode] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForgedSkip.t.sol:ForgedSkipAfterCaughtSkip
+[FAIL: FOUNDRY::SKIPnot cheatcode] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+});
+
+forgetest_init!(forged_create_skip_after_caught_skip_fails_setup, |prj, cmd| {
+    prj.add_test(
+        "ForgedCreateSkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ForgedSkipConstructor {
+    constructor() {
+        bytes memory reason = bytes("FOUNDRY::SKIPnot cheatcode");
+        assembly {
+            revert(add(reason, 32), mload(reason))
+        }
+    }
+}
+
+contract ForgedCreateSkipAfterCaughtSkip is Test {
+    function setUp() public {
+        (bool assertionSuccess,) = address(vm).call(
+            abi.encodeWithSignature("assertEq(uint256,uint256)", 1, 2)
+        );
+        require(!assertionSuccess);
+
+        (bool success,) = address(vm).call(
+            abi.encodeWithSignature("skip(bool,string)", true, "not cheatcode")
+        );
+        require(!success);
+        new ForgedSkipConstructor();
+    }
+
+    function test_neverRuns() public pure {}
+}
+    "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgedCreateSkipAfterCaughtSkip"]).assert_failure().stdout_eq(str![
+        [r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForgedCreateSkip.t.sol:ForgedCreateSkipAfterCaughtSkip
+[FAIL: FOUNDRY::SKIPnot cheatcode] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForgedCreateSkip.t.sol:ForgedCreateSkipAfterCaughtSkip
+[FAIL: FOUNDRY::SKIPnot cheatcode] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]
+    ]);
 });
 
 forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
