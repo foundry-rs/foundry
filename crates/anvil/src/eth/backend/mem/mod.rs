@@ -7062,13 +7062,9 @@ where
     ///   known locally, which may be fewer than 256.
     pub async fn debug_execution_witness(
         &self,
-        block: BlockNumber,
+        block: BlockId,
     ) -> Result<ExecutionWitness, BlockchainError> {
-        let number = self.convert_block_number(Some(block));
-        let best = self.best_number();
-        if number > best {
-            return Err(BlockchainError::BlockOutOfRange(best, number));
-        }
+        let number = self.ensure_block_number(Some(block)).await?;
         let Some(parent) = number.checked_sub(1) else {
             return Err(BlockchainError::Message(
                 "genesis block has no parent state to build a witness from".to_string(),

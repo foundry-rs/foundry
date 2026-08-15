@@ -39,6 +39,14 @@ pub struct Params<T> {
     pub params: T,
 }
 
+/// The witness generation mode supported by `debug_executionWitness`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionWitnessMode {
+    /// Produces the legacy execution witness format.
+    Legacy,
+}
+
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(tag = "method", content = "params")]
@@ -410,8 +418,8 @@ pub enum EthRequest {
     DebugAccountInfoAt(BlockId, Index, Address),
 
     /// reth's `debug_executionWitness` endpoint.
-    #[serde(rename = "debug_executionWitness", with = "sequence")]
-    DebugExecutionWitness(BlockNumber),
+    #[serde(rename = "debug_executionWitness")]
+    DebugExecutionWitness(BlockId, #[serde(default)] Option<ExecutionWitnessMode>),
 
     /// geth's `debug_traceBlock` endpoint.
     #[serde(rename = "debug_traceBlock")]
@@ -1897,9 +1905,25 @@ true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "debug_executionWitness", "params": ["latest"]}"#;
+        let s = r#"{"method": "debug_executionWitness", "params": ["latest", null]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_executionWitness", "params": ["0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3", "legacy"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_executionWitness", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3", "requireCanonical": true}, "legacy"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_executionWitness", "params": [{"blockNumber": "0x1"}, null]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_executionWitness", "params": ["latest", "canonical"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        assert!(serde_json::from_value::<EthRequest>(value).is_err());
     }
 
     #[test]

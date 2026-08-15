@@ -1200,13 +1200,31 @@ async fn can_get_execution_witness() {
     let number = receipt.block_number.unwrap();
 
     // No witness exists for the genesis block since it has no parent state.
-    api.debug_execution_witness(BlockNumberOrTag::Number(0)).await.unwrap_err();
+    api.debug_execution_witness(BlockId::number(0), None).await.unwrap_err();
 
     let witness: ExecutionWitness = provider
         .client()
         .request("debug_executionWitness", (BlockNumberOrTag::Number(number),))
         .await
         .unwrap();
+
+    let block = provider.get_block(BlockId::number(number)).await.unwrap().unwrap();
+    let by_hash: ExecutionWitness = provider
+        .client()
+        .request("debug_executionWitness", (BlockId::hash(block.header.hash), Some("legacy")))
+        .await
+        .unwrap();
+    assert_eq!(by_hash, witness);
+
+    let by_eip1898: ExecutionWitness = provider
+        .client()
+        .request(
+            "debug_executionWitness",
+            (BlockId::hash_canonical(block.header.hash), Option::<&str>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_eip1898, witness);
 
     // The witness contains the full parent state trie, so the parent state root must be among the
     // collected nodes.
