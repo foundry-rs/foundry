@@ -37,7 +37,7 @@ use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
 };
 use foundry_evm::{
-    constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
+    constants::{CALLER, MAGIC_ASSUME},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     decode::{RevertDecoder, SkipReason},
     executors::{
@@ -1745,9 +1745,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         raw_call_result: &RawCallResult<FEN>,
     ) -> Result<Option<String>, String> {
-        if raw_call_result.reverter == Some(CHEATCODE_ADDRESS)
-            && let Some(reason) = SkipReason::decode(&raw_call_result.result)
-        {
+        if let Some(reason) = raw_call_result.skip_reason() {
             return Err(format!("vm.skip during concrete replay: {reason}"));
         }
 
