@@ -652,6 +652,77 @@ contract SymbolicBoundedCarry {
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
+forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_saturating_mul_equivalence because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSaturatingMul.t.sol",
+        r#"
+library SaturatingMath {
+    function saturatingMul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            z := or(sub(or(iszero(x), eq(div(mul(x, y), x), y)), 1), mul(x, y))
+        }
+    }
+}
+
+contract SymbolicSaturatingMul {
+    function mul(uint256 x, uint256 y) external pure returns (uint256) {
+        return x * y;
+    }
+
+    function checkSaturatingMul(uint256 x, uint256 y) public view {
+        (bool success,) = address(this).staticcall(abi.encodeCall(this.mul, (x, y)));
+        uint256 expected = success ? x * y : type(uint256).max;
+        assert(SaturatingMath.saturatingMul(x, y) == expected);
+    }
+
+    function checkWrongOverflowResult(uint256 x, uint256 y) public pure {
+        if (x == type(uint256).max && y == 2) {
+            assert(SaturatingMath.saturatingMul(x, y) == 0);
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkSaturatingMul"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkSaturatingMul(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkWrongOverflowResult",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+});
+
 forgetest_init!(symbolic_json_schema_reports_pass, |prj, cmd| {
     if !z3_available() {
         let _ =

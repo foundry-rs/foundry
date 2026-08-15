@@ -673,7 +673,7 @@ impl SymbolicExecutor {
             None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
-                let sat = self.solver.is_sat(&mut self.cx, &constraints)?;
+                let sat = self.is_sat_with_state(state, &constraints)?;
                 Ok((constraints, sat))
             }
         }
@@ -1360,11 +1360,11 @@ impl SymbolicExecutor {
             None => {
                 let mut success_constraints = state.constraints.clone();
                 success_constraints.push(can_transfer.clone());
-                let success_sat = self.solver.is_sat(&mut self.cx, &success_constraints)?;
+                let success_sat = self.is_sat_with_state(state, &success_constraints)?;
 
                 let mut failure_constraints = state.constraints.clone();
                 failure_constraints.push(can_transfer.not(&mut self.cx));
-                let failure_sat = self.solver.is_sat(&mut self.cx, &failure_constraints)?;
+                let failure_sat = self.is_sat_with_state(state, &failure_constraints)?;
 
                 match (success_sat, failure_sat) {
                     (true, true) => {
@@ -1418,11 +1418,11 @@ impl SymbolicExecutor {
             None => {
                 let mut success_constraints = state.constraints.clone();
                 success_constraints.push(can_pay.clone());
-                let success_sat = self.solver.is_sat(&mut self.cx, &success_constraints)?;
+                let success_sat = self.is_sat_with_state(state, &success_constraints)?;
 
                 let mut failure_constraints = state.constraints.clone();
                 failure_constraints.push(can_pay.not(&mut self.cx));
-                let failure_sat = self.solver.is_sat(&mut self.cx, &failure_constraints)?;
+                let failure_sat = self.is_sat_with_state(state, &failure_constraints)?;
 
                 match (success_sat, failure_sat) {
                     (true, true) => {
@@ -1488,7 +1488,7 @@ impl SymbolicExecutor {
         outside_constraints.extend(
             candidate_constraints.iter().cloned().map(|condition| condition.not(&mut self.cx)),
         );
-        let outside_sat = self.solver.is_sat(&mut self.cx, &outside_constraints)?;
+        let outside_sat = self.is_sat_with_state(state, &outside_constraints)?;
 
         if !self.config.symbolic_call_targets && outside_sat {
             return Err(SymbolicError::Unsupported("symbolic CALL target"));
@@ -1541,7 +1541,7 @@ impl SymbolicExecutor {
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {
             let mut branch = state.clone();
             branch.constraints.push(constraint);
-            if !self.solver.is_sat(&mut self.cx, &branch.constraints)? {
+            if !self.is_sat_with_state(&branch, &branch.constraints)? {
                 continue;
             }
 

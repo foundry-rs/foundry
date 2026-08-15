@@ -22,7 +22,7 @@ impl SymbolicExecutor {
     ) -> Result<Option<PathState>, SymbolicError> {
         while let Some(mut state) = self.pop_next_path(paths) {
             if state.take_deferred_feasibility_check()
-                && !self.branch_is_sat_or_defer(&state.constraints)?
+                && !self.branch_is_sat_or_defer(&state, &state.constraints)?
             {
                 continue;
             }
