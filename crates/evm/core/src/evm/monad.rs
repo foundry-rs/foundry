@@ -84,13 +84,6 @@ pub fn monad_context_from_participants(
     }
 }
 
-fn set_monad_chain_context<DB: alloy_evm::Database>(
-    context: &mut MonadContext<DB>,
-    chain_context: MonadChainContext,
-) {
-    context.chain = chain_context;
-}
-
 fn rebase_monad_context<DB: alloy_evm::Database>(context: &mut MonadContext<DB>) {
     let chain = context.chain.clone();
     let mut tracker = std::mem::take(context.journaled_state.reserve_balance_mut());
@@ -194,7 +187,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         chain_context: Self::ChainContext,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         let mut evm = self.create_evm(db, evm_env);
-        set_monad_chain_context(evm.ctx_mut(), chain_context);
+        evm.ctx_mut().chain = chain_context;
         evm
     }
 
@@ -206,7 +199,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
-        set_monad_chain_context(monad_evm.ctx_mut(), chain_context);
+        monad_evm.ctx_mut().chain = chain_context;
         monad_evm.cfg.tx_chain_id_check = true;
         monad_evm.inspector().get_networks().inject_precompiles(monad_evm.precompiles_mut());
         monad_evm
@@ -218,7 +211,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         replacement: Option<&Self::ChainContext>,
     ) {
         if let Some(replacement) = replacement {
-            set_monad_chain_context(ecx, replacement.clone());
+            ecx.chain = replacement.clone();
         }
         rebase_monad_context(ecx);
     }
@@ -382,7 +375,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
             .build_monad_with_inspector(inspector)
             .with_precompiles(MonadPrecompilesMap::new_with_spec(spec));
 
-        set_monad_chain_context(&mut evm.0.ctx, chain_context);
+        evm.0.ctx.chain = chain_context;
         evm.0.ctx.cfg.tx_chain_id_check = true;
         evm.0.inspector.get_networks().inject_precompiles(&mut evm.0.precompiles);
 
@@ -762,7 +755,8 @@ mod tests {
             vec![transaction(parent_sender, parent_authority)],
             vec![transaction(current_sender, current_authority)],
         )
-        .child(&transaction(child_sender, child_authority));
+        .into_child()
+        .next_transaction(&transaction(child_sender, child_authority));
 
         assert_eq!(context.current_tx_index, 0);
         assert_eq!(context.grandparent_senders_and_authorities.len(), 2);
