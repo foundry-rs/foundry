@@ -1088,6 +1088,7 @@ impl Cheatcode for deleteSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
         ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
@@ -1099,6 +1100,7 @@ impl Cheatcode for deleteStateSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
         ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
@@ -1111,6 +1113,7 @@ impl Cheatcode for deleteSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.fork_block_number_override_snapshots.clear();
         ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
@@ -1122,6 +1125,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.fork_block_number_override_snapshots.clear();
         ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
@@ -1591,6 +1595,7 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
+    ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
     let factory = FEN::EvmFactory::default();
     ccx.state.context_snapshots.insert(
         id,
@@ -1667,6 +1672,11 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         if let Some(snap) = ccx.state.env_overrides_snapshots.get(&snapshot_id) {
             ccx.state.env_overrides = snap.clone();
         }
+        if let Some(&fork_block_number) =
+            ccx.state.fork_block_number_override_snapshots.get(&snapshot_id)
+        {
+            ccx.state.fork_block_number_override = fork_block_number;
+        }
         ccx.state.revert_created_accounts(snapshot_id, false);
         sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
@@ -1699,6 +1709,11 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;
+        }
+        if let Some(fork_block_number) =
+            ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
+        {
+            ccx.state.fork_block_number_override = fork_block_number;
         }
         ccx.state.revert_created_accounts(snapshot_id, true);
         sync_tx_after_env_override_restore(ccx);

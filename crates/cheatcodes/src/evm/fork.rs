@@ -472,6 +472,7 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     propagated: Vec<(Address, usize)>,
 ) {
     let target_fork_id = ccx.ecx.db().active_fork_id();
+    ccx.state.fork_block_number_override = ccx.ecx.db().active_fork_block_number();
     if source_fork_id != target_fork_id {
         ccx.state.commit_created_account_changes(source_fork_id);
     }
@@ -485,6 +486,7 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
 ) {
     let active_fork_id = ccx.ecx.db().active_fork_id();
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
+        ccx.state.fork_block_number_override = ccx.ecx.db().active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);
     }
 }
