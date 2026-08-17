@@ -4806,7 +4806,7 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .assert_success();
 });
 
-forgetest_async!(tempo_script_setup_does_not_charge_fees, |prj, cmd| {
+forgetest_async!(tempo_script_runs_with_zero_fee_token_balance, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(
         "TempoScript.s.sol",
@@ -4824,13 +4824,9 @@ contract TempoScript is Script {
     });
 
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    api.anvil_deal_tip20(
-        CALLER,
-        address!("0x20c0000000000000000000000000000000000000"),
-        U256::ZERO,
-    )
-    .await
-    .unwrap();
+    let fee_token = address!("0x20c0000000000000000000000000000000000000");
+    // Synthetic script execution should not require the caller to fund protocol fees.
+    api.anvil_deal_tip20(CALLER, fee_token, U256::ZERO).await.unwrap();
     cmd.arg("script").arg(script).args([
         "--rpc-url",
         &handle.http_endpoint(),
