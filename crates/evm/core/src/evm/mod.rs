@@ -84,6 +84,15 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     /// Additional network-specific cheatcode contract addresses.
     const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
 
+    /// Network-native precompile addresses installed at `spec` that carry no bytecode.
+    ///
+    /// Solidity emits an `extcodesize` check for high-level calls to functions without return
+    /// data, so a code-less precompile makes the *caller* revert before the precompile runs.
+    /// Harnesses give these accounts a sentinel byte; see [`SYSTEM_PRECOMPILE_STUB`].
+    fn stateful_precompiles(_spec: SpecFor<Self>) -> Vec<Address> {
+        Vec::new()
+    }
+
     /// Maximum initcode size enforced when nested cheatcode execution simulates a raw deployment.
     const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 

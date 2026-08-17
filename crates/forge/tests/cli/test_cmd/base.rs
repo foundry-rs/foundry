@@ -1,3 +1,5 @@
+use anvil::{NodeConfig, spawn};
+use foundry_evm::hardforks::BaseUpgrade;
 use foundry_test_utils::util::OutputExt;
 
 forgetest!(base_azul_excludes_beryl_precompiles, |prj, cmd| {
@@ -67,6 +69,47 @@ forgetest!(base_list_accepts_base_network, |prj, cmd| {
         "--chain-id",
         "8453",
         "--list",
+    ])
+    .assert_success();
+});
+
+// Stateful Base precompile calls must work against a forked endpoint, not just locally: read-only
+// ActivationRegistry/B20 calls already passed while `activate`/`createB20` reverted.
+forgetest_async!(base_fork_allows_stateful_precompile_writes, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()))).await;
+
+    prj.add_test("BaseForkWrites.t.sol", include_str!("../../fixtures/BaseForkWrites.t.sol"));
+
+    cmd.args([
+        "test",
+        "--network",
+        "base",
+        "--hardfork",
+        "base:Beryl",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--match-test",
+        "test_fork_activation_write",
+        "-vvvv",
+    ])
+    .assert_success();
+});
+
+forgetest!(base_local_allows_stateful_precompile_writes, |prj, cmd| {
+    prj.add_test("BaseForkWrites.t.sol", include_str!("../../fixtures/BaseForkWrites.t.sol"));
+
+    cmd.args([
+        "test",
+        "--network",
+        "base",
+        "--hardfork",
+        "base:Beryl",
+        "--chain-id",
+        "8453",
+        "--match-test",
+        "test_fork_activation_write",
+        "-vvvv",
     ])
     .assert_success();
 });

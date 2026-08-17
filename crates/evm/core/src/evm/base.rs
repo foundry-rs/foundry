@@ -1,11 +1,14 @@
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
+use alloy_primitives::Address;
 use base_common_chains::ChainConfig;
 use base_common_evm::{
     BaseContext, BaseEvm, BaseEvmFactory, BaseHaltReason, BaseHandler, BaseSpecId, BaseTransaction,
     BaseTransactionError,
 };
 use base_common_network::Base;
-use foundry_evm_networks::NetworkVariant;
+use foundry_evm_networks::{
+    BASE_PRECOMPILE_ADDRESSES, NetworkVariant, is_base_precompile_active_at,
+};
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
@@ -36,6 +39,15 @@ impl FoundryEvmNetwork for BaseEvmNetwork {
 
     fn supports_network(network: NetworkVariant) -> bool {
         network.is_base()
+    }
+
+    fn stateful_precompiles(spec: BaseSpecId) -> Vec<Address> {
+        let upgrade = spec.upgrade();
+        BASE_PRECOMPILE_ADDRESSES
+            .iter()
+            .copied()
+            .filter(|address| is_base_precompile_active_at(*address, upgrade))
+            .collect()
     }
 }
 

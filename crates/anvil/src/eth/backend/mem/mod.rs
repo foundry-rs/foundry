@@ -161,6 +161,11 @@ use foundry_evm::core::{
     },
 };
 #[cfg(feature = "base")]
+use foundry_evm::core::{
+    constants::SYSTEM_PRECOMPILE_STUB,
+    evm::{BaseEvmNetwork, FoundryEvmNetwork as _},
+};
+#[cfg(feature = "base")]
 use foundry_evm::hardfork::BaseUpgrade;
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
@@ -4833,6 +4838,21 @@ impl<N: Network> Backend<N> {
                 let upgrades =
                     ChainUpgrades::new([(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0))]);
                 ensure_eip8130_system_accounts(upgrades, 1, &mut erased)?;
+            }
+
+            // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
+            // check on high-level calls to functions without return data does not revert in the
+            // caller. `ensure_eip8130_system_accounts` only covers the Cobalt nonce manager.
+            for address in BaseEvmNetwork::stateful_precompiles(BaseSpecId::new(upgrade)) {
+                let mut account = erased.basic(address)?.unwrap_or_default();
+                if account.code.as_ref().is_none_or(|code| code.is_empty()) {
+                    let code = revm::state::Bytecode::new_legacy(Bytes::from_static(
+                        SYSTEM_PRECOMPILE_STUB,
+                    ));
+                    account.code_hash = code.hash_slow();
+                    account.code = Some(code);
+                    erased.insert_account(address, account);
+                }
             }
         }
 
