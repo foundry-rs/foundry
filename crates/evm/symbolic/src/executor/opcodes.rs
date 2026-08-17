@@ -343,7 +343,8 @@ impl SymbolicExecutor {
             SymBoolExpr::constant(&mut self.cx, false)
         };
         let local_size = SymMemory::size_after_access_word(&mut self.cx, offset.clone(), size);
-        let total_size = SymExpr::binop(&mut self.cx, SymBinOp::Add, memory_checkpoint, local_size);
+        let total_size =
+            SymMemory::saturating_add_word(&mut self.cx, memory_checkpoint, local_size);
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, total_size, memory_limit);
         let valid_access = SymBoolExpr::and(&mut self.cx, vec![representable, within_limit]);
@@ -356,6 +357,74 @@ impl SymbolicExecutor {
                 let (valid_seed_models, invalid_seed_models) =
                     state.split_corpus_seed_models(&valid_access);
                 let mut valid = state.clone();
+                valid.pc = valid.pc.saturating_sub(1);
+                valid.depth = valid.depth.saturating_sub(1);
+                valid.constraints = valid_constraints;
+                valid.set_corpus_seed_models(valid_seed_models);
+                worklist.push_back(valid);
+                state.constraints = invalid_constraints;
+                state.set_corpus_seed_models(invalid_seed_models);
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                Ok(Some(StepOutcome::Revert))
+            }
+            (true, false) => {
+                state.constraints = valid_constraints;
+                Ok(None)
+            }
+            (false, true) => {
+                state.constraints = invalid_constraints;
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                Ok(Some(StepOutcome::Revert))
+            }
+            (false, false) => Ok(Some(StepOutcome::AssumeRejected)),
+        }
+    }
+
+    pub(super) fn guard_memory_range<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        rewind_state: &PathState,
+        offset: &SymExpr,
+        size: &SymExpr,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let zero_size = SymBoolExpr::eq_word_const(&mut self.cx, size, U256::ZERO);
+        let host_max = SymExpr::constant(&mut self.cx, U256::from(usize::MAX & !31usize));
+        let size_fits =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, size.clone(), host_max.clone());
+        let max_offset = SymExpr::binop(&mut self.cx, SymBinOp::Sub, host_max, size.clone());
+        let offset_fits = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), max_offset);
+
+        let local_size = state.memory.size_after_range_expansion_word(
+            &mut self.cx,
+            offset.clone(),
+            size.clone(),
+        );
+        let checkpoint = state.memory_checkpoint.clone();
+        let total_size =
+            SymMemory::saturating_add_word(&mut self.cx, checkpoint.clone(), local_size.clone());
+        let memory_limit =
+            SymExpr::constant(&mut self.cx, U256::from(executor.evm_env().cfg_env.memory_limit()));
+        let checkpoint_fits =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, checkpoint, memory_limit.clone());
+        let local_fits =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit.clone());
+        let total_fits = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, total_size, memory_limit);
+        let nonzero_valid =
+            SymBoolExpr::and(&mut self.cx, vec![size_fits, offset_fits, local_fits, total_fits]);
+        let range_valid = SymBoolExpr::or(&mut self.cx, vec![zero_size, nonzero_valid]);
+        let valid_access = SymBoolExpr::and(&mut self.cx, vec![checkpoint_fits, range_valid]);
+
+        let (valid_constraints, valid_sat) =
+            self.constraints_with_condition(state, valid_access.clone())?;
+        let invalid = valid_access.clone().not(&mut self.cx);
+        let (invalid_constraints, invalid_sat) = self.constraints_with_condition(state, invalid)?;
+        match (valid_sat, invalid_sat) {
+            (true, true) => {
+                let (valid_seed_models, invalid_seed_models) =
+                    state.split_corpus_seed_models(&valid_access);
+                let mut valid = rewind_state.clone();
                 valid.pc = valid.pc.saturating_sub(1);
                 valid.depth = valid.depth.saturating_sub(1);
                 valid.constraints = valid_constraints;

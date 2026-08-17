@@ -9,6 +9,7 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
+        let memory_rewind_state = state.clone();
         let pre_call_state = (!state.function_mocks.is_empty()
             || !state.expected_calls.is_empty()
             || !state.call_mocks.is_empty()
@@ -87,7 +88,30 @@ impl SymbolicExecutor {
             }
         };
 
+        let in_size_word = in_size.size_word(&mut self.cx);
+        if let Some(outcome) = self.guard_memory_range(
+            executor,
+            state,
+            worklist,
+            &memory_rewind_state,
+            &in_offset,
+            &in_size_word,
+        )? {
+            return Ok(outcome);
+        }
         in_size.expand_memory(&mut self.cx, &mut state.memory, in_offset.clone());
+
+        let out_size_word = out_size.size_word(&mut self.cx);
+        if let Some(outcome) = self.guard_memory_range(
+            executor,
+            state,
+            worklist,
+            &memory_rewind_state,
+            &out_offset,
+            &out_size_word,
+        )? {
+            return Ok(outcome);
+        }
         out_size.expand_memory(&mut self.cx, &mut state.memory, out_offset.clone());
 
         if state.is_static && matches!(kind, CallKind::Call) {

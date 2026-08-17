@@ -14,6 +14,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        let memory_rewind_state = state.clone();
         let value = state.stack.pop()?;
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
@@ -44,6 +45,17 @@ impl SymbolicExecutor {
         let salt =
             if matches!(kind, CreateKind::Create2) { Some(state.stack.pop()?) } else { None };
 
+        let size_word = size.size_word(&mut self.cx);
+        if let Some(outcome) = self.guard_memory_range(
+            executor,
+            state,
+            worklist,
+            &memory_rewind_state,
+            &offset,
+            &size_word,
+        )? {
+            return Ok(outcome);
+        }
         size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
         let initcode = match &size {

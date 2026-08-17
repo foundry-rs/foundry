@@ -219,6 +219,22 @@ contract SymbolicMemoryLimit {
         }
         assert(ok != expand);
     }
+
+    function wrappingCallRange() external {
+        assembly {
+            pop(call(gas(), address(), 0, not(0), 1, 0, 0))
+        }
+    }
+
+    function nestedWrappingCallRange() external {
+        this.wrappingCallRange();
+    }
+
+    function checkMemoryLimitRejectsWrappingCallRanges() public {
+        (bool directOk,) = address(this).call(abi.encodeCall(this.wrappingCallRange, ()));
+        (bool nestedOk,) = address(this).call(abi.encodeCall(this.nestedWrappingCallRange, ()));
+        assert(!directOk && !nestedOk);
+    }
 }
 "#,
     );
@@ -237,6 +253,7 @@ contract SymbolicMemoryLimit {
 [PASS] checkMemoryLimitNestedCall()
 [PASS] checkMemoryLimitCallInputExpansion()
 [PASS] checkMemoryLimitSymbolicCallSize(bool)
+[PASS] checkMemoryLimitRejectsWrappingCallRanges()
 "#]],
     );
 });

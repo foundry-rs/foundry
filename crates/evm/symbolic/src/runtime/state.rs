@@ -1480,7 +1480,7 @@ impl CallFrame {
 
     pub(crate) fn total_memory_size(&self, cx: &mut SymCx) -> SymExpr {
         let size = self.memory.size_word(cx);
-        SymExpr::binop(cx, SymBinOp::Add, self.memory_checkpoint.clone(), size)
+        SymMemory::saturating_add_word(cx, self.memory_checkpoint.clone(), size)
     }
 }
 

@@ -72,15 +72,22 @@ impl SymbolicMemoryWrite {
 }
 
 impl SymMemory {
+    pub(crate) fn saturating_add_word(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
+        let sum = SymExpr::binop(cx, SymBinOp::Add, left.clone(), right);
+        let overflow = SymBoolExpr::cmp(cx, SymCmpOp::Ult, sum.clone(), left);
+        let max = SymExpr::constant(cx, U256::MAX);
+        SymExpr::ite(cx, overflow, max, sum)
+    }
+
     pub(crate) fn size_after_access_word(cx: &mut SymCx, offset: SymExpr, len: usize) -> SymExpr {
         let size = SymExpr::constant(cx, U256::from(len));
         Self::size_after_range_word(cx, offset, size)
     }
 
     fn size_after_range_word(cx: &mut SymCx, offset: SymExpr, size: SymExpr) -> SymExpr {
-        let end = SymExpr::binop(cx, SymBinOp::Add, offset, size.clone());
+        let end = Self::saturating_add_word(cx, offset, size.clone());
         let round = SymExpr::constant(cx, U256::from(31));
-        let rounded = SymExpr::binop(cx, SymBinOp::Add, end, round);
+        let rounded = Self::saturating_add_word(cx, end, round);
         let mask = SymExpr::constant(cx, !U256::from(31));
         let rounded = SymExpr::binop(cx, SymBinOp::And, rounded, mask);
         let is_empty = SymBoolExpr::eq_word_const(cx, &size, U256::ZERO);
@@ -440,6 +447,17 @@ impl SymMemory {
             size = Self::max_size_word(cx, size, access_size.clone());
         }
         size
+    }
+
+    pub(crate) fn size_after_range_expansion_word(
+        &self,
+        cx: &mut SymCx,
+        offset: SymExpr,
+        size: SymExpr,
+    ) -> SymExpr {
+        let current = self.size_word(cx);
+        let expanded = Self::size_after_range_word(cx, offset, size);
+        Self::max_size_word(cx, current, expanded)
     }
 
     pub(crate) fn expand_range(&mut self, cx: &mut SymCx, offset: SymExpr, size: SymExpr) {
