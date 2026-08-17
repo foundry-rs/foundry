@@ -619,19 +619,6 @@ mod tests {
         }
     }
 
-    fn left_aligned_u64(value: u64) -> U256 {
-        let mut bytes = [0; 32];
-        bytes[..8].copy_from_slice(&value.to_be_bytes());
-        U256::from_be_bytes(bytes)
-    }
-
-    fn address_and_flags(address: Address, flags: u64) -> U256 {
-        let mut bytes = [0; 32];
-        bytes[..20].copy_from_slice(address.as_slice());
-        bytes[20..28].copy_from_slice(&flags.to_be_bytes());
-        U256::from_be_bytes(bytes)
-    }
-
     fn transaction(caller: Address, authority: Address) -> TxEnv {
         let authorization = RecoveredAuthorization::new_unchecked(
             Authorization { chain_id: U256::from(1), address: Address::ZERO, nonce: 0 },
@@ -943,6 +930,9 @@ mod tests {
         let validator_id = 7;
         let reward = U256::from(25) * MON;
         let initial_staking_balance = U256::from(3) * MON;
+        // Monad stores validator IDs and packed address/flags values left-aligned.
+        let validator_id_slot = U256::from(validator_id) << 192;
+        let address_flags_slot = U256::from_be_slice(validator_auth.as_slice()) << 96;
         let mut db = InMemoryDB::default();
         db.insert_account_info(SYSTEM_ADDRESS, AccountInfo { nonce: 11, ..Default::default() });
         db.insert_account_info(
@@ -952,7 +942,7 @@ mod tests {
         db.insert_account_storage(
             STAKING_ADDRESS,
             val_id_secp_key(&block_author),
-            left_aligned_u64(validator_id),
+            validator_id_slot,
         )
         .unwrap();
         db.insert_account_storage(
@@ -966,7 +956,7 @@ mod tests {
         db.insert_account_storage(
             STAKING_ADDRESS,
             validator_key(validator_id, validator_offsets::ADDRESS_FLAGS),
-            address_and_flags(validator_auth, 0),
+            address_flags_slot,
         )
         .unwrap();
 
@@ -1004,7 +994,7 @@ mod tests {
         );
         assert_eq!(
             db.storage(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).unwrap(),
-            left_aligned_u64(validator_id)
+            validator_id_slot
         );
         assert_eq!(
             db.storage(
