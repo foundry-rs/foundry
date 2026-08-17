@@ -97,6 +97,7 @@ use anvil_rpc::{
     response::ResponseResult,
 };
 use foundry_common::{
+    provider::redact_url,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
@@ -636,7 +637,7 @@ impl<N: Network> EthApi<N> {
         let mut node_config = self.backend.node_config.write().await;
         if let Some((fork, provider, endpoint_identity)) = staged_fork {
             let mut config = fork.config.write();
-            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().unwrap_or("none"), url);
+            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().map(redact_url).unwrap_or_else(|| "none".to_string()), redact_url(&url));
             config.provider = provider;
             config.fork_urls = vec![url.clone()];
             config.fork_chain_id = None;

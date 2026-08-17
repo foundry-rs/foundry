@@ -4,7 +4,10 @@
 
 use crate::{
     DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
-    provider::mpp::transport::{LazyMppHttpTransport, lazy_mpp_ws_connect},
+    provider::{
+        mpp::transport::{LazyMppHttpTransport, lazy_mpp_ws_connect},
+        redact_url,
+    },
 };
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -16,7 +19,7 @@ use alloy_transport::{
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
 use reqwest::header::{HeaderName, HeaderValue};
-use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
+use std::{error::Error as StdError, fmt, path::PathBuf, str::FromStr, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tower::Service;
@@ -176,7 +179,7 @@ impl RuntimeTransportBuilder {
 
 impl fmt::Display for RuntimeTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "RuntimeTransport {}", self.url)
+        write!(f, "RuntimeTransport {}", redact_url(self.url.as_str()))
     }
 }
 
@@ -288,17 +291,17 @@ impl RuntimeTransport {
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
             }
-            ws.into_service()
-                .await
-                .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?
+            ws.into_service().await.map_err(|e| {
+                RuntimeTransportError::TransportError(e, redact_url(self.url.as_str()))
+            })?
         } else {
             let mut ws = WsConnect::new(self.url.to_string());
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
             }
-            ws.into_service()
-                .await
-                .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?
+            ws.into_service().await.map_err(|e| {
+                RuntimeTransportError::TransportError(e, redact_url(self.url.as_str()))
+            })?
         };
 
         Ok(InnerTransport::Ws(service))
@@ -340,11 +343,13 @@ impl RuntimeTransport {
 
             // SAFETY: We just checked that the inner transport exists.
             match inner.clone().expect("must've been initialized") {
-                InnerTransport::Http(mut http) => http.call(req),
-                InnerTransport::Ws(mut ws) => ws.call(req),
-                InnerTransport::Ipc(mut ipc) => ipc.call(req),
+                InnerTransport::Http(mut http) => http
+                    .call(req)
+                    .await
+                    .map_err(|error| redact_http_transport_error(error, &this.url)),
+                InnerTransport::Ws(mut ws) => ws.call(req).await,
+                InnerTransport::Ipc(mut ipc) => ipc.call(req).await,
             }
-            .await
         })
     }
 
@@ -355,6 +360,32 @@ impl RuntimeTransport {
     {
         BoxTransport::new(self)
     }
+}
+
+fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> TransportError {
+    let alloy_json_rpc::RpcError::Transport(TransportErrorKind::Custom(source)) = &error else {
+        return error;
+    };
+    let safe_endpoint = redact_url(endpoint.as_str());
+    let mut request_endpoint = endpoint.clone();
+    let _ = request_endpoint.set_username("");
+    let _ = request_endpoint.set_password(None);
+    request_endpoint.set_query(None);
+    request_endpoint.set_fragment(None);
+
+    let mut message = String::new();
+    let mut error: Option<&(dyn StdError + 'static)> = Some(source.as_ref());
+    while let Some(source) = error {
+        if !message.is_empty() {
+            message.push_str(": ");
+        }
+        message.push_str(&source.to_string());
+        error = source.source();
+    }
+    for sensitive in [endpoint.as_str(), request_endpoint.as_str()] {
+        message = message.replace(sensitive, &safe_endpoint);
+    }
+    TransportErrorKind::custom_str(&message)
 }
 
 impl tower::Service<RequestPacket> for RuntimeTransport {
@@ -429,6 +460,73 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 mod tests {
     use super::*;
     use reqwest::header::HeaderMap;
+    use std::io;
+
+    #[derive(Debug, Error)]
+    #[error("request to https://example.com/private-api-key failed")]
+    struct ProviderError {
+        #[source]
+        source: io::Error,
+    }
+
+    #[test]
+    fn http_transport_errors_preserve_provider_guidance() {
+        let endpoint =
+            Url::parse("https://user:password@example.com/private-api-key?token=secret").unwrap();
+        let error = TransportErrorKind::custom(ProviderError {
+            source: io::Error::other(
+                "Authorize an access key with:\n  cast tempo login --no-browser",
+            ),
+        });
+
+        let report = redact_http_transport_error(error, &endpoint).to_string();
+
+        assert!(report.contains("https://example.com/"));
+        assert!(report.contains("cast tempo login --no-browser"));
+        assert!(!report.contains("password"));
+        assert!(!report.contains("private-api-key"));
+        assert!(!report.contains("secret"));
+    }
+
+    #[test]
+    fn http_transport_errors_redact_endpoint_paths() {
+        let endpoint =
+            Url::parse("https://user:password@example.com/private-api-key?token=secret").unwrap();
+        let error = TransportErrorKind::custom_str(concat!(
+            "request to https://example.com/private-api-key failed: connection refused\n\n",
+            "Authorize an access key with:\n  cast tempo login"
+        ));
+
+        let error = redact_http_transport_error(error, &endpoint);
+        let report = error.to_string();
+
+        assert!(report.contains("https://example.com/"));
+        assert!(!report.contains("password"));
+        assert!(!report.contains("private-api-key"));
+        assert!(!report.contains("secret"));
+        assert!(report.to_lowercase().contains("connection refused"));
+        assert!(report.contains("cast tempo login"));
+    }
+
+    #[tokio::test]
+    async fn websocket_error_redacts_url_credentials() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let url = Url::parse(&format!(
+            "ws://user:password@{address}/private-api-key?token=secret#fragment"
+        ))
+        .unwrap();
+        let transport = RuntimeTransportBuilder::new(url).build();
+
+        let error = transport.connect_ws().await.unwrap_err().to_string();
+
+        assert!(error.contains(&format!("ws://{address}/")));
+        assert!(!error.contains("user"));
+        assert!(!error.contains("password"));
+        assert!(!error.contains("private-api-key"));
+        assert!(!error.contains("secret"));
+    }
 
     #[tokio::test]
     async fn test_user_agent_header() {
