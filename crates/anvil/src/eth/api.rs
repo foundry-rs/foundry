@@ -365,6 +365,9 @@ impl<N: Network> EthApi<N> {
     }
 
     /// Invalidates EIP-8130 admission state after out-of-band state mutation.
+    ///
+    /// This is a no-op without Base support, where it has nothing to invalidate.
+    #[cfg_attr(not(feature = "base"), allow(clippy::missing_const_for_fn))]
     fn invalidate_base_eip8130_pool(&self) {
         #[cfg(feature = "base")]
         if self.backend.is_base() {
@@ -4914,14 +4917,14 @@ impl EthApi<FoundryNetwork> {
     /// protocol nonce lane.
     async fn eip8130_nonce_markers(
         &self,
-        pending: &PendingTransaction<FoundryTxEnvelope>,
+        #[cfg_attr(not(feature = "base"), allow(unused_variables))] pending: &PendingTransaction<
+            FoundryTxEnvelope,
+        >,
     ) -> Result<Option<(Vec<TxMarker>, Vec<TxMarker>)>> {
-        #[cfg(not(feature = "base"))]
-        let _ = pending;
         #[cfg(feature = "base")]
         if let FoundryTxEnvelope::Eip8130(signed) = pending.transaction.as_ref() {
             let tx = signed.tx();
-            let now = self.backend.eip8130_pool_timestamp();
+            let now = self.backend.eip8130_pool_timestamp_ms();
             signed
                 .validate_admission_static(self.backend.chain_id().to())
                 .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;

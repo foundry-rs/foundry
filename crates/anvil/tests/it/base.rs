@@ -45,7 +45,8 @@ fn eip8130_envelope_with(
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -80,7 +81,8 @@ fn malformed_configured_eip8130_envelope_with_nonce(
         sender: Some(signer.address()),
         nonce_key,
         nonce_sequence,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -98,16 +100,22 @@ fn eip8130_envelope_with_nonce(
     signer: &PrivateKeySigner,
     nonce_key: U256,
     nonce_sequence: u64,
-    expiry: u64,
+    valid_before: u64,
 ) -> FoundryTxEnvelope {
-    eip8130_envelope_with_nonce_and_fee(signer, nonce_key, nonce_sequence, expiry, 1_000_000_000)
+    eip8130_envelope_with_nonce_and_fee(
+        signer,
+        nonce_key,
+        nonce_sequence,
+        valid_before,
+        1_000_000_000,
+    )
 }
 
 fn eip8130_envelope_with_nonce_and_fee(
     signer: &PrivateKeySigner,
     nonce_key: U256,
     nonce_sequence: u64,
-    expiry: u64,
+    valid_before: u64,
     max_fee_per_gas: u128,
 ) -> FoundryTxEnvelope {
     let tx = TxEip8130 {
@@ -115,7 +123,8 @@ fn eip8130_envelope_with_nonce_and_fee(
         sender: None,
         nonce_key,
         nonce_sequence,
-        expiry,
+        valid_after: 0,
+        valid_before,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas,
         gas_limit: 200_000,
@@ -142,7 +151,8 @@ fn eip8130_envelope_with_channel_calls(
         sender: None,
         nonce_key,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -177,7 +187,8 @@ fn sponsored_eip8130_envelope_with_nonce(
         sender: None,
         nonce_key,
         nonce_sequence,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -885,14 +896,14 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
     let now = api.anvil_node_info().await.unwrap().current_block_timestamp;
-    let expiry = now + 10;
+    let valid_before = (now + 10) * 1_000;
     let original = provider
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(
                 &signer,
                 Eip8130Constants::NONCE_KEY_MAX,
                 0,
-                expiry,
+                valid_before,
                 1_000_000_000,
             )
             .encoded_2718(),
@@ -906,7 +917,7 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
                 &signer,
                 Eip8130Constants::NONCE_KEY_MAX,
                 0,
-                expiry,
+                valid_before,
                 2_000_000_000,
             )
             .encoded_2718(),
@@ -919,7 +930,7 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
                 &signer,
                 Eip8130Constants::NONCE_KEY_MAX,
                 0,
-                expiry + 1,
+                valid_before + 1,
                 1_000_000_000,
             )
             .encoded_2718(),
@@ -946,14 +957,14 @@ async fn base_eip8130_rejects_mined_nonce_free_replay_at_admission() {
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
-    let expiry = genesis_timestamp + 20;
+    let valid_before = (genesis_timestamp + 20) * 1_000;
     provider
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(
                 &signer,
                 Eip8130Constants::NONCE_KEY_MAX,
                 0,
-                expiry,
+                valid_before,
                 1_000_000_000,
             )
             .encoded_2718(),
@@ -970,7 +981,7 @@ async fn base_eip8130_rejects_mined_nonce_free_replay_at_admission() {
                 &signer,
                 Eip8130Constants::NONCE_KEY_MAX,
                 0,
-                expiry,
+                valid_before,
                 2_000_000_000,
             )
             .encoded_2718(),
@@ -989,10 +1000,10 @@ async fn base_eip8130_txpool_drops_expired_nonce_free_transaction() {
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
     let now = api.anvil_node_info().await.unwrap().current_block_timestamp;
-    let expiry = now + 1;
+    let valid_before = (now + 1) * 1_000;
     let pending = provider
         .send_raw_transaction(
-            &eip8130_envelope_with_nonce(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry)
+            &eip8130_envelope_with_nonce(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, valid_before)
                 .encoded_2718(),
         )
         .await
@@ -1038,10 +1049,10 @@ async fn base_eip8130_snapshot_revert_restores_channel_nonce() {
         .unwrap();
     assert_eq!(nonce, U256::ZERO);
 
-    let expiry = api.anvil_node_info().await.unwrap().current_block_timestamp + 100;
+    let valid_before = (api.anvil_node_info().await.unwrap().current_block_timestamp + 100) * 1_000;
     let receipt = provider
         .send_raw_transaction(
-            &eip8130_envelope_with_nonce(&signer, nonce_key, 0, expiry).encoded_2718(),
+            &eip8130_envelope_with_nonce(&signer, nonce_key, 0, valid_before).encoded_2718(),
         )
         .await
         .unwrap()

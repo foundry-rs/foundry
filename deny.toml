@@ -117,6 +117,8 @@ allow-git = [
     # Monad
     "https://github.com/category-labs/alloy-monad-evm",
     "https://github.com/category-labs/monad-revm",
+    # Base
+    "https://github.com/base/base",
     # Transitive dependency of Tempo
     "https://github.com/commonwarexyz/monorepo",
     "https://github.com/paradigmxyz/reth",

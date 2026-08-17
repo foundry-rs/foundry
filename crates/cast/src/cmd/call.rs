@@ -262,17 +262,17 @@ impl CallArgs {
                 .await;
         }
 
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self
-                .run_with_network_and_opts::<MonadEvmNetwork>(config, evm_opts, auth_preflight)
-                .await;
-        }
-
         #[cfg(feature = "base")]
         if evm_opts.networks.is_base() {
             return self
                 .run_with_network_and_opts::<BaseEvmNetwork>(config, evm_opts, auth_preflight)
+                .await;
+        }
+
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return self
+                .run_with_network_and_opts::<MonadEvmNetwork>(config, evm_opts, auth_preflight)
                 .await;
         }
 

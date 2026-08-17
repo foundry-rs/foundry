@@ -11,8 +11,6 @@ use std::{
 
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
-#[cfg(feature = "base")]
-use base_common_evm::BaseSpecId;
 use foundry_compilers::artifacts::EvmVersion;
 #[cfg(feature = "optimism")]
 use op_revm::OpSpecId;
@@ -22,6 +20,8 @@ use serde::{Deserialize, Serialize};
 pub use alloy_hardforks::EthereumHardfork;
 #[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
+#[cfg(feature = "base")]
+pub use base_common_evm::BaseSpecId;
 #[cfg(feature = "base")]
 pub use base_common_genesis::BaseUpgrade;
 #[cfg(feature = "monad")]
@@ -228,6 +228,16 @@ impl From<FoundryHardfork> for OpHardfork {
 impl From<BaseUpgrade> for FoundryHardfork {
     fn from(value: BaseUpgrade) -> Self {
         Self::Base(value)
+    }
+}
+
+#[cfg(feature = "base")]
+impl From<FoundryHardfork> for BaseUpgrade {
+    fn from(fork: FoundryHardfork) -> Self {
+        match fork {
+            FoundryHardfork::Base(upgrade) => upgrade,
+            _ => Self::default(),
+        }
     }
 }
 

@@ -1463,8 +1463,10 @@ impl NodeConfig {
             );
         }
         #[cfg(feature = "base")]
-        if let FoundryHardfork::Base(upgrade) = active_hardfork {
-            decoder_builder = decoder_builder.with_base_upgrade(Some(upgrade));
+        {
+            decoder_builder = decoder_builder.with_base_upgrade(
+                self.networks.is_base().then(|| BaseUpgrade::from(active_hardfork)),
+            );
         }
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache

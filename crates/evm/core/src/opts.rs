@@ -21,6 +21,8 @@ use foundry_common::{
     provider::{ProviderBuilder, is_rpc_method_not_found},
 };
 use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit};
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::TempoHardfork;
@@ -1460,6 +1462,12 @@ where
             .then(|| FoundryHardfork::Monad(config.evm_spec_id::<MonadHardfork>()));
         #[cfg(not(feature = "monad"))]
         let hardfork = None;
+        #[cfg(feature = "base")]
+        let hardfork = hardfork.or_else(|| {
+            networks
+                .is_base()
+                .then(|| FoundryHardfork::Base(config.evm_spec_id::<BaseSpecId>().upgrade()))
+        });
         hardfork
     };
 
@@ -2243,14 +2251,17 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[cfg(feature = "base")]
     async fn base_anvil_identity_uses_generic_network_and_hardfork_parsing() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let (_api, handle) = anvil::spawn(
+            anvil::NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into())),
+        )
+        .await;
         let endpoint = handle.http_endpoint();
         let provider = EvmOpts::default().fork_provider_with_url::<AnyNetwork>(&endpoint).unwrap();
         let execution_chain_id = provider.get_chain_id().await.unwrap();
-        let mut node_info =
+        let node_info =
             provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.unwrap();
-        node_info.network = Some("base".to_string());
-        node_info.hard_fork = "Beryl".to_string();
+        assert_eq!(node_info.network.as_deref(), Some("base"));
+        assert_eq!(node_info.hard_fork, "Beryl");
 
         let identity = EvmOpts::resolve_fork_endpoint_identity(
             &provider,

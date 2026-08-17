@@ -10,10 +10,10 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
-#[cfg(feature = "base")]
-use foundry_evm_hardforks::{BaseUpgrade, ExecutionSpec};
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceRequirements;
@@ -111,8 +111,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_env: &mut EvmEnvFor<FEN>,
         evm_version: Option<EvmVersion>,
     ) -> Option<FoundryHardfork> {
-        let explicit_hardfork = evm_version
-            .and_then(|version| network_hardfork_from_evm_version::<FEN>(networks, version));
+        let explicit_hardfork =
+            evm_version.and_then(|version| network_hardfork_from_evm_version(networks, version));
         resolve_execution_spec(
             config,
             networks,
@@ -145,10 +145,14 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             FoundryHardfork::Base(upgrade) => Some(upgrade),
             _ => None,
         });
+        #[cfg(not(feature = "base"))]
+        let base_upgrade = None;
 
-        config.labels.extend(networks.precompiles_label(tempo_hardfork, monad_hardfork));
-        #[cfg(feature = "base")]
-        config.labels.extend(networks.base_precompiles_label(base_upgrade));
+        config.labels.extend(networks.precompiles_label(
+            tempo_hardfork,
+            monad_hardfork,
+            base_upgrade,
+        ));
     }
 
     /// uses the fork block number from the config
@@ -190,24 +194,20 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     }
 }
 
-fn network_hardfork_from_evm_version<FEN: FoundryEvmNetwork>(
+fn network_hardfork_from_evm_version(
     networks: NetworkConfigs,
     evm_version: EvmVersion,
 ) -> Option<FoundryHardfork> {
     if networks.is_tempo() {
         return Some(FoundryHardfork::Tempo(evm_spec_id::<TempoHardfork>(evm_version)));
     }
+    #[cfg(feature = "base")]
+    if networks.is_base() {
+        return Some(FoundryHardfork::Base(evm_spec_id::<BaseSpecId>(evm_version).upgrade()));
+    }
     #[cfg(feature = "monad")]
     if networks.is_monad() {
         return Some(FoundryHardfork::Monad(evm_spec_id::<MonadHardfork>(evm_version)));
-    }
-    #[cfg(feature = "base")]
-    if networks.is_base() {
-        let upgrade = evm_spec_id::<SpecFor<FEN>>(evm_version)
-            .evm_version_name()
-            .parse::<BaseUpgrade>()
-            .ok()?;
-        return Some(FoundryHardfork::Base(upgrade));
     }
     None
 }

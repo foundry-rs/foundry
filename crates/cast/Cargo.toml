@@ -141,6 +141,7 @@ monad = [
     "foundry-cli/monad",
 ]
 base = [
+    "anvil/base",
     "dep:base-common-network",
     "dep:op-alloy-flz",
     "foundry-common/base",

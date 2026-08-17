@@ -1817,6 +1817,16 @@ impl<N: Network> Backend<N> {
         self.evm_env.read().block_env.timestamp.saturating_to()
     }
 
+    /// Returns the EIP-8130 pool admission snapshot in Unix milliseconds.
+    ///
+    /// EIP-8130 validity windows are millisecond timestamps evaluated against
+    /// `block.timestamp * 1000`, so protocol validation must use this rather than the
+    /// second-valued block timestamp.
+    #[cfg(feature = "base")]
+    pub fn eip8130_pool_timestamp_ms(&self) -> u64 {
+        self.eip8130_pool_timestamp().saturating_mul(1_000)
+    }
+
     /// Returns whether a Tempo hardfork is active on this backend.
     pub fn is_tempo_hardfork_active(&self, hardfork: TempoHardfork) -> bool {
         self.is_tempo() && self.tempo_hardfork() >= hardfork
@@ -1842,16 +1852,15 @@ impl<N: Network> Backend<N> {
         let monad_hardfork = self.is_monad().then(|| self.monad_hardfork());
         #[cfg(not(feature = "monad"))]
         let monad_hardfork = None;
-        precompiles_map.extend(
-            self.networks
-                .precompiles(self.is_tempo().then(|| self.tempo_hardfork()), monad_hardfork),
-        );
         #[cfg(feature = "base")]
-        for (address, label) in
-            self.networks.base_precompiles_label(self.is_base().then(|| self.base_upgrade()))
-        {
-            precompiles_map.insert(label, address);
-        }
+        let base_upgrade = self.is_base().then(|| self.base_upgrade());
+        #[cfg(not(feature = "base"))]
+        let base_upgrade = None;
+        precompiles_map.extend(self.networks.precompiles(
+            self.is_tempo().then(|| self.tempo_hardfork()),
+            monad_hardfork,
+            base_upgrade,
+        ));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
@@ -1998,10 +2007,14 @@ impl<N: Network> Backend<N> {
         let tempo_hardfork = self.is_tempo().then(|| self.tempo_hardfork());
         #[cfg(feature = "monad")]
         let monad_hardfork = self.is_monad().then(|| self.monad_hardfork());
+        #[cfg(feature = "base")]
+        let base_upgrade = self.is_base().then(|| self.base_upgrade());
         let decoder = self.call_trace_decoder.read();
         let is_current = decoder.tempo_hardfork() == tempo_hardfork;
         #[cfg(feature = "monad")]
         let is_current = is_current && decoder.monad_hardfork() == monad_hardfork;
+        #[cfg(feature = "base")]
+        let is_current = is_current && decoder.base_upgrade() == base_upgrade;
         if is_current {
             return Arc::clone(&decoder);
         }
@@ -2012,6 +2025,8 @@ impl<N: Network> Backend<N> {
         updated.set_tempo_hardfork(tempo_hardfork);
         #[cfg(feature = "monad")]
         updated.set_monad_hardfork(monad_hardfork);
+        #[cfg(feature = "base")]
+        updated.set_base_upgrade(base_upgrade);
         *decoder = Arc::new(updated);
         Arc::clone(&decoder)
     }
@@ -9483,10 +9498,8 @@ where
     ) -> Result<(), BlockchainError> {
         let address = *tx.sender();
         let account = self.get_account(address).await?;
-        #[cfg(feature = "base")]
+        #[cfg_attr(not(feature = "base"), allow(unused_mut))]
         let mut evm_env = self.next_evm_env();
-        #[cfg(not(feature = "base"))]
-        let evm_env = self.next_evm_env();
         #[cfg(feature = "base")]
         if tx.transaction.as_ref().is_eip8130() {
             evm_env.block_env.timestamp = U256::from(self.eip8130_pool_timestamp());
@@ -9495,7 +9508,7 @@ where
         #[cfg(feature = "base")]
         if let FoundryTxEnvelope::Eip8130(signed) = tx.transaction.as_ref() {
             let body = signed.tx();
-            let now = self.eip8130_pool_timestamp();
+            let now = self.eip8130_pool_timestamp_ms();
             signed
                 .validate_admission_static(self.chain_id().to())
                 .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
@@ -9674,7 +9687,9 @@ where
                 .validate_admission_static(evm_env.cfg_env.chain_id)
                 .map_err(|error| InvalidTransactionError::Eip8130(error.to_string()))?;
             signed
-                .validate_timestamp(evm_env.block_env.timestamp.saturating_to())
+                .validate_timestamp(
+                    evm_env.block_env.timestamp.saturating_to::<u64>().saturating_mul(1_000),
+                )
                 .map_err(|error| InvalidTransactionError::Eip8130(error.to_string()))?;
         }
 
@@ -10299,12 +10314,18 @@ mod tests {
     use alloy_provider::Provider;
     #[cfg(feature = "monad")]
     use alloy_rpc_types::TransactionRequest;
+    #[cfg(feature = "base")]
+    use base_common_precompiles::{ActivationRegistryStorage, B20FactoryStorage};
+    #[cfg(feature = "monad")]
+    use foundry_evm::hardfork::MonadHardfork;
+    #[cfg(feature = "base")]
+    use foundry_evm::hardforks::BaseUpgrade;
+    #[cfg(any(feature = "base", feature = "monad"))]
+    use foundry_evm::traces::CallTraceDecoderBuilder;
     use foundry_evm::{
         backend::{BlockchainDb, BlockchainDbMeta},
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
-    #[cfg(feature = "monad")]
-    use foundry_evm::{hardfork::MonadHardfork, traces::CallTraceDecoderBuilder};
     #[cfg(feature = "monad")]
     use monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS;
     use std::sync::Arc;
@@ -10765,6 +10786,38 @@ mod tests {
         assert_eq!(
             decoder.labels.get(&RESERVE_BALANCE_ADDRESS).map(String::as_str),
             Some("ReserveBalance")
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn base_trace_decoder_follows_resolved_upgrade() {
+        let (azul, _) =
+            spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Azul.into()))).await;
+        let stale_beryl =
+            CallTraceDecoderBuilder::new().with_base_upgrade(Some(BaseUpgrade::Beryl)).build();
+        *azul.backend.call_trace_decoder.write() = Arc::new(stale_beryl);
+
+        let decoder = azul.backend.call_trace_decoder();
+        assert_eq!(decoder.base_upgrade(), Some(BaseUpgrade::Azul));
+        assert!(!decoder.labels.contains_key(&B20FactoryStorage::ADDRESS));
+        assert!(!decoder.labels.contains_key(&ActivationRegistryStorage::ADDRESS));
+
+        let (beryl, _) =
+            spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()))).await;
+        let stale_azul =
+            CallTraceDecoderBuilder::new().with_base_upgrade(Some(BaseUpgrade::Azul)).build();
+        *beryl.backend.call_trace_decoder.write() = Arc::new(stale_azul);
+
+        let decoder = beryl.backend.call_trace_decoder();
+        assert_eq!(decoder.base_upgrade(), Some(BaseUpgrade::Beryl));
+        assert_eq!(
+            decoder.labels.get(&B20FactoryStorage::ADDRESS).map(String::as_str),
+            Some("B20Factory")
+        );
+        assert_eq!(
+            decoder.labels.get(&ActivationRegistryStorage::ADDRESS).map(String::as_str),
+            Some("ActivationRegistry")
         );
     }
 }

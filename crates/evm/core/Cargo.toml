@@ -127,6 +127,7 @@ monad = [
     "foundry-evm-networks/monad",
 ]
 base = [
+    "anvil/base",
     "dep:base-common-chains",
     "dep:base-common-consensus",
     "dep:base-common-evm",

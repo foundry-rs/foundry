@@ -199,6 +199,7 @@ fn replay_transfer_fixture(fixture: ReplayFixture) {
     let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         fixture_env(&fixture, upgrade),
+        (),
         NoOpInspector,
     );
     let result = evm.transact_commit(tx).expect("replay Base transfer");
@@ -251,6 +252,7 @@ fn replays_beryl_operator_fee_charge_and_refund() {
     let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         fixture_env(&fixture, BaseUpgrade::Beryl),
+        (),
         NoOpInspector,
     );
     evm.ctx_mut().chain = L1BlockInfo {
@@ -320,6 +322,7 @@ fn replays_successful_and_failed_base_deposits() {
     let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         simple_base_env(BaseUpgrade::Beryl),
+        (),
         NoOpInspector,
     );
     evm.ctx_mut().chain.l2_block = Some(U256::ONE);
@@ -342,6 +345,7 @@ fn replays_successful_and_failed_base_deposits() {
     let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         simple_base_env(BaseUpgrade::Beryl),
+        (),
         NoOpInspector,
     );
     evm.ctx_mut().chain.l2_block = Some(U256::ONE);
@@ -363,7 +367,8 @@ fn eip8130_transaction(signer: &PrivateKeySigner) -> (BaseTxEnvelope, BaseTransa
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -405,6 +410,7 @@ fn simulates_and_commits_eip8130_without_placeholder_txenv() {
     let mut simulation_evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut simulation_db,
         simple_base_env(BaseUpgrade::Cobalt),
+        (),
         NoOpInspector,
     );
     simulation_evm.ctx_mut().chain.l2_block = Some(U256::ONE);
@@ -420,6 +426,7 @@ fn simulates_and_commits_eip8130_without_placeholder_txenv() {
     let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         simple_base_env(BaseUpgrade::Cobalt),
+        (),
         NoOpInspector,
     );
     evm.ctx_mut().chain.l2_block = Some(U256::ONE);
@@ -432,6 +439,7 @@ fn simulates_and_commits_eip8130_without_placeholder_txenv() {
     let mut replay_evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         simple_base_env(BaseUpgrade::Cobalt),
+        (),
         NoOpInspector,
     );
     replay_evm.ctx_mut().chain.l2_block = Some(U256::ONE);

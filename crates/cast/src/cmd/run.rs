@@ -171,14 +171,14 @@ impl RunArgs {
             return self.run_with_evm::<TempoEvmNetwork>(config, evm_opts).await;
         }
 
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self.run_with_evm::<MonadEvmNetwork>(config, evm_opts).await;
-        }
-
         #[cfg(feature = "base")]
         if evm_opts.networks.is_base() {
             return self.run_with_evm::<BaseEvmNetwork>(config, evm_opts).await;
+        }
+
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return self.run_with_evm::<MonadEvmNetwork>(config, evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]

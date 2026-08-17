@@ -74,9 +74,9 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         .await;
     }
 
-    #[cfg(feature = "monad")]
-    if evm_opts.networks.is_monad() {
-        return Box::pin(run_command_with_network::<MonadEvmNetwork>(
+    #[cfg(feature = "base")]
+    if evm_opts.networks.is_base() {
+        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
             args,
             config,
             evm_opts,
@@ -86,9 +86,9 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         .await;
     }
 
-    #[cfg(feature = "base")]
-    if evm_opts.networks.is_base() {
-        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
+    #[cfg(feature = "monad")]
+    if evm_opts.networks.is_monad() {
+        return Box::pin(run_command_with_network::<MonadEvmNetwork>(
             args,
             config,
             evm_opts,

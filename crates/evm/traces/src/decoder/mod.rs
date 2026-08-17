@@ -285,7 +285,7 @@ pub struct CallTraceDecoder {
 
     /// The Base upgrade, used to determine upgrade-specific precompiles.
     #[cfg(feature = "base")]
-    pub base_upgrade: Option<BaseUpgrade>,
+    base_upgrade: Option<BaseUpgrade>,
 
     /// Hide addresses when a label is available, showing only the label.
     pub compact_labels: bool,
@@ -373,6 +373,22 @@ impl CallTraceDecoder {
             return;
         }
         self.monad_hardfork = hardfork;
+        self.clear_addresses();
+    }
+
+    /// Returns the Base upgrade used for address-scoped metadata.
+    #[cfg(feature = "base")]
+    pub const fn base_upgrade(&self) -> Option<BaseUpgrade> {
+        self.base_upgrade
+    }
+
+    /// Rebuilds address-scoped metadata for a new Base upgrade.
+    #[cfg(feature = "base")]
+    pub fn set_base_upgrade(&mut self, upgrade: Option<BaseUpgrade>) {
+        if self.base_upgrade == upgrade {
+            return;
+        }
+        self.base_upgrade = upgrade;
         self.clear_addresses();
     }
 

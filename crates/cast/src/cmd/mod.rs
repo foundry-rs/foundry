@@ -72,7 +72,7 @@ pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVari
     Ok(provider.get_chain_id().await?.into())
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "base", feature = "monad")))]
 mod tests {
     use super::*;
 

@@ -80,6 +80,7 @@ monad = [
     "forge-verify/monad",
 ]
 base = [
+    "anvil/base",
     "foundry-evm/base",
     "foundry-evm-networks/base",
     "foundry-common/base",
