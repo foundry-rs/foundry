@@ -568,10 +568,10 @@ alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", re
 monad-revm = { git = "https://github.com/category-labs/monad-revm", rev = "8ba4a51b221357105465cbe6d410906d3f12baeb" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "2147e3cc6bde77965e45a1626d5478dc6865011e" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "2147e3cc6bde77965e45a1626d5478dc6865011e" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "2147e3cc6bde77965e45a1626d5478dc6865011e" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "2147e3cc6bde77965e45a1626d5478dc6865011e" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "eabd2e218a7606505430d84bfeacd145e2c1eff3" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "eabd2e218a7606505430d84bfeacd145e2c1eff3" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "eabd2e218a7606505430d84bfeacd145e2c1eff3" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "eabd2e218a7606505430d84bfeacd145e2c1eff3" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
