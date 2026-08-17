@@ -4,8 +4,8 @@ use crate::{
     Cheatcode, Cheatcodes, Result,
     Vm::*,
     json::{
-        check_json_key_exists, parse_json, parse_json_coerce, parse_json_keys, resolve_type,
-        upsert_json_value,
+        check_json_key_exists, parse_json, parse_json_coerce, parse_json_coerce_or,
+        parse_json_keys, resolve_type, upsert_json_value,
     },
 };
 use alloy_dyn_abi::DynSolType;
@@ -45,101 +45,234 @@ impl Cheatcode for parseToml_1Call {
     }
 }
 
-impl Cheatcode for parseTomlUintCall {
+impl Cheatcode for parseTomlUint_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Uint(256))
     }
 }
 
-impl Cheatcode for parseTomlUintArrayCall {
+impl Cheatcode for parseTomlUint_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(toml, key, &DynSolType::Uint(256), defaultValue)
+    }
+}
+
+impl Cheatcode for parseTomlUintArray_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
-impl Cheatcode for parseTomlIntCall {
+impl Cheatcode for parseTomlUintArray_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(
+            toml,
+            key,
+            &DynSolType::Array(Box::new(DynSolType::Uint(256))),
+            defaultValue,
+        )
+    }
+}
+
+impl Cheatcode for parseTomlInt_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Int(256))
     }
 }
 
-impl Cheatcode for parseTomlIntArrayCall {
+impl Cheatcode for parseTomlInt_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(toml, key, &DynSolType::Int(256), defaultValue)
+    }
+}
+
+impl Cheatcode for parseTomlIntArray_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
-impl Cheatcode for parseTomlBoolCall {
+impl Cheatcode for parseTomlIntArray_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(
+            toml,
+            key,
+            &DynSolType::Array(Box::new(DynSolType::Int(256))),
+            defaultValue,
+        )
+    }
+}
+
+impl Cheatcode for parseTomlBool_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Bool)
     }
 }
 
-impl Cheatcode for parseTomlBoolArrayCall {
+impl Cheatcode for parseTomlBool_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(toml, key, &DynSolType::Bool, defaultValue)
+    }
+}
+
+impl Cheatcode for parseTomlBoolArray_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
-impl Cheatcode for parseTomlAddressCall {
+impl Cheatcode for parseTomlBoolArray_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(
+            toml,
+            key,
+            &DynSolType::Array(Box::new(DynSolType::Bool)),
+            defaultValue,
+        )
+    }
+}
+
+impl Cheatcode for parseTomlAddress_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Address)
     }
 }
 
-impl Cheatcode for parseTomlAddressArrayCall {
+impl Cheatcode for parseTomlAddress_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(toml, key, &DynSolType::Address, defaultValue)
+    }
+}
+
+impl Cheatcode for parseTomlAddressArray_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
-impl Cheatcode for parseTomlStringCall {
+impl Cheatcode for parseTomlAddressArray_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(
+            toml,
+            key,
+            &DynSolType::Array(Box::new(DynSolType::Address)),
+            defaultValue,
+        )
+    }
+}
+
+impl Cheatcode for parseTomlString_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::String)
     }
 }
 
-impl Cheatcode for parseTomlStringArrayCall {
+impl Cheatcode for parseTomlString_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(toml, key, &DynSolType::String, defaultValue)
+    }
+}
+
+impl Cheatcode for parseTomlStringArray_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
-impl Cheatcode for parseTomlBytesCall {
+impl Cheatcode for parseTomlStringArray_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(
+            toml,
+            key,
+            &DynSolType::Array(Box::new(DynSolType::String)),
+            defaultValue,
+        )
+    }
+}
+
+impl Cheatcode for parseTomlBytes_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Bytes)
     }
 }
 
-impl Cheatcode for parseTomlBytesArrayCall {
+impl Cheatcode for parseTomlBytes_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(toml, key, &DynSolType::Bytes, defaultValue)
+    }
+}
+
+impl Cheatcode for parseTomlBytesArray_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
-impl Cheatcode for parseTomlBytes32Call {
+impl Cheatcode for parseTomlBytesArray_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(
+            toml,
+            key,
+            &DynSolType::Array(Box::new(DynSolType::Bytes)),
+            defaultValue,
+        )
+    }
+}
+
+impl Cheatcode for parseTomlBytes32_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::FixedBytes(32))
     }
 }
 
-impl Cheatcode for parseTomlBytes32ArrayCall {
+impl Cheatcode for parseTomlBytes32_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(toml, key, &DynSolType::FixedBytes(32), defaultValue)
+    }
+}
+
+impl Cheatcode for parseTomlBytes32Array_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+    }
+}
+
+impl Cheatcode for parseTomlBytes32Array_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { toml, key, defaultValue } = self;
+        parse_toml_coerce_or(
+            toml,
+            key,
+            &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))),
+            defaultValue,
+        )
     }
 }
 
@@ -236,6 +369,17 @@ fn parse_toml(toml: &str, key: &str, struct_defs: Option<&StructDefinitions>) ->
 /// Parse a TOML string and return the value at the given path, coercing it to the given type.
 fn parse_toml_coerce(toml: &str, key: &str, ty: &DynSolType) -> Result {
     parse_json_coerce(&toml_to_json_string(toml)?, key, ty)
+}
+
+/// Parse a TOML string and return the value at the given path, coercing it to the given type, or
+/// return the default if the path does not exist.
+fn parse_toml_coerce_or<T: SolValue>(
+    toml: &str,
+    key: &str,
+    ty: &DynSolType,
+    default: &T,
+) -> Result {
+    parse_json_coerce_or(&toml_to_json_string(toml)?, key, ty, default)
 }
 
 /// Parse a TOML string and return an array of all keys at the given path.
