@@ -272,7 +272,7 @@ pub enum EthRequest {
     #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
     GetGenesisTime(()),
 
-    /// Returns the UNIX wall time in milliseconds when the latest block was created.
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
     #[serde(rename = "anvil_getLastBlockWallTime", with = "empty_params")]
     GetLastBlockWallTime(()),
 

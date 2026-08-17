@@ -64,7 +64,7 @@ impl TimeManager {
         self.reset_timestamp(start_timestamp, true);
     }
 
-    /// Sets the current timestamp without changing when the latest block was created.
+    /// Sets the current timestamp without changing when the current head was installed.
     pub fn set_time(&self, timestamp: u64) {
         self.reset_timestamp(timestamp, false);
     }
@@ -86,7 +86,7 @@ impl TimeManager {
         self.state.read().offset
     }
 
-    /// Returns the UNIX wall time in milliseconds when the latest block was created.
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
     pub fn last_block_wall_time(&self) -> u64 {
         self.state.read().last_block_wall_time
     }

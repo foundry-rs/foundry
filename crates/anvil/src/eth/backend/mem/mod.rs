@@ -5926,7 +5926,6 @@ where
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
-            self.time.mark_block_created();
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
                 storage.monad_block_participants.insert(block_hash, participants);
@@ -5969,6 +5968,8 @@ where
                     .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
                 storage.remove_block_transactions_by_number(to_clear)
             }
+
+            self.time.mark_block_created();
 
             // we intentionally set the difficulty to `0` for newer blocks
             evm_env.block_env.difficulty = U256::from(0);

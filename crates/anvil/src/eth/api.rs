@@ -761,7 +761,7 @@ impl<N: Network> EthApi<N> {
         Ok(self.backend.genesis_time())
     }
 
-    /// Returns the UNIX wall time in milliseconds when the latest block was created.
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
     ///
     /// Handler for RPC call: `anvil_getLastBlockWallTime`
     pub fn anvil_get_last_block_wall_time(&self) -> Result<u64> {
