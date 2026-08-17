@@ -1501,12 +1501,9 @@ impl Config {
                 }
                 SolcReq::Local(solc) => {
                     if !solc.is_file() {
-                        return Err(SolcError::msg(format!(
-                            "`solc` {} does not exist",
-                            solc.display()
-                        )));
+                        return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
                     }
-                    Solc::new(solc)?
+                    Solc::new_with_approval(solc)?
                 }
             };
             return Ok(Some(solc));
@@ -1594,7 +1591,7 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            Some(Vyper::new(path)?)
+            Some(Vyper::new_with_approval(path)?)
         } else {
             Vyper::new("vyper").ok()
         };
@@ -3108,10 +3105,10 @@ impl SolcReq {
     ///
     /// If the `SolcReq` is a `Version` it will return the version, if it's a path to a binary it
     /// will try to get the version from the binary.
-    fn try_version(&self) -> Result<Version, SolcError> {
+    pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => Solc::new(path).map(|solc| solc.version),
+            Self::Local(path) => Solc::new_with_approval(path).map(|solc| solc.version),
         }
     }
 }

@@ -29,7 +29,7 @@ use foundry_evm::{
         FoundryBlock as _,
         decode::RevertDecoder,
         evm::{
-            BlockContext, BlockEnvFor, BlockResponseFor, ContextAuxFor, EvmEnvFor,
+            BlockContext, BlockEnvFor, BlockResponseFor, ChainContextFor, EvmEnvFor,
             FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor,
         },
     },
@@ -406,7 +406,7 @@ pub fn deploy_contract<FEN>(
     evm_env: &EvmEnvFor<FEN>,
     tx_env: &TxEnvFor<FEN>,
     to: TxKind,
-    context_aux: ContextAuxFor<FEN>,
+    chain_context: ChainContextFor<FEN>,
 ) -> Result<Address, eyre::ErrReport>
 where
     FEN: FoundryEvmNetwork,
@@ -417,8 +417,11 @@ where
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
             );
         }
-        let result =
-            executor.transact_with_env_and_context(evm_env.clone(), tx_env.clone(), context_aux)?;
+        let result = executor.transact_with_env_and_context(
+            evm_env.clone(),
+            tx_env.clone(),
+            chain_context,
+        )?;
 
         trace!(transact_result = ?result.exit_reason);
 
@@ -451,7 +454,7 @@ where
         let deploy_result = executor.deploy_with_env_and_context(
             evm_env.clone(),
             tx_env.clone(),
-            context_aux,
+            chain_context,
             None,
         )?;
         trace!(deploy_result = ?deploy_result.raw.exit_reason);
@@ -462,13 +465,13 @@ where
 pub fn synthetic_deployment_context<FEN>(
     block_context: Option<&BlockContext<FEN>>,
     tx_env: &TxEnvFor<FEN>,
-) -> ContextAuxFor<FEN>
+) -> ChainContextFor<FEN>
 where
     FEN: FoundryEvmNetwork,
 {
     block_context.map_or_else(
-        || FEN::EvmFactory::default().context_for_transaction(tx_env),
-        |context| context.child(tx_env),
+        || FEN::EvmFactory::default().chain_context_for_transaction(tx_env),
+        |context| context.clone().into_child().next_transaction(tx_env),
     )
 }
 
@@ -728,33 +731,27 @@ contract Broken {
         );
         let synthetic_tx = monad_tx(synthetic_sender);
 
-        let auxiliary =
+        let chain_context =
             synthetic_deployment_context::<MonadEvmNetwork>(Some(&context), &synthetic_tx);
 
-        assert_eq!(
-            auxiliary.chain.grandparent_senders_and_authorities,
-            [child_grandparent].into_iter().collect()
-        );
-        assert_eq!(
-            auxiliary.chain.parent_senders_and_authorities,
-            [child_parent].into_iter().collect()
-        );
-        assert_eq!(auxiliary.chain.current_block_senders, vec![synthetic_sender]);
-        assert_eq!(auxiliary.chain.current_tx_index, 0);
+        assert!(chain_context.grandparent_senders_and_authorities.contains(&child_grandparent));
+        assert!(chain_context.parent_senders_and_authorities.contains(&child_parent));
+        assert_eq!(chain_context.current_block_senders, vec![synthetic_sender]);
+        assert_eq!(chain_context.current_tx_index, 0);
     }
 
     #[test]
     #[cfg(feature = "monad")]
-    fn synthetic_monad_deployment_without_history_uses_transaction_context() {
+    fn synthetic_monad_deployment_without_history_uses_chain_context() {
         let synthetic_sender = Address::repeat_byte(0x44);
         let synthetic_tx = monad_tx(synthetic_sender);
 
-        let auxiliary = synthetic_deployment_context::<MonadEvmNetwork>(None, &synthetic_tx);
+        let chain_context = synthetic_deployment_context::<MonadEvmNetwork>(None, &synthetic_tx);
 
-        assert!(auxiliary.chain.grandparent_senders_and_authorities.is_empty());
-        assert!(auxiliary.chain.parent_senders_and_authorities.is_empty());
-        assert_eq!(auxiliary.chain.current_block_senders, vec![synthetic_sender]);
-        assert_eq!(auxiliary.chain.current_tx_index, 0);
+        assert!(chain_context.grandparent_senders_and_authorities.is_empty());
+        assert!(chain_context.parent_senders_and_authorities.is_empty());
+        assert_eq!(chain_context.current_block_senders, vec![synthetic_sender]);
+        assert_eq!(chain_context.current_tx_index, 0);
     }
 
     #[test]

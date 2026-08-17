@@ -282,7 +282,7 @@ impl SymbolicExecutor {
             if target.result() { condition.clone().not(&mut self.cx) } else { condition.clone() };
         let mut constraints = state.constraints.clone();
         constraints.push(desired);
-        if !self.branch_is_sat_or_defer(&constraints)? {
+        if !self.branch_is_sat_or_defer(state, &constraints)? {
             return Ok(false);
         }
         state.constraints = constraints;
@@ -1204,7 +1204,7 @@ impl SymbolicExecutor {
             None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(in_bounds);
-                if self.solver.is_sat(&mut self.cx, &constraints)? {
+                if self.is_sat_with_state(state, &constraints)? {
                     state.constraints = constraints;
                     Ok(true)
                 } else {

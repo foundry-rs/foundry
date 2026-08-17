@@ -1,8 +1,8 @@
 use std::{fmt::Debug, ops::Deref};
 
 use crate::{
-    FoundryBlock, FoundryContextExt, FoundryContextState, FoundryEvmAuxState, FoundryInspectorExt,
-    FoundryTransaction, FromAnyRpcTransaction,
+    FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
+    FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
@@ -29,7 +29,6 @@ use revm::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
     primitives::{eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
-    state::EvmState,
 };
 use serde::{Deserialize, Serialize};
 use tempo_alloy::TempoNetwork;
@@ -107,8 +106,19 @@ pub type SpecFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Spec;
 pub type BlockEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::BlockEnv;
 pub type PrecompilesFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Precompiles;
 pub type EvmEnvFor<FEN> = EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>;
-pub type ContextAuxFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::ContextAux;
-pub type ContextStateFor<FEN> = FoundryContextState<ContextAuxFor<FEN>>;
+pub type ChainContextFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::ChainContext;
+pub type TransactionStateFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::TransactionState;
+
+/// Boxed nested EVM produced by a Foundry EVM factory.
+pub type NestedEvmFor<'db, F> = Box<
+    dyn NestedEvm<
+            Spec = <F as EvmFactory>::Spec,
+            Block = <F as EvmFactory>::BlockEnv,
+            Tx = <F as EvmFactory>::Tx,
+            ChainContext = <F as FoundryEvmFactory>::ChainContext,
+            TransactionState = <F as FoundryEvmFactory>::TransactionState,
+        > + 'db,
+>;
 
 pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
 pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
@@ -116,26 +126,11 @@ pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionR
 pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
 pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
-/// Rebases precomputed network context after the active database or fork position changes.
-pub fn rebase_context_after_state_transition<FEN: FoundryEvmNetwork>(
-    ecx: &mut FoundryContextFor<'_, FEN>,
-    current: &ContextAuxFor<FEN>,
-    mut replacement: ContextAuxFor<FEN>,
-) {
-    {
-        let (_, inner) = ecx.db_journal_inner_mut();
-        FEN::EvmFactory::default().rebase_context_aux(current, &mut replacement, &inner.state);
-    }
-    ecx.set_aux_state(replacement);
-}
-
 /// Rebases network caches after state changes that retain the active chain cursor.
 pub fn refresh_context_after_state_change<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
 ) {
-    let current = ecx.aux_state();
-    let replacement = current.clone();
-    rebase_context_after_state_transition::<FEN>(ecx, &current, replacement);
+    FEN::EvmFactory::default().apply_context_transition(ecx, None);
 }
 
 pub trait FoundryEvmFactory:
@@ -150,6 +145,12 @@ pub trait FoundryEvmFactory:
     + Default
     + 'static
 {
+    /// Chain context required to execute at an exact transaction position.
+    type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
+
+    /// Family-owned state scoped to the active transaction.
+    type TransactionState: Clone + Debug + Default + Send + Sync + 'static;
+
     /// Additional network-specific cheatcode contract addresses.
     const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
 
@@ -162,15 +163,11 @@ pub trait FoundryEvmFactory:
     /// Whether canonical protocol system transactions must be included during fork replay.
     const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = false;
 
-    /// Network-specific state stored outside the standard REVM journal.
-    type ContextAux: FoundryEvmAuxState;
-
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
             Block = Self::BlockEnv,
             Tx = Self::Tx,
             Spec = Self::Spec,
-            Aux = Self::ContextAux,
             Db: DatabaseExt<Self>,
         >
     where
@@ -192,35 +189,49 @@ pub trait FoundryEvmFactory:
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
+        chain_context: Self::ChainContext,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
-    /// Returns the auxiliary state for a standalone synthetic transaction.
-    fn context_for_transaction(&self, _tx: &Self::Tx) -> Self::ContextAux {
-        Self::ContextAux::default()
+    /// Builds chain context for a standalone synthetic transaction.
+    fn chain_context_for_transaction(&self, _tx: &Self::Tx) -> Self::ChainContext {
+        Self::ChainContext::default()
     }
 
-    /// Returns the auxiliary state for a transaction at an exact position in a block.
-    fn context_for_block(
+    /// Builds chain context for a transaction at an exact block position.
+    fn chain_context_for_block(
         &self,
         _grandparent: &[Self::Tx],
         _parent: &[Self::Tx],
         _current: &[Self::Tx],
         _current_tx_index: usize,
-    ) -> Self::ContextAux {
-        Self::ContextAux::default()
+    ) -> Self::ChainContext {
+        Self::ChainContext::default()
     }
 
-    /// Rebases live auxiliary state after the underlying database or fork position changes.
-    ///
-    /// `replacement` contains context reconstructed at the new position. Implementations may
-    /// preserve transaction-scoped state from `current` while recomputing caches against `state`.
-    fn rebase_context_aux(
+    /// Captures the active transaction position from a live EVM context.
+    fn capture_chain_context(&self, _ecx: &Self::FoundryContext<'_>) -> Self::ChainContext {
+        Self::ChainContext::default()
+    }
+
+    /// Applies a new transaction position and refreshes family-owned state after journal changes.
+    fn apply_context_transition<'db>(
         &self,
-        _current: &Self::ContextAux,
-        _replacement: &mut Self::ContextAux,
-        _state: &EvmState,
+        _ecx: &mut Self::FoundryContext<'db>,
+        _replacement: Option<&Self::ChainContext>,
+    ) {
+    }
+
+    /// Captures family-owned state for the active transaction.
+    fn capture_transaction_state(&self, _ecx: &Self::FoundryContext<'_>) -> Self::TransactionState {
+        Self::TransactionState::default()
+    }
+
+    /// Restores family-owned state for the active transaction.
+    fn restore_transaction_state(
+        &self,
+        _ecx: &mut Self::FoundryContext<'_>,
+        _state: Self::TransactionState,
     ) {
     }
 
@@ -263,12 +274,12 @@ pub trait FoundryEvmFactory:
         evm.transact(tx).map_err(Into::into)
     }
 
-    /// Creates an uninspected EVM with explicit network-specific auxiliary state.
+    /// Creates an uninspected EVM with explicit transaction-position context.
     fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
+        chain_context: Self::ChainContext,
     ) -> Self::Evm<DB, NoOpInspector>;
 
     /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
@@ -281,16 +292,9 @@ pub trait FoundryEvmFactory:
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
+        chain_context: Self::ChainContext,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<
-        dyn NestedEvm<
-                Spec = Self::Spec,
-                Block = Self::BlockEnv,
-                Tx = Self::Tx,
-                Aux = Self::ContextAux,
-            > + 'db,
-    >;
+    ) -> NestedEvmFor<'db, Self>;
 }
 
 /// Object-safe trait exposing the operations that cheatcode nested EVM closures need.
@@ -304,23 +308,28 @@ pub trait NestedEvm {
     type Block;
     /// The transaction environment type.
     type Tx;
-    /// Network-specific state stored outside the standard REVM journal.
-    type Aux: FoundryEvmAuxState;
-
+    /// Chain context identifying the active transaction position.
+    type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
+    /// Family-owned state scoped to the active transaction.
+    type TransactionState: Clone + Debug + Default + Send + Sync + 'static;
     /// Returns a mutable reference to the journal inner state (`JournaledState`).
     fn journal_inner_mut(&mut self) -> &mut JournaledState;
 
-    /// Clones the complete context state.
-    fn context_state(&self) -> FoundryContextState<Self::Aux>;
+    /// Captures the active transaction position.
+    fn capture_chain_context(&self) -> Self::ChainContext {
+        Self::ChainContext::default()
+    }
 
-    /// Clones the network-specific auxiliary state.
-    fn aux_state(&self) -> Self::Aux;
+    /// Captures family-owned state for the active transaction.
+    fn capture_transaction_state(&self) -> Self::TransactionState {
+        Self::TransactionState::default()
+    }
 
-    /// Restores the complete context state.
-    fn set_context_state(&mut self, state: FoundryContextState<Self::Aux>);
+    /// Restores family-owned state for the active transaction.
+    fn restore_transaction_state(&mut self, _state: Self::TransactionState) {}
 
-    /// Preserves auxiliary state across the next synthetic transaction boundary.
-    fn preserve_aux_state_on_transaction(&mut self) {}
+    /// Preserves transaction-scoped state across the next transaction boundary.
+    fn preserve_transaction_state_on_next_transaction(&mut self) {}
 
     /// Runs a single execution frame (create or call) through the EVM handler loop.
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
@@ -343,35 +352,48 @@ pub trait NestedEvm {
 }
 
 /// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
-pub type NestedEvmClosure<'a, Spec, Block, Tx, Aux> =
+pub type NestedEvmClosure<'a, Spec, Block, Tx, ChainContext, TransactionState> =
     &'a mut dyn FnMut(
-        &mut dyn NestedEvm<Spec = Spec, Block = Block, Tx = Tx, Aux = Aux>,
+        &mut dyn NestedEvm<
+            Spec = Spec,
+            Block = Block,
+            Tx = Tx,
+            ChainContext = ChainContext,
+            TransactionState = TransactionState,
+        >,
     ) -> Result<(), EVMError<DatabaseError>>;
 
+/// Nested EVM closure for a Foundry EVM network.
+pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<
+    'a,
+    SpecFor<FEN>,
+    BlockEnvFor<FEN>,
+    TxEnvFor<FEN>,
+    ChainContextFor<FEN>,
+    TransactionStateFor<FEN>,
+>;
+
 /// Clones the current context (env + journal), passes the database, cloned env,
-/// and cloned context state to the callback. The callback builds whatever EVM it
-/// needs, runs its operations, and returns `(result, modified_env, modified_context)`.
+/// and cloned journal inner to the callback. The callback builds whatever EVM it
+/// needs, runs its operations, and returns `(result, modified_env, modified_journal)`.
 /// Modified state is written back after the callback returns.
 pub fn with_cloned_context<CTX: FoundryContextExt>(
     ecx: &mut CTX,
     f: impl FnOnce(
         &mut CTX::Db,
         EvmEnv<CTX::Spec, CTX::Block>,
-        FoundryContextState<CTX::Aux>,
-    ) -> Result<
-        (EvmEnv<CTX::Spec, CTX::Block>, FoundryContextState<CTX::Aux>),
-        EVMError<DatabaseError>,
-    >,
+        JournaledState,
+    )
+        -> Result<(EvmEnv<CTX::Spec, CTX::Block>, JournaledState), EVMError<DatabaseError>>,
 ) -> Result<(), EVMError<DatabaseError>> {
     let evm_env = ecx.evm_clone();
-    let context_state = ecx.context_state();
+    let (db, journal_inner) = ecx.db_journal_inner_mut();
+    let journal_inner = journal_inner.clone();
 
-    let db = ecx.db_mut();
-
-    let (sub_evm_env, sub_state) = f(db, evm_env, context_state)?;
+    let (sub_evm_env, sub_inner) = f(db, evm_env, journal_inner)?;
 
     // Write back modified state. The db borrow was released when f returned.
-    ecx.set_context_state(sub_state);
+    ecx.set_journal_inner(sub_inner);
     ecx.set_evm(sub_evm_env);
 
     Ok(())

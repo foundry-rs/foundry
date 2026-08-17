@@ -430,11 +430,15 @@ impl PathState {
         self.mapping_hook_keccak_preimages = child.mapping_hook_keccak_preimages.clone();
     }
 
+    pub(crate) fn inherit_inspector_recordings(&mut self, child: &Self) {
+        self.recorded_logs = child.recorded_logs.clone();
+        self.access_record = child.access_record.clone();
+    }
+
     pub(crate) fn merge_reverted_top_level_effects(&mut self, reverted: &Self) {
         self.merge_noncommitting_check_constraints(reverted);
         self.block = reverted.block.clone();
-        self.recorded_logs = reverted.recorded_logs.clone();
-        self.access_record = reverted.access_record.clone();
+        self.inherit_inspector_recordings(reverted);
         self.expected_revert = reverted.expected_revert.clone();
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call.clone();
         self.expected_emit = reverted.expected_emit.clone();
@@ -930,6 +934,7 @@ impl AccessRecord {
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
+        self.read(address, slot.clone());
         Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
     }
 
@@ -1736,6 +1741,10 @@ impl SymbolicWorld {
 
     pub(crate) fn enable_arbitrary_storage_copy(&mut self, source: Address, target: Address) {
         self.arbitrary_storage_copies.insert(target, source);
+    }
+
+    pub(crate) fn replay_storage_symbols(&self) -> SymbolicVars {
+        self.replay_storage_slots.keys().copied().collect()
     }
 
     pub(crate) fn replay_storage_assignments(
