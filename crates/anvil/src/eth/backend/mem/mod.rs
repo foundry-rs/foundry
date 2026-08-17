@@ -5096,15 +5096,19 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let (num, hash) = {
-            let mut snapshots = self.active_state_snapshots.lock();
-            let Some(snapshot) = snapshots.remove(&id) else {
-                return Ok(false);
-            };
-            snapshots.retain(|snapshot_id, _| *snapshot_id < id);
-            snapshot
+        let Some((num, hash)) = self.active_state_snapshots.lock().get(&id).copied() else {
+            return Ok(false);
         };
-        let best_block_hash = {
+        let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
+            return Ok(false);
+        }
+        {
+            let mut snapshots = self.active_state_snapshots.lock();
+            snapshots.remove(&id);
+            snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+        }
+        {
             // revert the storage that's newer than the snapshot
             let current_height = self.best_number();
             let mut storage = self.blockchain.storage.write();
@@ -5125,10 +5129,7 @@ impl<N: Network> Backend<N> {
 
             storage.best_number = num;
             storage.best_hash = hash;
-            hash
-        };
-        let block =
-            self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        }
 
         let reset_time = block.header.timestamp();
         self.time.reset(reset_time);
@@ -5150,7 +5151,7 @@ impl<N: Network> Backend<N> {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
+        Ok(true)
     }
 
     /// executes the transactions without writing to the underlying database
