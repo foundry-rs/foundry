@@ -4814,7 +4814,21 @@ forgetest_async!(tempo_script_runs_with_zero_fee_token_balance, |prj, cmd| {
 import "forge-std/Script.sol";
 
 contract TempoScript is Script {
-    function run() external {}
+    uint256 public value;
+
+    constructor() {
+        value = 1;
+    }
+
+    function setUp() external {
+        require(value == 1);
+        value = 2;
+    }
+
+    function run() external {
+        require(value == 2);
+        value = 3;
+    }
 }
 "#,
     );
