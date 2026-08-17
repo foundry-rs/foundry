@@ -526,6 +526,7 @@ mod tests {
             shrink_run_limit: 0,
             fail_on_revert: false,
             assertion_failure: false,
+            fork_block_number: None,
         })
     }
 
@@ -542,6 +543,7 @@ mod tests {
             call_sequence: sequence(sequence_len, 0x90),
             original_sequence_len: sequence_len,
             revert_reason: reason.to_string(),
+            fork_block_number: None,
             edge_fingerprint: B256::ZERO,
         })
     }

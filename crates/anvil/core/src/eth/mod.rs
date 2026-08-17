@@ -409,6 +409,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_accountInfoAt")]
     DebugAccountInfoAt(BlockId, Index, Address),
 
+    /// reth's `debug_executionWitness` endpoint.
+    #[serde(rename = "debug_executionWitness", with = "sequence")]
+    DebugExecutionWitness(BlockNumber),
+
     /// geth's `debug_traceBlock` endpoint.
     #[serde(rename = "debug_traceBlock")]
     DebugTraceBlock(Bytes, #[serde(default)] GethDebugTracingOptions),
@@ -1883,6 +1887,17 @@ true}]}"#;
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "debug_accountInfoAt", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}, 0, "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_execution_witness() {
+        let s = r#"{"method": "debug_executionWitness", "params": ["0x1"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_executionWitness", "params": ["latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

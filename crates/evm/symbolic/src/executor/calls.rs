@@ -1069,6 +1069,7 @@ impl SymbolicExecutor {
             parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
             parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
             parent.inherit_mapping_hook_provenance(&outcome.state);
+            parent.inherit_inspector_recordings(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -1103,7 +1104,6 @@ impl SymbolicExecutor {
                         } else {
                             parent.expected_revert = Some(expected);
                         }
-                        parent.access_record = outcome.state.access_record.clone();
                         parent.expected_calls = outcome.state.expected_calls.clone();
                         parent.expected_creates = outcome.state.expected_creates.clone();
                         parent.call_mocks = outcome.state.call_mocks.clone();
@@ -1130,8 +1130,6 @@ impl SymbolicExecutor {
             match outcome.status {
                 TopLevelCallStatus::Success => {
                     parent.block = outcome.state.block.clone();
-                    parent.recorded_logs = outcome.state.recorded_logs.clone();
-                    parent.access_record = outcome.state.access_record.clone();
                     parent.expected_emit = outcome.state.expected_emit.clone();
                     parent.expected_calls = outcome.state.expected_calls.clone();
                     parent.expected_creates = outcome.state.expected_creates.clone();

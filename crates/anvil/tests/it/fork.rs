@@ -2125,7 +2125,7 @@ async fn can_override_fork_chain_id() {
 
 // <https://github.com/foundry-rs/foundry/issues/6485>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_reset_moonbeam() {
+async fn flaky_test_fork_reset_moonbeam() {
     crate::init_tracing();
     let (api, handle) = spawn(
         fork_config()

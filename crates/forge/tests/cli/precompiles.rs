@@ -114,9 +114,61 @@ contract PrecompileCaller {
     }
 }
 
+contract OrdinaryCode {
+    function ordinaryCode() external pure returns (bool) {
+        return true;
+    }
+}
+
 contract PrecompileTraceTest is Test {
     function test_precompile_traces() public {
         new PrecompileCaller();
+    }
+
+    function test_inactive_p256_address() public {
+        OrdinaryCode implementation = new OrdinaryCode();
+        vm.etch(address(0x100), address(implementation).code);
+        assertTrue(OrdinaryCode(address(0x100)).ordinaryCode());
+    }
+
+    function test_mocked_p256_address() public {
+        OrdinaryCode implementation = new OrdinaryCode();
+        vm.mockFunction(
+            address(0x100),
+            address(implementation),
+            abi.encodeCall(OrdinaryCode.ordinaryCode, ())
+        );
+        assertTrue(OrdinaryCode(address(0x100)).ordinaryCode());
+    }
+
+    function test_p256_redirected_to_other_precompile() public {
+        bytes memory callData = abi.encodeCall(OrdinaryCode.ordinaryCode, ());
+        vm.mockFunction(address(0x100), address(0x02), callData);
+        (bool success, bytes memory result) = address(0x100).call(callData);
+        assertTrue(success);
+        assertEq(result.length, 0);
+    }
+
+    function test_mocked_p256_call() public {
+        bytes memory callData = abi.encodeCall(OrdinaryCode.ordinaryCode, ());
+        vm.mockCall(address(0x100), callData, abi.encode(true));
+        (bool success, bytes memory result) = address(0x100).call(callData);
+        assertTrue(success);
+        assertTrue(abi.decode(result, (bool)));
+    }
+
+    function test_isolated_p256_call() public {
+        (bool success,) = address(0x100).call(new bytes(160));
+        assertTrue(success);
+    }
+
+    function test_isolated_inactive_p256_address() public {
+        OrdinaryCode implementation = new OrdinaryCode();
+        vm.etch(address(0x100), address(implementation).code);
+        (bool success, bytes memory result) =
+            address(0x100).call(abi.encodeCall(OrdinaryCode.ordinaryCode, ()));
+        assertTrue(success);
+        assertTrue(abi.decode(result, (bool)));
     }
 }
    "#,
@@ -163,8 +215,8 @@ Traces:
     │   │   └─ ← [Return] 0x0000000000000000000000000000000011a9a0372b8f332d5c30de9ad14e50372a73fa4c45d5f2fa5097f2d6fb93bcac592f2e1711ac43db0519870c7d0ea41500000000000000000000000000000000092c0f994164a0719f51c24ba3788de240ff926b55f58c445116e8bc6a47cd63392fd4e8e22bdf9feaa96ee773222133
     │   ├─ [..] PRECOMPILES::bls12MapFp2ToG2(0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) [staticcall]
     │   │   └─ ← [Return] 0x00000000000000000000000000000000018320896ec9eef9d5e619848dc29ce266f413d02dd31d9b9d44ec0c79cd61f18b075ddba6d7bd20b7ff27a4b324bfce000000000000000000000000000000000a67d12118b5a35bb02d2e86b3ebfa7e23410db93de39fb06d7025fa95e96ffa428a7a27c3ae4dd4b40bd251ac658892000000000000000000000000000000000260e03644d1a2c321256b3246bad2b895cad13890cbe6f85df55106a0d334604fb143c7a042d878006271865bc359410000000000000000000000000000000004c69777a43f0bda07679d5805e63f18cf4e0e7c6112ac7f70266d199b4f76ae27c6269a3ceebdae30806e9a76aadf5c
-    │   ├─ [..] P256VERIFY::fulfillBasicOrder_efficient_6GL6yc() [staticcall]
-    │   │   └─ ← [Return]
+    │   ├─ [..] PRECOMPILES::p256Verify(0x0000000000000000000000000000000000000000000000000000000000000000, 0, 0, 0, 0) [staticcall]
+    │   │   └─ ← [Return] 0x
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
 
@@ -172,6 +224,109 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_inactive_p256_address", "-vvvv", "--evm-version", "prague"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [..] PrecompileTraceTest::test_inactive_p256_address()
+    ├─ [..] → new OrdinaryCode@[..]
+    │   └─ ← [Return] 177 bytes of code
+    ├─ [0] VM::etch(0x0000000000000000000000000000000000000100, 0x[..])
+    │   └─ ← [Return]
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode() [staticcall]
+    │   └─ ← [Return] true
+    └─ ← [Stop]
+
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_mocked_p256_address", "-vvvv", "--evm-version", "osaka"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [..] PrecompileTraceTest::test_mocked_p256_address()
+    ├─ [..] → new OrdinaryCode@[..]
+    │   └─ ← [Return] 177 bytes of code
+    ├─ [0] VM::mockFunction(0x0000000000000000000000000000000000000100, OrdinaryCode: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f], 0xf4eb3bbd)
+    │   └─ ← [Return]
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode() [staticcall]
+    │   └─ ← [Return] true
+    └─ ← [Stop]
+
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "test_p256_redirected_to_other_precompile",
+            "-vvvv",
+            "--evm-version",
+            "osaka",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
+    │   └─ ← [Return]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_mocked_p256_call", "-vvvv", "--evm-version", "osaka"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
+    │   └─ ← [Return] true
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "test_isolated_p256_call",
+            "-vvvv",
+            "--evm-version",
+            "osaka",
+            "--isolate",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [..] PrecompileTraceTest::test_isolated_p256_call()
+    ├─ [..] PRECOMPILES::p256Verify(0x0000000000000000000000000000000000000000000000000000000000000000, 0, 0, 0, 0)
+    │   └─ ← [Return] 0x
+    └─ ← [Stop]
+
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "test_isolated_inactive_p256_address",
+            "-vvvv",
+            "--evm-version",
+            "prague",
+            "--isolate",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
+    │   └─ ← [Return] true
+...
 "#]]);
 });
 

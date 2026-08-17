@@ -1,7 +1,7 @@
 //! Support for generating the state root for memdb storage
 
 use alloy_primitives::{
-    B256, U256, keccak256,
+    B256, Bytes, U256, keccak256,
     map::{AddressMap, B256Map, HashSet, U256Map},
 };
 use alloy_rlp::Encodable;
@@ -344,6 +344,13 @@ impl TrieNode {
             return Some(rlp.clone());
         }
 
+        let rlp = self.encode(out)?;
+        self.rlp = Some(rlp.clone());
+        Some(rlp)
+    }
+
+    /// Encodes this node into `out`, returning its RLP reference without consulting the cache.
+    fn encode(&mut self, out: &mut Vec<u8>) -> Option<RlpNode> {
         let rlp = match &mut self.kind {
             TrieNodeKind::Empty => return None,
             TrieNodeKind::Leaf { path, value } => {
@@ -370,9 +377,43 @@ impl TrieNode {
                 BranchNodeRef::new(&stack[..stack_len], state_mask).rlp(out)
             }
         };
-        self.rlp = Some(rlp.clone());
         Some(rlp)
     }
+
+    /// Appends the RLP encoding of this node and all of its descendants to `nodes`.
+    fn collect_nodes(&mut self, rlp_buf: &mut Vec<u8>, nodes: &mut Vec<Bytes>) {
+        match &mut self.kind {
+            TrieNodeKind::Empty => return,
+            TrieNodeKind::Leaf { .. } => {}
+            TrieNodeKind::Extension { child, .. } => child.collect_nodes(rlp_buf, nodes),
+            TrieNodeKind::Branch { children } => {
+                for child in children.iter_mut().flatten() {
+                    child.collect_nodes(rlp_buf, nodes);
+                }
+            }
+        }
+        self.encode(rlp_buf);
+        nodes.push(Bytes::copy_from_slice(rlp_buf));
+    }
+}
+
+/// Builds the state trie for the given accounts and returns its root together with the RLP
+/// encoding of every node of the account trie and all storage tries.
+///
+/// The node set is a witness for any execution against this state: it is a strict superset of
+/// the nodes touched by any particular block.
+pub fn state_trie_witness(accounts: &AddressMap<DbAccount>) -> (B256, Vec<Bytes>) {
+    let mut rlp_buf = Vec::new();
+    let mut trie = IncrementalStateTrie::from_accounts(accounts, &mut rlp_buf);
+    let mut nodes = Vec::new();
+    for storage_trie in trie.storage.values_mut() {
+        storage_trie.root.collect_nodes(&mut rlp_buf, &mut nodes);
+    }
+    trie.accounts.root.collect_nodes(&mut rlp_buf, &mut nodes);
+    let root = trie.root(&mut rlp_buf);
+    nodes.sort_unstable();
+    nodes.dedup();
+    (root, nodes)
 }
 
 pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 {

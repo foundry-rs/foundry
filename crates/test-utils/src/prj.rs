@@ -165,8 +165,9 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
 pub struct TestProject<
     T: ArtifactOutput<CompilerContract = Contract> + Default = ConfigurableArtifacts,
 > {
-    /// The directory in which this test executable is running.
-    exe_root: PathBuf,
+    /// The Cargo profile directory (`target/<profile>`) containing the Foundry binaries built
+    /// alongside this test executable.
+    profile_dir: PathBuf,
     /// The project in which the test should run.
     pub(crate) inner: Arc<TempProject<MultiCompiler, T>>,
 }
@@ -183,9 +184,7 @@ impl TestProject {
 
     pub fn with_project(project: TempProject) -> Self {
         init_tracing();
-        let this = env::current_exe().unwrap();
-        let exe_root = canonicalize(this.parent().expect("executable's directory"));
-        Self { exe_root, inner: Arc::new(project) }
+        Self { profile_dir: cargo_profile_dir(), inner: Arc::new(project) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -457,7 +456,7 @@ impl TestProject {
 
     /// Returns the path to a sibling Foundry executable in the current test target directory.
     pub fn foundry_bin_path(&self, name: &str) -> PathBuf {
-        canonicalize(self.exe_root.join(format!("../{name}{}", env::consts::EXE_SUFFIX)))
+        canonicalize(self.profile_dir.join(format!("{name}{}", env::consts::EXE_SUFFIX)))
     }
 
     /// Returns the path to a sibling Foundry executable, building it when cargo did not.
@@ -468,7 +467,7 @@ impl TestProject {
         }
 
         let package = format!("{name}@{}", env!("CARGO_PKG_VERSION"));
-        let (target_dir, profile) = cargo_build_target_dir_and_profile(&self.exe_root);
+        let (target_dir, profile) = cargo_build_target_dir_and_profile(&self.profile_dir);
         let mut cmd = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
         cmd.args(["build", "-p", &package, "--bin", name, "--manifest-path"])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
@@ -927,8 +926,7 @@ fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
         .unwrap_or_else(|_| path.as_ref().to_path_buf())
 }
 
-fn cargo_build_target_dir_and_profile(exe_root: &Path) -> (&Path, Option<&str>) {
-    let profile_dir = exe_root.parent().expect("test executable profile directory");
+fn cargo_build_target_dir_and_profile(profile_dir: &Path) -> (&Path, Option<&str>) {
     let target_dir = profile_dir.parent().expect("Cargo target directory");
     let profile = match profile_dir.file_name().and_then(OsStr::to_str) {
         // Cargo's dev profile writes to `debug`, so the default `cargo build` profile is correct.
@@ -937,4 +935,24 @@ fn cargo_build_target_dir_and_profile(exe_root: &Path) -> (&Path, Option<&str>) 
         None => panic!("test executable profile directory must be UTF-8"),
     };
     (target_dir, profile)
+}
+
+/// Returns the Cargo profile directory (`target/<profile>`) for the currently running test
+/// executable.
+///
+/// Final binaries like `forge` and `cast` are uplifted into `target/<profile>` itself, while test
+/// executables are compiled into `target/<profile>/deps/`, or under `target/<profile>/build/` with
+/// Cargo's new build-dir layout, so walk up from the executable's directory until the parent of
+/// the `deps` or `build` component.
+pub fn cargo_profile_dir() -> PathBuf {
+    let exe = env::current_exe().expect("test executable path");
+    let exe_dir = canonicalize(exe.parent().expect("executable's directory"));
+    let mut dir = exe_dir.as_path();
+    while let Some(parent) = dir.parent() {
+        if matches!(dir.file_name().and_then(OsStr::to_str), Some("deps" | "build")) {
+            return parent.to_path_buf();
+        }
+        dir = parent;
+    }
+    exe_dir
 }

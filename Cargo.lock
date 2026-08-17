@@ -403,8 +403,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-monad-evm"
-version = "0.5.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm?rev=334bda1826996118d40872af35c27316a01889a2#334bda1826996118d40872af35c27316a01889a2"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b488e1dd0352b471aecfc903657c5505125490442ecbb63494c885ed1c0188d6"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -635,6 +636,7 @@ checksum = "88813dc63f261e25d158f07063a71e926f36b3ee8076c1e6d8396348452c5f69"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-anvil",
+ "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-trace",
@@ -2990,6 +2992,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.4",
  "revm",
+ "rexpect",
  "rpassword",
  "semver 1.0.28",
  "serde",
@@ -7993,7 +7996,8 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.6.0"
-source = "git+https://github.com/category-labs/monad-revm?rev=8ba4a51b221357105465cbe6d410906d3f12baeb#8ba4a51b221357105465cbe6d410906d3f12baeb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b640502c0bcc1ac08d9eb2555467ba47fb9071715b0c53592d64f8a5fade2a41"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
