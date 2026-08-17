@@ -4805,6 +4805,45 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .assert_success();
 });
 
+forgetest_async!(tempo_fork_script_with_fee_token_and_nonzero_gas_price, |prj, cmd| {
+    let script = prj.add_script(
+        "TempoFee.s.sol",
+        r#"
+contract TempoFeeScript {
+    function run() external {}
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let fee_token = address!("0x20c0000000000000000000000000000000000000");
+    // Anvil's Tempo genesis is deliberately overfunded. Remove the synthetic caller and fee
+    // manager liquidity so the test exercises the same invalid refund path as a real fork.
+    api.anvil_deal_tip20(foundry_evm::constants::CALLER, fee_token, U256::ZERO).await.unwrap();
+    api.anvil_deal_tip20(
+        address!("0xfeec000000000000000000000000000000000000"),
+        fee_token,
+        U256::ZERO,
+    )
+    .await
+    .unwrap();
+    let rpc = handle.http_endpoint();
+
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &rpc,
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        "0x20c0000000000000000000000000000000000000",
+        "--with-gas-price",
+        "600000000",
+        "--block-gas-limit",
+        "18446744073709551615",
+    ]);
+    cmd.assert_success();
+});
+
 forgetest_async!(tempo_aa_script_broadcast_deploys_with_fee_token, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(

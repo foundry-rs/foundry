@@ -1114,6 +1114,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>) {
         let mut cfg_env = self.evm_env.cfg_env.clone();
         cfg_env.spec = self.spec_id();
+        // Test transactions are synthetic and must not transfer real network fees. This remains
+        // necessary when the cheatcode handler restores the actual gas price during execution.
+        cfg_env.disable_fee_charge = true;
 
         // We always set the gas price to 0 so we can execute the transaction regardless of
         // network conditions - the actual gas price is kept in `self.block` and is applied
@@ -1928,6 +1931,27 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn test_env_disables_fee_charging() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut evm_env = EvmEnvFor::<EthEvmNetwork>::default();
+        evm_env.cfg_env.disable_fee_charge = false;
+        let executor = ExecutorBuilder::default().build(
+            evm_env,
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+
+        let (evm_env, _) = executor.build_test_env(
+            CALLER,
+            TxKind::Call(Address::repeat_byte(0x11)),
+            Bytes::new(),
+            U256::ZERO,
+        );
+
+        assert!(evm_env.cfg_env.disable_fee_charge);
     }
 
     #[test]
