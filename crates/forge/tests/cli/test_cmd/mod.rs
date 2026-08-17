@@ -1280,6 +1280,10 @@ interface Vm {{
     function createSelectFork(string calldata url, uint256 blockNumber)
         external
         returns (uint256 forkId);
+    function roll(uint256 newHeight) external;
+    function rollFork(uint256 blockNumber) external;
+    function snapshotState() external returns (uint256 snapshotId);
+    function revertToState(uint256 snapshotId) external returns (bool success);
 }}
 
 contract ForkBlockTest {{
@@ -1288,6 +1292,20 @@ contract ForkBlockTest {{
     function testForkFailure() public {{
         vm.createSelectFork("{endpoint}", 7);
         require(false, "fork failure");
+    }}
+
+    function testForkFailureAfterRoll() public {{
+        vm.createSelectFork("{endpoint}", 7);
+        vm.roll(99);
+        require(false, "fork failure after roll");
+    }}
+
+    function testForkFailureAfterRevert() public {{
+        vm.createSelectFork("{endpoint}", 7);
+        uint256 snapshot = vm.snapshotState();
+        vm.rollFork(6);
+        vm.revertToState(snapshot);
+        require(false, "fork failure after revert");
     }}
 
     function testForkSuccess() public {{
@@ -1309,23 +1327,27 @@ contract ForkBlockTest {{
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 4 tests for test/ForkBlock.t.sol:ForkBlockTest
+Ran 6 tests for test/ForkBlock.t.sol:ForkBlockTest
 [FAIL: fork failure] testForkFailure() (block: 7) ([GAS])
+[FAIL: fork failure after revert] testForkFailureAfterRevert() (block: 7) ([GAS])
+[FAIL: fork failure after roll] testForkFailureAfterRoll() (block: 7) ([GAS])
 [PASS] testForkSuccess() ([GAS])
 [FAIL: local failure] testLocalFailure() ([GAS])
 [PASS] testLocalSuccess() ([GAS])
-Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
+Ran 1 test suite [ELAPSED]: 2 tests passed, 4 failed, 0 skipped (6 total tests)
 
 Failing tests:
-Encountered 2 failing tests in test/ForkBlock.t.sol:ForkBlockTest
+Encountered 4 failing tests in test/ForkBlock.t.sol:ForkBlockTest
 [FAIL: fork failure] testForkFailure() (block: 7) ([GAS])
+[FAIL: fork failure after revert] testForkFailureAfterRevert() (block: 7) ([GAS])
+[FAIL: fork failure after roll] testForkFailureAfterRoll() (block: 7) ([GAS])
 [FAIL: local failure] testLocalFailure() ([GAS])
 
-Encountered a total of 2 failing tests, 2 tests succeeded
+Encountered a total of 4 failing tests, 2 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --rerun` to retry only the 4 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);

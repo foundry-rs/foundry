@@ -31,7 +31,7 @@ impl SymbolicExecutor {
             Some(false) => Ok(CheatcodeOutcome::AssumeRejected),
             None => {
                 state.constraints.push(condition);
-                if self.solver.is_sat(&mut self.cx, &state.constraints)? {
+                if self.is_sat_with_state(state, &state.constraints)? {
                     Ok(CheatcodeOutcome::Continue(Vec::new()))
                 } else {
                     Ok(CheatcodeOutcome::AssumeRejected)
@@ -54,7 +54,7 @@ impl SymbolicExecutor {
             expr,
             U256::from(max),
         ));
-        if self.solver.is_sat(&mut self.cx, &above_max)? {
+        if self.is_sat_with_state(state, &above_max)? {
             return Err(SymbolicError::Unsupported(reason));
         }
 
@@ -69,7 +69,7 @@ impl SymbolicExecutor {
                 expr,
                 U256::from(mid),
             ));
-            if self.solver.is_sat(&mut self.cx, &above_mid)? {
+            if self.is_sat_with_state(state, &above_mid)? {
                 low = mid + 1;
             } else {
                 high = mid;
@@ -91,7 +91,7 @@ impl SymbolicExecutor {
             None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
-                if self.solver.is_sat(&mut self.cx, &constraints)? {
+                if self.is_sat_with_state(state, &constraints)? {
                     state.constraints = constraints;
                     Ok(true)
                 } else {

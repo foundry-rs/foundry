@@ -38,6 +38,12 @@ fn symbolic_model<S: AsRef<str>>(
     values.into_iter().map(|(name, value)| (cx.intern(name.as_ref()), value)).collect()
 }
 
+fn replayable_input(cx: &mut SymCx, name: &str) -> SymExpr {
+    let symbol = cx.intern(name);
+    cx.mark_replayable_input(symbol);
+    SymExpr::get_var(cx, symbol)
+}
+
 fn model_value(cx: &SymCx, model: &SymbolicModel, name: &str) -> Option<U256> {
     model.get(&cx.symbol(name)).copied()
 }
@@ -2667,6 +2673,58 @@ fn bool_word_equality_simplifies_to_condition() {
 }
 
 #[test]
+fn expression_simplifies_saturating_select_idiom() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let x_is_zero = SymBoolExpr::eq_word_const(&mut cx, &x, U256::ZERO);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), x);
+    let product_is_exact = SymBoolExpr::eq(&mut cx, quotient, y);
+    let safe = SymBoolExpr::or(&mut cx, vec![product_is_exact.clone(), x_is_zero.clone()]);
+    let x_is_zero = SymExpr::bool_word(&mut cx, x_is_zero);
+    let product_is_exact = SymExpr::bool_word(&mut cx, product_is_exact);
+    let guard = SymExpr::binop(&mut cx, SymBinOp::Or, x_is_zero, product_is_exact);
+    let one = SymExpr::one(&mut cx);
+    let sub_mask = SymExpr::binop(&mut cx, SymBinOp::Sub, guard.clone(), one);
+    let sub_actual = SymExpr::binop(&mut cx, SymBinOp::Or, sub_mask, product.clone());
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let add_mask = SymExpr::binop(&mut cx, SymBinOp::Add, guard, max.clone());
+    let add_actual = SymExpr::binop(&mut cx, SymBinOp::Or, add_mask, product.clone());
+    let expected = SymExpr::ite(&mut cx, safe, product, max);
+
+    assert_eq!(sub_actual, expected);
+    assert_eq!(add_actual, expected);
+}
+
+#[test]
+fn ite_equality_with_selected_arm_exposes_branch_condition() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let selected = SymExpr::var(&mut cx, "selected");
+    let other = SymExpr::var(&mut cx, "other");
+    let value = SymExpr::ite(&mut cx, condition.clone(), selected.clone(), other.clone());
+
+    let selected_matches = SymBoolExpr::eq(&mut cx, value.clone(), selected);
+    let selected_failure = selected_matches.not(&mut cx);
+    let condition_is_false = condition.clone().not(&mut cx);
+    let normalized =
+        normalize_constraints_for_solver(&mut cx, &[condition.clone(), selected_failure]);
+    assert!(normalized.contains(&condition));
+    assert!(normalized.contains(&condition_is_false));
+
+    let condition_is_false = condition.clone().not(&mut cx);
+    let other_matches = SymBoolExpr::eq(&mut cx, value, other);
+    let other_failure = other_matches.not(&mut cx);
+    let normalized =
+        normalize_constraints_for_solver(&mut cx, &[condition_is_false.clone(), other_failure]);
+    assert!(normalized.contains(&condition_is_false));
+    assert!(normalized.contains(&condition));
+}
+
+#[test]
 fn inverted_bool_word_equality_simplifies_to_condition() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
@@ -3077,6 +3135,49 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
         normalize_bool_for_solver(&mut cx, guard_is_zero),
         SymBoolExpr::constant(&mut cx, false)
     );
+}
+
+#[test]
+fn checked_mul_guard_branches_use_constructive_models() {
+    let mut cx = SymCx::new();
+    let x = replayable_input(&mut cx, "x");
+    let y = replayable_input(&mut cx, "y");
+    let guard = checked_mul_guard_word(&mut cx, &x, &y);
+    let zero = SymExpr::zero(&mut cx);
+    let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
+    let guard_is_true = guard_is_false.clone().not(&mut cx);
+
+    for constraint in [guard_is_true, guard_is_false] {
+        let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+        assert!(solver.is_sat_branch(&mut cx, &[constraint]).unwrap());
+        assert_eq!(solver.stats().smt_queries, 0);
+        assert_eq!(solver.heuristic_witnesses(), 0);
+    }
+}
+
+#[test]
+fn saturating_mul_counterexample_branches_short_circuit_locally() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
+    let guard = checked_mul_guard_word(&mut cx, &x, &y);
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let mask = SymExpr::binop(&mut cx, SymBinOp::Add, guard.clone(), max.clone());
+    let saturated = SymExpr::binop(&mut cx, SymBinOp::Or, mask, product.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
+    let guard_is_true = guard_is_false.clone().not(&mut cx);
+    let overflow_failure = SymBoolExpr::eq(&mut cx, saturated.clone(), max).not(&mut cx);
+    let exact_failure = SymBoolExpr::eq(&mut cx, saturated, product).not(&mut cx);
+
+    for constraints in [vec![guard_is_false, overflow_failure], vec![guard_is_true, exact_failure]]
+    {
+        let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+        assert!(!solver.is_sat_branch(&mut cx, &constraints).unwrap(), "{constraints:?}");
+        assert_eq!(solver.stats().smt_queries, 0);
+        assert_eq!(solver.heuristic_witnesses(), 0);
+    }
 }
 
 #[test]
@@ -4849,6 +4950,26 @@ fn direct_contradiction_is_sat_short_circuits_locally() {
     let one = SymExpr::constant(&mut cx, U256::from(1));
     let constraint = SymBoolExpr::eq(&mut cx, x, one);
     let constraints = vec![constraint.clone(), constraint.not(&mut cx)];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn disjunction_with_all_arms_false_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let zero = SymExpr::zero(&mut cx);
+    let x_is_zero = SymBoolExpr::eq(&mut cx, x, zero.clone());
+    let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero);
+    let either_is_zero = SymBoolExpr::or(&mut cx, vec![x_is_zero.clone(), y_is_zero.clone()]);
+    let constraints = vec![either_is_zero, x_is_zero.not(&mut cx), y_is_zero.not(&mut cx)];
 
     assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
 

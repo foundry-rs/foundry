@@ -180,14 +180,50 @@ const fn expr_ternop_key(op: SymTernOp) -> u8 {
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
-    constraints.iter().any(|constraint| match constraint.kind() {
+    let mut derived = Vec::new();
+    for constraint in constraints {
+        let Some(fact) = bitwise_bool_word_fact(cx, constraint) else { continue };
+        if let SymBoolExprKind::And(values) = fact.kind() {
+            // A positive conjunction implies each member independently. Retain the aggregate for
+            // exact matches, but expose its members to the direct contradiction check as well.
+            derived.extend(values.iter().cloned());
+        }
+        derived.push(fact);
+    }
+    let contains =
+        |expected: &SymBoolExpr| constraints.contains(expected) || derived.contains(expected);
+    constraints.iter().chain(&derived).any(|constraint| match constraint.kind() {
         SymBoolExprKind::Const(false) => true,
-        SymBoolExprKind::Not(inner) => constraints.contains(inner),
+        SymBoolExprKind::Not(inner)
+            if let SymBoolExprKind::And(values) = inner.kind()
+                && values.iter().all(&contains) =>
+        {
+            true
+        }
+        SymBoolExprKind::Not(inner) => contains(inner),
         _ => {
             let negated = constraint.clone().not(cx);
-            constraints.contains(&negated)
+            contains(&negated)
         }
     })
+}
+
+fn bitwise_bool_word_fact(cx: &mut SymCx, constraint: &SymBoolExpr) -> Option<SymBoolExpr> {
+    match constraint.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+            if right.as_const().is_some_and(|value| value.is_zero()) =>
+        {
+            left.bitwise_bool_word_condition(cx).map(|condition| condition.not(cx))
+        }
+        SymBoolExprKind::Not(inner) => {
+            let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = inner.kind() else { return None };
+            if !right.as_const().is_some_and(|value| value.is_zero()) {
+                return None;
+            }
+            left.bitwise_bool_word_condition(cx)
+        }
+        _ => None,
+    }
 }
 
 /// Returns whether every expression in `subset` appears in `superset`.
@@ -1802,6 +1838,38 @@ impl ConstraintContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_contradiction_uses_members_of_derived_positive_conjunction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let zero = SymExpr::zero(&mut cx);
+        let x_is_zero = SymBoolExpr::eq(&mut cx, x, zero.clone());
+        let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero.clone());
+        let x_word = SymExpr::bool_word(&mut cx, x_is_zero.clone());
+        let y_word = SymExpr::bool_word(&mut cx, y_is_zero);
+        let either_word = SymExpr::binop(&mut cx, SymBinOp::Or, x_word, y_word);
+        let neither_is_zero = SymBoolExpr::eq(&mut cx, either_word, zero);
+
+        assert!(constraints_are_directly_unsat(&mut cx, &[neither_is_zero, x_is_zero]));
+    }
+
+    #[test]
+    fn direct_contradiction_does_not_expand_derived_negated_conjunction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let zero = SymExpr::zero(&mut cx);
+        let x_is_zero = SymBoolExpr::eq(&mut cx, x, zero.clone());
+        let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero.clone());
+        let x_word = SymExpr::bool_word(&mut cx, x_is_zero.clone());
+        let y_word = SymExpr::bool_word(&mut cx, y_is_zero);
+        let both_word = SymExpr::binop(&mut cx, SymBinOp::And, x_word, y_word);
+        let not_both = SymBoolExpr::eq(&mut cx, both_word, zero);
+
+        assert!(!constraints_are_directly_unsat(&mut cx, &[not_both, x_is_zero]));
+    }
 
     #[test]
     fn polynomial_identity_handles_shared_dag() {

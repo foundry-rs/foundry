@@ -17,7 +17,7 @@ impl SymbolicExecutor {
 
         let mut fail_constraints = state.constraints.clone();
         fail_constraints.push(fail);
-        if self.solver.is_sat(&mut self.cx, &fail_constraints)? {
+        if self.is_sat_with_state(state, &fail_constraints)? {
             state.constraints = fail_constraints;
             return Ok(CheatcodeOutcome::Failure);
         }
