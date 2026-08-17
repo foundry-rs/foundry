@@ -129,7 +129,40 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), "storage layout", wrap)?;
+                let mut layout =
+                    artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
+                if is_solidity_source(&target_path) {
+                    let mut namespaces = BTreeMap::<String, String>::new();
+                    for namespace in output
+                        .parser_mut()
+                        .solc_mut()
+                        .erc7201_storage_layouts(&target_path, contract.name())?
+                    {
+                        if let Some(previous) = namespaces
+                            .insert(namespace.namespace.clone(), namespace.contract.clone())
+                        {
+                            eyre::bail!(
+                                "duplicate ERC-7201 namespace `{}` declared by `{previous}` and `{}`",
+                                namespace.namespace,
+                                namespace.contract
+                            );
+                        }
+                        layout.storage.extend(namespace.layout.storage);
+                        for (key, storage_type) in namespace.layout.types {
+                            if let Some(existing) = layout.types.get(&key) {
+                                if existing != &storage_type {
+                                    eyre::bail!(
+                                        "incompatible storage type `{key}` while merging ERC-7201 namespace `{}`",
+                                        namespace.namespace
+                                    );
+                                }
+                            } else {
+                                layout.types.insert(key, storage_type);
+                            }
+                        }
+                    }
+                }
+                print_storage_layout(Some(&layout), "storage layout", wrap)?;
             }
             ContractArtifactField::TransientStorageLayout => {
                 print_storage_layout(

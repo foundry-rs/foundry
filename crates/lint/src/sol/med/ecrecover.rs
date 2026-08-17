@@ -384,7 +384,7 @@ impl<'hir> Analyzer<'hir> {
         {
             return args.exprs().next().and_then(|arg| self.const_value(arg));
         }
-        if self.gcx.builtin_member(expr.peel_parens().id) == Some(Builtin::TypeMax)
+        if self.gcx.resolved_builtin(expr.peel_parens()) == Some(Builtin::TypeMax)
             && let Some(ty) = self.gcx.type_of_expr(expr.peel_parens().id)
             && let TyKind::Elementary(ElementaryType::UInt(size)) = ty.kind
         {

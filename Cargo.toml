@@ -562,15 +562,15 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "bfb81215cf35b602bf8c159b6abc3a847f5df91d" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "bfb81215cf35b602bf8c159b6abc3a847f5df91d" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "bfb81215cf35b602bf8c159b6abc3a847f5df91d" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "a1e5746c99876288238fc09ddd479d93bc9fff5e" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "a1e5746c99876288238fc09ddd479d93bc9fff5e" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "a1e5746c99876288238fc09ddd479d93bc9fff5e" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "a1e5746c99876288238fc09ddd479d93bc9fff5e" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }

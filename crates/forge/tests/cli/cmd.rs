@@ -1471,6 +1471,123 @@ contract Transient {
         );
 });
 
+forgetest!(can_inspect_contract_scoped_erc7201_layouts, |prj, cmd| {
+    prj.add_source(
+        "Base.sol",
+        r#"
+contract Base {
+    /// @custom:storage-location erc7201:example.base
+    struct BaseStorage {
+        address owner;
+        bool paused;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Namespaced.sol",
+        r#"
+import {Base} from "./Base.sol";
+
+contract Namespaced is Base {
+    uint256 regular;
+
+    /// @custom:storage-location erc7201:example.main
+    struct MainStorage {
+        uint256 counter;
+        mapping(address => uint256) balances;
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["inspect", "Namespaced", "storageLayout", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let storage = value["storage"].as_array().unwrap();
+    assert_eq!(storage.len(), 5);
+    assert_eq!(storage[0]["label"], "regular");
+    assert_eq!(storage[0]["slot"], "0");
+    assert_eq!(storage[1]["label"], "owner");
+    assert_eq!(storage[1]["offset"], 0);
+    assert_eq!(storage[2]["label"], "paused");
+    assert_eq!(storage[2]["offset"], 20);
+    assert_eq!(storage[3]["label"], "counter");
+    assert_eq!(storage[4]["label"], "balances");
+    assert!(storage[1]["contract"].as_str().unwrap().contains("Base [erc7201:example.base]"));
+    assert!(storage[3]["contract"].as_str().unwrap().contains("Namespaced [erc7201:example.main]"));
+
+    let types = value["types"].as_object().unwrap();
+    for entry in &storage[1..] {
+        let key = entry["type"].as_str().unwrap();
+        assert!(types.contains_key(key));
+        assert!(!key.starts_with("t_erc7201("));
+        assert_eq!(entry["astId"], 0);
+    }
+});
+
+forgetest!(does_not_treat_file_scoped_struct_as_erc7201_namespace, |prj, cmd| {
+    prj.add_source(
+        "FileScoped.sol",
+        r#"
+/// @custom:storage-location erc7201:example.file
+struct FileStorage {
+    uint256 value;
+}
+
+contract Consumer {
+    FileStorage regular;
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["inspect", "Consumer", "storageLayout", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let storage = value["storage"].as_array().unwrap();
+    assert_eq!(storage.len(), 1);
+    assert_eq!(storage[0]["label"], "regular");
+    assert_eq!(storage[0]["slot"], "0");
+    assert!(!output.windows(b"erc7201".len()).any(|window| window == b"erc7201"));
+});
+
+forgetest!(rejects_duplicate_erc7201_namespaces, |prj, cmd| {
+    prj.add_source(
+        "Duplicate.sol",
+        r#"
+contract Base {
+    /// @custom:storage-location erc7201:example.duplicate
+    struct BaseStorage { uint256 value; }
+}
+
+contract Duplicate is Base {
+    /// @custom:storage-location erc7201:example.duplicate
+    struct DuplicateStorage { uint256 value; }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["inspect", "Duplicate", "storageLayout", "--json"])
+        .assert_failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).unwrap();
+    assert!(stderr.contains("duplicate ERC-7201 namespace `example.duplicate`"));
+});
+
 forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
     prj.add_source("A.sol", "contract A {}");
     prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);
