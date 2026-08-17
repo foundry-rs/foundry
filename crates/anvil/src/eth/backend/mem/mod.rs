@@ -136,7 +136,7 @@ use foundry_evm::core::{
     evm::{
         FoundryEvmFactory, MonadBlockParticipants,
         monad_block_participants as collect_monad_block_participants,
-        monad_context_from_participants,
+        monad_context_from_participants, protocol_system_call,
     },
 };
 #[cfg(feature = "optimism")]
@@ -2923,7 +2923,13 @@ impl<N: Network> Backend<N> {
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
-            EnvelopeExecutionKind::Replay => Ok(factory.transact_replay(&mut evm, tx_env)?),
+            EnvelopeExecutionKind::Replay => {
+                if let Some(result) = factory.try_transact_system_replay(&mut evm, &tx_env)? {
+                    Ok(result)
+                } else {
+                    Ok(evm.transact(tx_env)?)
+                }
+            }
         }
     }
 
@@ -3045,7 +3051,7 @@ impl<N: Network> Backend<N> {
                     if !is_replay {
                         return executor.execute_transaction_without_commit((tx_env, recovered));
                     }
-                    match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+                    match protocol_system_call(&tx_env) {
                         Ok(None) => {
                             return executor
                                 .execute_transaction_without_commit((tx_env, recovered));
@@ -3056,12 +3062,20 @@ impl<N: Network> Backend<N> {
                     executor.execute_transaction_without_commit_with(
                         (tx_env, recovered),
                         |evm, tx_env, transaction_hash| {
-                            MonadEvmFactory::default().transact_replay(evm, tx_env).map_err(|err| {
-                                BlockExecutionError::msg(format!(
-                                    "failed to replay Monad transaction {transaction_hash}: \
+                            MonadEvmFactory::default()
+                                .try_transact_system_replay(evm, &tx_env)
+                                .map_err(|err| {
+                                    BlockExecutionError::msg(format!(
+                                        "failed to replay Monad transaction {transaction_hash}: \
                                          {err}"
-                                ))
-                            })
+                                    ))
+                                })?
+                                .ok_or_else(|| {
+                                    BlockExecutionError::msg(format!(
+                                        "Monad transaction {transaction_hash} is not a canonical \
+                                         replay envelope"
+                                    ))
+                                })
                         },
                     )
                 },
@@ -5676,9 +5690,14 @@ where
                     inspector_tx_config,
                     |evm, tx_env, _transaction_hash| {
                         prepare_monad_transaction(evm, &tx_env);
-                        let result = MonadEvmFactory::default()
-                            .transact_replay(evm, tx_env)
-                            .map_err(BlockExecutionError::msg);
+                        let result = match MonadEvmFactory::default()
+                            .try_transact_system_replay(evm, &tx_env)
+                            .map_err(BlockExecutionError::msg)
+                        {
+                            Ok(Some(result)) => Ok(result),
+                            Ok(None) => evm.transact(tx_env).map_err(BlockExecutionError::msg),
+                            Err(err) => Err(err),
+                        };
                         if result.is_err() {
                             rollback_monad_transaction(evm);
                         }
@@ -9056,7 +9075,7 @@ where
         if self.is_monad() && pool_tx.is_replay {
             let tx_env: TxEnv =
                 build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
-            match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+            match protocol_system_call(&tx_env) {
                 Ok(Some(system_call)) => {
                     if system_call
                         .chain_id

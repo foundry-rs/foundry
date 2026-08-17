@@ -120,9 +120,10 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         Ok(res)
     }
 
-    /// Executes a canonical replay transaction with explicit network-specific context.
-    #[instrument(name = "inspect_replay", level = "debug", skip_all)]
-    pub fn inspect_replay_with_context<
+    /// Tries to execute a canonical system transaction with explicit network-specific context.
+    #[cfg(feature = "monad")]
+    #[instrument(name = "inspect_system_replay", level = "debug", skip_all)]
+    pub fn try_inspect_system_replay_with_context<
         I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>,
     >(
         &mut self,
@@ -130,22 +131,21 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         chain_context: ChainContextFor<FEN>,
         inspector: I,
-    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
+    ) -> eyre::Result<Option<ResultAndState<HaltReasonFor<FEN>>>> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let is_protocol_system = factory.protocol_system_call(tx_env)?.is_some();
         let mut evm = factory.create_foundry_evm_with_inspector(
             self,
             evm_env.clone(),
             chain_context,
             inspector,
         );
-        let result = factory.transact_foundry_replay(&mut evm, tx_env.clone())?;
+        let result = factory.try_transact_foundry_system_replay(&mut evm, tx_env)?;
 
-        if !is_protocol_system {
-            *tx_env = evm.tx().clone();
-        }
+        // A successful specialized replay replaces the EVM transaction with its synthetic system
+        // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
+        // `inspect_with_context` above and copies inspector mutations back normally.
         *evm_env = evm.finish().1;
 
         Ok(result)
