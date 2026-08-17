@@ -1955,14 +1955,8 @@ mod tests {
 
     #[test]
     fn amsterdam_intercepted_create_refunds_state_gas() {
-        let cheats_config = Arc::new(CheatsConfig::new(
-            &Config::default(),
-            EvmOpts::default(),
-            None,
-            None,
-            None,
-            false,
-        ));
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config))
@@ -1993,14 +1987,8 @@ mod tests {
 
     #[test]
     fn amsterdam_mocked_call_revert_refunds_state_gas() {
-        let cheats_config = Arc::new(CheatsConfig::new(
-            &Config::default(),
-            EvmOpts::default(),
-            None,
-            None,
-            None,
-            false,
-        ));
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config))
@@ -2210,14 +2198,8 @@ mod tests {
     ///    `sync_tx_after_env_override_restore` must restore `tx.blob_hashes = original`.
     #[test]
     fn pre_override_blob_hashes_restored_on_revert_to_state() {
-        let cheats_config = Arc::new(CheatsConfig::new(
-            &Config::default(),
-            EvmOpts::default(),
-            None,
-            None,
-            None,
-            false,
-        ));
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
 
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default()

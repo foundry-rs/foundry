@@ -1,6 +1,6 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{Address, U256, map::AddressHashMap};
+use alloy_primitives::{U256, map::AddressHashMap};
 use foundry_common::{ContractsByArtifact, fs::normalize_path};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
@@ -62,8 +62,6 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
-    /// Fee token to use for Tempo transactions.
-    pub fee_token: Option<Address>,
 }
 
 impl CheatsConfig {
@@ -73,7 +71,6 @@ impl CheatsConfig {
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
         running_artifact: Option<ArtifactId>,
-        fee_token: Option<Address>,
         batch_rewrite_creates: bool,
     ) -> Self {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
@@ -107,7 +104,6 @@ impl CheatsConfig {
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
-            fee_token,
         }
     }
 
@@ -118,7 +114,6 @@ impl CheatsConfig {
             evm_opts,
             self.available_artifacts.clone(),
             self.running_artifact.clone(),
-            self.fee_token,
             self.batch_rewrite_creates,
         );
         cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
@@ -253,7 +248,6 @@ impl Default for CheatsConfig {
             assertions_revert: true,
             seed: None,
             internal_expect_revert: false,
-            fee_token: None,
         }
     }
 }
@@ -289,7 +283,6 @@ mod tests {
             Default::default(),
             None,
             None,
-            None,
             false,
         )
     }
@@ -313,7 +306,7 @@ mod tests {
     fn test_batch_rewrite_creates_flag_plumbing() {
         assert!(!CheatsConfig::default().batch_rewrite_creates);
 
-        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, None, true);
+        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, true);
         assert!(on.batch_rewrite_creates);
 
         let cloned = on.clone_with(&Config::default(), Default::default());
@@ -327,7 +320,7 @@ mod tests {
         config.labels.insert(address, "legacy".to_string());
         config.tracing.labels.insert(address, "canonical".to_string());
 
-        let config = CheatsConfig::new(&config, Default::default(), None, None, None, false);
+        let config = CheatsConfig::new(&config, Default::default(), None, None, false);
 
         assert_eq!(config.labels.get(&address).map(String::as_str), Some("canonical"));
     }

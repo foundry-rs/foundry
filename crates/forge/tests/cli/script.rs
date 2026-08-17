@@ -4812,32 +4812,52 @@ forgetest_async!(tempo_aa_script_broadcast_deploys_with_fee_token, |prj, cmd| {
         r#"
 import "forge-std/Script.sol";
 
-contract TempoAADeployment {}
+contract TempoAADeployment {
+    function ping() external {}
+}
 
 contract DeployTempoAA is Script {
     function run() external {
         vm.startBroadcast();
-        new TempoAADeployment();
+        TempoAADeployment deployment = new TempoAADeployment();
+        deployment.ping();
         vm.stopBroadcast();
     }
 }
 "#,
     );
 
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path_usd = address!("0x20c0000000000000000000000000000000000000");
+    let alpha_usd = address!("0x20c0000000000000000000000000000000000001");
+    api.anvil_deal_tip20(sender, path_usd, U256::ZERO).await.unwrap();
+    api.anvil_deal_tip20(sender, alpha_usd, U256::from(u64::MAX)).await.unwrap();
 
     cmd.arg("script").arg(script).args([
         "--rpc-url",
         &rpc,
         "--private-key",
         private_key,
+        "--tc",
+        "DeployTempoAA",
         "--broadcast",
         "--tempo.fee-token",
-        "0x20c0000000000000000000000000000000000000",
+        "0x20c0000000000000000000000000000000000001",
     ]);
     cmd.assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("no broadcast artifact found");
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let transactions = json["transactions"].as_array().unwrap();
+    assert_eq!(transactions.len(), 2, "expected one CREATE and one CALL transaction");
+    for transaction in transactions {
+        assert_eq!(transaction["transaction"]["feeToken"], alpha_usd.to_string().to_lowercase());
+    }
 });
 
 forgetest_async!(tempo_aa_script_broadcasts_with_local_sponsor, |prj, cmd| {
