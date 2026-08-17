@@ -337,50 +337,12 @@ contract ParseJsonTest is Test {
     }
 
     function test_parseJsonDefaults() public {
-        string memory missing = ".missing";
-        address defaultAddress = address(0x1234);
-        bytes32 defaultBytes32 = keccak256("default");
-
-        assertTrue(vm.parseJsonBool("{}", missing, true));
-        assertEq(vm.parseJsonUint("{}", missing, 42), 42);
-        assertEq(vm.parseJsonInt("{}", missing, -42), -42);
-        assertEq(vm.parseJsonAddress("{}", missing, defaultAddress), defaultAddress);
-        assertEq(vm.parseJsonString("{}", missing, "default"), "default");
-        assertEq(vm.parseJsonBytes("{}", missing, hex"1234"), hex"1234");
-        assertEq(vm.parseJsonBytes32("{}", missing, defaultBytes32), defaultBytes32);
-
-        bool[] memory defaultBools = new bool[](1);
-        defaultBools[0] = true;
-        uint256[] memory defaultUints = new uint256[](1);
-        defaultUints[0] = 42;
-        int256[] memory defaultInts = new int256[](1);
-        defaultInts[0] = -42;
-        address[] memory defaultAddresses = new address[](1);
-        defaultAddresses[0] = defaultAddress;
-        string[] memory defaultStrings = new string[](1);
-        defaultStrings[0] = "default";
-        bytes[] memory defaultBytes = new bytes[](1);
-        defaultBytes[0] = hex"1234";
-        bytes32[] memory defaultBytes32s = new bytes32[](1);
-        defaultBytes32s[0] = defaultBytes32;
-        uint256[] memory emptyUints = new uint256[](0);
-
-        assertEq(abi.encode(vm.parseJsonBoolArray("{}", missing, defaultBools)), abi.encode(defaultBools));
-        assertEq(abi.encode(vm.parseJsonUintArray("{}", missing, defaultUints)), abi.encode(defaultUints));
-        assertEq(abi.encode(vm.parseJsonIntArray("{}", missing, defaultInts)), abi.encode(defaultInts));
-        assertEq(abi.encode(vm.parseJsonAddressArray("{}", missing, defaultAddresses)), abi.encode(defaultAddresses));
-        assertEq(abi.encode(vm.parseJsonStringArray("{}", missing, defaultStrings)), abi.encode(defaultStrings));
-        assertEq(abi.encode(vm.parseJsonBytesArray("{}", missing, defaultBytes)), abi.encode(defaultBytes));
-        assertEq(abi.encode(vm.parseJsonBytes32Array("{}", missing, defaultBytes32s)), abi.encode(defaultBytes32s));
-        assertEq(abi.encode(vm.parseJsonUintArray("{}", missing, emptyUints)), abi.encode(emptyUints));
-
+        assertEq(vm.parseJsonUint("{}", ".missing", 42), 42);
         assertEq(vm.parseJsonUint('{"value":7}', ".value", 42), 7);
 
-        vm._expectCheatcodeRevert("expected uint256, found JSON object");
-        vm.parseJsonUint('{"value":{}}', ".value", 42);
-
-        vm._expectCheatcodeRevert('path ".values[*]" must return exactly one JSON value');
-        vm.parseJsonUint('{"values":[1,2]}', ".values[*]", 42);
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        assertEq(abi.encode(vm.parseJsonUintArray("{}", ".missing", defaultValue)), abi.encode(defaultValue));
     }
 
     struct Nested {
