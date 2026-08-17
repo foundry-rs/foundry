@@ -682,6 +682,42 @@ Created new encrypted keystore file: [..]
     assert!(keystore_path.is_dir());
 });
 
+// tests that `cast wallet new <name>` treats a bare account name like `cast wallet import <name>`
+casttest!(new_wallet_bare_account_name_uses_default_keystore, |_prj, cmd| {
+    let account = format!(
+        "issue-16209-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    );
+    cmd.args(["wallet", "new", &account, "--unsafe-password", "test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#]]);
+
+    let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores").join(&account);
+    assert!(keystore_path.is_file(), "expected keystore at {}", keystore_path.display());
+    let _ = fs::remove_file(&keystore_path);
+});
+
+// tests that a missing path-like argument is still treated as a directory, not an account name
+casttest!(new_wallet_missing_dir_still_errors, |_prj, cmd| {
+    cmd.args(["wallet", "new", "./missing-keystore-dir", "--unsafe-password", "test"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.
+./missing-keystore-dir is not a directory.
+Error: [..]
+
+"#]]);
+});
+
 // tests that we can outputting multiple keys without a keystore path
 
 #[cfg(all(target_os = "macos", feature = "touch-id"))]
