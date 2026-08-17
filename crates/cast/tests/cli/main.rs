@@ -7923,7 +7923,7 @@ casttest!(
     #[ignore = "public Base RPC endpoint used in CI does not reliably serve this block"]
     flaky_estimate_base_da,
     |_prj, cmd| {
-        cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
+        cmd.args(["da-estimate", "30558838", "-r", next_rpc_endpoint(NamedChain::Base).as_str()])
             .assert_success()
             .stdout_eq(str![[r#"
 52916546100
