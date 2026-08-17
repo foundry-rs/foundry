@@ -1010,7 +1010,17 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         target: ArtifactId,
         restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
-        self._get_runner(Some((known_contracts, script_wallets, target)), debug, restricted).await
+        let mut runner = self
+            ._get_runner(Some((known_contracts, script_wallets, target)), debug, restricted)
+            .await?;
+
+        // Script execution is synthetic. Keep the Tempo transaction context, but do not charge
+        // protocol fees for deploying or calling the local script contract.
+        if self.evm_opts.networks.is_tempo() {
+            runner.executor.evm_env_mut().cfg_env.disable_fee_charge = true;
+        }
+
+        Ok(runner)
     }
 
     async fn _get_runner(
@@ -1147,6 +1157,7 @@ mod tests {
             CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
         },
     };
+    use semver::Version;
     use std::{fs, num::NonZeroU64, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
@@ -1934,6 +1945,51 @@ mod tests {
 
         assert_eq!(script.source_chain_id, Some(NamedChain::MonadTestnet as u64));
         assert_eq!(script.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_runner_fee_charge_matches_execution_context() {
+        let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+        let networks = NetworkConfigs::with_tempo();
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            sender: handle.dev_accounts().next().unwrap(),
+            networks,
+            ..Default::default()
+        };
+        let config = Config { networks, ..Default::default() };
+        let mut script = ScriptConfig::<TempoEvmNetwork>::new(
+            config,
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let rpc_runner = script._get_runner(None, false, false).await.unwrap();
+        assert!(!rpc_runner.executor.evm_env().cfg_env.disable_fee_charge);
+
+        let target = ArtifactId {
+            path: PathBuf::from("Script.json"),
+            name: "Script".to_string(),
+            source: PathBuf::from("Script.sol"),
+            version: Version::new(0, 8, 30),
+            build_id: String::new(),
+            profile: "default".to_string(),
+        };
+        let synthetic_runner = script
+            .get_runner_with_cheatcodes(
+                ContractsByArtifact::default(),
+                Wallets::new(Default::default(), None),
+                false,
+                target,
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(synthetic_runner.executor.evm_env().cfg_env.disable_fee_charge);
     }
 
     #[test]

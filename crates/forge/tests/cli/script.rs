@@ -11,6 +11,7 @@ use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -4803,6 +4804,44 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .arg("--root")
         .arg(prj.root())
         .assert_success();
+});
+
+forgetest_async!(tempo_script_setup_does_not_charge_fees, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "TempoScript.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoScript is Script {
+    function run() external {}
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.gas_limit = u64::MAX.into();
+        config.gas_price = Some(600_000_000);
+    });
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_deal_tip20(
+        CALLER,
+        address!("0x20c0000000000000000000000000000000000000"),
+        U256::ZERO,
+    )
+    .await
+    .unwrap();
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--network",
+        "tempo",
+        "--gas-price",
+        "600000000",
+        "--tempo.fee-token",
+        "0x20c0000000000000000000000000000000000000",
+    ]);
+    cmd.assert_success();
 });
 
 forgetest_async!(tempo_aa_script_broadcast_deploys_with_fee_token, |prj, cmd| {
