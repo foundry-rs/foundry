@@ -87,6 +87,9 @@ impl SymbolicExecutor {
             }
         };
 
+        in_size.expand_memory(&mut self.cx, &mut state.memory, in_offset.clone());
+        out_size.expand_memory(&mut self.cx, &mut state.memory, out_offset.clone());
+
         if state.is_static && matches!(kind, CallKind::Call) {
             match state.constrained_word(&mut self.cx, &value) {
                 Some(value) if value.is_zero() => {}

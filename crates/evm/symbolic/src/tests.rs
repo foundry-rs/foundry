@@ -1050,6 +1050,23 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
 }
 
 #[test]
+fn memory_size_tracks_symbolic_copy_extent_not_materialized_bound() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let size = SymExpr::var(&mut cx, "size");
+    let bytes = SymBytes::concrete(&mut cx, vec![1, 2, 3, 4]);
+    let dest = SymExpr::constant(&mut cx, U256::from(64));
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
+    let logical_size = memory.size_word(&mut cx);
+
+    let empty = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(logical_size.eval_model(&empty).unwrap(), U256::ZERO);
+
+    let nonempty = symbolic_model(&mut cx, [("size".to_string(), U256::from(1))]);
+    assert_eq!(logical_size.eval_model(&nonempty).unwrap(), U256::from(96));
+}
+
+#[test]
 fn memory_concrete_write_overrides_older_symbolic_write() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();

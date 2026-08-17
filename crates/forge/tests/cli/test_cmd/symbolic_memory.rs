@@ -172,7 +172,8 @@ contract SymbolicMemoryLimit {
             switch callvalue()
             case 0 { mstore(4065, 1) }
             case 1 { mstore8(4096, 1) }
-            default { mstore(2048, 1) }
+            case 2 { mstore(2048, 1) }
+            default { mstore8(0, 1) }
         }
     }
 
@@ -201,6 +202,23 @@ contract SymbolicMemoryLimit {
         }
         assert(!ok);
     }
+
+    function checkMemoryLimitCallInputExpansion() public {
+        bool ok;
+        assembly {
+            ok := call(gas(), address(), 3, 2048, 2048, 0, 0)
+        }
+        assert(!ok);
+    }
+
+    function checkMemoryLimitSymbolicCallSize(bool expand) public {
+        bool ok;
+        assembly {
+            let size := mul(expand, 2048)
+            ok := call(gas(), address(), 3, 2048, size, 0, 0)
+        }
+        assert(ok != expand);
+    }
 }
 "#,
     );
@@ -217,6 +235,8 @@ contract SymbolicMemoryLimit {
 [PASS] checkMemoryLimitExactBoundaries()
 [PASS] checkMemoryLimitFirstInvalidBoundaries()
 [PASS] checkMemoryLimitNestedCall()
+[PASS] checkMemoryLimitCallInputExpansion()
+[PASS] checkMemoryLimitSymbolicCallSize(bool)
 "#]],
     );
 });

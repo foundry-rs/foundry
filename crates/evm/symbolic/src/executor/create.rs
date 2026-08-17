@@ -44,6 +44,8 @@ impl SymbolicExecutor {
         let salt =
             if matches!(kind, CreateKind::Create2) { Some(state.stack.pop()?) } else { None };
 
+        size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
+
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
                 if let Some(offset) = state.constrained_usize(&mut self.cx, &offset) {
