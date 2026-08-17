@@ -454,14 +454,14 @@ forgetest!(test_fork_backtrace, |prj, cmd| {
 [SOLC_VERSION] [ELAPSED]
 ...
 Ran 5 tests for test/ForkBacktrace.t.sol:ForkBacktraceTest
-[FAIL: USDC transfer failed] testDirectOnChainRevert() ([GAS])
+[FAIL: USDC transfer failed] testDirectOnChainRevert() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
   at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
   at ForkBacktraceTest.testDirectOnChainRevert (test/ForkBacktrace.t.sol:36:126)
 
-[FAIL: ERC20: transfer amount exceeds balance] testNestedFailure() ([GAS])
+[FAIL: ERC20: transfer amount exceeds balance] testNestedFailure() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
@@ -469,13 +469,13 @@ Backtrace:
   at ForkedERC20Wrapper.nestedFailure (src/ForkedERC20Wrapper.sol:14:89)
   at ForkBacktraceTest.testNestedFailure (test/ForkBacktrace.t.sol:30:51)
 
-[FAIL: Account has zero USDC balance] testRequireNonZeroBalance() ([GAS])
+[FAIL: Account has zero USDC balance] testRequireNonZeroBalance() (block: [..]) ([GAS])
 ...
 Backtrace:
   at ForkedERC20Wrapper.requireNonZeroBalance (src/ForkedERC20Wrapper.sol:23:68)
   at ForkBacktraceTest.testRequireNonZeroBalance (test/ForkBacktrace.t.sol:26:64)
 
-[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
+[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transferFrom
@@ -483,7 +483,7 @@ Backtrace:
   at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:101)
   at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:65)
 
-[FAIL: ERC20: transfer amount exceeds balance] testTransferWithoutBalance() ([GAS])
+[FAIL: ERC20: transfer amount exceeds balance] testTransferWithoutBalance() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
@@ -511,7 +511,7 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 No files changed, compilation skipped
 ...
 Ran 1 test for test/ForkBacktrace.t.sol:ForkBacktraceTest
-[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
+[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() (block: [..]) ([GAS])
 ...
 Backtrace:
   at FiatTokenV2_2.transferFrom

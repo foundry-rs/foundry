@@ -606,27 +606,20 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
-    /// Resolves Tempo's safe default beneficiary for fork-derived configuration.
-    pub(crate) fn tempo_fork_beneficiary(&self, beneficiary: Address) -> Address {
-        if self.networks.is_tempo() && !self.fork_urls.is_empty() && beneficiary.is_zero() {
-            TIP_FEE_MANAGER_ADDRESS
-        } else {
-            beneficiary
-        }
-    }
-
     /// Applies Tempo's safe default beneficiary for forked nodes while preserving
     /// explicit coinbase selections.
     pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
-        let beneficiary = self.tempo_fork_beneficiary(evm_env.block_env.beneficiary);
-        if beneficiary != evm_env.block_env.beneficiary {
+        if self.networks.is_tempo()
+            && !self.fork_urls.is_empty()
+            && evm_env.block_env.beneficiary.is_zero()
+        {
             // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
             // Forked transactions with the default zero beneficiary can therefore
             // fail fee collection before producing a receipt. Use the same neutral
             // fee-recipient sentinel as Tempo's simulation path so validator token
             // lookup falls back to the default PathUSD token unless the user has
             // explicitly supplied a non-zero coinbase.
-            evm_env.block_env.beneficiary = beneficiary;
+            evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
         }
     }
 

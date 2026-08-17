@@ -476,6 +476,9 @@ ratatui = { version = "0.30", default-features = false }
 rayon = "1"
 regex = { version = "1", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# PTY-based CLI tests.
+# https://github.com/rust-cli/rexpect/pull/106
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 ron = "0.12"
 rustls = "0.23"
 semver = "1"
@@ -538,7 +541,7 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7" }
 
 # Monad
-alloy-monad-evm = { version = "0.5.0", default-features = false, features = [
+alloy-monad-evm = { version = "0.6.0", default-features = false, features = [
     "std",
     "memory_limit",
 ] }
@@ -562,10 +565,6 @@ idna_adapter = "=1.1.0"
 solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
-
-## monad
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", rev = "334bda1826996118d40872af35c27316a01889a2" }
-monad-revm = { git = "https://github.com/category-labs/monad-revm", rev = "8ba4a51b221357105465cbe6d410906d3f12baeb" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }

@@ -348,6 +348,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             debug_bytecodes: call.debug_bytecodes.clone(),
             breakpoints: Some(breakpoints),
             deprecated_cheatcodes,
+            fork_block_number: call.fork_block_number,
             ..Default::default()
         };
 
@@ -552,6 +553,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 result.traces.clone_from(&call.traces);
                 result.debug_bytecodes.clone_from(&call.debug_bytecodes);
                 result.breakpoints = call.cheatcodes.as_ref().map(|c| c.breakpoints.clone());
+                result.fork_block_number = call.fork_block_number;
             }
 
             match &failed_worker.failure {

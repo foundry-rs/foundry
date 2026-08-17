@@ -69,12 +69,27 @@ impl SymbolicExecutor {
         self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
     }
 
+    pub(super) fn is_sat_with_state(
+        &mut self,
+        state: &PathState,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        let replayable_storage = state.world.replay_storage_symbols();
+        self.solver.is_sat_with_replayable_storage(&mut self.cx, constraints, &replayable_storage)
+    }
+
     /// Checks branch feasibility, recording solver-unknown as an incomplete proof path.
     pub(super) fn branch_is_sat_or_defer(
         &mut self,
+        state: &PathState,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
-        match self.solver.is_sat_branch(&mut self.cx, constraints) {
+        let replayable_storage = state.world.replay_storage_symbols();
+        match self.solver.is_sat_branch_with_replayable_storage(
+            &mut self.cx,
+            constraints,
+            &replayable_storage,
+        ) {
             Ok(feasible) => Ok(feasible),
             Err(SymbolicError::SolverUnknown) => {
                 self.defer_solver_unknown();
@@ -472,7 +487,12 @@ impl SymbolicExecutor {
         function: &Function,
         state: &PathState,
     ) -> Result<SymbolicConcreteInput, SymbolicError> {
-        let model = self.solver.model(&mut self.cx, &state.constraints)?;
+        let replayable_storage = state.world.replay_storage_symbols();
+        let model = self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })

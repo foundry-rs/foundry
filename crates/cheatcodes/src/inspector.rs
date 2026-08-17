@@ -41,13 +41,13 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{ContextAuxUpdate, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{ContextUpdate, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, ContextAuxFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor,
-        with_cloned_context,
+        BlockEnvFor, ChainContextFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor,
+        TransactionStateFor, TxEnvFor, with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -95,7 +95,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
@@ -105,7 +105,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextAuxUpdate<ContextAuxFor<FEN>>>;
+    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>>;
 
     /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
     fn transact_from_tx_on_db(
@@ -125,8 +125,8 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        context_aux: ContextAuxFor<FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
+        chain_context: ChainContextFor<FEN>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
@@ -180,22 +180,33 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        with_cloned_context(ecx, |db, evm_env, context_state| {
-            let context_aux = context_state.auxiliary.clone();
-            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
-                db,
-                evm_env,
-                context_aux,
-                cheats,
-            );
-            evm.set_context_state(context_state);
+        let factory = FEN::EvmFactory::default();
+        let chain_context = factory.capture_chain_context(ecx);
+        let state = factory.capture_transaction_state(ecx);
+        let mut nested_chain_context = None;
+        let mut transaction_state = None;
+        with_cloned_context(ecx, |db, evm_env, journaled_state| {
+            let mut evm = factory.create_foundry_nested_evm(db, evm_env, chain_context, cheats);
+            *evm.journal_inner_mut() = journaled_state;
+            evm.restore_transaction_state(state);
             f(&mut *evm)?;
-            let sub_state = evm.context_state();
+            nested_chain_context = Some(evm.capture_chain_context());
+            transaction_state = Some(evm.capture_transaction_state());
+            let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_state))
-        })
+            Ok((sub_evm_env, sub_inner))
+        })?;
+        factory.apply_context_transition(
+            ecx,
+            Some(&nested_chain_context.expect("nested EVM chain context was captured")),
+        );
+        factory.restore_transaction_state(
+            ecx,
+            transaction_state.expect("nested EVM state was captured"),
+        );
+        Ok(())
     }
 
     fn with_fresh_nested_evm(
@@ -203,11 +214,15 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        context_aux: ContextAuxFor<FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
+        chain_context: ChainContextFor<FEN>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm =
-            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, context_aux, cheats);
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+            db,
+            evm_env,
+            chain_context,
+            cheats,
+        );
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -218,7 +233,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextAuxUpdate<ContextAuxFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
@@ -670,6 +685,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// execution block environment.
     pub block: Option<BlockEnvFor<FEN>>,
 
+    /// The active fork block override updated by a fork-switching cheatcode.
+    ///
+    /// This persists fork changes made through a copy-on-write backend between invariant calls.
+    pub fork_block_number_override: Option<u64>,
+
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
     /// transaction construction.
@@ -863,6 +883,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// the post-snapshot value even though `EvmEnv` was rolled back.
     pub env_overrides_snapshots: HashMap<U256, HashMap<Option<LocalForkId>, EnvOverrides>>,
 
+    /// Per-state-snapshot copies of [`Self::fork_block_number_override`].
+    pub fork_block_number_override_snapshots: HashMap<U256, Option<u64>>,
+
+    /// Transaction-position context and family-owned execution state captured atomically alongside
+    /// state snapshots.
+    pub context_snapshots: HashMap<U256, (ChainContextFor<FEN>, TransactionStateFor<FEN>)>,
+
     /// Whether we are currently executing inside an isolation context, i.e.
     /// the synthetic inner transaction wrapped by
     /// `InspectorStackRefMut::transact_inner` (used by `--gas-report` and
@@ -893,6 +920,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
+            fork_block_number_override: Default::default(),
             active_delegations: Default::default(),
             active_blob_sidecar: Default::default(),
             gas_price: Default::default(),
@@ -949,6 +977,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             execution_evm_version: None,
             env_overrides: Default::default(),
             env_overrides_snapshots: Default::default(),
+            fork_block_number_override_snapshots: Default::default(),
+            context_snapshots: Default::default(),
             in_isolation_context: false,
         }
     }
@@ -1458,7 +1488,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let value = call.transfer_value();
 
             // Match every partial/full calldata
-            for (calldata, (expected, actual_count)) in expected_calls_for_target {
+            for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target
+            {
                 // Increment actual times seen if...
                 // The calldata is at most, as big as this call's input, and
                 if calldata.len() <= input.len() &&
@@ -1469,7 +1500,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // The gas matches, if provided
                     expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
-                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit)
+                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit) &&
+                    // The call scheme matches, if provided
+                    expected_scheme.is_none_or(|scheme| scheme == call.scheme)
                 {
                     *actual_count += 1;
                 }
@@ -2672,7 +2705,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Match expected calls
             for (address, calldatas) in &self.expected_calls {
                 // Loop over each address, and for each address, loop over each calldata it expects.
-                for (calldata, (expected, actual_count)) in calldatas {
+                for ((calldata, scheme), (expected, actual_count)) in calldatas {
                     // Grab the values we expect to see
                     let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
 
@@ -2693,6 +2726,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                             value.as_ref().map(|v| format!("value {v}")),
                             gas.map(|g| format!("gas {g}")),
                             min_gas.map(|g| format!("minimum gas {g}")),
+                            scheme.map(|scheme| format!("call type {scheme:?}")),
                         ]
                         .into_iter()
                         .flatten()

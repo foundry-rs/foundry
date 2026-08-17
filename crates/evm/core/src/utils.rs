@@ -254,6 +254,31 @@ mod tests {
     }
 
     #[test]
+    fn block_normalization_sets_prevrandao_for_moonbeam() {
+        let header = AnyHeader { difficulty: U256::from(1), ..Default::default() };
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        let mut evm_env = EvmEnv::new(
+            CfgEnv::<SpecId>::default(),
+            BlockEnv { prevrandao: None, ..Default::default() },
+        );
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Moonbeam as u64,
+            NetworkConfigs::default(),
+        );
+
+        assert!(evm_env.block_env.prevrandao.is_some());
+    }
+
+    #[test]
     fn tx_replay_env_changes_disable_priority_fee_check_only_for_arbitrum() {
         let mut evm_env = EvmEnv::new(
             revm::context::CfgEnv::<SpecId>::default(),

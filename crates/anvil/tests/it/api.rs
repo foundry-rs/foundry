@@ -13,13 +13,13 @@ use alloy_network::{
     TxSignerSync,
 };
 use alloy_primitives::{
-    Address, B256, ChainId, Keccak256, U256, b256, bytes,
+    Address, B256, ChainId, Keccak256, U256, b256, bytes, keccak256,
     map::{AddressHashMap, B256HashMap, HashMap},
 };
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions, erc4337::TransactionConditional,
-    request::TransactionRequest, state::AccountOverride,
+    BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions, debug::ExecutionWitness,
+    erc4337::TransactionConditional, request::TransactionRequest, state::AccountOverride,
 };
 use alloy_rpc_types_eth::{Bundle, EthCallResponse};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
@@ -1173,4 +1173,64 @@ async fn test_send_transaction_uses_valid_fallback_gas_on_osaka() {
 
     let receipt = api.send_transaction_sync(WithOtherFields::new(tx_req)).await.unwrap();
     assert!(!receipt.status(), "transaction should preserve send-path revert semantics");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_execution_witness() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    // Deploy a contract so the witness contains code and storage.
+    let contract = SimpleStorage::deploy(&provider, "initial".to_string()).await.unwrap();
+    let receipt = contract
+        .setValue("updated".to_string())
+        .from(from)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let number = receipt.block_number.unwrap();
+
+    // No witness exists for the genesis block since it has no parent state.
+    api.debug_execution_witness(BlockNumberOrTag::Number(0)).await.unwrap_err();
+
+    let witness: ExecutionWitness = provider
+        .client()
+        .request("debug_executionWitness", (BlockNumberOrTag::Number(number),))
+        .await
+        .unwrap();
+
+    // The witness contains the full parent state trie, so the parent state root must be among the
+    // collected nodes.
+    let parent = provider.get_block(BlockId::number(number - 1)).await.unwrap().unwrap();
+    assert!(witness.state.iter().any(|node| keccak256(node) == parent.header.state_root));
+
+    // Preimages of the touched account addresses and the deployed code are included.
+    assert!(witness.keys.iter().any(|key| key.as_ref() == from.as_slice()));
+    assert!(witness.keys.iter().any(|key| key.as_ref() == to.as_slice()));
+    assert!(witness.keys.iter().any(|key| key.len() == 32));
+    assert!(!witness.codes.is_empty());
+
+    // Ancestor headers start at the parent block.
+    assert_eq!(witness.headers.len(), number as usize);
+    assert_eq!(keccak256(&witness.headers[0]), parent.header.hash);
+
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    // Witnesses for older blocks are served from the state history.
+    let historical: ExecutionWitness = provider
+        .client()
+        .request("debug_executionWitness", (BlockNumberOrTag::Number(number),))
+        .await
+        .unwrap();
+    assert_eq!(historical, witness);
 }
