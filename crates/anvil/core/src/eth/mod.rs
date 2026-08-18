@@ -272,6 +272,10 @@ pub enum EthRequest {
     #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
     GetGenesisTime(()),
 
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
+    #[serde(rename = "anvil_getLastBlockWallTime", with = "empty_params")]
+    GetLastBlockWallTime(()),
+
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(B256, Index),
 
@@ -1107,6 +1111,16 @@ mod tests {
         let s = r#"{"method": "anvil_getAutomine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_custom_get_last_block_wall_time() {
+        let s = r#"{"method": "anvil_getLastBlockWallTime", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        assert!(matches!(
+            serde_json::from_value::<EthRequest>(value).unwrap(),
+            EthRequest::GetLastBlockWallTime(())
+        ));
     }
 
     #[test]
