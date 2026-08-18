@@ -17,6 +17,8 @@ use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
+#[cfg(feature = "monad")]
+use revm::inspector::Inspector;
 use revm::{
     Database,
     context::{
@@ -24,7 +26,7 @@ use revm::{
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::FrameResult,
-    inspector::{Inspector, NoOpInspector},
+    inspector::NoOpInspector,
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
@@ -51,9 +53,6 @@ pub use monad::*;
 #[cfg(feature = "optimism")]
 pub use op::*;
 pub use tempo::*;
-
-mod replay;
-pub use replay::*;
 
 /// Foundry's compatibility trait associating a [`Network`] with a [`FoundryEvmFactory`].
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
@@ -160,9 +159,6 @@ pub trait FoundryEvmFactory:
     /// Whether transaction execution needs metadata from surrounding blocks.
     const NEEDS_BLOCK_CONTEXT: bool = false;
 
-    /// Whether canonical protocol system transactions must be included during fork replay.
-    const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = false;
-
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
             Block = Self::BlockEnv,
@@ -235,43 +231,45 @@ pub trait FoundryEvmFactory:
     ) {
     }
 
-    /// Converts a canonical envelope into a family-specific protocol system call.
+    /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
     ///
-    /// Returns an error when the transaction uses a network's reserved protocol sender but does
-    /// not satisfy that network's canonical envelope rules.
-    fn protocol_system_call(&self, _tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
-        Ok(None)
-    }
-
-    /// Executes a canonical replay transaction on a regular EVM created by this factory.
+    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
+    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
+    /// fall back to ordinary execution using the same EVM instance.
     ///
-    /// Factories with protocol system envelopes override this hook to apply their protocol
-    /// prestate through the concrete EVM context before entering the dedicated system-call path.
-    fn transact_replay<DB, I>(
+    /// Implementations that recognize a transaction here must provide equivalent recognition in
+    /// [`Self::try_transact_foundry_system_replay`].
+    #[cfg(feature = "monad")]
+    fn try_transact_system_replay<DB, I>(
         &self,
-        evm: &mut Self::Evm<DB, I>,
-        tx: Self::Tx,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>>
+        _evm: &mut Self::Evm<DB, I>,
+        _tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
     where
         DB: alloy_evm::Database,
         I: Inspector<Self::Context<DB>>,
     {
-        if self.protocol_system_call(&tx)?.is_some() {
-            eyre::bail!("protocol system replay is not implemented for this EVM factory");
-        }
-        evm.transact(tx).map_err(Into::into)
+        Ok(None)
     }
 
-    /// Executes a canonical replay transaction on a Foundry EVM with an inspector.
-    fn transact_foundry_replay<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+    /// Tries to execute a canonical system transaction on a Foundry-wrapped EVM with an inspector.
+    ///
+    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
+    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
+    /// fall back to ordinary execution using the same EVM instance.
+    ///
+    /// Implementations that recognize a transaction here must provide equivalent recognition in
+    /// [`Self::try_transact_system_replay`].
+    #[cfg(feature = "monad")]
+    fn try_transact_foundry_system_replay<
+        'db,
+        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
+    >(
         &self,
-        evm: &mut Self::FoundryEvm<'db, I>,
-        tx: Self::Tx,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>> {
-        if self.protocol_system_call(&tx)?.is_some() {
-            eyre::bail!("protocol system replay is not implemented for this EVM factory");
-        }
-        evm.transact(tx).map_err(Into::into)
+        _evm: &mut Self::FoundryEvm<'db, I>,
+        _tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
+        Ok(None)
     }
 
     /// Creates an uninspected EVM with explicit transaction-position context.
@@ -341,9 +339,7 @@ pub trait NestedEvm {
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
 
     /// Executes a canonical replay transaction.
-    ///
-    /// Networks with protocol system envelopes must override this method so replay can apply the
-    /// protocol prestate and bypass ordinary transaction validation.
+    #[cfg(feature = "monad")]
     fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
         self.transact_raw(tx).map_err(Into::into)
     }

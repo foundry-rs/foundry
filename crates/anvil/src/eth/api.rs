@@ -47,8 +47,6 @@ use alloy_eips::{
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
-#[cfg(feature = "monad")]
-use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, BlockResponse, Network,
     NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
@@ -101,7 +99,7 @@ use foundry_common::{
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::FoundryEvmFactory;
+use foundry_evm::core::evm::protocol_system_call;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -4019,10 +4017,7 @@ impl EthApi<FoundryNetwork> {
             MONAD_SYSTEM_ADDRESS,
         );
         let tx_env: TxEnv = build_tx_env_for_pending(&pending, self.backend.cheats());
-        MonadEvmFactory::default()
-            .protocol_system_call(&tx_env)
-            .is_ok_and(|call| call.is_some())
-            .then_some(pending)
+        protocol_system_call(&tx_env).is_ok_and(|call| call.is_some()).then_some(pending)
     }
 
     /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
