@@ -249,6 +249,136 @@ invariant_notHit()
     );
 });
 
+forgetest_init!(symbolic_secondary_replay_preserves_storage, |prj, cmd| {
+    skip_unless_z3!("symbolic_secondary_replay_preserves_storage");
+
+    prj.add_test(
+        "SymbolicSecondaryStorage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ArbitraryStorageVm {
+    function setArbitraryStorage(address target) external;
+}
+
+contract SecondaryExternalStore {
+    uint256 public value;
+}
+
+contract SecondaryStorageTarget {
+    SecondaryExternalStore store;
+    bool public hit;
+    bool public anchorHit;
+
+    constructor(SecondaryExternalStore store_) {
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42);
+        hit = true;
+    }
+
+    function breakAnchor() external {
+        anchorHit = true;
+    }
+}
+
+contract SymbolicSecondaryStorage is Test {
+    SecondaryExternalStore store;
+    SecondaryStorageTarget target;
+
+    function setUp() public {
+        store = new SecondaryExternalStore();
+        target = new SecondaryStorageTarget(store);
+        ArbitraryStorageVm(address(vm)).setArbitraryStorage(address(store));
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public view {
+        require(!target.anchorHit(), "anchor hit");
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_secondary() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_secondary",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_secondary()");
+    let artifact_ref = &result["invariant_failures"][0]["artifact"];
+    let original_artifact = read_artifact_ref(artifact_ref);
+    assert_eq!(original_artifact["invariant_failure"]["kind"], "predicate");
+    assert_eq!(original_artifact["invariant_failure"]["name"], "invariant_secondary");
+    assert!(original_artifact["invariant_failure"]["site"].is_object());
+
+    let persisted = prj
+        .root()
+        .join("cache/invariant/failures/SymbolicSecondaryStorage/invariants/invariant_secondary");
+    let persisted_anchor = prj
+        .root()
+        .join("cache/invariant/failures/SymbolicSecondaryStorage/invariants/invariant_anchor");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    assert_eq!(original["storage"].as_array().expect("storage assignments").len(), 1);
+    assert_eq!(original["storage"][0]["value"], "0x2a");
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    for _ in 0..2 {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--fuzz-runs",
+                "0",
+                "--match-test",
+                "invariant_",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        let failures = result["invariant_failures"].as_array().expect("invariant failures");
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0]["name"], "invariant_anchor");
+        assert_eq!(failures[0]["reason"], "anchor hit");
+        assert_eq!(failures[1]["name"], "invariant_secondary");
+        assert_eq!(failures[1]["reason"], "hit");
+        assert_eq!(failures[1]["counterexample"]["Sequence"][1][0]["func_name"], "useStore");
+
+        let replayed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+        assert_eq!(replayed, original);
+
+        let replayed_artifact = read_artifact_ref(artifact_ref);
+        assert_eq!(replayed_artifact["invariant_failure"], original_artifact["invariant_failure"]);
+
+        std::fs::remove_file(&persisted_anchor).unwrap();
+    }
+});
+
 forgetest_init!(symbolic_predicate_artifact_rejects_handler_assertion_replay, |prj, cmd| {
     skip_unless_z3!("symbolic_predicate_artifact_rejects_handler_assertion_replay");
 
