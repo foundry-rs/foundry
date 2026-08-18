@@ -343,6 +343,10 @@ contract ParseJsonTest is Test {
         uint256[] memory defaultValue = new uint256[](1);
         defaultValue[0] = 42;
         assertEq(abi.encode(vm.parseJsonUintArray("{}", ".missing", defaultValue)), abi.encode(defaultValue));
+
+        bytes[] memory dynamicDefault = new bytes[](1);
+        dynamicDefault[0] = hex"deadbeef";
+        assertEq(abi.encode(vm.parseJsonBytesArray("{}", ".missing", dynamicDefault)), abi.encode(dynamicDefault));
     }
 
     struct Nested {
