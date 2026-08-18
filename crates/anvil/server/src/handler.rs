@@ -24,6 +24,10 @@ pub async fn handle<Http: RpcHandler, Ws>(
             .map(Json)
             .map(IntoResponse::into_response)
             .unwrap_or_else(|| StatusCode::NO_CONTENT.into_response()),
+        Err(JsonRejection::JsonSyntaxError(err)) => {
+            warn!(target: "rpc", ?err, "invalid request");
+            Json(Response::error(RpcError::parse_error())).into_response()
+        }
         Err(err) => {
             warn!(target: "rpc", ?err, "invalid request");
             Json(Response::error(RpcError::invalid_request())).into_response()
@@ -86,11 +90,15 @@ async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ServerConfig, http_router};
     use anvil_rpc::{
         request::{RequestParams, RpcNotification},
         response::ResponseResult,
     };
-    use axum::body::to_bytes;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request as HttpRequest, header},
+    };
     use std::{
         pin::pin,
         sync::{
@@ -99,11 +107,28 @@ mod tests {
         },
         task::{Context, Poll, Waker},
     };
+    use tower::ServiceExt;
 
     #[derive(Clone, Default)]
     struct TestHandler {
         requests: Arc<AtomicUsize>,
     }
+
+    #[derive(Clone, Debug, serde::Deserialize)]
+    #[serde(tag = "method", content = "params")]
+    enum TypedRequest {
+        #[serde(rename = "known")]
+        Known(Vec<TestParam>),
+    }
+
+    #[derive(Clone, Debug, serde::Deserialize)]
+    enum TestParam {
+        #[serde(rename = "allowed")]
+        Allowed,
+    }
+
+    #[derive(Clone)]
+    struct TypedHandler;
 
     #[async_trait::async_trait]
     impl RpcHandler for TestHandler {
@@ -111,6 +136,17 @@ mod tests {
 
         async fn on_request(&self, _request: Self::Request) -> ResponseResult {
             self.requests.fetch_add(1, Ordering::Relaxed);
+            ResponseResult::success(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RpcHandler for TypedHandler {
+        type Request = TypedRequest;
+
+        async fn on_request(&self, request: Self::Request) -> ResponseResult {
+            let TypedRequest::Known(params) = request;
+            drop(params);
             ResponseResult::success(())
         }
     }
@@ -132,6 +168,15 @@ mod tests {
         })
     }
 
+    fn typed_call(method: &str) -> RpcMethodCall {
+        RpcMethodCall {
+            jsonrpc: Version::V2,
+            method: method.to_owned(),
+            params: RequestParams::Array(vec![serde_json::json!("bogus")]),
+            id: Id::Number(1),
+        }
+    }
+
     fn run_ready<F: Future>(future: F) -> F::Output {
         let waker = Waker::noop();
         let mut cx = Context::from_waker(waker);
@@ -147,6 +192,21 @@ mod tests {
         let response = run_ready(handle_request(Request::Batch(vec![]), TestHandler::default()));
 
         assert_eq!(response, Some(Response::error(RpcError::invalid_request())));
+    }
+
+    #[test]
+    fn distinguishes_unknown_methods_from_unknown_parameter_variants() {
+        let unknown_method = run_ready(TypedHandler.on_call(typed_call("unknown")));
+        let invalid_params = run_ready(TypedHandler.on_call(typed_call("known")));
+
+        assert_eq!(
+            serde_json::to_value(unknown_method).unwrap()["error"]["code"],
+            serde_json::json!(-32601)
+        );
+        assert_eq!(
+            serde_json::to_value(invalid_params).unwrap()["error"]["code"],
+            serde_json::json!(-32602)
+        );
     }
 
     #[test]
@@ -190,5 +250,23 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert!(run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap().is_empty());
         assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn malformed_json_returns_parse_error() {
+        let request = HttpRequest::post("/")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{"))
+            .unwrap();
+        let response = run_ready(
+            http_router(ServerConfig::default(), TestHandler::default()).oneshot(request),
+        )
+        .unwrap();
+        let body = run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap();
+
+        assert_eq!(
+            serde_json::from_slice::<Response>(&body).unwrap(),
+            Response::error(RpcError::parse_error())
+        );
     }
 }
