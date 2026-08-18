@@ -298,13 +298,16 @@ pub trait NestedEvm {
     /// The block environment type.
     type Block;
     /// The transaction environment type.
-    type Tx;
+    type Tx: FoundryTransaction;
     /// Chain context identifying the active transaction position.
     type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
     /// Family-owned state scoped to the active transaction.
     type TransactionState: Clone + Debug + Default + Send + Sync + 'static;
     /// Returns a mutable reference to the journal inner state (`JournaledState`).
     fn journal_inner_mut(&mut self) -> &mut JournaledState;
+
+    /// Returns a mutable reference to the transaction environment.
+    fn tx_mut(&mut self) -> &mut Self::Tx;
 
     /// Captures the active transaction position.
     fn capture_chain_context(&self) -> Self::ChainContext {

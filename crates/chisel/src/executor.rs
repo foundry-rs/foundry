@@ -236,7 +236,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                             self.config.evm_opts.clone(),
                             None,
                             None,
-                            None,
                             false,
                         )
                         .into(),
