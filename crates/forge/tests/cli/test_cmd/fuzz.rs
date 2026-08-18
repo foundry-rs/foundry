@@ -534,7 +534,7 @@ contract ForgeExplicitFuzzReplayTest {{
         .arg(&missing_explicit)
         .assert_failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-    let stderr = stderr.replace('\\', "/");
+    let stderr = stderr.replace('\\', "/").replace("//", "/");
     assert!(
         stderr.contains(&missing_explicit.display().to_string().replace('\\', "/")),
         "{stderr}"
@@ -556,7 +556,7 @@ contract ForgeExplicitFuzzReplayTest {{
         .arg(&malformed)
         .assert_failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-    let stderr = stderr.replace('\\', "/");
+    let stderr = stderr.replace('\\', "/").replace("//", "/");
     assert!(stderr.contains(&malformed.display().to_string().replace('\\', "/")), "{stderr}");
 
     let output = cmd

@@ -845,27 +845,26 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         Ok(result)
     }
 
-    /// Executes and commits a family-specific protocol system transaction.
-    #[instrument(name = "transact_protocol_system", level = "debug", skip_all)]
-    pub fn transact_protocol_system_with_env_and_context(
+    /// Tries to execute and commit a canonical system transaction during replay.
+    #[cfg(feature = "monad")]
+    #[instrument(name = "transact_system_replay", level = "debug", skip_all)]
+    pub fn try_transact_system_replay_with_env_and_context(
         &mut self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
         chain_context: ChainContextFor<FEN>,
-    ) -> eyre::Result<RawCallResult<FEN>> {
-        let factory = FEN::EvmFactory::default();
-        if factory.protocol_system_call(&tx_env)?.is_none() {
-            eyre::bail!("transaction is not a protocol system transaction");
-        }
-
+    ) -> eyre::Result<Option<RawCallResult<FEN>>> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect_replay_with_context(
+        let Some(result) = backend.try_inspect_system_replay_with_context(
             &mut evm_env,
             &mut tx_env,
             chain_context,
             &mut stack,
-        )?;
+        )?
+        else {
+            return Ok(None);
+        };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
         let fork_block_number = backend.active_fork_block_number();
         let mut result = convert_executed_result(
@@ -880,7 +879,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
         self.record_block_transaction(committed_tx);
-        Ok(result)
+        Ok(Some(result))
     }
 
     /// Commit the changeset to the database and adjust `self.inspector_config` values according to

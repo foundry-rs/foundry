@@ -816,33 +816,32 @@ impl VerifyBytecodeArgs {
                     }
 
                     let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
-                    let is_protocol_system = factory.protocol_system_call(&tx_env)?.is_some();
-                    if !is_protocol_system
-                        && (is_known_system_sender(tx.from())
-                            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
-                    {
-                        continue;
-                    }
+                    let is_system = is_known_system_sender(tx.from())
+                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
                     let chain_context = block_context.as_ref().map_or_else(
                         || factory.chain_context_for_transaction(&tx_env),
                         |context| context.transaction(index),
                     );
 
-                    if is_protocol_system {
-                        executor
-                            .transact_protocol_system_with_env_and_context(
+                    if is_system {
+                        #[cfg(feature = "monad")]
+                        let _ = executor
+                            .try_transact_system_replay_with_env_and_context(
                                 evm_env.clone(),
                                 tx_env.clone(),
                                 chain_context,
                             )
                             .wrap_err_with(|| {
                                 format!(
-                                    "Failed to execute protocol system transaction: {:?} in block {}",
+                                    "Failed to replay system transaction: {:?} in block {}",
                                     tx.tx_hash(),
                                     evm_env.block_env.number()
                                 )
                             })?;
-                    } else if ConsensusTransaction::to(tx).is_some() {
+                        continue;
+                    }
+
+                    if ConsensusTransaction::to(tx).is_some() {
                         executor
                             .transact_with_env_and_context(
                                 evm_env.clone(),
