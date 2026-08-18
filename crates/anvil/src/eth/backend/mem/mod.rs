@@ -5101,7 +5101,9 @@ impl<N: Network> Backend<N> {
         let Some((num, hash)) = self.active_state_snapshots.lock().remove(&id) else {
             return Ok(false);
         };
-        let best_block_hash = {
+        let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+
+        {
             // revert the storage that's newer than the snapshot
             let current_height = self.best_number();
             let mut storage = self.blockchain.storage.write();
@@ -5122,10 +5124,7 @@ impl<N: Network> Backend<N> {
 
             storage.best_number = num;
             storage.best_hash = hash;
-            hash
-        };
-        let block =
-            self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        }
 
         let reset_time = block.header.timestamp();
         self.time.reset(reset_time);
@@ -5972,6 +5971,8 @@ where
                     .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
                 storage.remove_block_transactions_by_number(to_clear)
             }
+
+            self.time.mark_block_created();
 
             // we intentionally set the difficulty to `0` for newer blocks
             evm_env.block_env.difficulty = U256::from(0);
@@ -9815,6 +9816,25 @@ mod tests {
             source_fork_block_number: None,
             source_fork_block_hash: None,
         }
+    }
+
+    #[tokio::test]
+    async fn missing_snapshot_block_does_not_change_head() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let snapshot_hash = api.backend.best_hash();
+        let snapshot = api.backend.create_state_snapshot().await;
+        api.mine_one().await.unwrap();
+        let best_number = api.backend.best_number();
+        let best_hash = api.backend.best_hash();
+        let head_wall_time = api.backend.time().last_block_wall_time();
+
+        api.backend.blockchain.storage.write().blocks.remove(&snapshot_hash);
+        let err = api.backend.revert_state_snapshot(snapshot).await.unwrap_err();
+
+        assert!(matches!(err, super::BlockchainError::BlockNotFound));
+        assert_eq!(api.backend.best_number(), best_number);
+        assert_eq!(api.backend.best_hash(), best_hash);
+        assert_eq!(api.backend.time().last_block_wall_time(), head_wall_time);
     }
 
     struct CacheFlushingDb(BlockchainDb);
