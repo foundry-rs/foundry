@@ -26,7 +26,8 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_primitives::{
-    Address, B256, Bytes, Selector, U256, address, hex, keccak256, map::HashMap,
+    Address, B256, Bytes, Selector, U256, address, hex, keccak256,
+    map::{Entry, HashMap},
 };
 use eyre::Result;
 use foundry_common::{
@@ -80,7 +81,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp::min,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -1776,6 +1777,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         test_name: &str,
         artifact_file_name: &str,
         symbolic_storage: &[SymbolicStorageAssignment],
+        invariant_failure: Option<SymbolicInvariantArtifactFailure>,
         progress: Option<&indicatif::ProgressBar>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayedInvariantSequence> {
@@ -1794,7 +1796,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             SymbolicCounterexampleReplaySemantics {
                 fail_on_revert: self.config.invariant.fail_on_revert,
             },
-            None,
+            invariant_failure,
             progress,
             position,
         )
@@ -3658,58 +3660,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
-        // A non-anchor predicate's persisted failure is only honored when its embedded settings
-        // still match the current run; stale caches fall back to a fresh campaign.
-        let persisted_invariants = if is_optimization {
-            BTreeSet::new()
-        } else {
-            live_invariants
-                .iter()
-                .filter(|(invariant_fn, _)| *invariant_fn != campaign_anchor)
-                .filter_map(|(invariant_fn, _)| {
-                    persisted_invariant_failure(&failure_dir, invariant_fn, &current_settings)
-                        .is_some()
-                        .then_some(invariant_fn.name.as_str())
-                })
-                .collect::<BTreeSet<_>>()
-        };
-        // Warn when predicates are dropped because they already have persisted failures from a
-        // previous campaign. Symmetric with the primary's persisted-replay warning so users
-        // aren't surprised when fewer invariants appear in the report than their contract
-        // defines (Echidna/Medusa never skip properties between runs).
-        if !is_optimization && !self.cr.mcr.tcfg.fuzz_failure_replay {
-            let persisted_skipped: Vec<&str> = live_invariants
-                .iter()
-                .filter(|(invariant_fn, _)| {
-                    *invariant_fn != campaign_anchor
-                        && persisted_invariants.contains(invariant_fn.name.as_str())
-                })
-                .map(|(invariant_fn, _)| invariant_fn.name.as_str())
-                .collect();
-            if !persisted_skipped.is_empty() {
-                let _ = sh_warn!(
-                    "{}: {} invariant(s) skipped due to persisted failures: {}. \
-                     Run `forge clean` or delete files in {} to re-include.",
-                    self.cr.name,
-                    persisted_skipped.len(),
-                    persisted_skipped.join(", "),
-                    failure_dir.display(),
-                );
-            }
-        }
-        // Build the invariant list in source declaration order, retaining the anchor (`func`)
-        // and every other selected predicate that doesn't already have a compatible persisted
-        // failure. Track the anchor's index so downstream consumers can resolve the campaign
-        // anchor without searching by name.
+        // Build the invariant list in source declaration order. Secondary persisted failures stay
+        // in the campaign so stale artifacts cannot suppress the current predicate implementation.
         let replay_invariant_fns = live_invariants.clone();
-        let invariant_fns: Vec<(&Function, bool)> = live_invariants
-            .into_iter()
-            .filter(|(invariant_fn, _)| {
-                *invariant_fn == campaign_anchor
-                    || (!is_optimization
-                        && !persisted_invariants.contains(invariant_fn.name.as_str()))
-            })
-            .collect();
+        let invariant_fns = live_invariants;
         let anchor_idx = invariant_fns
             .iter()
             .position(|(invariant_fn, _)| *invariant_fn == campaign_anchor)
@@ -3816,22 +3770,33 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // predicate as the replay anchor because merged invariant suites persist failures per
         // predicate, while campaign runs use a stable suite anchor.
         let mut replayed_persisted_invariant = false;
-        let replay_candidates: Vec<(&Function, bool)> =
-            if self.cr.mcr.tcfg.fuzz_failure_replay && !is_optimization {
-                replay_invariant_fns
-                    .iter()
-                    .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor())
-                    .chain(
-                        replay_invariant_fns.iter().filter(|(invariant_fn, _)| {
-                            *invariant_fn == invariant_contract.anchor()
-                        }),
-                    )
-                    .copied()
-                    .collect()
-            } else {
-                vec![(invariant_contract.anchor(), false)]
-            };
-        for (replay_invariant, _) in replay_candidates {
+        let mut replayed_secondary_failures = Vec::new();
+        let replay_candidates: Vec<(&Function, bool)> = if is_optimization {
+            vec![(invariant_contract.anchor(), false)]
+        } else if self.cr.mcr.tcfg.fuzz_failure_replay {
+            replay_invariant_fns
+                .iter()
+                .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor())
+                .chain(
+                    replay_invariant_fns
+                        .iter()
+                        .filter(|(invariant_fn, _)| *invariant_fn == invariant_contract.anchor()),
+                )
+                .copied()
+                .collect()
+        } else {
+            replay_invariant_fns
+                .iter()
+                .filter(|(invariant_fn, _)| *invariant_fn == invariant_contract.anchor())
+                .chain(
+                    replay_invariant_fns
+                        .iter()
+                        .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor()),
+                )
+                .copied()
+                .collect()
+        };
+        for (replay_invariant, fail_on_revert) in replay_candidates {
             let replay_failure_file = invariant_failure_file(&failure_dir, replay_invariant);
             let Some(InvariantPersistedFailure {
                 mut call_sequence,
@@ -3883,6 +3848,39 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     continue;
                 };
                 if failure_site.is_some_and(|expected| expected != confirmed_failure_site) {
+                    continue;
+                }
+                if replay_invariant != invariant_contract.anchor()
+                    && !self.cr.mcr.tcfg.fuzz_failure_replay
+                {
+                    let is_revert = match confirmed_failure_site {
+                        SymbolicInvariantFailureSite::Invariant { selector, .. }
+                            if selector == replay_invariant.selector() =>
+                        {
+                            false
+                        }
+                        SymbolicInvariantFailureSite::SequenceCall { .. }
+                            if fail_on_revert && !replay.sequence_assertion_failure =>
+                        {
+                            true
+                        }
+                        _ => continue,
+                    };
+                    replayed_secondary_failures.push((
+                        replay_invariant.name.clone(),
+                        InvariantFuzzError::from_replayed_invariant(
+                            replay_contract.address,
+                            replay_invariant,
+                            txes,
+                            replay.reason,
+                            invariant_config,
+                            fail_on_revert,
+                            assertion_failure,
+                            is_revert,
+                        ),
+                        storage,
+                        confirmed_failure_site,
+                    ));
                     continue;
                 }
                 let mut replayed_entirely = replay.replayed_entirely;
@@ -4235,7 +4233,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                 failure.reason.clone().unwrap_or_else(|| {
                                                     "symbolic invariant counterexample".to_string()
                                                 });
-                                            let invariant_failures =
+                                            let mut invariant_failures =
                                                 vec![InvariantFailure::Predicate {
                                                     name: invariant_contract.anchor().name.clone(),
                                                     reason,
@@ -4248,27 +4246,76 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                     persisted_path: primary_failure_file,
                                                     is_anchor: true,
                                                 }];
-                                            let failed_predicate_reason =
-                                                Some(invariant_failures[0].reason().to_string());
+
+                                            for (invariant, _) in &invariant_contract.invariant_fns
+                                            {
+                                                if let Some((_, error, _, _)) =
+                                                    replayed_secondary_failures.iter().find(
+                                                        |(name, _, _, _)| name == &invariant.name,
+                                                    )
+                                                    && let InvariantFuzzError::BrokenInvariant(
+                                                        case_data,
+                                                    )
+                                                    | InvariantFuzzError::Revert(case_data) =
+                                                        error
+                                                    && let TestError::Fail(_, calls) =
+                                                        &case_data.test_error
+                                                {
+                                                    let call_sequence = calls
+                                                        .iter()
+                                                        .map(|tx| {
+                                                            BaseCounterExample::from_invariant_call(
+                                                                tx,
+                                                                identified_contracts,
+                                                                None,
+                                                                invariant_config.show_solidity,
+                                                            )
+                                                        })
+                                                        .collect();
+                                                    invariant_failures.push(
+                                                        InvariantFailure::Predicate {
+                                                            name: invariant.name.clone(),
+                                                            reason: error
+                                                                .revert_reason()
+                                                                .unwrap_or_default(),
+                                                            counterexample: Some(
+                                                                CounterExample::Sequence(
+                                                                    calls.len(),
+                                                                    call_sequence,
+                                                                ),
+                                                            ),
+                                                            artifact: None,
+                                                            minimization: None,
+                                                            persisted_path: invariant_failure_file(
+                                                                &failure_dir,
+                                                                invariant,
+                                                            ),
+                                                            is_anchor: false,
+                                                        },
+                                                    );
+                                                }
+                                            }
 
                                             let invariant_predicate_results = if is_campaign {
-                                                std::iter::once(InvariantPredicateResult {
-                                                    name: invariant_contract.anchor().name.clone(),
-                                                    status: TestStatus::Failure,
-                                                    reason: failed_predicate_reason,
-                                                })
-                                                .chain(skipped_predicate_results.clone())
-                                                .sorted_by_key(|predicate| {
-                                                    self.cr
-                                                        .contract
-                                                        .abi
-                                                        .functions()
-                                                        .position(|func| {
-                                                            func.name == predicate.name
-                                                        })
-                                                        .unwrap_or(usize::MAX)
-                                                })
-                                                .collect()
+                                                invariant_failures
+                                                    .iter()
+                                                    .map(|failure| InvariantPredicateResult {
+                                                        name: failure.name().to_string(),
+                                                        status: TestStatus::Failure,
+                                                        reason: Some(failure.reason().to_string()),
+                                                    })
+                                                    .chain(skipped_predicate_results.clone())
+                                                    .sorted_by_key(|predicate| {
+                                                        self.cr
+                                                            .contract
+                                                            .abi
+                                                            .functions()
+                                                            .position(|func| {
+                                                                func.name == predicate.name
+                                                            })
+                                                            .unwrap_or(usize::MAX)
+                                                    })
+                                                    .collect()
                                             } else {
                                                 Vec::new()
                                             };
@@ -4279,7 +4326,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                 fork_block_number,
                                                 invariant_failures,
                                                 invariant_predicate_results,
-                                                Some(failure_dir.clone()),
+                                                Some(failure_dir),
                                                 invariant_count,
                                                 Vec::new(),
                                                 None,
@@ -4401,7 +4448,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
-        let invariant_result = match evm.invariant_fuzz(
+        let mut invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true, None),
@@ -4415,6 +4462,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
+        let mut replayed_secondary_metadata = BTreeMap::new();
+        for (name, failure, storage, failure_site) in replayed_secondary_failures {
+            if let Entry::Vacant(entry) = invariant_result.errors.entry(name) {
+                replayed_secondary_metadata.insert(entry.key().clone(), (storage, failure_site));
+                entry.insert(failure);
+            }
+        }
         // Merge coverage collected during invariant run with test setup coverage.
         self.result.merge_coverages(invariant_result.line_coverage);
 
@@ -4510,6 +4564,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &invariant_contract.anchor().signature(),
                             &invariant_contract.anchor().signature(),
                             &[],
+                            None,
                             progress.as_ref(),
                             Some((1, total_broken)),
                         ) {
@@ -4575,18 +4630,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     continue;
                 }
 
-                // Skip invariants whose counterexample is already persisted from a prior run
-                // (those were filtered out of the live campaign earlier; `errors` won't contain
-                // them, but the dir check is a belt-and-braces safety net). Use the same
-                // settings-aware compatibility check as the filter so a stale persisted cache
-                // doesn't suppress a freshly-broken secondary.
                 let persisted_failure = invariant_failure_file(&failure_dir, invariant);
-                if !persisted_invariants.contains(invariant.name.as_str())
-                    && let Some(error) = invariant_result.errors.get(&invariant.name)
+                if let Some(error) = invariant_result.errors.get(&invariant.name)
                     && let InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) = error
                     && let TestError::Fail(_, ref calls) = case_data.test_error
                 {
+                    let replayed_metadata = replayed_secondary_metadata.get(&invariant.name);
                     let original_seq_len = calls.len();
                     // On Ctrl+C: skip the (potentially long) replay+shrink, but still persist
                     // the un-shrunk sequence so the next run targeting this invariant picks it
@@ -4604,20 +4654,30 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 )
                             })
                             .collect::<Vec<_>>();
-                        record_invariant_failure(
-                            failure_dir.as_path(),
-                            persisted_failure.as_path(),
-                            &unshrunk_sequence,
-                            &current_settings,
-                            case_data.assertion_failure,
-                        );
+                        if replayed_metadata.is_none() {
+                            record_invariant_failure(
+                                failure_dir.as_path(),
+                                persisted_failure.as_path(),
+                                &unshrunk_sequence,
+                                &current_settings,
+                                case_data.assertion_failure,
+                            );
+                        }
                         any_failure_persisted = true;
                         None
                     } else {
                         let position = next_position;
                         next_position += 1;
+                        let mut replay_config = invariant_config.clone();
+                        if replayed_metadata.is_some() {
+                            // The persisted failure site was validated before entering the
+                            // campaign. The generic shrinker only preserves failure, not its site,
+                            // so shrinking here could misattribute a different failure to this
+                            // predicate.
+                            replay_config.shrink_run_limit = 0;
+                        }
                         match self.replay_invariant_error_sequence(
-                            invariant_config.clone(),
+                            replay_config,
                             calls,
                             Some(case_data.inner_sequence.clone()),
                             case_data.assertion_failure,
@@ -4627,7 +4687,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             &invariant.signature(),
                             &invariant.signature(),
-                            &[],
+                            replayed_metadata
+                                .map(|(storage, _)| storage.as_slice())
+                                .unwrap_or_default(),
+                            replayed_metadata.map(|(_, site)| {
+                                SymbolicInvariantArtifactFailure::Predicate {
+                                    name: invariant.name.clone(),
+                                    site: Some(*site),
+                                }
+                            }),
                             progress.as_ref(),
                             Some((position, total_broken)),
                         ) {
@@ -4636,13 +4704,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                     fork_block_number =
                                         replayed.fork_block_number.or(fork_block_number);
                                 }
-                                record_invariant_failure(
-                                    failure_dir.as_path(),
-                                    persisted_failure.as_path(),
-                                    &replayed.call_sequence,
-                                    &current_settings,
-                                    case_data.assertion_failure,
-                                );
+                                // Keep all replay metadata for a seeded persisted failure. A fresh
+                                // campaign error takes precedence above and is persisted normally.
+                                if replayed_metadata.is_none() {
+                                    record_invariant_failure(
+                                        failure_dir.as_path(),
+                                        persisted_failure.as_path(),
+                                        &replayed.call_sequence,
+                                        &current_settings,
+                                        case_data.assertion_failure,
+                                    );
+                                }
                                 any_failure_persisted = true;
                                 Some((
                                     CounterExample::Sequence(
