@@ -141,7 +141,7 @@ impl<N: Network> ScriptSequence<N> {
 
         // cache folder writes
         //../run-latest.json
-        fs::write_pretty_json_file(sensitive_path, &sensitive_script_sequence)?;
+        fs::write_sensitive_json_file(sensitive_path, &sensitive_script_sequence)?;
         if save_ts {
             //../run-[timestamp].json
             fs::copy(sensitive_path, sensitive_path.with_file_name(&ts_name))?;
