@@ -391,6 +391,35 @@ async fn can_mine_manually() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn get_last_block_wall_time_updates_after_mining() {
+    let before_spawn =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let genesis_wall_time: u64 =
+        provider.raw_request("anvil_getLastBlockWallTime".into(), ()).await.unwrap();
+    let after_spawn =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    assert!((before_spawn..=after_spawn).contains(&genesis_wall_time));
+
+    api.evm_set_time(api.backend.time().current_call_timestamp() + 60).unwrap();
+    let unchanged_wall_time: u64 =
+        provider.raw_request("anvil_getLastBlockWallTime".into(), ()).await.unwrap();
+    assert_eq!(unchanged_wall_time, genesis_wall_time);
+
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    let before_mining =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    api.mine_one().await.unwrap();
+
+    let block_wall_time: u64 =
+        provider.raw_request("anvil_getLastBlockWallTime".into(), ()).await.unwrap();
+    let after_mining =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    assert!((before_mining..=after_mining).contains(&block_wall_time));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

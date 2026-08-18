@@ -11,7 +11,9 @@ use crate::{
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
-            db::{AnvilCacheDB, Db, MaybeFullDatabase, SerializableState, StateDb},
+            db::{
+                AnvilCacheDB, BLOCKHASH_HISTORY, Db, MaybeFullDatabase, SerializableState, StateDb,
+            },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
                 ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTransactionHooks,
@@ -22,7 +24,7 @@ use crate::{
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
             mem::{
-                state::{state_root, storage_root, trie_accounts},
+                state::{state_root, state_trie_witness, storage_root, trie_accounts},
                 storage::MinedTransactionReceipt,
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
@@ -86,7 +88,7 @@ use alloy_network::{
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256, address, hex, keccak256,
-    map::{AddressMap, HashMap, HashSet},
+    map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
@@ -95,6 +97,7 @@ use alloy_rpc_types::{
     EIP1186StorageProof as StorageProof, Filter, Header as AlloyHeader, Index, Log, Transaction,
     TransactionReceipt,
     anvil::Forking,
+    debug::ExecutionWitness,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
     simulate::{
@@ -133,7 +136,7 @@ use foundry_evm::core::{
     evm::{
         FoundryEvmFactory, MonadBlockParticipants,
         monad_block_participants as collect_monad_block_participants,
-        monad_context_from_participants,
+        monad_context_from_participants, protocol_system_call,
     },
 };
 #[cfg(feature = "optimism")]
@@ -511,18 +514,13 @@ struct PreparedMonadExecution {
 }
 
 #[cfg(feature = "monad")]
-fn exact_monad_context(context: MonadReplayContext) -> MonadExecutionContext<'static> {
-    MonadExecutionContext::Exact(Box::new(context))
-}
-
-#[cfg(feature = "monad")]
 fn exact_monad_context_at(
     context: &MonadReplayContext,
     current_tx_index: usize,
 ) -> MonadExecutionContext<'static> {
     let mut context = context.clone();
     context.current_tx_index = current_tx_index;
-    exact_monad_context(context)
+    MonadExecutionContext::Exact(Box::new(context))
 }
 
 #[cfg(feature = "monad")]
@@ -1329,19 +1327,9 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
-    /// Returns true if Celo network mode is active.
-    pub const fn is_celo(&self) -> bool {
-        self.networks.is_celo()
-    }
-
     /// Returns true if Monad network mode is active
     pub const fn is_monad(&self) -> bool {
         self.networks.is_monad()
-    }
-
-    /// Returns the active execution network family name.
-    pub const fn execution_family_name(&self) -> &'static str {
-        self.networks.execution_family_name()
     }
 
     /// Returns the active execution profile name.
@@ -2935,7 +2923,13 @@ impl<N: Network> Backend<N> {
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
-            EnvelopeExecutionKind::Replay => Ok(factory.transact_replay(&mut evm, tx_env)?),
+            EnvelopeExecutionKind::Replay => {
+                if let Some(result) = factory.try_transact_system_replay(&mut evm, &tx_env)? {
+                    Ok(result)
+                } else {
+                    Ok(evm.transact(tx_env)?)
+                }
+            }
         }
     }
 
@@ -3057,7 +3051,7 @@ impl<N: Network> Backend<N> {
                     if !is_replay {
                         return executor.execute_transaction_without_commit((tx_env, recovered));
                     }
-                    match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+                    match protocol_system_call(&tx_env) {
                         Ok(None) => {
                             return executor
                                 .execute_transaction_without_commit((tx_env, recovered));
@@ -3068,12 +3062,20 @@ impl<N: Network> Backend<N> {
                     executor.execute_transaction_without_commit_with(
                         (tx_env, recovered),
                         |evm, tx_env, transaction_hash| {
-                            MonadEvmFactory::default().transact_replay(evm, tx_env).map_err(|err| {
-                                BlockExecutionError::msg(format!(
-                                    "failed to replay Monad transaction {transaction_hash}: \
+                            MonadEvmFactory::default()
+                                .try_transact_system_replay(evm, &tx_env)
+                                .map_err(|err| {
+                                    BlockExecutionError::msg(format!(
+                                        "failed to replay Monad transaction {transaction_hash}: \
                                          {err}"
-                                ))
-                            })
+                                    ))
+                                })?
+                                .ok_or_else(|| {
+                                    BlockExecutionError::msg(format!(
+                                        "Monad transaction {transaction_hash} is not a canonical \
+                                         replay envelope"
+                                    ))
+                                })
                         },
                     )
                 },
@@ -5694,9 +5696,14 @@ where
                     inspector_tx_config,
                     |evm, tx_env, _transaction_hash| {
                         prepare_monad_transaction(evm, &tx_env);
-                        let result = MonadEvmFactory::default()
-                            .transact_replay(evm, tx_env)
-                            .map_err(BlockExecutionError::msg);
+                        let result = match MonadEvmFactory::default()
+                            .try_transact_system_replay(evm, &tx_env)
+                            .map_err(BlockExecutionError::msg)
+                        {
+                            Ok(Some(result)) => Ok(result),
+                            Ok(None) => evm.transact(tx_env).map_err(BlockExecutionError::msg),
+                            Err(err) => Err(err),
+                        };
                         if result.is_err() {
                             rollback_monad_transaction(evm);
                         }
@@ -5971,6 +5978,8 @@ where
                     .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
                 storage.remove_block_transactions_by_number(to_clear)
             }
+
+            self.time.mark_block_created();
 
             // we intentionally set the difficulty to `0` for newer blocks
             evm_env.block_env.difficulty = U256::from(0);
@@ -7043,6 +7052,79 @@ where
         };
 
         Ok(BlockOpcodeGas { block_hash, block_number: block.header.number(), transactions })
+    }
+
+    /// Returns a best-effort execution witness for the given block, in the same format as reth's
+    /// `debug_executionWitness`.
+    ///
+    /// Anvil does not track which state a block's execution actually touched, so this returns a
+    /// witness for the entire parent state instead: the RLP encoding of every node of the parent
+    /// state trie (including all storage tries), all contract codes, and the preimages of all
+    /// account addresses and storage slots. This is a strict superset of the minimal witness, so
+    /// stateless re-execution of the block against it works, but the witness size grows with the
+    /// total state instead of the state accessed by the block.
+    ///
+    /// Limitations:
+    /// - Not supported while forking: only remotely accessed accounts are known locally, and the
+    ///   locally computed state roots do not match the remote chain's roots.
+    /// - The parent block's state must still be available in the state history, i.e. it must not
+    ///   have been discarded via `--prune-history`.
+    /// - The genesis block has no witness since it has no parent state.
+    /// - `headers` contains the ancestor headers within the 256 block `BLOCKHASH` window that are
+    ///   known locally, which may be fewer than 256.
+    pub async fn debug_execution_witness(
+        &self,
+        block: BlockNumber,
+    ) -> Result<ExecutionWitness, BlockchainError> {
+        let number = self.convert_block_number(Some(block));
+        let best = self.best_number();
+        if number > best {
+            return Err(BlockchainError::BlockOutOfRange(best, number));
+        }
+        let Some(parent) = number.checked_sub(1) else {
+            return Err(BlockchainError::Message(
+                "genesis block has no parent state to build a witness from".to_string(),
+            ));
+        };
+
+        let mut headers = Vec::new();
+        for ancestor in (number.saturating_sub(BLOCKHASH_HISTORY)..number).rev() {
+            let Some(block) = self.get_block(ancestor) else { break };
+            headers.push(alloy_rlp::encode(&block.header).into());
+        }
+
+        self.with_database_at(Some(BlockRequest::Number(parent)), |state, _| {
+            let Some(accounts) = state.maybe_full_db() else {
+                return Err(BlockchainError::Message(
+                    "debug_executionWitness is not supported while forking".to_string(),
+                ));
+            };
+
+            let (_, nodes) = state_trie_witness(&accounts);
+            let mut codes = Vec::new();
+            let mut seen_codes = B256Set::default();
+            let mut keys = Vec::new();
+            for (address, account) in &accounts {
+                keys.push(Bytes::copy_from_slice(address.as_slice()));
+                for slot in account.storage.keys() {
+                    keys.push(Bytes::copy_from_slice(&slot.to_be_bytes::<32>()));
+                }
+                if account.info.code_hash != KECCAK_EMPTY
+                    && seen_codes.insert(account.info.code_hash)
+                {
+                    let code = match &account.info.code {
+                        Some(code) => code.original_bytes(),
+                        None => state.code_by_hash_ref(account.info.code_hash)?.original_bytes(),
+                    };
+                    codes.push(code);
+                }
+            }
+            keys.sort_unstable();
+            keys.dedup();
+
+            Ok(ExecutionWitness { state: nodes, codes, keys, headers })
+        })
+        .await?
     }
 
     /// Returns account information after replaying a block through the transaction at `tx_index`.
@@ -9001,7 +9083,7 @@ where
         if self.is_monad() && pool_tx.is_replay {
             let tx_env: TxEnv =
                 build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
-            match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+            match protocol_system_call(&tx_env) {
                 Ok(Some(system_call)) => {
                     if system_call
                         .chain_id
@@ -9741,6 +9823,25 @@ mod tests {
             source_fork_block_number: None,
             source_fork_block_hash: None,
         }
+    }
+
+    #[tokio::test]
+    async fn missing_snapshot_block_does_not_change_head() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let snapshot_hash = api.backend.best_hash();
+        let snapshot = api.backend.create_state_snapshot().await;
+        api.mine_one().await.unwrap();
+        let best_number = api.backend.best_number();
+        let best_hash = api.backend.best_hash();
+        let head_wall_time = api.backend.time().last_block_wall_time();
+
+        api.backend.blockchain.storage.write().blocks.remove(&snapshot_hash);
+        let err = api.backend.revert_state_snapshot(snapshot).await.unwrap_err();
+
+        assert!(matches!(err, super::BlockchainError::BlockNotFound));
+        assert_eq!(api.backend.best_number(), best_number);
+        assert_eq!(api.backend.best_hash(), best_hash);
+        assert_eq!(api.backend.time().last_block_wall_time(), head_wall_time);
     }
 
     struct CacheFlushingDb(BlockchainDb);

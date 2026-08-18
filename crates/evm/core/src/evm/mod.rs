@@ -17,6 +17,8 @@ use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
+#[cfg(feature = "monad")]
+use revm::inspector::Inspector;
 use revm::{
     Database,
     context::{
@@ -24,7 +26,7 @@ use revm::{
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::FrameResult,
-    inspector::{Inspector, NoOpInspector},
+    inspector::NoOpInspector,
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
@@ -51,9 +53,6 @@ pub use monad::*;
 #[cfg(feature = "optimism")]
 pub use op::*;
 pub use tempo::*;
-
-mod replay;
-pub use replay::*;
 
 /// Foundry's compatibility trait associating a [`Network`] with a [`FoundryEvmFactory`].
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
@@ -126,21 +125,6 @@ pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionR
 pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
 pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
-/// Applies transaction-position changes and refreshes EVM-family state after a journal transition.
-pub fn apply_context_transition<FEN: FoundryEvmNetwork>(
-    ecx: &mut FoundryContextFor<'_, FEN>,
-    replacement: Option<&ChainContextFor<FEN>>,
-) {
-    FEN::EvmFactory::default().apply_context_transition(ecx, replacement);
-}
-
-/// Rebases network caches after state changes that retain the active chain cursor.
-pub fn refresh_context_after_state_change<FEN: FoundryEvmNetwork>(
-    ecx: &mut FoundryContextFor<'_, FEN>,
-) {
-    apply_context_transition::<FEN>(ecx, None);
-}
-
 pub trait FoundryEvmFactory:
     EvmFactory<
         Spec: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
@@ -167,9 +151,6 @@ pub trait FoundryEvmFactory:
 
     /// Whether transaction execution needs metadata from surrounding blocks.
     const NEEDS_BLOCK_CONTEXT: bool = false;
-
-    /// Whether canonical protocol system transactions must be included during fork replay.
-    const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = false;
 
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
@@ -243,43 +224,45 @@ pub trait FoundryEvmFactory:
     ) {
     }
 
-    /// Converts a canonical envelope into a family-specific protocol system call.
+    /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
     ///
-    /// Returns an error when the transaction uses a network's reserved protocol sender but does
-    /// not satisfy that network's canonical envelope rules.
-    fn protocol_system_call(&self, _tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
-        Ok(None)
-    }
-
-    /// Executes a canonical replay transaction on a regular EVM created by this factory.
+    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
+    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
+    /// fall back to ordinary execution using the same EVM instance.
     ///
-    /// Factories with protocol system envelopes override this hook to apply their protocol
-    /// prestate through the concrete EVM context before entering the dedicated system-call path.
-    fn transact_replay<DB, I>(
+    /// Implementations that recognize a transaction here must provide equivalent recognition in
+    /// [`Self::try_transact_foundry_system_replay`].
+    #[cfg(feature = "monad")]
+    fn try_transact_system_replay<DB, I>(
         &self,
-        evm: &mut Self::Evm<DB, I>,
-        tx: Self::Tx,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>>
+        _evm: &mut Self::Evm<DB, I>,
+        _tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
     where
         DB: alloy_evm::Database,
         I: Inspector<Self::Context<DB>>,
     {
-        if self.protocol_system_call(&tx)?.is_some() {
-            eyre::bail!("protocol system replay is not implemented for this EVM factory");
-        }
-        evm.transact(tx).map_err(Into::into)
+        Ok(None)
     }
 
-    /// Executes a canonical replay transaction on a Foundry EVM with an inspector.
-    fn transact_foundry_replay<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+    /// Tries to execute a canonical system transaction on a Foundry-wrapped EVM with an inspector.
+    ///
+    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
+    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
+    /// fall back to ordinary execution using the same EVM instance.
+    ///
+    /// Implementations that recognize a transaction here must provide equivalent recognition in
+    /// [`Self::try_transact_system_replay`].
+    #[cfg(feature = "monad")]
+    fn try_transact_foundry_system_replay<
+        'db,
+        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
+    >(
         &self,
-        evm: &mut Self::FoundryEvm<'db, I>,
-        tx: Self::Tx,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>> {
-        if self.protocol_system_call(&tx)?.is_some() {
-            eyre::bail!("protocol system replay is not implemented for this EVM factory");
-        }
-        evm.transact(tx).map_err(Into::into)
+        _evm: &mut Self::FoundryEvm<'db, I>,
+        _tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
+        Ok(None)
     }
 
     /// Creates an uninspected EVM with explicit transaction-position context.
@@ -315,13 +298,16 @@ pub trait NestedEvm {
     /// The block environment type.
     type Block;
     /// The transaction environment type.
-    type Tx;
+    type Tx: FoundryTransaction;
     /// Chain context identifying the active transaction position.
     type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
     /// Family-owned state scoped to the active transaction.
     type TransactionState: Clone + Debug + Default + Send + Sync + 'static;
     /// Returns a mutable reference to the journal inner state (`JournaledState`).
     fn journal_inner_mut(&mut self) -> &mut JournaledState;
+
+    /// Returns a mutable reference to the transaction environment.
+    fn tx_mut(&mut self) -> &mut Self::Tx;
 
     /// Captures the active transaction position.
     fn capture_chain_context(&self) -> Self::ChainContext {
@@ -349,9 +335,7 @@ pub trait NestedEvm {
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
 
     /// Executes a canonical replay transaction.
-    ///
-    /// Networks with protocol system envelopes must override this method so replay can apply the
-    /// protocol prestate and bypass ordinary transaction validation.
+    #[cfg(feature = "monad")]
     fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
         self.transact_raw(tx).map_err(Into::into)
     }

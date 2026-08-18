@@ -22,6 +22,7 @@ struct TimeState {
     offset: i128,
     offset_reset_generation: u64,
     last_timestamp: u64,
+    last_block_wall_time: u64,
     next_exact_timestamp: Option<TimestampOverride>,
     interval: Option<u64>,
     next_override_generation: u64,
@@ -60,10 +61,22 @@ impl TimeManager {
     /// Resets the current time manager to the given timestamp, resetting the offsets and
     /// next block timestamp option
     pub fn reset(&self, start_timestamp: u64) {
-        let current = duration_since_unix_epoch().as_secs() as i128;
+        self.reset_timestamp(start_timestamp, true);
+    }
+
+    /// Sets the current timestamp without changing when the current head was installed.
+    pub fn set_time(&self, timestamp: u64) {
+        self.reset_timestamp(timestamp, false);
+    }
+
+    fn reset_timestamp(&self, start_timestamp: u64, mark_new_head: bool) {
+        let current = duration_since_unix_epoch();
         let mut state = self.state.write();
         state.last_timestamp = start_timestamp;
-        state.offset = (start_timestamp as i128) - current;
+        if mark_new_head {
+            state.last_block_wall_time = current.as_millis().try_into().unwrap_or(u64::MAX);
+        }
+        state.offset = (start_timestamp as i128) - current.as_secs() as i128;
         state.offset_reset_generation = state.offset_reset_generation.wrapping_add(1);
         state.next_exact_timestamp = None;
         state.next_override_generation = state.next_override_generation.wrapping_add(1);
@@ -71,6 +84,17 @@ impl TimeManager {
 
     pub fn offset(&self) -> i128 {
         self.state.read().offset
+    }
+
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
+    pub fn last_block_wall_time(&self) -> u64 {
+        self.state.read().last_block_wall_time
+    }
+
+    /// Records that a new latest block was created.
+    pub(crate) fn mark_block_created(&self) {
+        self.state.write().last_block_wall_time =
+            duration_since_unix_epoch().as_millis().try_into().unwrap_or(u64::MAX);
     }
 
     /// Adds the given `offset` to the already tracked offset and returns the result

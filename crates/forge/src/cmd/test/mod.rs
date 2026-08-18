@@ -2131,7 +2131,7 @@ impl TestArgs {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
             if self.summary && !outcome.results.is_empty() {
-                let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+                let summary_report = TestSummaryReport::new(self.detailed, &outcome);
                 sh_println!("{}", &summary_report)?;
             }
 
@@ -3331,7 +3331,7 @@ impl TestArgs {
         }
 
         if !is_multi_pass && self.summary && !outcome.results.is_empty() {
-            let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+            let summary_report = TestSummaryReport::new(self.detailed, &outcome);
             sh_println!("{summary_report}")?;
         }
 

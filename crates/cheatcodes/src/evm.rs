@@ -32,10 +32,7 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{
-        FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor,
-        refresh_context_after_state_change,
-    },
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -358,7 +355,7 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
-        refresh_context_after_state_change::<FEN>(ccx.ecx);
+        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
         Ok(Default::default())
     }
 }
@@ -373,7 +370,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
-        refresh_context_after_state_change::<FEN>(ccx.ecx);
+        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
         Ok(Default::default())
     }
 }
@@ -776,7 +773,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
-        refresh_context_after_state_change::<FEN>(ccx.ecx);
+        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
         Ok(Default::default())
     }
 }
@@ -1278,7 +1275,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
-        refresh_context_after_state_change::<FEN>(ccx.ecx);
+        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1455,7 +1452,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Keep network-specific caches aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.
-        refresh_context_after_state_change::<FEN>(ccx.ecx);
+        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
 
         // Return output bytes.
         let output = match res.result {
@@ -1664,7 +1661,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
             FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(context));
             FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state.clone());
         } else {
-            refresh_context_after_state_change::<FEN>(ccx.ecx);
+            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
         }
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
@@ -1704,7 +1701,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
             FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(&context));
             FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state);
         } else {
-            refresh_context_after_state_change::<FEN>(ccx.ecx);
+            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
         }
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
