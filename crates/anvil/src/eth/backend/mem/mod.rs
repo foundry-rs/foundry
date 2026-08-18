@@ -136,7 +136,7 @@ use foundry_evm::core::{
     evm::{
         FoundryEvmFactory, MonadBlockParticipants,
         monad_block_participants as collect_monad_block_participants,
-        monad_context_from_participants,
+        monad_context_from_participants, protocol_system_call,
     },
 };
 #[cfg(feature = "optimism")]
@@ -2923,7 +2923,13 @@ impl<N: Network> Backend<N> {
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
-            EnvelopeExecutionKind::Replay => Ok(factory.transact_replay(&mut evm, tx_env)?),
+            EnvelopeExecutionKind::Replay => {
+                if let Some(result) = factory.try_transact_system_replay(&mut evm, &tx_env)? {
+                    Ok(result)
+                } else {
+                    Ok(evm.transact(tx_env)?)
+                }
+            }
         }
     }
 
@@ -3045,7 +3051,7 @@ impl<N: Network> Backend<N> {
                     if !is_replay {
                         return executor.execute_transaction_without_commit((tx_env, recovered));
                     }
-                    match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+                    match protocol_system_call(&tx_env) {
                         Ok(None) => {
                             return executor
                                 .execute_transaction_without_commit((tx_env, recovered));
@@ -3056,12 +3062,20 @@ impl<N: Network> Backend<N> {
                     executor.execute_transaction_without_commit_with(
                         (tx_env, recovered),
                         |evm, tx_env, transaction_hash| {
-                            MonadEvmFactory::default().transact_replay(evm, tx_env).map_err(|err| {
-                                BlockExecutionError::msg(format!(
-                                    "failed to replay Monad transaction {transaction_hash}: \
+                            MonadEvmFactory::default()
+                                .try_transact_system_replay(evm, &tx_env)
+                                .map_err(|err| {
+                                    BlockExecutionError::msg(format!(
+                                        "failed to replay Monad transaction {transaction_hash}: \
                                          {err}"
-                                ))
-                            })
+                                    ))
+                                })?
+                                .ok_or_else(|| {
+                                    BlockExecutionError::msg(format!(
+                                        "Monad transaction {transaction_hash} is not a canonical \
+                                         replay envelope"
+                                    ))
+                                })
                         },
                     )
                 },
@@ -5087,7 +5101,9 @@ impl<N: Network> Backend<N> {
         let Some((num, hash)) = self.active_state_snapshots.lock().remove(&id) else {
             return Ok(false);
         };
-        let best_block_hash = {
+        let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+
+        {
             // revert the storage that's newer than the snapshot
             let current_height = self.best_number();
             let mut storage = self.blockchain.storage.write();
@@ -5108,10 +5124,7 @@ impl<N: Network> Backend<N> {
 
             storage.best_number = num;
             storage.best_hash = hash;
-            hash
-        };
-        let block =
-            self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        }
 
         let reset_time = block.header.timestamp();
         self.time.reset(reset_time);
@@ -5676,9 +5689,14 @@ where
                     inspector_tx_config,
                     |evm, tx_env, _transaction_hash| {
                         prepare_monad_transaction(evm, &tx_env);
-                        let result = MonadEvmFactory::default()
-                            .transact_replay(evm, tx_env)
-                            .map_err(BlockExecutionError::msg);
+                        let result = match MonadEvmFactory::default()
+                            .try_transact_system_replay(evm, &tx_env)
+                            .map_err(BlockExecutionError::msg)
+                        {
+                            Ok(Some(result)) => Ok(result),
+                            Ok(None) => evm.transact(tx_env).map_err(BlockExecutionError::msg),
+                            Err(err) => Err(err),
+                        };
                         if result.is_err() {
                             rollback_monad_transaction(evm);
                         }
@@ -5953,6 +5971,8 @@ where
                     .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
                 storage.remove_block_transactions_by_number(to_clear)
             }
+
+            self.time.mark_block_created();
 
             // we intentionally set the difficulty to `0` for newer blocks
             evm_env.block_env.difficulty = U256::from(0);
@@ -9056,7 +9076,7 @@ where
         if self.is_monad() && pool_tx.is_replay {
             let tx_env: TxEnv =
                 build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
-            match MonadEvmFactory::default().protocol_system_call(&tx_env) {
+            match protocol_system_call(&tx_env) {
                 Ok(Some(system_call)) => {
                     if system_call
                         .chain_id
@@ -9796,6 +9816,25 @@ mod tests {
             source_fork_block_number: None,
             source_fork_block_hash: None,
         }
+    }
+
+    #[tokio::test]
+    async fn missing_snapshot_block_does_not_change_head() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let snapshot_hash = api.backend.best_hash();
+        let snapshot = api.backend.create_state_snapshot().await;
+        api.mine_one().await.unwrap();
+        let best_number = api.backend.best_number();
+        let best_hash = api.backend.best_hash();
+        let head_wall_time = api.backend.time().last_block_wall_time();
+
+        api.backend.blockchain.storage.write().blocks.remove(&snapshot_hash);
+        let err = api.backend.revert_state_snapshot(snapshot).await.unwrap_err();
+
+        assert!(matches!(err, super::BlockchainError::BlockNotFound));
+        assert_eq!(api.backend.best_number(), best_number);
+        assert_eq!(api.backend.best_hash(), best_hash);
+        assert_eq!(api.backend.time().last_block_wall_time(), head_wall_time);
     }
 
     struct CacheFlushingDb(BlockchainDb);
