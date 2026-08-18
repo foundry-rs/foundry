@@ -3,6 +3,8 @@
 use crate::errors::FsPathError;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Serialize, de::DeserializeOwned};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
@@ -95,7 +97,25 @@ pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
 
 /// Writes the object as a pretty JSON object.
 pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
-    let file = create_file(path)?;
+    write_pretty_json(path, obj, create_file(path)?)
+}
+
+/// Writes an object as pretty JSON with owner-only permissions on Unix.
+pub fn write_sensitive_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
+    let mut options = File::options();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let file = options.open(path).map_err(|err| FsPathError::create_file(err, path))?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|err| FsPathError::write(err, path))?;
+
+    write_pretty_json(path, obj, file)
+}
+
+fn write_pretty_json<T: Serialize>(path: &Path, obj: &T, file: File) -> Result<()> {
     let mut writer = BufWriter::new(file);
     serde_json::to_writer_pretty(&mut writer, obj)
         .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
@@ -265,6 +285,22 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_sensitive_json_file_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["new", "existing"] {
+            let path = dir.path().join(name);
+            if name == "existing" {
+                fs::write(&path, []).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            }
+
+            write_sensitive_json_file(&path, &()).unwrap();
+            assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
 
     #[test]
     fn test_normalize_path() {
