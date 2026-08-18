@@ -89,8 +89,8 @@ forgetest_async!(base_fork_allows_stateful_precompile_writes, |prj, cmd| {
         "base:Beryl",
         "--fork-url",
         &handle.http_endpoint(),
-        "--match-test",
-        "test_fork_activation_write",
+        "--match-contract",
+        "BaseForkWritesTest",
         "-vvvv",
     ])
     .assert_success();
@@ -107,8 +107,8 @@ forgetest!(base_local_allows_stateful_precompile_writes, |prj, cmd| {
         "base:Beryl",
         "--chain-id",
         "8453",
-        "--match-test",
-        "test_fork_activation_write",
+        "--match-contract",
+        "BaseForkWritesTest",
         "-vvvv",
     ])
     .assert_success();

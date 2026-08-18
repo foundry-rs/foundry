@@ -96,6 +96,21 @@ pub const BASE_PRECOMPILE_ADDRESSES: &[Address] = &[
     NonceManagerStorage::ADDRESS,
 ];
 
+/// Fixed Base precompiles that expose at least one function returning no data.
+///
+/// Solidity guards high-level calls to such functions with an `extcodesize` check, which a
+/// code-less account fails in the caller, so these must carry code. Base mainnet plants a one-byte
+/// sentinel on exactly these two. The factory, nonce manager, and transaction context return data
+/// from every function and are code-less on chain, so stubbing them would diverge — a contract
+/// guarding calls with an `isContract` probe would pass locally and revert on Base.
+///
+/// The nonce manager separately receives a stub at Cobalt from Base's own
+/// `ensure_eip8130_system_accounts` transition, for EIP-161 state clearing rather than for
+/// `extcodesize`. That transition owns it; this list must not.
+#[cfg(feature = "base")]
+pub const BASE_CODE_SENTINEL_ADDRESSES: &[Address] =
+    &[ActivationRegistryStorage::ADDRESS, PolicyRegistryStorage::ADDRESS];
+
 /// BSC secp256r1 precompile address introduced by the Haber hardfork.
 const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
 

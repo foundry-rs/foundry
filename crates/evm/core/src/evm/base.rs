@@ -6,7 +6,7 @@ use base_common_evm::{
     BaseTransactionError,
 };
 use base_common_network::Base;
-use foundry_evm_networks::{BASE_PRECOMPILE_ADDRESSES, is_base_precompile_active_at};
+use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_active_at};
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
@@ -76,7 +76,7 @@ impl FoundryEvmFactory for BaseEvmFactory {
 
     fn stateful_precompiles(spec: Self::Spec) -> Vec<Address> {
         let upgrade = spec.upgrade();
-        BASE_PRECOMPILE_ADDRESSES
+        BASE_CODE_SENTINEL_ADDRESSES
             .iter()
             .copied()
             .filter(|address| is_base_precompile_active_at(*address, upgrade))
@@ -187,7 +187,7 @@ mod tests {
     use base_common_evm::BaseUpgrade;
     use base_common_precompiles::{
         ActivationRegistryStorage, B20FactoryStorage, IActivationRegistry, NonceManagerStorage,
-        TxContextStorage,
+        PolicyRegistryStorage, TxContextStorage,
     };
     use revm::{
         ExecuteEvm,
@@ -211,6 +211,36 @@ mod tests {
         let mut cfg = CfgEnv::new_with_spec(BaseSpecId::new(upgrade));
         cfg.chain_id = chain_id;
         EvmEnv::new(cfg, BlockEnv::default())
+    }
+
+    /// Mainnet plants a one-byte sentinel on exactly the two registries that expose
+    /// void-returning functions, and leaves the factory, nonce manager, and transaction context
+    /// code-less. Stubbing more than this would make an `isContract` probe pass locally and
+    /// revert on Base.
+    #[test]
+    fn code_sentinel_covers_only_void_returning_precompiles() {
+        let stubbed = |upgrade| BaseEvmFactory::stateful_precompiles(BaseSpecId::new(upgrade));
+
+        assert!(stubbed(BaseUpgrade::Azul).is_empty());
+
+        for upgrade in [BaseUpgrade::Beryl, BaseUpgrade::Cobalt] {
+            let addresses = stubbed(upgrade);
+            assert_eq!(
+                addresses,
+                vec![ActivationRegistryStorage::ADDRESS, PolicyRegistryStorage::ADDRESS],
+                "unexpected sentinel set at {upgrade:?}"
+            );
+            for absent in [
+                B20FactoryStorage::ADDRESS,
+                NonceManagerStorage::ADDRESS,
+                TxContextStorage::ADDRESS,
+            ] {
+                assert!(
+                    !addresses.contains(&absent),
+                    "{absent} is code-less on Base and must not be stubbed"
+                );
+            }
+        }
     }
 
     #[test]
