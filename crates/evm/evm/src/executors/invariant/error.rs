@@ -404,6 +404,38 @@ pub enum InvariantFuzzError {
 }
 
 impl InvariantFuzzError {
+    /// Reconstructs a predicate failure from a persisted sequence that still reproduces.
+    #[expect(clippy::too_many_arguments)]
+    pub fn from_replayed_invariant(
+        invariant_address: Address,
+        invariant: &Function,
+        call_sequence: Vec<BasicTxDetails>,
+        reason: Option<String>,
+        config: &InvariantConfig,
+        fail_on_revert: bool,
+        assertion_failure: bool,
+        is_revert: bool,
+    ) -> Self {
+        let revert_reason = reason.unwrap_or_default();
+        let origin = invariant.name.as_str();
+        let failure = FailedInvariantCaseData {
+            test_error: TestError::Fail(
+                format!("{origin}, reason: {revert_reason}").into(),
+                call_sequence,
+            ),
+            return_reason: "".into(),
+            revert_reason,
+            addr: invariant_address,
+            calldata: invariant.selector().to_vec().into(),
+            inner_sequence: Vec::new(),
+            shrink_run_limit: config.shrink_run_limit,
+            fail_on_revert,
+            assertion_failure,
+            fork_block_number: None,
+        };
+        if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
+    }
+
     /// Active fork block when this invariant failure was observed, if any.
     pub const fn fork_block_number(&self) -> Option<u64> {
         match self {
