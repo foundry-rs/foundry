@@ -154,6 +154,8 @@ use base_execution_eip8130::{FeeCheck, IntrinsicGas, IntrinsicGasInput};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+#[cfg(feature = "base")]
+use foundry_evm::core::constants::SYSTEM_PRECOMPILE_STUB;
 #[cfg(feature = "monad")]
 use foundry_evm::core::{
     FromAnyRpcTransaction,
@@ -163,8 +165,6 @@ use foundry_evm::core::{
         monad_context_from_participants,
     },
 };
-#[cfg(feature = "base")]
-use foundry_evm::core::{constants::SYSTEM_PRECOMPILE_STUB, evm::FoundryEvmFactory as _};
 #[cfg(feature = "base")]
 use foundry_evm::hardfork::BaseUpgrade;
 #[cfg(feature = "optimism")]
@@ -4835,7 +4835,11 @@ impl<N: Network> Backend<N> {
             // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
             // check on high-level calls to functions without return data does not revert in the
             // caller. `ensure_eip8130_system_accounts` only covers the Cobalt nonce manager.
-            for address in BaseEvmFactory::stateful_precompiles(BaseSpecId::new(upgrade)) {
+            for address in
+                <BaseEvmFactory as foundry_evm::core::evm::FoundryEvmFactory>::stateful_precompiles(
+                    BaseSpecId::new(upgrade),
+                )
+            {
                 let mut account = erased.basic(address)?.unwrap_or_default();
                 if account.code.as_ref().is_none_or(|code| code.is_empty()) {
                     let code = revm::state::Bytecode::new_legacy(Bytes::from_static(

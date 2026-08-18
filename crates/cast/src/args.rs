@@ -457,6 +457,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                             .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
                             .await?
                     }
+                    // Monad blocks are Ethereum-shaped, so they use the Ethereum-typed provider.
+                    #[cfg(feature = "monad")]
+                    NetworkVariant::Monad => {
+                        let provider =
+                            ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
                 }
             } else {
                 let provider = utils::get_provider(&config)?;
@@ -768,6 +777,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .await?
                 }
                 NetworkVariant::Ethereum => {
+                    let provider = utils::get_provider(&config)?;
+                    Cast::new(&provider)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
+                        .await?
+                }
+                // Monad transactions are Ethereum-shaped, so they use the default provider.
+                #[cfg(feature = "monad")]
+                NetworkVariant::Monad => {
                     let provider = utils::get_provider(&config)?;
                     Cast::new(&provider)
                         .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
