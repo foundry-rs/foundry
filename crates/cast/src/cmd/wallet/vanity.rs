@@ -373,6 +373,10 @@ fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>
         }
         Ok(Either::Left(decoded))
     } else {
+        // a non regex literal containing non-hex characters can never match
+        if !is_hex && pattern.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+            return Err(eyre::eyre!("Pattern contains non-hex characters and can never match"));
+        }
         let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
         let pattern = if is_hex { pattern.to_ascii_lowercase() } else { pattern.to_string() };
         Ok(Either::Right(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
@@ -511,5 +515,15 @@ mod tests {
     fn reject_empty_prefixed_vanity_pattern() {
         let err = parse_pattern("0x", true).unwrap_err();
         assert_eq!(err.to_string(), "Vanity pattern cannot be empty");
+    }
+
+    #[test]
+    fn reject_unmatchable_pattern() {
+        // non-hex chars can never appear in a hex address
+        assert!(parse_pattern("zzz", true).is_err());
+        assert!(parse_pattern("foobar", false).is_err());
+
+        // regex patterns stay supported
+        assert!(parse_pattern("a.c", true).is_ok());
     }
 }

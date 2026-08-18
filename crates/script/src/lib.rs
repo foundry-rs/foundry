@@ -1068,7 +1068,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     self.evm_opts.clone(),
                     Some(known_contracts),
                     Some(target),
-                    self.tempo.fee_token,
                     self.batch,
                 );
                 if restricted {

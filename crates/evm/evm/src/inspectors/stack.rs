@@ -19,7 +19,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, get_create2_factory_call_inputs,
-        refresh_context_after_state_change, with_cloned_context,
+        with_cloned_context,
     },
     precompiles::P256_VERIFY,
 };
@@ -1081,7 +1081,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let Ok(res) = res else {
             factory.restore_transaction_state(ecx, transaction_state);
-            refresh_context_after_state_change::<FEN>(ecx);
+            FEN::EvmFactory::default().apply_context_transition(ecx, None);
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
@@ -1136,7 +1136,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         };
         if rolled_back {
-            refresh_context_after_state_change::<FEN>(ecx);
+            FEN::EvmFactory::default().apply_context_transition(ecx, None);
         }
         (InterpreterResult { result, output, gas }, address, was_precompile_called)
     }
@@ -1201,7 +1201,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
 
-        refresh_context_after_state_change::<FEN>(ecx);
+        FEN::EvmFactory::default().apply_context_transition(ecx, None);
     }
 
     // We take extra care in optimizing `step` and `step_end`, as they're are likely the most
