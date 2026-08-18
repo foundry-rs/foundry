@@ -559,7 +559,10 @@ fn contextual_overlays(
 ) -> Option<Vec<Remapping>> {
     let applicable = |mapping: &&Remapping| {
         mapping.context.as_deref().is_none_or(|context| {
-            refinement.context.as_deref().is_some_and(|refinement| refinement.starts_with(context))
+            refinement
+                .context
+                .as_deref()
+                .is_some_and(|refinement| context_starts_with(refinement, context))
         })
     };
     if authoritative
@@ -580,6 +583,19 @@ fn contextual_overlays(
         overlay.context.clone_from(&refinement.context);
     }
     Some(overlays)
+}
+
+fn context_starts_with(path: &str, base: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use path_slash::PathBufExt as _;
+
+        let path = PathBuf::from_slash(path);
+        let base = PathBuf::from_slash(base);
+        return path.starts_with(base);
+    }
+    #[cfg(not(windows))]
+    Path::new(path).starts_with(base)
 }
 
 fn configured_auto_remapping(
@@ -903,6 +919,23 @@ mod tests {
             std::slice::from_ref(&nested_refinement),
         );
         assert_eq!(generated.into_inner(), vec![contextual_cli]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn contextual_overlay_accepts_mixed_windows_separators() {
+        let authoritative = Remapping {
+            context: Some(r"C:\workspace\lib/a/".to_string()),
+            name: "shared/".to_string(),
+            path: "src/override/".to_string(),
+        };
+        let refinement = Remapping {
+            context: Some(r"C:\workspace\lib\a\lib\x\".to_string()),
+            name: "shared/".to_string(),
+            path: "lib/a/lib/x/lib/shared/src/".to_string(),
+        };
+
+        assert!(contextual_overlays(&[authoritative], &refinement).is_none());
     }
 
     #[test]

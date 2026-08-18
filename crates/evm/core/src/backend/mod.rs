@@ -6,7 +6,6 @@ use crate::{
     evm::{
         BlockContext, BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
-        execute_replay_transaction,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
@@ -1046,21 +1045,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Converts a replayable transaction while preserving the established behavior of skipping
-    /// network system envelopes that this EVM factory does not execute.
-    fn replay_tx_env(
-        factory: &FEN::EvmFactory,
-        tx: &AnyRpcTransaction,
-    ) -> eyre::Result<Option<TxEnvFor<FEN>>> {
+    /// system envelopes that this build cannot decode.
+    fn replay_tx_env(tx: &AnyRpcTransaction) -> eyre::Result<Option<TxEnvFor<FEN>>> {
         let is_system = is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE;
-        if is_system && !FEN::EvmFactory::REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS {
+        if is_system {
+            #[cfg(not(feature = "monad"))]
             return Ok(None);
+            #[cfg(feature = "monad")]
+            return Ok(TxEnvFor::<FEN>::from_any_rpc_transaction(tx).ok());
         }
 
-        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
-        if is_system && factory.protocol_system_call(&tx_env)?.is_none() {
-            return Ok(None);
-        }
-        Ok(Some(tx_env))
+        TxEnvFor::<FEN>::from_any_rpc_transaction(tx).map(Some)
     }
 
     /// Returns the transaction environments needed to construct exact block context.
@@ -1553,8 +1548,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let factory = FEN::EvmFactory::default();
         let mut txs_to_replay = Vec::with_capacity(target_index);
         for (index, tx) in transactions[..target_index].iter().enumerate() {
-            let Some(tx_env) = Self::replay_tx_env(&factory, tx)? else { continue };
-            txs_to_replay.push((index, tx.clone(), tx_env));
+            let Some(tx_env) = Self::replay_tx_env(tx)? else { continue };
+            let is_system = is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE;
+            txs_to_replay.push((index, tx.clone(), tx_env, is_system));
         }
 
         // Replay all preceding transactions against a cloned ForkDB.
@@ -1568,7 +1564,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let mut replay_db = fork.db.clone();
 
             if let Some(context) = block_context {
-                for (index, tx, tx_env) in &txs_to_replay {
+                for (index, tx, tx_env, is_system) in &txs_to_replay {
                     let chain_context = context.transaction(*index);
                     let mut evm =
                         factory.create_evm_with_context(replay_db, evm_env.clone(), chain_context);
@@ -1578,8 +1574,23 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                         timestamp,
                     );
                     trace!(tx=?tx.tx_hash(), "committing transaction");
-                    let result = execute_replay_transaction(&factory, &mut evm, tx_env.clone())
-                        .wrap_err("backend: failed replaying transaction")?;
+                    let result = if *is_system {
+                        #[cfg(feature = "monad")]
+                        let Some(result) = factory
+                            .try_transact_system_replay(&mut evm, tx_env)
+                            .wrap_err("backend: failed replaying system transaction")?
+                        else {
+                            replay_db = evm.into_db();
+                            continue;
+                        };
+                        #[cfg(not(feature = "monad"))]
+                        unreachable!("system transactions are filtered without Monad support");
+                        #[cfg(feature = "monad")]
+                        result
+                    } else {
+                        evm.transact(tx_env.clone())
+                            .wrap_err("backend: failed replaying transaction")?
+                    };
                     evm.db_mut().commit(result.state);
                     replay_db = evm.into_db();
                 }
@@ -1590,10 +1601,24 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                     chain_id,
                     timestamp,
                 );
-                for (_, tx, tx_env) in &txs_to_replay {
+                for (_, tx, tx_env, is_system) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
-                    let result = execute_replay_transaction(&factory, &mut evm, tx_env.clone())
-                        .wrap_err("backend: failed replaying transaction")?;
+                    let result = if *is_system {
+                        #[cfg(feature = "monad")]
+                        let Some(result) = factory
+                            .try_transact_system_replay(&mut evm, tx_env)
+                            .wrap_err("backend: failed replaying system transaction")?
+                        else {
+                            continue;
+                        };
+                        #[cfg(not(feature = "monad"))]
+                        unreachable!("system transactions are filtered without Monad support");
+                        #[cfg(feature = "monad")]
+                        result
+                    } else {
+                        evm.transact(tx_env.clone())
+                            .wrap_err("backend: failed replaying transaction")?
+                    };
                     evm.db_mut().commit(result.state);
                 }
                 replay_db = evm.into_db();
@@ -2894,7 +2919,12 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
             inspector,
         );
         evm.journal_inner_mut().depth = depth + 1;
-        evm.transact_replay(tx_env).wrap_err("backend: failed committing transaction")?
+        #[cfg(feature = "monad")]
+        let result =
+            evm.transact_replay(tx_env).wrap_err("backend: failed committing transaction")?;
+        #[cfg(not(feature = "monad"))]
+        let result = evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?;
+        result
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
@@ -3114,16 +3144,12 @@ mod tests {
             }))
         };
 
-        let factory = Default::default();
         assert!(
-            Backend::<EthEvmNetwork>::replay_tx_env(
-                &factory,
-                &transaction(SYSTEM_TRANSACTION_TYPE)
-            )
-            .unwrap()
-            .is_none()
+            Backend::<EthEvmNetwork>::replay_tx_env(&transaction(SYSTEM_TRANSACTION_TYPE))
+                .unwrap()
+                .is_none()
         );
-        assert!(Backend::<EthEvmNetwork>::replay_tx_env(&factory, &transaction(0xff)).is_err());
+        assert!(Backend::<EthEvmNetwork>::replay_tx_env(&transaction(0xff)).is_err());
     }
 
     #[test]

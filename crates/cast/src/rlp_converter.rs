@@ -1,5 +1,5 @@
 use alloy_primitives::{U256, hex};
-use alloy_rlp::{Buf, Decodable, Encodable, Header};
+use alloy_rlp::{Decodable, Encodable, Header, PayloadView};
 use eyre::Context;
 use serde_json::Value;
 use std::fmt;
@@ -25,23 +25,50 @@ impl Encodable for Item {
 
 impl Decodable for Item {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let h = Header::decode(buf)?;
-        if buf.len() < h.payload_length {
-            return Err(alloy_rlp::Error::InputTooShort);
+        struct ListFrame<'a> {
+            remaining: std::vec::IntoIter<&'a [u8]>,
+            items: Vec<Item>,
         }
-        let mut d = &buf[..h.payload_length];
-        let r = if h.list {
-            let view = &mut d;
-            let mut v = Vec::new();
-            while !view.is_empty() {
-                v.push(Self::decode(view)?);
-            }
-            Ok(Self::Array(v))
-        } else {
-            Ok(Self::Data(d.to_vec()))
+
+        let items = match Header::decode_raw(buf)? {
+            PayloadView::String(data) => return Ok(Self::Data(data.to_vec())),
+            PayloadView::List(items) => items,
         };
-        buf.advance(h.payload_length);
-        r
+
+        let mut frames = vec![ListFrame { remaining: items.into_iter(), items: Vec::new() }];
+        loop {
+            let Some(encoded) = frames.last_mut().unwrap().remaining.next() else {
+                let frame = frames.pop().unwrap();
+                let item = Self::Array(frame.items);
+                if let Some(parent) = frames.last_mut() {
+                    parent.items.push(item);
+                    continue;
+                }
+                return Ok(item);
+            };
+
+            match Header::decode_raw(&mut &encoded[..])? {
+                PayloadView::String(data) => {
+                    frames.last_mut().unwrap().items.push(Self::Data(data.to_vec()));
+                }
+                PayloadView::List(items) => {
+                    frames.push(ListFrame { remaining: items.into_iter(), items: Vec::new() });
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Item {
+    fn drop(&mut self) {
+        // The default recursive drop can overflow after successfully decoding deeply nested RLP.
+        let Self::Array(items) = self else { return };
+        let mut pending = std::mem::take(items);
+        while let Some(mut item) = pending.pop() {
+            if let Self::Array(children) = &mut item {
+                pending.append(children);
+            }
+        }
     }
 }
 
@@ -73,21 +100,30 @@ impl FromIterator<Self> for Item {
 // Display as hex values
 impl fmt::Display for Item {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Data(dat) => {
-                write!(f, "\"0x{}\"", hex::encode(dat))?;
-            }
-            Self::Array(items) => {
-                f.write_str("[")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(",")?;
+        enum Task<'a> {
+            Item(&'a Item),
+            Comma,
+            Close,
+        }
+
+        let mut tasks = vec![Task::Item(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Item(Self::Data(data)) => write!(f, "\"0x{}\"", hex::encode(data))?,
+                Task::Item(Self::Array(items)) => {
+                    f.write_str("[")?;
+                    tasks.push(Task::Close);
+                    for (i, item) in items.iter().enumerate().rev() {
+                        tasks.push(Task::Item(item));
+                        if i > 0 {
+                            tasks.push(Task::Comma);
+                        }
                     }
-                    fmt::Display::fmt(item, f)?;
                 }
-                f.write_str("]")?;
+                Task::Comma => f.write_str(",")?,
+                Task::Close => f.write_str("]")?,
             }
-        };
+        }
         Ok(())
     }
 }
