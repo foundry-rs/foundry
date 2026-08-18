@@ -794,7 +794,9 @@ impl CallTraceDecoder {
             self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
         for event in abi.events() {
-            if let Some(address) = address {
+            if let Some(address) = address
+                && !global
+            {
                 self.push_address_event(address, event.clone());
             }
             if global {
