@@ -4832,24 +4832,24 @@ contract TempoScript is Script {
 }
 "#,
     );
-    prj.update_config(|config| {
-        config.gas_limit = u64::MAX.into();
-        config.gas_price = Some(600_000_000);
-    });
-
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let fee_token = address!("0x20c0000000000000000000000000000000000000");
-    // Synthetic script execution should not require the caller to fund protocol fees.
+    let fee_manager = address!("0xfeec000000000000000000000000000000000000");
+    // Clear both balances so synthetic execution cannot accidentally succeed through fee
+    // accounting.
     api.anvil_deal_tip20(CALLER, fee_token, U256::ZERO).await.unwrap();
+    api.anvil_deal_tip20(fee_manager, fee_token, U256::ZERO).await.unwrap();
     cmd.arg("script").arg(script).args([
         "--rpc-url",
         &handle.http_endpoint(),
         "--network",
         "tempo",
-        "--gas-price",
-        "600000000",
         "--tempo.fee-token",
         "0x20c0000000000000000000000000000000000000",
+        "--with-gas-price",
+        "600000000",
+        "--block-gas-limit",
+        "18446744073709551615",
     ]);
     cmd.assert_success();
 });
