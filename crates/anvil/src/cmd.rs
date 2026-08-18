@@ -1112,19 +1112,17 @@ mod tests {
         assert_eq!(config.get_chain_id(), 1);
     }
 
+    /// `anvil --chain-id 8453` resolved to Optimism before Base support existed and must keep
+    /// doing so in builds without the feature, which is what release binaries ship.
     #[test]
-    #[cfg(not(feature = "base"))]
-    fn chain_id_rejects_disabled_base_network() {
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
         for chain_id in ["8453", "84532"] {
             let args = NodeArgs::parse_from(["anvil", "--chain-id", chain_id]);
-            let error = args.into_node_config().unwrap_err();
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "cannot infer execution network from chain ID {chain_id}: network family \
-                     `base` is not enabled in this build"
-                )
-            );
+            let config = args
+                .into_node_config()
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(config.networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
         }
     }
 

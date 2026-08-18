@@ -286,11 +286,13 @@ impl NetworkVariant {
         if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
             return Ok(Some(Self::Ethereum));
         }
+        // Only claim Base when the feature is on. `is_optimism()` below already covers Base chain
+        // IDs, and that is what shipped binaries resolve them to today, so erroring here would
+        // regress builds that never asked for Base. Monad errors instead because no shipped EVM
+        // approximates it.
+        #[cfg(feature = "base")]
         if matches!(chain.named(), Some(NamedChain::Base | NamedChain::BaseSepolia)) {
-            #[cfg(feature = "base")]
             return Ok(Some(Self::Base));
-            #[cfg(not(feature = "base"))]
-            return Err("network family `base` is not enabled in this build".to_string());
         }
         if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
             #[cfg(feature = "monad")]
@@ -1747,17 +1749,17 @@ mod tests {
         assert_eq!(NetworkConfigs::default().active_network_name(), None);
     }
 
+    /// Base chain IDs resolved to Optimism before Base support existed, and `is_optimism()` still
+    /// covers them, so a build without the `base` feature must keep resolving them rather than
+    /// erroring. Shipped release binaries are exactly that build.
     #[test]
-    #[cfg(not(feature = "base"))]
-    fn fallible_chain_id_inference_rejects_disabled_base() {
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_inference_falls_back_to_optimism_without_base() {
         for chain_id in [NamedChain::Base as u64, NamedChain::BaseSepolia as u64] {
-            assert_eq!(
-                NetworkConfigs::default().try_with_chain_id(chain_id).unwrap_err(),
-                format!(
-                    "cannot infer execution network from chain ID {chain_id}: network family \
-                     `base` is not enabled in this build"
-                )
-            );
+            let configs = NetworkConfigs::default()
+                .try_with_chain_id(chain_id)
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(configs.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
         }
     }
 

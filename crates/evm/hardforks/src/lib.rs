@@ -974,5 +974,17 @@ mod tests {
                 Some(FoundryHardfork::Optimism(_))
             ));
         }
+
+        /// Base is an OP-stack chain, so without the `base` feature its chain IDs must still map
+        /// to an Optimism hardfork rather than resolving to nothing.
+        #[test]
+        #[cfg(not(feature = "base"))]
+        fn test_from_chain_and_timestamp_base() {
+            let base_chain_id = 8453;
+            assert!(matches!(
+                FoundryHardfork::from_chain_and_timestamp(base_chain_id, u64::MAX),
+                Some(FoundryHardfork::Optimism(_))
+            ));
+        }
     }
 }
