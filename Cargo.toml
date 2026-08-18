@@ -552,14 +552,14 @@ monad-revm = { version = "0.6.0", default-features = false, features = [
 ] }
 
 # Base
-base-common-chains = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
-base-common-consensus = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
-base-common-evm = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
-base-common-genesis = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
-base-common-network = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
-base-common-precompiles = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
-base-common-rpc-types = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
-base-execution-eip8130 = { git = "https://github.com/base/base", rev = "b88721ac3c99af64ea0a8dfe1515bab3460a64b0", default-features = false }
+base-common-chains = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
+base-common-consensus = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
+base-common-evm = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
+base-common-genesis = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
+base-common-network = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
+base-common-precompiles = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
+base-common-rpc-types = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
+base-execution-eip8130 = { git = "https://github.com/base/base", rev = "c7c801749bbb35a96907bd50b9c0114fb88a4d99", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
